@@ -2937,13 +2937,25 @@ app.use((error, req, res, next) => {
 async function startServer() {
   try {
     await ensureDatabaseSchema();
+    console.log('Schema validado para gestão GRC');
+  } catch (error) {
+    console.warn('Não foi possível validar o schema do banco:', error.message);
+  }
+
+  try {
     await ensureDefaultAdminUser();
+    console.log('Administrador Master validado');
+  } catch (error) {
+    console.warn('Não foi possível validar o Administrador Master:', error.message);
+  }
+
+  try {
     await backfillComplaintProtocols();
     await backfillNpsProtocols();
     await backfillComplaintDeadlines();
-    console.log('Banco validado para gestão de reclamações');
+    console.log('Backfills operacionais validados');
   } catch (error) {
-    console.warn('Não foi possível validar o schema do banco:', error.message);
+    console.warn('Não foi possível executar os backfills:', error.message);
   }
 
   app.listen(PORT, () => {
