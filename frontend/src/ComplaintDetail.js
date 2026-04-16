@@ -14,7 +14,7 @@ const roleLabels = {
   supervisor_crc: 'Supervisor do CRC',
   coordinator: 'Coordenador',
   manager: 'Gerente',
-  viewer: 'Consulta'
+  viewer: 'Marketing'
 };
 
 const forwardingOptions = [

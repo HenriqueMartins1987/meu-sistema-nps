@@ -24,6 +24,7 @@ function AdminPanel() {
   const [users, setUsers] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState('');
+  const [userSearch, setUserSearch] = useState('');
   const [draft, setDraft] = useState(null);
   const [feedback, setFeedback] = useState('');
   const [loading, setLoading] = useState(true);
@@ -31,6 +32,19 @@ function AdminPanel() {
   const selectedUser = useMemo(() => (
     users.find((user) => String(user.id) === String(selectedUserId)) || null
   ), [users, selectedUserId]);
+
+  const filteredUsers = useMemo(() => {
+    const term = userSearch.trim().toLowerCase();
+
+    if (!term) return users;
+
+    return users.filter((user) => [
+      user.name,
+      user.email,
+      user.position,
+      roleLabel(user.role)
+    ].join(' ').toLowerCase().includes(term));
+  }, [users, userSearch]);
 
   const loadData = async () => {
     setLoading(true);
@@ -101,6 +115,22 @@ function AdminPanel() {
       clinicIds.has(clinicId) ? clinicIds.delete(clinicId) : clinicIds.add(clinicId);
       return { ...prev, clinicIds: Array.from(clinicIds) };
     });
+  };
+
+  const selectAllPermissions = () => {
+    setDraft((prev) => ({ ...prev, permissions: screenPermissions.map((permission) => permission.value) }));
+  };
+
+  const clearPermissions = () => {
+    setDraft((prev) => ({ ...prev, permissions: [] }));
+  };
+
+  const selectAllClinics = () => {
+    setDraft((prev) => ({ ...prev, clinicIds: clinics.map((clinic) => clinic.id) }));
+  };
+
+  const clearClinics = () => {
+    setDraft((prev) => ({ ...prev, clinicIds: [] }));
   };
 
   const saveUser = async () => {
@@ -194,8 +224,15 @@ function AdminPanel() {
 
             <label className="admin-selector">
               Selecionar colaborador
+              <input
+                className="field"
+                value={userSearch}
+                onChange={(event) => setUserSearch(event.target.value)}
+                placeholder="Pesquisar por nome, e-mail, cargo ou perfil"
+              />
               <select className="field" value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
-                {users.map((user) => (
+                {filteredUsers.length === 0 && <option value="">Nenhum colaborador encontrado</option>}
+                {filteredUsers.map((user) => (
                   <option key={user.id} value={user.id}>
                     {user.name} · {user.email}
                   </option>
@@ -257,7 +294,7 @@ function AdminPanel() {
                   />
                 </label>
                 <label>
-                  WhatsApp <span className="whatsapp-symbol">☎</span>
+                  WhatsApp
                   <input
                     className="field"
                     value={draft.whatsapp || defaultBrazilPhone}
@@ -275,7 +312,12 @@ function AdminPanel() {
 
               <div className="admin-switch-row">
                 <label>
-                  <input type="checkbox" checked={draft.active} onChange={(event) => updateDraft('active', event.target.checked)} />
+                  <input
+                    type="checkbox"
+                    checked={isSelectedMaster ? true : draft.active}
+                    onChange={(event) => updateDraft('active', event.target.checked)}
+                    disabled={isSelectedMaster}
+                  />
                   Usuário habilitado
                 </label>
               </div>

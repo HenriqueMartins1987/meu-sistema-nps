@@ -106,7 +106,7 @@ const accessProfiles = {
   supervisor_crc: 'Supervisor do CRC',
   coordinator: 'Coordenador',
   manager: 'Gerente',
-  viewer: 'Consulta'
+  viewer: 'Marketing'
 };
 
 const screenPermissions = {
@@ -221,6 +221,10 @@ function canMarkPatientContact(user) {
 
 function canRegisterFirstAttendance(user) {
   return user?.role === 'sac_operator' || isAdminUser(user);
+}
+
+function canDeleteRecords(user) {
+  return isMasterAdminUser(user) || user?.role === 'supervisor_crc';
 }
 
 function classifyNpsFeedback(score, feedbackType) {
@@ -414,6 +418,7 @@ async function ensureDatabaseSchema() {
   await ensureColumn('users', 'permissions', 'LONGTEXT NULL');
   await ensureColumn('users', 'deleted_at', 'TIMESTAMP NULL');
   await ensureColumn('users', 'deleted_by', 'VARCHAR(160) NULL');
+  await ensureColumn('users', 'must_change_password', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn('users', 'active', 'TINYINT(1) NOT NULL DEFAULT 1');
   await ensureColumn('users', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
   await ensureColumn('users', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
@@ -674,6 +679,11 @@ async function ensureDefaultAdminUser() {
       passwordHash,
       JSON.stringify(Object.keys(screenPermissions))
     ]
+  );
+
+  await pool.query(
+    'UPDATE users SET must_change_password = 0 WHERE LOWER(email) = ?',
+    [masterAdminEmail]
   );
 
   await pool.query(
@@ -1627,7 +1637,18 @@ app.get('/registration-requests/:token/approve', async (req, res) => {
     await pool.query(
       `INSERT INTO users
        (name, email, password, role, position, phone, whatsapp, department, permissions, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+       ON DUPLICATE KEY UPDATE
+         name = VALUES(name),
+         role = VALUES(role),
+         position = VALUES(position),
+         phone = VALUES(phone),
+         whatsapp = VALUES(whatsapp),
+         department = VALUES(department),
+         permissions = VALUES(permissions),
+         active = 1,
+         deleted_at = NULL,
+         deleted_by = NULL`,
       [
         request.name,
         request.email,
@@ -1795,7 +1816,7 @@ app.post('/admin/registration-requests/:id/reject', authenticate, requireMasterA
 app.get('/admin/users', authenticate, requireAdmin, async (req, res) => {
   try {
     const [users] = await pool.query(
-      `SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, created_at, updated_at
+      `SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, created_at, updated_at
        FROM users
        WHERE deleted_at IS NULL
        ORDER BY name ASC`
@@ -1928,7 +1949,7 @@ app.post('/admin/users/:id/reset-password', authenticate, requireAdmin, async (r
     }
 
     const passwordHash = await bcrypt.hash('123456789', 10);
-    await pool.query('UPDATE users SET password = ? WHERE id = ?', [passwordHash, user.id]);
+    await pool.query('UPDATE users SET password = ?, must_change_password = 1 WHERE id = ?', [passwordHash, user.id]);
     await createNotification(
       user.id,
       'password_reset',
@@ -2054,7 +2075,8 @@ app.post('/login', async (req, res) => {
     }
 
     const clinicIds = await getUserClinicIds(user.id);
-    const token = jwt.sign({ id: user.id, email: user.email, role, name: user.name, permissions, clinicIds }, SECRET);
+    const mustChangePassword = Boolean(user.must_change_password);
+    const token = jwt.sign({ id: user.id, email: user.email, role, name: user.name, permissions, clinicIds, mustChangePassword }, SECRET);
 
     res.json({
       message: 'Login ok',
@@ -2064,13 +2086,128 @@ app.post('/login', async (req, res) => {
         ...safeUser,
         role,
         permissions,
-        clinicIds
+        clinicIds,
+        mustChangePassword
       }
     });
 
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro no login' });
+  }
+});
+
+app.patch('/profile', authenticate, async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [req.user.id]);
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+
+    const current = rows[0];
+    const currentEmail = String(current.email || '').toLowerCase();
+    const requestedEmail = String(req.body.email || current.email).trim().toLowerCase();
+
+    if (currentEmail === masterAdminEmail && requestedEmail !== masterAdminEmail) {
+      return res.status(403).json({ error: 'O e-mail do Administrador Master não pode ser alterado.' });
+    }
+
+    if (requestedEmail !== currentEmail) {
+      const [duplicates] = await pool.query('SELECT id FROM users WHERE email = ? AND id <> ? AND deleted_at IS NULL', [requestedEmail, current.id]);
+
+      if (duplicates.length) {
+        return res.status(409).json({ error: 'Já existe outro usuário com este e-mail.' });
+      }
+    }
+
+    const normalizedPhone = normalizeBrazilPhone(req.body.phone || current.phone);
+    const normalizedWhatsapp = normalizeBrazilPhone(req.body.whatsapp || current.whatsapp);
+
+    if (!isCompleteBrazilPhone(normalizedPhone) || !isCompleteBrazilPhone(normalizedWhatsapp)) {
+      return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.' });
+    }
+
+    await pool.query(
+      `UPDATE users
+          SET name = ?,
+              email = ?,
+              phone = ?,
+              whatsapp = ?
+        WHERE id = ?`,
+      [
+        req.body.name || current.name,
+        requestedEmail,
+        normalizedPhone,
+        normalizedWhatsapp,
+        current.id
+      ]
+    );
+
+    const [updatedRows] = await pool.query(
+      `SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, created_at, updated_at
+       FROM users
+       WHERE id = ?`,
+      [current.id]
+    );
+    const updated = updatedRows[0];
+    let permissions = defaultPermissionsForRole(updated.role);
+
+    try {
+      permissions = updated.permissions ? JSON.parse(updated.permissions) : permissions;
+    } catch (error) {
+      permissions = defaultPermissionsForRole(updated.role);
+    }
+
+    const clinicIds = await getUserClinicIds(updated.id);
+
+    res.json({
+      message: 'Perfil atualizado com sucesso.',
+      user: {
+        ...updated,
+        permissions,
+        clinicIds,
+        mustChangePassword: Boolean(updated.must_change_password)
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao atualizar perfil.' });
+  }
+});
+
+app.post('/profile/change-password', authenticate, async (req, res) => {
+  try {
+    const { current_password, new_password } = req.body || {};
+
+    if (!current_password || !new_password) {
+      return res.status(400).json({ error: 'Informe a senha atual e a nova senha.' });
+    }
+
+    if (!isStrongPassword(new_password)) {
+      return res.status(400).json({ error: 'A nova senha deve ter no mínimo 8 caracteres, letra maiúscula, letra minúscula, número e caractere especial.' });
+    }
+
+    const [rows] = await pool.query('SELECT id, password FROM users WHERE id = ? AND deleted_at IS NULL', [req.user.id]);
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+
+    const user = rows[0];
+    const validPassword = user.password === current_password || await bcrypt.compare(current_password, user.password);
+
+    if (!validPassword) {
+      return res.status(401).json({ error: 'Senha atual inválida.' });
+    }
+
+    const passwordHash = await bcrypt.hash(new_password, 10);
+    await pool.query('UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?', [passwordHash, user.id]);
+
+    res.json({ message: 'Senha alterada com sucesso.' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao alterar senha.' });
   }
 });
 
@@ -2230,6 +2367,14 @@ app.post('/nps/public', async (req, res) => {
       role: 'externo'
     });
 
+    await sendWhatsappNotification({
+      event: 'nps_protocol_patient',
+      to: normalizedPatientPhone,
+      protocol,
+      npsId: npsInsert.insertId,
+      message: `Sua pesquisa de satisfacao foi registrada com o protocolo ${protocol}.`
+    });
+
     if (npsProfile === 'detrator') {
       await notifyClinicResponsibles(
         clinic_id,
@@ -2335,8 +2480,8 @@ app.patch('/nps/responses/:id/treatment', authenticate, async (req, res) => {
 
 app.delete('/nps/responses/:id', authenticate, async (req, res) => {
   try {
-    if (!isMasterAdminUser(req.user)) {
-      return res.status(403).json({ error: 'Apenas o Administrador Master pode excluir NPS.' });
+    if (!canDeleteRecords(req.user)) {
+      return res.status(403).json({ error: 'Apenas o Administrador Master ou Supervisor do CRC pode excluir NPS.' });
     }
 
     const reason = String(req.body?.reason || 'Exclusão administrativa').slice(0, 500);
@@ -2586,6 +2731,28 @@ app.post('/complaints', upload.single('file'), async (req, res) => {
     });
     await notifyComplaintCreated(result.insertId, protocol);
 
+    await sendWhatsappNotification({
+      event: 'complaint_protocol_patient',
+      to: normalizedPatientPhone,
+      protocol,
+      complaintId: result.insertId,
+      message: `Seu protocolo ${protocol} foi registrado e sera acompanhado pela equipe responsavel.`
+    });
+
+    if (normalizedOrigin === 'Marketing') {
+      await sendEmail(
+        approvalEmail,
+        `Protocolo ${protocol} registrado pelo Marketing`,
+        `<p>Um novo protocolo foi registrado pelo link externo de Marketing.</p><p><strong>Paciente:</strong> ${patient_name}</p><p><strong>Protocolo:</strong> ${protocol}</p>`
+      );
+      await sendWhatsappNotification({
+        event: 'marketing_protocol_created',
+        protocol,
+        complaintId: result.insertId,
+        message: `Marketing registrou o protocolo ${protocol} para o paciente ${patient_name}.`
+      });
+    }
+
     res.json({
       message: 'Reclamação salva com sucesso',
       id: result.insertId,
@@ -2615,7 +2782,7 @@ app.get('/complaints/:id', authenticate, async (req, res) => {
 
 app.delete('/complaints/:id', authenticate, async (req, res) => {
   try {
-    if (!isMasterAdminUser(req.user)) {
+    if (!canDeleteRecords(req.user)) {
       return res.status(403).json({ error: 'Apenas o Administrador Master pode excluir reclamações.' });
     }
 

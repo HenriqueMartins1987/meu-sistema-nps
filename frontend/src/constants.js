@@ -72,7 +72,7 @@ export const accessProfiles = [
   { value: 'supervisor_crc', label: 'Supervisor do CRC' },
   { value: 'coordinator', label: 'Coordenador' },
   { value: 'manager', label: 'Gerente' },
-  { value: 'viewer', label: 'Consulta' }
+  { value: 'viewer', label: 'Marketing' }
 ];
 
 export const screenPermissions = [
