@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import api from './api';
+import { isMasterAdmin, readUser } from './constants';
 
 const profileLabels = {
   detrator: 'Detrator',
@@ -33,6 +34,18 @@ function profileFromScore(score) {
   return 'detrator';
 }
 
+function profileWeight(profile) {
+  if (profile === 'detrator') return 0;
+  if (profile === 'neutro') return 1;
+  return 2;
+}
+
+function buildWhatsappUrl(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (!digits) return null;
+  return `https://wa.me/${digits.startsWith('55') ? digits : `55${digits}`}`;
+}
+
 function getNpsStatus(item) {
   return item?.nps_status || 'registrado';
 }
@@ -55,70 +68,131 @@ function parseReasons(value) {
   }
 }
 
+function uniqueList(values) {
+  return Array.from(new Set(values.filter(Boolean)))
+    .sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'));
+}
+
 function NpsManagement() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const focusNpsId = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const rawId = params.get('abrir') || params.get('id');
+    const parsedId = Number(rawId);
+    return Number.isFinite(parsedId) && parsedId > 0 ? parsedId : null;
+  }, [location.search]);
+  const currentUser = readUser();
+  const canDeleteRecords = isMasterAdmin(currentUser) || currentUser?.role === 'supervisor_crc';
   const [rows, setRows] = useState([]);
+  const [clinics, setClinics] = useState([]);
   const [filters, setFilters] = useState({
     profile: '',
     clinic: '',
+    state: '',
+    region: '',
+    coordinator: '',
     status: '',
     search: ''
   });
   const [loading, setLoading] = useState(true);
   const [savingId, setSavingId] = useState(null);
   const [selectedNps, setSelectedNps] = useState(null);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [treatmentText, setTreatmentText] = useState('');
   const [treatmentStatus, setTreatmentStatus] = useState('em_tratativa');
   const [feedback, setFeedback] = useState('');
+  const autoOpenNpsRef = useRef(false);
 
-  const loadRows = async () => {
+  const loadRows = useCallback(async () => {
     setLoading(true);
     setFeedback('');
 
     try {
-      const res = await api.get('/nps/responses');
-      setRows(Array.isArray(res.data) ? res.data : []);
+      const [npsRes, clinicsRes] = await Promise.all([
+        api.get('/nps/responses'),
+        api.get('/clinics')
+      ]);
+      setRows(Array.isArray(npsRes.data) ? npsRes.data : []);
+      setClinics(Array.isArray(clinicsRes.data) ? clinicsRes.data : []);
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível carregar as pesquisas NPS.');
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     loadRows();
-  }, []);
+  }, [loadRows]);
 
-  const clinicOptions = useMemo(() => (
-    Array.from(new Set(rows.map((item) => item.clinic_name).filter(Boolean)))
-      .sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'))
-  ), [rows]);
+  useEffect(() => {
+    autoOpenNpsRef.current = false;
+  }, [focusNpsId]);
 
-  const filteredRows = useMemo(() => rows.filter((item) => {
-    const profile = item.nps_profile || profileFromScore(item.score);
-    const status = getNpsStatus(item);
-    const searchable = [
-      protocolLabel(item),
-      item.patient_name,
-      item.patient_phone,
-      item.clinic_name,
-      item.city,
-      item.state,
-      item.region,
-      item.detractor_feedback,
-      item.improvement_comment,
-      item.comment,
-      item.nps_treatment_comment,
-      ...(item.logs || []).map((log) => log.message)
-    ].map(normalizeText).join(' ');
+  useEffect(() => {
+    if (!focusNpsId || autoOpenNpsRef.current || !rows.length) {
+      return;
+    }
 
-    return (
-      (!filters.profile || profile === filters.profile)
-      && (!filters.clinic || item.clinic_name === filters.clinic)
-      && (!filters.status || status === filters.status)
-      && (!filters.search || searchable.includes(normalizeText(filters.search)))
-    );
-  }), [rows, filters]);
+    const targetNps = rows.find((item) => item.id === focusNpsId);
+
+    if (!targetNps) {
+      return;
+    }
+
+    autoOpenNpsRef.current = true;
+    setSelectedNps(targetNps);
+    setTreatmentText('');
+    setTreatmentStatus(getNpsStatus(targetNps) === 'tratado' ? 'tratado' : 'em_tratativa');
+    setShowDeleteModal(false);
+    navigate(location.pathname, { replace: true });
+  }, [focusNpsId, location.pathname, navigate, rows]);
+
+  const filterOptions = useMemo(() => ({
+    clinics: uniqueList([...rows.map((item) => item.clinic_name), ...clinics.map((clinic) => clinic.name)]),
+    states: uniqueList([...rows.map((item) => item.state), ...clinics.map((clinic) => clinic.state)]),
+    regions: uniqueList([...rows.map((item) => item.region), ...clinics.map((clinic) => clinic.region)]),
+    coordinators: uniqueList([...rows.map((item) => item.coordinator_name), ...clinics.map((clinic) => clinic.coordinator_name)])
+  }), [rows, clinics]);
+
+  const filteredRows = useMemo(() => rows
+    .filter((item) => {
+      const profile = item.nps_profile || profileFromScore(item.score);
+      const status = getNpsStatus(item);
+      const searchable = [
+        protocolLabel(item),
+        item.patient_name,
+        item.patient_phone,
+        item.clinic_name,
+        item.city,
+        item.state,
+        item.region,
+        item.detractor_feedback,
+        item.improvement_comment,
+        item.comment,
+        item.nps_treatment_comment,
+        ...(item.logs || []).map((log) => log.message)
+      ].map(normalizeText).join(' ');
+
+      return (
+        (!filters.profile || profile === filters.profile)
+        && (!filters.clinic || item.clinic_name === filters.clinic)
+        && (!filters.state || item.state === filters.state)
+        && (!filters.region || item.region === filters.region)
+        && (!filters.coordinator || item.coordinator_name === filters.coordinator)
+        && (!filters.status || status === filters.status)
+        && (!filters.search || searchable.includes(normalizeText(filters.search)))
+      );
+    })
+    .sort((a, b) => {
+      const profileDiff = profileWeight(a.nps_profile || profileFromScore(a.score))
+        - profileWeight(b.nps_profile || profileFromScore(b.score));
+
+      if (profileDiff !== 0) return profileDiff;
+
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    }), [rows, filters]);
 
   const metrics = useMemo(() => {
     const total = rows.length;
@@ -146,6 +220,7 @@ function NpsManagement() {
 
   const closeTreatment = () => {
     setSelectedNps(null);
+    setShowDeleteModal(false);
     setTreatmentText('');
     setTreatmentStatus('em_tratativa');
   };
@@ -198,6 +273,27 @@ function NpsManagement() {
       }
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível migrar este NPS para reclamação.');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const handleDeleteNps = async () => {
+    if (!selectedNps || !canDeleteRecords) return;
+
+    setSavingId(selectedNps.id);
+    setFeedback('');
+
+    try {
+      await api.delete(`/nps/responses/${selectedNps.id}`, {
+        data: { reason: 'Exclusão administrativa pela tela de gestão NPS.' }
+      });
+      await loadRows();
+      setShowDeleteModal(false);
+      closeTreatment();
+      setFeedback('Pesquisa NPS excluída com lastro de auditoria.');
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível excluir a pesquisa NPS.');
     } finally {
       setSavingId(null);
     }
@@ -271,8 +367,26 @@ function NpsManagement() {
             />
             <select className="field" value={filters.clinic} onChange={(event) => updateFilter('clinic', event.target.value)}>
               <option value="">Todas as unidades</option>
-              {clinicOptions.map((clinic) => (
+              {filterOptions.clinics.map((clinic) => (
                 <option key={clinic} value={clinic}>{clinic}</option>
+              ))}
+            </select>
+            <select className="field" value={filters.region} onChange={(event) => updateFilter('region', event.target.value)}>
+              <option value="">Todas as regiões</option>
+              {filterOptions.regions.map((region) => (
+                <option key={region} value={region}>{region}</option>
+              ))}
+            </select>
+            <select className="field" value={filters.state} onChange={(event) => updateFilter('state', event.target.value)}>
+              <option value="">Todos os estados</option>
+              {filterOptions.states.map((state) => (
+                <option key={state} value={state}>{state}</option>
+              ))}
+            </select>
+            <select className="field" value={filters.coordinator} onChange={(event) => updateFilter('coordinator', event.target.value)}>
+              <option value="">Todos os coordenadores</option>
+              {filterOptions.coordinators.map((coordinator) => (
+                <option key={coordinator} value={coordinator}>{coordinator}</option>
               ))}
             </select>
             <select className="field" value={filters.profile} onChange={(event) => updateFilter('profile', event.target.value)}>
@@ -446,6 +560,20 @@ function NpsManagement() {
             </div>
 
             <div className="heading-actions">
+              {buildWhatsappUrl(selectedNps.patient_phone) && (
+                <a className="primary-action whatsapp-action" href={buildWhatsappUrl(selectedNps.patient_phone)} target="_blank" rel="noreferrer">
+                  Chamar no WhatsApp
+                </a>
+              )}
+              {canDeleteRecords && (
+                <button
+                  className="outline-action danger-action"
+                  onClick={() => setShowDeleteModal(true)}
+                  disabled={savingId === selectedNps.id}
+                >
+                  Excluir NPS
+                </button>
+              )}
               <button className="outline-action" onClick={closeTreatment} disabled={savingId === selectedNps.id}>
                 Fechar
               </button>
@@ -463,6 +591,37 @@ function NpsManagement() {
                   {savingId === selectedNps.id ? 'Salvando...' : 'Salvar tratativa'}
                 </button>
               )}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {showDeleteModal && selectedNps && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirmar exclusão do NPS">
+          <section className="modal-panel modal-confirm-panel">
+            <p className="eyebrow">Excluir NPS</p>
+            <h2>Tem certeza que deseja excluir?</h2>
+            <p>
+              A exclusão retira o protocolo NPS da lista operacional e mantém o registro de auditoria.
+            </p>
+
+            <div className="row-actions">
+              <button
+                className="outline-action"
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                disabled={savingId === selectedNps.id}
+              >
+                Cancelar
+              </button>
+              <button
+                className="outline-action danger-action"
+                type="button"
+                onClick={handleDeleteNps}
+                disabled={savingId === selectedNps.id}
+              >
+                {savingId === selectedNps.id ? 'Excluindo...' : 'Confirmar exclusão'}
+              </button>
             </div>
           </section>
         </div>

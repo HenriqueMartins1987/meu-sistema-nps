@@ -46,8 +46,13 @@ function protocolLabel(item) {
   return `NPS-${year}-${String(item?.id || 0).padStart(6, '0')}`;
 }
 
-function uniqueValues(rows, key) {
-  return Array.from(new Set(rows.map((row) => row[key]).filter(Boolean)))
+function profileLabel(profile) {
+  const normalized = String(profile || '').trim();
+  return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'Não informado';
+}
+
+function uniqueList(values) {
+  return Array.from(new Set(values.filter(Boolean)))
     .sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'));
 }
 
@@ -102,6 +107,13 @@ function formatShortDate(value) {
   }).format(new Date(value));
 }
 
+function lastNpsActor(item) {
+  return item?.logs?.[0]?.actor_name
+    || item?.nps_treatment_by
+    || item?.converted_by
+    || 'Sem tratativa';
+}
+
 const chartOptions = {
   responsive: true,
   maintainAspectRatio: false,
@@ -115,6 +127,7 @@ const chartOptions = {
 function NpsDashboard() {
   const navigate = useNavigate();
   const [rows, setRows] = useState([]);
+  const [clinics, setClinics] = useState([]);
   const [filters, setFilters] = useState(initialFilters);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState('');
@@ -125,8 +138,12 @@ function NpsDashboard() {
       setFeedback('');
 
       try {
-        const res = await api.get('/nps/responses');
-        setRows(Array.isArray(res.data) ? res.data : []);
+        const [npsRes, clinicsRes] = await Promise.all([
+          api.get('/nps/responses'),
+          api.get('/clinics')
+        ]);
+        setRows(Array.isArray(npsRes.data) ? npsRes.data : []);
+        setClinics(Array.isArray(clinicsRes.data) ? clinicsRes.data : []);
       } catch (error) {
         setFeedback(error.response?.data?.error || 'Não foi possível carregar o dashboard NPS.');
       } finally {
@@ -138,11 +155,11 @@ function NpsDashboard() {
   }, []);
 
   const options = useMemo(() => ({
-    clinics: uniqueValues(rows, 'clinic_name'),
-    states: uniqueValues(rows, 'state'),
-    regions: uniqueValues(rows, 'region'),
-    coordinators: uniqueValues(rows, 'coordinator_name')
-  }), [rows]);
+    clinics: uniqueList([...rows.map((row) => row.clinic_name), ...clinics.map((clinic) => clinic.name)]),
+    states: uniqueList([...rows.map((row) => row.state), ...clinics.map((clinic) => clinic.state)]),
+    regions: uniqueList([...rows.map((row) => row.region), ...clinics.map((clinic) => clinic.region)]),
+    coordinators: uniqueList([...rows.map((row) => row.coordinator_name), ...clinics.map((clinic) => clinic.coordinator_name)])
+  }), [rows, clinics]);
 
   const filteredRows = useMemo(() => rows.filter((item) => {
     const createdAt = item.created_at ? new Date(item.created_at) : null;
@@ -212,7 +229,7 @@ function NpsDashboard() {
       <header className="page-heading">
         <div>
           <p className="eyebrow">Dashboard NPS</p>
-          <h1>BI INTERATIVO DE NPS</h1>
+          <h1>Dashboard NPS</h1>
           <p>Analise satisfação por unidade, região, coordenador, perfil e período.</p>
         </div>
 
@@ -385,6 +402,7 @@ function NpsDashboard() {
                     <th>Coordenador</th>
                     <th>Protocolo NPS</th>
                     <th>Status NPS</th>
+                    <th>Última tratativa por</th>
                     <th>Cadastro</th>
                   </tr>
                 </thead>
@@ -397,11 +415,12 @@ function NpsDashboard() {
                       <tr key={item.id}>
                         <td>{item.patient_name || 'Não informado'}</td>
                         <td><span className={`nps-score-pill small ${profile}`}>{item.score}</span></td>
-                        <td>{profile}</td>
+                        <td className="profile-cell">{profileLabel(profile)}</td>
                         <td>{item.clinic_name || 'Não informado'}</td>
                         <td>{item.coordinator_name || 'Não vinculado'}</td>
                         <td>{protocolLabel(item)}</td>
                         <td><span className={`nps-status-chip ${status}`}>{npsStatusLabels[status] || status}</span></td>
+                        <td>{lastNpsActor(item)}</td>
                         <td>{formatShortDate(item.created_at)}</td>
                       </tr>
                     );

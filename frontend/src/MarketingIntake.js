@@ -45,6 +45,7 @@ const initialForm = {
   manifestation_kind: 'reclamacao',
   complaint_category: '',
   channel: 'Marketing',
+  channel_other: '',
   service_type: '',
   priority: 'media',
   financial_involved: 'nao',
@@ -60,6 +61,7 @@ function MarketingIntake() {
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [error, setError] = useState('');
+  const [savedProtocol, setSavedProtocol] = useState('');
 
   useEffect(() => {
     api.get('/clinics')
@@ -113,9 +115,11 @@ function MarketingIntake() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    const formElement = event.currentTarget;
     setLoading(true);
     setFeedback('');
     setError('');
+    setSavedProtocol('');
 
     try {
       if (form.file && form.file.size > maxUploadSizeBytes) {
@@ -136,6 +140,12 @@ function MarketingIntake() {
         return;
       }
 
+      if (form.channel === 'Outro' && !form.channel_other.trim()) {
+        setError('Informe o canal de origem.');
+        setLoading(false);
+        return;
+      }
+
       const formData = new FormData();
       const complaintType = isComplaint
         ? labelFrom(complaintCategories, form.complaint_category)
@@ -146,7 +156,7 @@ function MarketingIntake() {
         clinic_id: form.clinic_id,
         patient_name: form.patient_name,
         patient_phone: form.patient_phone,
-        channel: form.channel,
+        channel: form.channel === 'Outro' ? form.channel_other.trim() : form.channel,
         complaint_type: complaintType,
         priority: isComplaint ? (isFinancialComplaint ? 'alta' : form.priority) : 'baixa',
         service_type: form.service_type ? labelFrom(serviceTypes, form.service_type) : '',
@@ -164,9 +174,12 @@ function MarketingIntake() {
       }
 
       const res = await api.post('/complaints', formData);
-      setFeedback(`Protocolo ${res.data?.protocol || ''} registrado com sucesso.`);
+      const protocol = res.data?.protocol || '';
+      setSavedProtocol(protocol);
+      setFeedback(`Protocolo ${protocol} registrado com sucesso.`);
       setForm(initialForm);
-      event.currentTarget.reset();
+      formElement.reset();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (requestError) {
       setError(requestError.response?.data?.error || 'Não foi possível registrar o protocolo.');
     } finally {
@@ -249,6 +262,20 @@ function MarketingIntake() {
               </label>
             </div>
 
+            {form.channel === 'Outro' && (
+              <label>
+                Descreva o canal de origem
+                <input
+                  className="field"
+                  value={form.channel_other}
+                  onChange={(event) => updateForm('channel_other', event.target.value.slice(0, 120))}
+                  placeholder="Informe o canal de origem"
+                  maxLength={120}
+                  required
+                />
+              </label>
+            )}
+
             <div className="form-grid two">
               <label>
                 Nome do paciente
@@ -262,7 +289,7 @@ function MarketingIntake() {
               </label>
 
               <label>
-                Telefone / WhatsApp <span className="whatsapp-symbol">☎</span>
+                Telefone / WhatsApp
                 <input
                   className="field"
                   value={form.patient_phone}

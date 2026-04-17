@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from './api';
 import {
@@ -13,6 +13,18 @@ import {
 
 const masterAdminEmail = 'henrique.martins@grcconsultoria.net.br';
 
+function buildNewUserDraft() {
+  return {
+    name: '',
+    email: '',
+    role: 'viewer',
+    position: '',
+    phone: defaultBrazilPhone,
+    whatsapp: defaultBrazilPhone,
+    department: ''
+  };
+}
+
 function roleLabel(role) {
   if (role === 'master_admin') return 'Administrador Master';
   return accessProfiles.find((profile) => profile.value === role)?.label || role || 'Perfil não informado';
@@ -20,7 +32,7 @@ function roleLabel(role) {
 
 function AdminPanel() {
   const navigate = useNavigate();
-  const currentUser = readUser();
+  const currentUser = useMemo(() => readUser(), []);
   const [users, setUsers] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState('');
@@ -28,6 +40,9 @@ function AdminPanel() {
   const [draft, setDraft] = useState(null);
   const [feedback, setFeedback] = useState('');
   const [loading, setLoading] = useState(true);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [newUser, setNewUser] = useState(buildNewUserDraft);
 
   const selectedUser = useMemo(() => (
     users.find((user) => String(user.id) === String(selectedUserId)) || null
@@ -46,7 +61,7 @@ function AdminPanel() {
     ].join(' ').toLowerCase().includes(term));
   }, [users, userSearch]);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     setLoading(true);
     setFeedback('');
 
@@ -67,7 +82,7 @@ function AdminPanel() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedUserId]);
 
   useEffect(() => {
     if (!isAdmin(currentUser)) {
@@ -76,7 +91,7 @@ function AdminPanel() {
     }
 
     loadData();
-  }, []);
+  }, [currentUser, navigate, loadData]);
 
   useEffect(() => {
     if (!selectedUser) {
@@ -99,6 +114,10 @@ function AdminPanel() {
 
   const updateDraft = (field, value) => {
     setDraft((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const updateNewUser = (field, value) => {
+    setNewUser((prev) => ({ ...prev, [field]: value }));
   };
 
   const togglePermission = (permission) => {
@@ -186,6 +205,37 @@ function AdminPanel() {
     }
   };
 
+  const createUser = async () => {
+    setFeedback('');
+
+    if (!newUser.name || !newUser.email || !newUser.position) {
+      setFeedback('Preencha nome completo, e-mail e cargo para criar o usuário.');
+      return;
+    }
+
+    if (!isCompleteBrazilPhone(newUser.phone) || !isCompleteBrazilPhone(newUser.whatsapp)) {
+      setFeedback('Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.');
+      return;
+    }
+
+    setCreating(true);
+
+    try {
+      const response = await api.post('/admin/users', newUser);
+      await loadData();
+      if (response.data?.id) {
+        setSelectedUserId(String(response.data.id));
+      }
+      setCreateOpen(false);
+      setNewUser(buildNewUserDraft());
+      setFeedback('Usuário criado com sucesso. O link de primeiro acesso e a senha 123456789 foram enviados.');
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível criar o usuário.');
+    } finally {
+      setCreating(false);
+    }
+  };
+
   if (!isAdmin(currentUser)) {
     return null;
   }
@@ -202,11 +252,12 @@ function AdminPanel() {
         </div>
 
         <div className="heading-actions">
+          <button className="primary-action" onClick={() => setCreateOpen(true)}>Cadastrar novo usuário</button>
           <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
         </div>
       </header>
 
-      {feedback && <p className="form-feedback">{feedback}</p>}
+      {feedback && <p className="form-feedback admin-feedback">{feedback}</p>}
 
       {loading ? (
         <section className="management-panel">
@@ -326,6 +377,10 @@ function AdminPanel() {
                 <div>
                   <p className="eyebrow">Telas liberadas</p>
                   <h3>Fluxo de alçada por tela</h3>
+                  <div className="mini-actions">
+                    <button type="button" className="outline-action" onClick={selectAllPermissions}>Selecionar todas</button>
+                    <button type="button" className="ghost-action" onClick={clearPermissions}>Limpar</button>
+                  </div>
                 </div>
                 <div className="admin-check-grid">
                   {screenPermissions.map((permission) => (
@@ -345,6 +400,10 @@ function AdminPanel() {
                 <div>
                   <p className="eyebrow">Clínicas vinculadas</p>
                   <h3>Responsabilidade por unidade</h3>
+                  <div className="mini-actions">
+                    <button type="button" className="outline-action" onClick={selectAllClinics}>Selecionar todas</button>
+                    <button type="button" className="ghost-action" onClick={clearClinics}>Limpar</button>
+                  </div>
                 </div>
                 <div className="admin-check-grid clinic-check-grid">
                   {clinics.map((clinic) => (
@@ -362,6 +421,62 @@ function AdminPanel() {
             </section>
           )}
         </section>
+      )}
+
+      {createOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <section className="modal-panel create-user-modal">
+            <div>
+              <p className="eyebrow">Novo usuário</p>
+              <h2>Cadastrar colaborador</h2>
+              <p>O sistema enviará o link de acesso com a senha temporária 123456789 para o primeiro login.</p>
+            </div>
+
+            <div className="admin-form-grid">
+              <label>
+                Nome completo
+                <input className="field" value={newUser.name} onChange={(event) => updateNewUser('name', event.target.value)} />
+              </label>
+              <label>
+                E-mail
+                <input className="field" type="email" value={newUser.email} onChange={(event) => updateNewUser('email', event.target.value)} />
+              </label>
+              <label>
+                Perfil
+                <select className="field" value={newUser.role} onChange={(event) => updateNewUser('role', event.target.value)}>
+                  {accessProfiles.map((profile) => (
+                    <option key={profile.value} value={profile.value}>{profile.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Cargo
+                <input className="field" value={newUser.position} onChange={(event) => updateNewUser('position', event.target.value)} />
+              </label>
+              <label>
+                Telefone
+                <input className="field" value={newUser.phone} onChange={(event) => updateNewUser('phone', formatBrazilPhoneInput(event.target.value))} maxLength={14} />
+              </label>
+              <label>
+                WhatsApp
+                <input className="field" value={newUser.whatsapp} onChange={(event) => updateNewUser('whatsapp', formatBrazilPhoneInput(event.target.value))} maxLength={14} />
+              </label>
+              <label className="admin-form-span">
+                Área ou unidade
+                <input className="field" value={newUser.department} onChange={(event) => updateNewUser('department', event.target.value)} />
+              </label>
+            </div>
+
+            <div className="heading-actions">
+              <button className="outline-action" onClick={() => { setCreateOpen(false); setNewUser(buildNewUserDraft()); }} disabled={creating}>
+                Cancelar
+              </button>
+              <button className="primary-action" onClick={createUser} disabled={creating}>
+                {creating ? 'Cadastrando...' : 'Salvar usuário'}
+              </button>
+            </div>
+          </section>
+        </div>
       )}
     </main>
   );

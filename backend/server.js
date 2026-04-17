@@ -26,8 +26,8 @@ const publicBaseUrl = process.env.PUBLIC_API_URL || `http://localhost:${PORT}`;
 const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
 const approvalEmail = process.env.APPROVAL_EMAIL || 'henrique.martins@grcconsultoria.net.br';
 const masterAdminEmail = (process.env.MASTER_ADMIN_EMAIL || 'henrique.martins@grcconsultoria.net.br').toLowerCase();
-const defaultAdminEmail = (process.env.DEFAULT_ADMIN_EMAIL || masterAdminEmail).toLowerCase();
-const defaultAdminPassword = process.env.DEFAULT_ADMIN_PASSWORD || 'Zyck1987#';
+const defaultAdminEmail = masterAdminEmail;
+const defaultAdminPassword = process.env.MASTER_ADMIN_PASSWORD || process.env.DEFAULT_ADMIN_PASSWORD || 'Zyck1987#';
 const whatsappWebhookUrl = process.env.WHATSAPP_WEBHOOK_URL || '';
 const whatsappGroupId = process.env.WHATSAPP_GROUP_ID || '';
 const uploadDir = path.join(__dirname, 'uploads');
@@ -157,6 +157,11 @@ function toMysqlDateTime(date) {
 function formatNpsProtocol(id, createdAt) {
   const year = createdAt ? new Date(createdAt).getFullYear() : new Date().getFullYear();
   return `NPS-${year}-${String(id).padStart(6, '0')}`;
+}
+
+function formatPatientProtocol(id, createdAt) {
+  const year = createdAt ? new Date(createdAt).getFullYear() : new Date().getFullYear();
+  return `PAC-${year}-${String(id).padStart(6, '0')}`;
 }
 
 function normalizeNpsStatus(value) {
@@ -411,6 +416,7 @@ async function ensureDatabaseSchema() {
   `);
 
   await ensureColumn('users', 'role', "VARCHAR(60) NOT NULL DEFAULT 'viewer'");
+  await pool.query("ALTER TABLE users MODIFY COLUMN role VARCHAR(60) NOT NULL DEFAULT 'viewer'");
   await ensureColumn('users', 'position', 'VARCHAR(160) NULL');
   await ensureColumn('users', 'phone', 'VARCHAR(40) NULL');
   await ensureColumn('users', 'whatsapp', 'VARCHAR(40) NULL');
@@ -455,8 +461,20 @@ async function ensureDatabaseSchema() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS notification_hidden (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      notification_id INT NOT NULL,
+      user_id INT NOT NULL,
+      hidden_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_notification_hidden (notification_id, user_id),
+      INDEX idx_notification_hidden_user_id (user_id)
+    )
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS patient_interactions (
       id INT AUTO_INCREMENT PRIMARY KEY,
+      protocol VARCHAR(40) NULL,
       patient_name VARCHAR(160) NOT NULL,
       patient_phone VARCHAR(40) NOT NULL,
       channel VARCHAR(80) NOT NULL,
@@ -473,6 +491,12 @@ async function ensureDatabaseSchema() {
       INDEX idx_patient_interactions_status (status)
     )
   `);
+  await ensureColumn('patient_interactions', 'protocol', 'VARCHAR(40) NULL');
+  await ensureColumn('patient_interactions', 'cancelled_at', 'TIMESTAMP NULL');
+  await ensureColumn('patient_interactions', 'cancelled_by_name', 'VARCHAR(160) NULL');
+  await ensureColumn('patient_interactions', 'cancelled_by_role', 'VARCHAR(80) NULL');
+  await ensureColumn('patient_interactions', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+  await ensureColumn('patient_interactions', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS patient_interaction_logs (
@@ -626,6 +650,12 @@ async function ensureDatabaseSchema() {
   await ensureColumn('complaints', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
   await ensureColumn('complaints', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
   await ensureColumn('complaints', 'closed_at', 'TIMESTAMP NULL');
+  await pool.query('ALTER TABLE complaints MODIFY COLUMN channel VARCHAR(160) NULL');
+  await pool.query('ALTER TABLE complaints MODIFY COLUMN complaint_type VARCHAR(160) NULL');
+  await pool.query('ALTER TABLE complaints MODIFY COLUMN service_type VARCHAR(160) NULL');
+  await pool.query("ALTER TABLE complaints MODIFY COLUMN status VARCHAR(40) NOT NULL DEFAULT 'aberta'");
+  await pool.query("ALTER TABLE complaints MODIFY COLUMN priority VARCHAR(40) DEFAULT 'media'");
+  await pool.query("ALTER TABLE complaints MODIFY COLUMN created_origin VARCHAR(80) DEFAULT 'Interno'");
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS complaint_evidences (
@@ -675,7 +705,7 @@ async function ensureDefaultAdminUser() {
        active = 1`,
     [
       'Henrique Martins',
-      defaultAdminEmail,
+      masterAdminEmail,
       passwordHash,
       JSON.stringify(Object.keys(screenPermissions))
     ]
@@ -709,6 +739,17 @@ async function backfillNpsProtocols() {
   await Promise.all(rows.map((row) => (
     pool.query('UPDATE nps_responses SET nps_protocol = ? WHERE id = ?', [
       formatNpsProtocol(row.id, row.created_at),
+      row.id
+    ])
+  )));
+}
+
+async function backfillPatientProtocols() {
+  const [rows] = await pool.query('SELECT id, created_at FROM patient_interactions WHERE protocol IS NULL OR protocol = ""');
+
+  await Promise.all(rows.map((row) => (
+    pool.query('UPDATE patient_interactions SET protocol = ? WHERE id = ?', [
+      formatPatientProtocol(row.id, row.created_at),
       row.id
     ])
   )));
@@ -1045,7 +1086,7 @@ async function createNotificationForAdmins(type, title, message, link = null, pa
 }
 
 async function notifyClinicResponsibles(clinicId, type, title, message, link, payload = null) {
-  if (!clinicId) return;
+  if (!clinicId) return [];
 
   const [clinicRows] = await pool.query('SELECT coordinator_name FROM clinics WHERE id = ?', [clinicId]);
   const coordinatorName = String(clinicRows[0]?.coordinator_name || '').trim();
@@ -1084,24 +1125,85 @@ async function notifyClinicResponsibles(clinicId, type, title, message, link, pa
   }
 
   await Promise.all(filteredUsers.map(async (user) => {
-    await createNotification(user.id, type, title, message, link, payload);
+    try {
+      await createNotification(user.id, type, title, message, link, payload);
+    } catch (error) {
+      console.warn('Nao foi possivel criar notificacao para responsavel da unidade:', error.message);
+    }
 
     if (user.email) {
-      await sendEmail(
-        user.email,
-        title,
-        `<p>${message.replace(/\n/g, '<br />')}</p><p><a href="${link}">Abrir no sistema</a></p>`
-      );
+      try {
+        await sendEmail(
+          user.email,
+          title,
+          `<p>${message.replace(/\n/g, '<br />')}</p><p><a href="${link}">Abrir no sistema</a></p>`
+        );
+      } catch (error) {
+        console.warn('Nao foi possivel enviar e-mail para responsavel da unidade:', error.message);
+      }
     }
 
     if (user.whatsapp) {
-      await sendWhatsappNotification({
-        event: type,
-        to: user.whatsapp,
-        userId: user.id,
-        link,
-        message: `${message}\n${link}`
-      });
+      try {
+        await sendWhatsappNotification({
+          event: type,
+          to: user.whatsapp,
+          userId: user.id,
+          link,
+          message: `${message}\n${link}`
+        });
+      } catch (error) {
+        console.warn('Nao foi possivel enviar WhatsApp para responsavel da unidade:', error.message);
+      }
+    }
+  }));
+
+  return filteredUsers.map((user) => user.id).filter(Boolean);
+}
+
+async function notifyOperationalComplaintTeam(title, message, link, payload = null, excludedUserIds = []) {
+  const excluded = new Set((excludedUserIds || []).map((id) => Number(id)));
+  const [users] = await pool.query(
+    `SELECT DISTINCT id, name, email, whatsapp, role
+       FROM users
+      WHERE active = 1
+        AND deleted_at IS NULL
+        AND role IN ('sac_operator', 'supervisor_crc')`
+  );
+  const recipients = users.filter((user) => user.id && !excluded.has(Number(user.id)));
+
+  await Promise.all(recipients.map(async (user) => {
+    try {
+      await createNotification(user.id, 'complaint_operational_alert', title, message, link, payload);
+    } catch (error) {
+      console.warn('Nao foi possivel criar notificacao operacional da reclamacao:', error.message);
+    }
+
+    if (user.email) {
+      try {
+        await sendEmail(
+          user.email,
+          title,
+          `<p>${message.replace(/\n/g, '<br />')}</p><p><a href="${link}">Abrir no sistema</a></p>`
+        );
+      } catch (error) {
+        console.warn('Nao foi possivel enviar e-mail operacional da reclamacao:', error.message);
+      }
+    }
+
+    if (user.whatsapp) {
+      try {
+        await sendWhatsappNotification({
+          event: 'complaint_operational_alert',
+          to: user.whatsapp,
+          userId: user.id,
+          role: user.role,
+          link,
+          message: `${message}\n${link}`
+        });
+      } catch (error) {
+        console.warn('Nao foi possivel enviar WhatsApp operacional da reclamacao:', error.message);
+      }
     }
   }));
 }
@@ -1135,30 +1237,57 @@ async function notifyComplaintCreated(complaintId, protocol) {
   const clinic = complaint.clinic_name
     ? `${complaint.clinic_name}${complaint.city ? ` - ${complaint.city}/${complaint.state || 'UF'}` : ''}`
     : 'Unidade não informada';
+  const title = `Novo protocolo ${protocol || complaint.protocol || complaintId}`;
+  const link = `${frontendUrl}/gestao/${complaintId}`;
   const message = [
-    `Novo protocolo ${protocol || complaint.protocol || complaintId}`,
+    title,
     `Paciente: ${complaint.patient_name || 'Não informado'}`,
     `Unidade: ${clinic}`,
     `Tipo: ${complaint.complaint_type || 'Não informado'}`,
     `Prioridade: ${complaint.priority || 'Não informada'}`,
     `Origem: ${complaint.created_origin || 'Interno'}`
   ].join('\n');
+  const payload = { complaintId, protocol: protocol || complaint.protocol || complaintId };
+  const detailedMessage = `${message}\n\nAcesse o protocolo para dar ciência e iniciar a tratativa.`;
+  const operationalMessage = `${message}\n\nSupervisor do CRC e Operador de SAC devem acompanhar o protocolo ate a conclusao.`;
 
-  await sendWhatsappNotification({
-    event: 'complaint_created',
-    protocol: protocol || complaint.protocol || complaintId,
-    complaintId,
-    message
-  });
+  try {
+    await sendWhatsappNotification({
+      event: 'complaint_created',
+      protocol: protocol || complaint.protocol || complaintId,
+      complaintId,
+      message
+    });
+  } catch (error) {
+    console.warn('Nao foi possivel enviar notificacao geral da reclamacao:', error.message);
+  }
 
-  await notifyClinicResponsibles(
-    complaint.clinic_id,
-    'complaint_assigned',
-    `Novo protocolo ${protocol || complaint.protocol || complaintId}`,
-    `${message}\n\nÉ necessário dar ciência e tratar o protocolo conforme a alçada da unidade.`,
-    `${frontendUrl}/gestao/${complaintId}`,
-    { complaintId, protocol: protocol || complaint.protocol || complaintId }
-  );
+  let notifiedUserIds = [];
+
+  try {
+    notifiedUserIds = await notifyClinicResponsibles(
+      complaint.clinic_id,
+      'complaint_assigned',
+      title,
+      detailedMessage,
+      link,
+      payload
+    );
+  } catch (error) {
+    console.warn('Nao foi possivel notificar responsaveis da unidade:', error.message);
+  }
+
+  try {
+    await notifyOperationalComplaintTeam(
+      title,
+      operationalMessage,
+      link,
+      payload,
+      notifiedUserIds
+    );
+  } catch (error) {
+    console.warn('Nao foi possivel notificar Supervisor CRC e Operador SAC:', error.message);
+  }
 }
 
 function buildNpsComplaintDescription(nps) {
@@ -1849,6 +1978,116 @@ app.get('/admin/users', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
+app.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const {
+      name,
+      email,
+      role,
+      position,
+      phone,
+      whatsapp,
+      department,
+      permissions,
+      clinicIds
+    } = req.body || {};
+
+    if (!name || !email || !role || !position || !phone || !whatsapp) {
+      return res.status(400).json({
+        error: 'Preencha nome completo, e-mail, perfil, cargo, telefone e WhatsApp.'
+      });
+    }
+
+    if (role === 'master_admin') {
+      return res.status(403).json({ error: 'Administrador Master é exclusivo para o usuário master.' });
+    }
+
+    if (!accessProfiles[role]) {
+      return res.status(400).json({ error: 'Perfil de acesso inválido.' });
+    }
+
+    const normalizedEmail = String(email).trim().toLowerCase();
+    const normalizedPhone = normalizeBrazilPhone(phone);
+    const normalizedWhatsapp = normalizeBrazilPhone(whatsapp);
+
+    if (!isCompleteBrazilPhone(normalizedPhone) || !isCompleteBrazilPhone(normalizedWhatsapp)) {
+      return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.' });
+    }
+
+    const [existing] = await pool.query(
+      'SELECT id FROM users WHERE LOWER(email) = ? AND deleted_at IS NULL',
+      [normalizedEmail]
+    );
+
+    if (existing.length) {
+      return res.status(409).json({ error: 'Já existe um usuário ativo com este e-mail.' });
+    }
+
+    const allowedPermissions = Array.isArray(permissions)
+      ? permissions.filter((permission) => screenPermissions[permission])
+      : defaultPermissionsForRole(role);
+    const passwordHash = await bcrypt.hash('123456789', 10);
+    const [result] = await pool.query(
+      `INSERT INTO users
+       (name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)`,
+      [
+        String(name).trim(),
+        normalizedEmail,
+        passwordHash,
+        role,
+        String(position).trim(),
+        normalizedPhone,
+        normalizedWhatsapp,
+        String(department || '').trim() || null,
+        JSON.stringify(allowedPermissions)
+      ]
+    );
+
+    if (Array.isArray(clinicIds) && clinicIds.length) {
+      await Promise.all(clinicIds.map((clinicId) => (
+        pool.query(
+          'INSERT INTO user_clinics (user_id, clinic_id, can_edit) VALUES (?, ?, 1)',
+          [result.insertId, clinicId]
+        )
+      )));
+    }
+
+    try {
+      await sendEmail(
+        normalizedEmail,
+        'Primeiro acesso liberado - Sistema GRC',
+        `
+          <h2>Seu acesso foi criado no Sistema GRC</h2>
+          <p><strong>Link do sistema:</strong> <a href="${frontendUrl}">${frontendUrl}</a></p>
+          <p><strong>E-mail de acesso:</strong> ${normalizedEmail}</p>
+          <p><strong>Senha temporária:</strong> 123456789</p>
+          <p>Por segurança, a alteração da senha será obrigatória no primeiro acesso.</p>
+        `
+      );
+    } catch (error) {
+      console.warn('Nao foi possivel enviar o e-mail de primeiro acesso:', error.message);
+    }
+
+    await createNotification(
+      result.insertId,
+      'password_reset',
+      'Primeiro acesso liberado',
+      'Seu acesso foi criado. Use a senha temporária 123456789 e altere a senha no primeiro login.',
+      '/perfil',
+      { temporaryPassword: true, firstAccess: true }
+    );
+
+    res.status(201).json({
+      message: 'Usuário criado com sucesso. O link de acesso foi enviado com a senha temporária.',
+      id: result.insertId
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao criar usuário.' });
+  }
+});
+
 app.patch('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
@@ -1999,14 +2238,32 @@ app.delete('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
 
 app.get('/notifications', authenticate, async (req, res) => {
   try {
+    const requestedStatus = String(req.query.status || 'unread').toLowerCase();
+    const statusFilter = ['read', 'unread'].includes(requestedStatus) ? requestedStatus : null;
+    const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 500);
+    const params = [req.user.id, isAdminUser(req.user) ? 1 : 0];
+    const statusClause = statusFilter ? 'AND status = ?' : '';
+
+    if (statusFilter) {
+      params.push(statusFilter);
+    }
+
+    params.push(limit);
+
     const [rows] = await pool.query(
-      `SELECT id, type, title, message, link, status, payload, created_at
+      `SELECT id, type, title, message, link, status, payload, created_at, read_at
        FROM notification_events
        WHERE (user_id = ? OR (? = 1 AND user_id IS NULL))
-         AND status = 'unread'
-       ORDER BY created_at DESC
-       LIMIT 30`,
-      [req.user.id, isAdminUser(req.user) ? 1 : 0]
+         AND NOT EXISTS (
+           SELECT 1
+           FROM notification_hidden nh
+           WHERE nh.notification_id = notification_events.id
+             AND nh.user_id = ?
+         )
+         ${statusClause}
+       ORDER BY COALESCE(read_at, created_at) DESC
+       LIMIT ?`,
+      [req.user.id, isAdminUser(req.user) ? 1 : 0, req.user.id, ...params.slice(2)]
     );
 
     res.json(rows);
@@ -2031,20 +2288,85 @@ app.post('/notifications/:id/read', authenticate, async (req, res) => {
   }
 });
 
+app.delete('/notifications/:id', authenticate, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id
+         FROM notification_events
+        WHERE id = ?
+          AND (user_id = ? OR (? = 1 AND user_id IS NULL))`,
+      [req.params.id, req.user.id, isAdminUser(req.user) ? 1 : 0]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Notificação não encontrada.' });
+    }
+
+    await pool.query(
+      `INSERT INTO notification_hidden (notification_id, user_id)
+       VALUES (?, ?)
+       ON DUPLICATE KEY UPDATE hidden_at = CURRENT_TIMESTAMP`,
+      [req.params.id, req.user.id]
+    );
+
+    res.json({ message: 'Notificação removida do histórico.' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao excluir notificação.' });
+  }
+});
+
+app.delete('/patient-interactions/:id', authenticate, async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT id, status, protocol, created_at FROM patient_interactions WHERE id = ?', [req.params.id]);
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Agendamento não encontrado.' });
+    }
+
+    const record = rows[0];
+
+    if (record.status === 'Cancelado') {
+      return res.json({ message: 'Agendamento já está na aba de cancelados.' });
+    }
+
+    await pool.query(
+      `UPDATE patient_interactions
+          SET status = 'Cancelado',
+              cancelled_at = NOW(),
+              cancelled_by_name = ?,
+              cancelled_by_role = ?
+        WHERE id = ?`,
+      [getActorName(req.user), req.user?.role || null, req.params.id]
+    );
+    await insertPatientInteractionLog(
+      req.params.id,
+      'Cancelado',
+      `Agendamento ${record.protocol || formatPatientProtocol(record.id, record.created_at)} movido para cancelados.`,
+      req.user
+    );
+
+    res.json({ message: 'Agendamento movido para cancelados com lastro.' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao cancelar agendamento.' });
+  }
+});
+
 // ============================================
 // LOGIN
 // ============================================
 app.post('/login', async (req, res) => {
   try {
     const { email, username, password } = req.body;
-    const login = email || username;
+    const login = String(email || username || '').trim().toLowerCase();
 
     if (!login || !password) {
       return res.status(400).json({ message: 'Informe e-mail e senha' });
     }
 
     const [rows] = await pool.query(
-      'SELECT * FROM users WHERE email = ?',
+      'SELECT * FROM users WHERE LOWER(email) = ?',
       [login]
     );
 
@@ -2502,6 +2824,7 @@ app.get('/patient-interactions', authenticate, async (req, res) => {
     const [rows] = await pool.query(
       `SELECT
         id,
+        protocol,
         patient_name,
         patient_phone,
         channel,
@@ -2512,10 +2835,13 @@ app.get('/patient-interactions', authenticate, async (req, res) => {
         status,
         created_by_name,
         created_by_role,
+        cancelled_at,
+        cancelled_by_name,
+        cancelled_by_role,
         created_at,
         updated_at
        FROM patient_interactions
-       ORDER BY created_at DESC, id DESC`
+       ORDER BY COALESCE(cancelled_at, created_at) DESC, id DESC`
     );
 
     if (!rows.length) {
@@ -2544,6 +2870,7 @@ app.get('/patient-interactions', authenticate, async (req, res) => {
 
     res.json(rows.map((row) => ({
       id: row.id,
+      protocol: row.protocol || formatPatientProtocol(row.id, row.created_at),
       patient: row.patient_name,
       phone: row.patient_phone,
       channel: row.channel,
@@ -2552,9 +2879,17 @@ app.get('/patient-interactions', authenticate, async (req, res) => {
       scheduledAt: row.scheduled_at,
       note: row.note,
       status: row.status,
+      createdByName: row.created_by_name,
+      createdByRole: row.created_by_role,
+      cancelledAt: row.cancelled_at,
+      cancelledByName: row.cancelled_by_name,
+      cancelledByRole: row.cancelled_by_role,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
-      history: logsByInteraction[row.id] || []
+      history: logsByInteraction[row.id] || [],
+      lastActorName: logsByInteraction[row.id]?.[0]?.actor_name || row.cancelled_by_name || row.created_by_name || null,
+      lastActorRole: logsByInteraction[row.id]?.[0]?.actor_role || row.cancelled_by_role || row.created_by_role || null,
+      lastActionAt: logsByInteraction[row.id]?.[0]?.at || row.cancelled_at || row.updated_at || row.created_at
     })));
   } catch (error) {
     console.error(error);
@@ -2578,7 +2913,15 @@ app.post('/patient-interactions', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Preencha paciente, telefone, canal, unidade, tipo e data.' });
     }
 
-    const scheduledDate = new Date(scheduledAt);
+    let scheduledDate;
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(String(scheduledAt || '').trim())) {
+      scheduledDate = new Date(`${scheduledAt}T00:00:00`);
+      const now = new Date();
+      scheduledDate.setHours(now.getHours(), now.getMinutes(), 0, 0);
+    } else {
+      scheduledDate = new Date(scheduledAt);
+    }
 
     if (Number.isNaN(scheduledDate.getTime())) {
       return res.status(400).json({ error: 'Informe uma data válida.' });
@@ -2600,9 +2943,11 @@ app.post('/patient-interactions', authenticate, async (req, res) => {
         req.user?.role || null
       ]
     );
-    await insertPatientInteractionLog(result.insertId, 'Registro criado', note || 'Movimento registrado.', req.user);
+    const protocol = formatPatientProtocol(result.insertId, scheduledDate);
+    await pool.query('UPDATE patient_interactions SET protocol = ? WHERE id = ?', [protocol, result.insertId]);
+    await insertPatientInteractionLog(result.insertId, 'Registro criado', note || `Agendamento registrado no protocolo ${protocol}.`, req.user);
 
-    res.status(201).json({ message: 'Movimento do paciente registrado.', id: result.insertId });
+    res.status(201).json({ message: 'Agendamento do paciente registrado.', id: result.insertId, protocol });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao salvar gestão do paciente.' });
@@ -2619,12 +2964,12 @@ app.patch('/patient-interactions/:id', authenticate, async (req, res) => {
     }
 
     await pool.query(
-      'UPDATE patient_interactions SET status = ? WHERE id = ?',
+      'UPDATE patient_interactions SET status = ?, cancelled_at = NULL, cancelled_by_name = NULL, cancelled_by_role = NULL WHERE id = ?',
       [status, req.params.id]
     );
     await insertPatientInteractionLog(req.params.id, action, `Status atualizado para ${status}.`, req.user);
 
-    res.json({ message: 'Movimento atualizado.' });
+    res.json({ message: 'Agendamento atualizado.' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao atualizar gestão do paciente.' });
@@ -2729,28 +3074,45 @@ app.post('/complaints', upload.single('file'), async (req, res) => {
       name: 'Sistema GRC',
       role: 'sistema'
     });
-    await notifyComplaintCreated(result.insertId, protocol);
+    try {
+      await notifyComplaintCreated(result.insertId, protocol);
+    } catch (error) {
+      console.warn('Nao foi possivel concluir notificacoes do protocolo:', error.message);
+    }
 
-    await sendWhatsappNotification({
-      event: 'complaint_protocol_patient',
-      to: normalizedPatientPhone,
-      protocol,
-      complaintId: result.insertId,
-      message: `Seu protocolo ${protocol} foi registrado e sera acompanhado pela equipe responsavel.`
-    });
-
-    if (normalizedOrigin === 'Marketing') {
-      await sendEmail(
-        approvalEmail,
-        `Protocolo ${protocol} registrado pelo Marketing`,
-        `<p>Um novo protocolo foi registrado pelo link externo de Marketing.</p><p><strong>Paciente:</strong> ${patient_name}</p><p><strong>Protocolo:</strong> ${protocol}</p>`
-      );
+    try {
       await sendWhatsappNotification({
-        event: 'marketing_protocol_created',
+        event: 'complaint_protocol_patient',
+        to: normalizedPatientPhone,
         protocol,
         complaintId: result.insertId,
-        message: `Marketing registrou o protocolo ${protocol} para o paciente ${patient_name}.`
+        message: `Seu protocolo ${protocol} foi registrado e sera acompanhado pela equipe responsavel.`
       });
+    } catch (error) {
+      console.warn('Nao foi possivel enviar protocolo ao paciente por WhatsApp:', error.message);
+    }
+
+    if (normalizedOrigin === 'Marketing') {
+      try {
+        await sendEmail(
+          approvalEmail,
+          `Protocolo ${protocol} registrado pelo Marketing`,
+          `<p>Um novo protocolo foi registrado pelo link externo de Marketing.</p><p><strong>Paciente:</strong> ${patient_name}</p><p><strong>Protocolo:</strong> ${protocol}</p>`
+        );
+      } catch (error) {
+        console.warn('Nao foi possivel enviar e-mail do protocolo de Marketing:', error.message);
+      }
+
+      try {
+        await sendWhatsappNotification({
+          event: 'marketing_protocol_created',
+          protocol,
+          complaintId: result.insertId,
+          message: `Marketing registrou o protocolo ${protocol} para o paciente ${patient_name}.`
+        });
+      } catch (error) {
+        console.warn('Nao foi possivel enviar WhatsApp do protocolo de Marketing:', error.message);
+      }
     }
 
     res.json({
@@ -3119,6 +3481,7 @@ async function startServer() {
   try {
     await backfillComplaintProtocols();
     await backfillNpsProtocols();
+    await backfillPatientProtocols();
     await backfillComplaintDeadlines();
     console.log('Backfills operacionais validados');
   } catch (error) {

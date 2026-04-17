@@ -128,7 +128,7 @@ function NpsSurveyPage() {
         : form.detractor_reasons;
       const feedbackType = profile === 'promotor' ? 'elogio' : profile === 'neutro' ? 'sugestao' : 'reclamacao';
 
-      await api.post('/nps/public', {
+      const res = await api.post('/nps/public', {
         clinic_id: form.clinic_id,
         patient_name: form.patient_name,
         patient_phone: form.patient_phone,
@@ -143,7 +143,7 @@ function NpsSurveyPage() {
         comment: ''
       });
 
-      setFeedback('Obrigado. Sua pesquisa foi registrada com sucesso.');
+      setFeedback(`Obrigado. Sua pesquisa foi registrada com sucesso. Protocolo: ${res.data?.protocol || 'em processamento'}.`);
       setForm(initialForm);
     } catch (requestError) {
       setError(requestError.response?.data?.error || 'Não foi possível enviar a pesquisa NPS.');
@@ -200,7 +200,7 @@ function NpsSurveyPage() {
             </div>
 
             <label>
-              Telefone / WhatsApp <span className="whatsapp-symbol">☎</span>
+              Telefone / WhatsApp
               <input
                 className="field"
                 value={form.patient_phone}
@@ -269,7 +269,7 @@ function NpsSurveyPage() {
                   </label>
 
                   <label>
-                    WhatsApp para contato <span className="whatsapp-symbol">☎</span>
+                    Telefone / WhatsApp
                     <input
                       className="field"
                       value={form.referral_phone}

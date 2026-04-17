@@ -1,20 +1,79 @@
-import React, { useEffect, useMemo, useState } from 'react';
+export { default } from './HomeShellFixed';
+/*
 import { useNavigate } from 'react-router-dom';
 import api from './api';
 import logo from './assets/logo.png';
 import { hasPermission, isAdmin, isMasterAdmin, readUser } from './constants';
 
+const notificationTypeLabels = {
+  complaint_assigned: 'Protocolo',
+  complaint_operational_alert: 'Alerta operacional',
+  complaint_created: 'Novo protocolo',
+  password_reset: 'Senha',
+  registration_request: 'Cadastro',
+  registration_rejected: 'Cadastro',
+  nps_detractor_assigned: 'NPS detrator'
+};
+
+function parseNotificationPayload(payload) {
+  if (!payload) return null;
+  if (typeof payload === 'object') return payload;
+
+  try {
+    return JSON.parse(payload);
+  } catch (error) {
+    return null;
+  }
+}
+
+function truncateText(value, limit = 140) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return 'Sem detalhes adicionais.';
+  return text.length > limit ? `${text.slice(0, limit - 1)}...` : text;
+}
+
+function formatNotificationDate(value) {
+  if (!value) return '';
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short'
+  }).format(new Date(value));
+}
+
+function notificationBadge(notification) {
+  return notificationTypeLabels[notification.type] || 'Notificação';
+}
+
+function notificationSummary(notification) {
+  const payload = parseNotificationPayload(notification.payload);
+  const protocol = payload?.protocol;
+
+  if (protocol) {
+    return truncateText(`${protocol} - ${notification.message || notification.title}`);
+  }
+
+  return truncateText(notification.message || notification.title);
+}
+
 function HomeShell() {
   const navigate = useNavigate();
-  const user = readUser();
+  const user = useMemo(() => readUser(), []);
   const adminUser = isAdmin(user);
   const masterUser = isMasterAdmin(user);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [notifications, setNotifications] = useState([]);
+  const [notificationTab, setNotificationTab] = useState('unread');
+  const [notificationGroups, setNotificationGroups] = useState({ unread: [], read: [] });
   const [registrationRequests, setRegistrationRequests] = useState([]);
   const [shareOpen, setShareOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
+  const [mustChangePassword, setMustChangePassword] = useState(Boolean(user?.mustChangePassword));
+  const [passwordForm, setPasswordForm] = useState({
+    current_password: '',
+    new_password: '',
+    confirm_password: ''
+  });
 
   const npsLink = `${window.location.origin}/pesquisa-nps`;
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(npsLink)}`;
@@ -23,7 +82,7 @@ function HomeShell() {
     {
       title: 'Reclamações',
       items: [
-        { label: 'Novo protocolo', path: '/cadastro', permission: 'complaints_register' },
+        { label: 'Novo Protocolo', path: '/cadastro', permission: 'complaints_register' },
         { label: 'Painel de Gestão de Reclamações', path: '/gestao', permission: 'complaints_management' },
         { label: 'Dashboard de Reclamações', path: '/dashboard', permission: 'complaints_dashboard' }
       ]
@@ -59,23 +118,40 @@ function HomeShell() {
     }))
     .filter((section) => section.items.length);
 
-  const loadNotifications = async () => {
+  const loadNotifications = useCallback(async () => {
     try {
-      const [notificationRes, registrationRes] = await Promise.all([
-        api.get('/notifications'),
+      const [unreadRes, readRes, registrationRes] = await Promise.all([
+        api.get('/notifications?status=unread&limit=30'),
+        api.get('/notifications?status=read&limit=50'),
         masterUser ? api.get('/admin/registration-requests?status=pendente') : Promise.resolve({ data: [] })
       ]);
 
-      setNotifications(Array.isArray(notificationRes.data) ? notificationRes.data : []);
+      setNotificationGroups({
+        unread: Array.isArray(unreadRes.data) ? unreadRes.data : [],
+        read: Array.isArray(readRes.data) ? readRes.data : []
+      });
       setRegistrationRequests(Array.isArray(registrationRes.data) ? registrationRes.data : []);
+
+      if (Array.isArray(unreadRes.data) && unreadRes.data.some((item) => item.type === 'password_reset')) {
+        setMustChangePassword(true);
+      }
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível carregar as notificações.');
     }
-  };
+  }, [masterUser]);
 
   useEffect(() => {
     loadNotifications();
-  }, []);
+  }, [loadNotifications]);
+
+  const totalAlerts = notificationGroups.unread.length + registrationRequests.length;
+  const visibleNotifications = notificationTab === 'read' ? notificationGroups.read : notificationGroups.unread;
+  const shareText = `Pesquisa de Satisfação Grupo Sorria: ${npsLink}`;
+
+  const handleNavigate = (path) => {
+    setDrawerOpen(false);
+    navigate(path);
+  };
 
   const handleRegistrationDecision = async (id, decision) => {
     setFeedback('');
@@ -88,15 +164,6 @@ function HomeShell() {
       setFeedback(error.response?.data?.error || 'Não foi possível analisar o cadastro.');
     }
   };
-
-  const totalAlerts = notifications.length + registrationRequests.length;
-
-  const handleNavigate = (path) => {
-    setDrawerOpen(false);
-    navigate(path);
-  };
-
-  const shareText = `Pesquisa de Satisfação Grupo Sorria: ${npsLink}`;
 
   const handleShareNps = async () => {
     if (navigator.share) {
@@ -114,14 +181,60 @@ function HomeShell() {
 
   const openNotification = async (notification) => {
     try {
-      await api.post(`/notifications/${notification.id}/read`);
-      setNotifications((prev) => prev.filter((item) => item.id !== notification.id));
+      if (notification.status !== 'read') {
+        await api.post(`/notifications/${notification.id}/read`);
+        setNotificationGroups((prev) => ({
+          unread: prev.unread.filter((item) => item.id !== notification.id),
+          read: [{ ...notification, status: 'read', read_at: new Date().toISOString() }, ...prev.read]
+            .filter((item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index)
+            .slice(0, 50)
+        }));
+      }
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível baixar a notificação.');
+      setFeedback(error.response?.data?.error || 'Não foi possível abrir a notificação.');
     }
 
     if (notification.link) {
       navigate(notification.link);
+    }
+  };
+
+  const updatePasswordField = (field, value) => {
+    setPasswordForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleForcedPasswordChange = async (event) => {
+    event.preventDefault();
+    setFeedback('');
+
+    if (passwordForm.new_password !== passwordForm.confirm_password) {
+      setFeedback('A confirmação da nova senha não confere.');
+      return;
+    }
+
+    try {
+      await api.post('/profile/change-password', {
+        current_password: passwordForm.current_password,
+        new_password: passwordForm.new_password
+      });
+
+      await Promise.all(
+        notificationGroups.unread
+          .filter((notification) => notification.type === 'password_reset')
+          .map((notification) => api.post(`/notifications/${notification.id}/read`))
+      );
+
+      const updatedUser = { ...(user || {}), mustChangePassword: false };
+      localStorage.setItem('user', JSON.stringify(updatedUser));
+      setNotificationGroups((prev) => ({
+        unread: prev.unread.filter((notification) => notification.type !== 'password_reset'),
+        read: prev.read
+      }));
+      setMustChangePassword(false);
+      setPasswordForm({ current_password: '', new_password: '', confirm_password: '' });
+      setFeedback('Senha alterada com sucesso.');
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível alterar a senha.');
     }
   };
 
@@ -138,19 +251,17 @@ function HomeShell() {
         </div>
 
         <div className="home-command-actions">
-          <div className="home-notification-row">
-            <button className="notification-button" onClick={() => setNotificationsOpen((prev) => !prev)}>
-              <span className="bell-icon" aria-hidden="true">🔔</span>
-              <span className="sr-only">Notificações</span>
-              <strong>{totalAlerts}</strong>
-            </button>
-          </div>
           <div className="home-account-row">
             {adminUser && (
               <button className="gear-action" onClick={() => navigate('/admin')} aria-label="Painel gerencial">
                 ⚙
               </button>
             )}
+            <button className="notification-button" onClick={() => setNotificationsOpen((prev) => !prev)}>
+              <span className="bell-icon" aria-hidden="true">🔔</span>
+              <span className="sr-only">Notificações</span>
+              <strong>{totalAlerts}</strong>
+            </button>
             <button className="ghost-action account-action" onClick={() => navigate('/perfil')}>
               Minha conta
             </button>
@@ -174,39 +285,82 @@ function HomeShell() {
               <button className="ghost-action" onClick={loadNotifications}>Atualizar</button>
             </div>
 
+            <div className="notification-tabs">
+              <button type="button" className={notificationTab === 'unread' ? 'active' : ''} onClick={() => setNotificationTab('unread')}>
+                Não lidas ({totalAlerts})
+              </button>
+              <button type="button" className={notificationTab === 'read' ? 'active' : ''} onClick={() => setNotificationTab('read')}>
+                Lidas ({notificationGroups.read.length})
+              </button>
+            </div>
+
             {feedback && <p className="form-feedback">{feedback}</p>}
 
-            {masterUser && registrationRequests.map((request) => (
-              <article className="notification-item" key={request.id}>
-                <span>Novo cadastro</span>
+            {notificationTab === 'unread' && masterUser && registrationRequests.map((request) => (
+              <article className="notification-item" key={`request-${request.id}`}>
+                <div className="notification-item-top">
+                  <span>Cadastro pendente</span>
+                  <small>{formatNotificationDate(request.created_at)}</small>
+                </div>
                 <strong>{request.name}</strong>
-                <p>{request.email} · {request.position || request.role}</p>
+                <p>{truncateText(`${request.email} - ${request.position || request.role}`)}</p>
                 <div className="notification-actions">
-                  <button className="primary-action" onClick={() => handleRegistrationDecision(request.id, 'approve')}>
-                    Aceitar
-                  </button>
-                  <button className="outline-action" onClick={() => handleRegistrationDecision(request.id, 'reject')}>
-                    Rejeitar
+                  <button className="primary-action" onClick={() => handleRegistrationDecision(request.id, 'approve')}>Aceitar</button>
+                  <button className="outline-action" onClick={() => handleRegistrationDecision(request.id, 'reject')}>Rejeitar</button>
+                </div>
+              </article>
+            ))}
+
+            {visibleNotifications.map((notification) => (
+              <article className={`notification-item ${notification.status === 'read' ? 'read' : 'unread'}`} key={notification.id}>
+                <div className="notification-item-top">
+                  <span>{notificationBadge(notification)}</span>
+                  <small>{formatNotificationDate(notification.read_at || notification.created_at)}</small>
+                </div>
+                <strong>{notification.title || 'Atualização do sistema'}</strong>
+                <p>{notificationSummary(notification)}</p>
+                <div className="notification-actions">
+                  <button className="outline-action" onClick={() => openNotification(notification)}>
+                    {notification.link ? 'Abrir' : notification.status === 'read' ? 'Ver' : 'Marcar como lida'}
                   </button>
                 </div>
               </article>
             ))}
 
-            {notifications.map((notification) => (
-              <article className="notification-item" key={notification.id}>
-                <span>{notification.type}</span>
-                <strong>{notification.title}</strong>
-                <p>{notification.message}</p>
-                <button className="outline-action" onClick={() => openNotification(notification)}>
-                  Abrir
-                </button>
-              </article>
-            ))}
-
-            {totalAlerts === 0 && <p className="empty-mini">Nenhuma nova notificação.</p>}
+            {notificationTab === 'unread' && totalAlerts === 0 && <p className="empty-mini">Nenhuma nova notificação.</p>}
+            {notificationTab === 'read' && notificationGroups.read.length === 0 && <p className="empty-mini">Nenhuma notificação lida no histórico.</p>}
           </section>
         )}
       </header>
+
+      {mustChangePassword && (
+        <div className="modal-backdrop forced-password-backdrop" role="dialog" aria-modal="true">
+          <form className="modal-panel forced-password-modal" onSubmit={handleForcedPasswordChange}>
+            <p className="eyebrow">Segurança</p>
+            <h2>Altere sua senha para continuar</h2>
+            <p>Sua senha foi reiniciada. Por segurança, o acesso ao sistema só será liberado após cadastrar uma nova senha forte.</p>
+
+            <label>
+              Senha atual
+              <input className="field" type="password" value={passwordForm.current_password} onChange={(event) => updatePasswordField('current_password', event.target.value)} autoComplete="current-password" required />
+            </label>
+
+            <label>
+              Nova senha
+              <input className="field" type="password" value={passwordForm.new_password} onChange={(event) => updatePasswordField('new_password', event.target.value)} autoComplete="new-password" required />
+            </label>
+
+            <label>
+              Confirmar nova senha
+              <input className="field" type="password" value={passwordForm.confirm_password} onChange={(event) => updatePasswordField('confirm_password', event.target.value)} autoComplete="new-password" required />
+            </label>
+
+            {feedback && <p className="form-feedback">{feedback}</p>}
+
+            <button className="primary-action" type="submit">Alterar senha</button>
+          </form>
+        </div>
+      )}
 
       {drawerOpen && (
         <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)}>
@@ -244,24 +398,19 @@ function HomeShell() {
 
         <div className="home-actions">
           {hasPermission(user, 'complaints_register') && (
-            <button className="primary-action" onClick={() => navigate('/cadastro')}>
-              Novo Protocolo
-            </button>
+            <button className="primary-action" onClick={() => navigate('/cadastro')}>Novo Protocolo</button>
           )}
           {hasPermission(user, 'complaints_management') && (
-            <button className="secondary-action" onClick={() => navigate('/gestao')}>
-              Painel de Gestão de Reclamações
-            </button>
+            <button className="secondary-action" onClick={() => navigate('/gestao')}>Painel de Gestão de Reclamações</button>
+          )}
+          {hasPermission(user, 'complaints_dashboard') && (
+            <button className="secondary-action" onClick={() => navigate('/dashboard')}>Dashboard de Reclamações</button>
           )}
           {hasPermission(user, 'nps_management') && (
-            <button className="outline-action" onClick={() => navigate('/gestao-nps')}>
-              Painel de Gestão NPS
-            </button>
+            <button className="outline-action" onClick={() => navigate('/gestao-nps')}>Painel de Gestão NPS</button>
           )}
           {hasPermission(user, 'nps_dashboard') && (
-            <button className="outline-action" onClick={() => navigate('/dashboard-nps')}>
-              Dashboard NPS
-            </button>
+            <button className="outline-action" onClick={() => navigate('/dashboard-nps')}>Dashboard NPS</button>
           )}
         </div>
       </section>
@@ -276,21 +425,15 @@ function HomeShell() {
 
         <div className="qr-code-box">
           <img src={qrCodeUrl} alt="QR Code da pesquisa NPS" />
-          <button className="outline-action" onClick={() => navigate('/pesquisa-nps')}>
-            Abrir pesquisa NPS
-          </button>
+          <button className="outline-action" onClick={() => navigate('/pesquisa-nps')}>Abrir pesquisa NPS</button>
           <div className="share-popover-wrap">
-            <button className="primary-action" onClick={() => setShareOpen((prev) => !prev)}>
-              Compartilhar
-            </button>
+            <button className="primary-action" onClick={() => setShareOpen((prev) => !prev)}>Compartilhar</button>
             {shareOpen && (
               <div className="share-popover">
-                <button type="button" onClick={handleShareNps}>Compartilhamento do aparelho</button>
+                <button type="button" onClick={handleShareNps}>Compartilhar</button>
                 <button type="button" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, '_blank')}>WhatsApp</button>
                 <a href={`mailto:?subject=Pesquisa de Satisfação&body=${encodeURIComponent(shareText)}`}>E-mail</a>
-                <button type="button" onClick={() => navigator.clipboard.writeText(npsLink).then(() => setFeedback('Link da pesquisa copiado.'))}>
-                  Copiar link
-                </button>
+                <button type="button" onClick={() => navigator.clipboard.writeText(npsLink).then(() => setFeedback('Link da pesquisa copiado.'))}>Copiar link</button>
               </div>
             )}
           </div>
@@ -342,4 +485,4 @@ function HomeShell() {
   );
 }
 
-export default HomeShell;
+*/

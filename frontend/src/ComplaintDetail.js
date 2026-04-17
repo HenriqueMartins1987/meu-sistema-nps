@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import api from './api';
-import { isAdmin as isAdminUser, priorityOptions, readUser, statusLabels } from './constants';
+import { isAdmin as isAdminUser, isMasterAdmin, priorityOptions, readUser, statusLabels } from './constants';
 
 const maxUploadSizeBytes = 10 * 1024 * 1024;
 const treatmentRoles = ['coordinator', 'manager', 'supervisor_crc'];
@@ -179,6 +179,7 @@ function ComplaintDetail() {
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [showForwardModal, setShowForwardModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [forwardToRole, setForwardToRole] = useState('');
 
   const protocol = useMemo(() => formatProtocol(complaint), [complaint]);
@@ -193,6 +194,7 @@ function ComplaintDetail() {
   const canAttachEvidence = evidenceRoles.includes(user?.role) || isAdmin;
   const canSupervisorAccept = user?.role === 'supervisor_crc' || isAdmin;
   const canSacClose = user?.role === 'sac_operator' || isAdmin;
+  const canDeleteComplaint = isMasterAdmin(user) || user?.role === 'supervisor_crc';
   const hasTreatment = Boolean(complaint?.treatment_at);
   const isHighPriority = normalizePriority(complaint?.priority) === 'alta';
   const hasSupervisorApproval = Boolean(complaint?.supervisor_approval_at);
@@ -360,6 +362,25 @@ function ComplaintDetail() {
     }
   };
 
+  const handleDeleteComplaint = async () => {
+    if (!canDeleteComplaint) return;
+
+    setSaving(true);
+    setFeedback('');
+
+    try {
+      await api.delete(`/complaints/${id}`, {
+        data: { reason: 'Exclusão administrativa pela ficha executiva.' }
+      });
+      setShowDeleteModal(false);
+      navigate('/gestao');
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível excluir este protocolo.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <main className="app-page">
@@ -402,6 +423,15 @@ function ComplaintDetail() {
             <a className="primary-action whatsapp-action" href={whatsappUrl} target="_blank" rel="noreferrer">
               Chamar no WhatsApp
             </a>
+          )}
+          {canDeleteComplaint && (
+            <button
+              className="outline-action danger-action"
+              onClick={() => setShowDeleteModal(true)}
+              disabled={saving}
+            >
+              Excluir protocolo
+            </button>
           )}
         </div>
       </header>
@@ -706,6 +736,37 @@ function ComplaintDetail() {
               </button>
               <button className="primary-action" type="button" onClick={handleFirstAttendanceForward} disabled={saving || !forwardToRole}>
                 {saving ? 'Salvando...' : 'Confirmar encaminhamento'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showDeleteModal && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirmar exclusão do protocolo">
+          <div className="modal-panel modal-confirm-panel">
+            <p className="eyebrow">Excluir protocolo</p>
+            <h2>Tem certeza que deseja excluir?</h2>
+            <p>
+              Esta ação remove o protocolo da operação e mantém o lastro de auditoria da exclusão.
+            </p>
+
+            <div className="row-actions">
+              <button
+                className="outline-action"
+                type="button"
+                onClick={() => setShowDeleteModal(false)}
+                disabled={saving}
+              >
+                Cancelar
+              </button>
+              <button
+                className="outline-action danger-action"
+                type="button"
+                onClick={handleDeleteComplaint}
+                disabled={saving}
+              >
+                {saving ? 'Excluindo...' : 'Confirmar exclusão'}
               </button>
             </div>
           </div>

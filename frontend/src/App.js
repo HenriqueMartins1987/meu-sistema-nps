@@ -2,7 +2,7 @@ import React from 'react';
 import { Routes, Route } from 'react-router-dom';
 
 import Login from './Login';
-import Home from './HomeShell';
+import Home from './HomeShellFixed';
 import Cadastro from './Cadastro';
 import Dashboard from './Dashboard';
 import DashboardManagement from './DashboardManagement';
@@ -10,12 +10,12 @@ import BI from './BI';
 import Register from './Register';
 import Profile from './Profile';
 import ComplaintDetail from './ComplaintDetail';
-import MarketingIntake from './MarketingIntake';
+import MarketingIntake from './MarketingIntakePage';
 import NpsSurveyPage from './NpsSurveyPage';
 import NpsManagement from './NpsManagement';
 import NpsDashboard from './NpsDashboard';
 import AdminPanel from './AdminPanel';
-import PatientManagement from './PatientManagement';
+import PatientManagement from './PatientManagementPage';
 import './App.css';
 
 function App() {
@@ -30,6 +30,7 @@ function App() {
       <Route path="/dashboard" element={<Dashboard />} />
       <Route path="/bi" element={<BI />} />
       <Route path="/perfil" element={<Profile />} />
+      <Route path="/marketing" element={<MarketingIntake />} />
       <Route path="/registro-marketing" element={<MarketingIntake />} />
       <Route path="/pesquisa-nps" element={<NpsSurveyPage />} />
       <Route path="/gestao-nps" element={<NpsManagement />} />

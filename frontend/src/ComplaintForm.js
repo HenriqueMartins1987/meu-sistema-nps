@@ -48,6 +48,7 @@ function ComplaintForm() {
   }));
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState('');
+  const [savedProtocol, setSavedProtocol] = useState('');
 
   useEffect(() => {
     api.get('/clinics')
@@ -77,8 +78,7 @@ function ComplaintForm() {
   ), [clinics]);
   const isSimpleManifestation = simpleManifestationTypes.includes(form.complaint_type);
   const isFinancialComplaint = form.financial_involved === 'sim' || form.complaint_type === 'financeiro';
-  const currentTypeLabel = labelFrom(complaintTypes, form.complaint_type);
-  const submitLabel = isSimpleManifestation ? 'Salvar protocolo' : 'Salvar registro';
+  const submitLabel = 'Salvar Protocolo';
   const pageTitle = form.complaint_type === 'sugestao'
     ? 'Nova Sugestão'
     : form.complaint_type === 'elogio'
@@ -137,8 +137,10 @@ function ComplaintForm() {
 
   const handleSubmit = async (event) => {
     event.preventDefault();
+    const formElement = event.currentTarget;
     setLoading(true);
     setFeedback('');
+    setSavedProtocol('');
 
     try {
       const formData = new FormData();
@@ -149,7 +151,7 @@ function ComplaintForm() {
         ? form.channel_other || 'Outros'
         : labelFrom(channels, form.channel);
       const serviceType = form.service_type ? labelFrom(serviceTypes, form.service_type) : '';
-      const protocolLabel = isSimpleManifestation ? 'Protocolo' : currentTypeLabel || 'Registro';
+      const protocolLabel = 'Protocolo';
 
       if (form.file && form.file.size > maxUploadSizeBytes) {
         setFeedback('O anexo deve ter no máximo 10 MB.');
@@ -185,12 +187,15 @@ function ComplaintForm() {
       }
 
       const res = await api.post('/complaints', formData);
+      const protocol = res.data?.protocol || '';
+      setSavedProtocol(protocol);
       setFeedback(
-        `${protocolLabel} ${res.data?.protocol || ''} cadastrado com sucesso. `
+        `${protocolLabel} ${protocol} cadastrado com sucesso. `
         + `A tela foi limpa para um novo ${isSimpleManifestation ? 'protocolo' : 'registro'}.`
       );
       setForm(initialForm);
-      event.currentTarget.reset();
+      formElement.reset();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (error) {
       const backendError = error.response?.data?.error;
       const simpleError = backendError
@@ -201,8 +206,9 @@ function ComplaintForm() {
 
       setFeedback(
         (isSimpleManifestation ? simpleError : backendError)
-        || `Erro ao salvar ${isSimpleManifestation ? 'o protocolo' : 'o registro'}.`
+        || 'Erro ao salvar o protocolo.'
       );
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
       setLoading(false);
     }
@@ -220,6 +226,16 @@ function ComplaintForm() {
           Voltar para Home
         </button>
       </header>
+
+      {savedProtocol && (
+        <section className="protocol-success-card" aria-live="polite">
+          <span>Protocolo cadastrado com sucesso</span>
+          <strong>{savedProtocol}</strong>
+          <p>A tela foi limpa e já está pronta para um novo cadastro.</p>
+        </section>
+      )}
+
+      {feedback && <p className="form-feedback page-form-feedback">{feedback}</p>}
 
       <form className="form-shell" onSubmit={handleSubmit}>
         <section className="form-section">
@@ -467,8 +483,6 @@ function ComplaintForm() {
             />
           </label>
         </section>
-
-        {feedback && <p className="form-feedback">{feedback}</p>}
 
         <div className="form-actions">
           <button type="button" className="outline-action" onClick={() => navigate('/home')}>

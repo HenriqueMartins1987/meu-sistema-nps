@@ -1,15 +1,29 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Bar, Doughnut } from 'react-chartjs-2';
+import 'chart.js/auto';
 import api from './api';
 
 const initialForm = {
   patient: '',
   phone: '+55',
   channel: 'whatsapp',
+  channelOther: '',
   clinic: '',
   type: 'confirmacao',
   scheduledAt: '',
   note: ''
+};
+
+const chartColors = ['#0b6f5f', '#d08c31', '#c44536', '#1f7a8c', '#4c956c', '#8a4f7d'];
+const chartOptions = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: {
+    legend: {
+      position: 'bottom'
+    }
+  }
 };
 
 const typeLabels = {
@@ -27,10 +41,58 @@ const channelLabels = {
   outros: 'Outros'
 };
 
+function groupCount(items, key) {
+  const map = new Map();
+
+  items.forEach((item) => {
+    const value = key(item) || 'Não informado';
+    map.set(value, (map.get(value) || 0) + 1);
+  });
+
+  return Array.from(map.entries())
+    .map(([label, total]) => ({ label, total }))
+    .sort((a, b) => b.total - a.total);
+}
+
+function buildBarData(rows, label = 'Total', color = '#0b6f5f') {
+  return {
+    labels: rows.map((row) => row.label),
+    datasets: [{
+      label,
+      data: rows.map((row) => row.total),
+      backgroundColor: color,
+      borderRadius: 6
+    }]
+  };
+}
+
+function buildDoughnutData(rows) {
+  return {
+    labels: rows.map((row) => row.label),
+    datasets: [{
+      data: rows.map((row) => row.total),
+      backgroundColor: rows.map((_, index) => chartColors[index % chartColors.length]),
+      borderWidth: 0
+    }]
+  };
+}
+
+function formatDateTime(value) {
+  if (!value) return 'Não informado';
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short'
+  }).format(new Date(value));
+}
+
 function PatientManagement() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isDashboard = location.pathname.includes('/dashboard');
   const [form, setForm] = useState(initialForm);
   const [records, setRecords] = useState([]);
+  const [clinics, setClinics] = useState([]);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [feedback, setFeedback] = useState('');
   const [loading, setLoading] = useState(true);
@@ -41,9 +103,13 @@ function PatientManagement() {
     setFeedback('');
 
     try {
-      const res = await api.get('/patient-interactions');
-      const data = Array.isArray(res.data) ? res.data : [];
+      const [recordsRes, clinicsRes] = await Promise.all([
+        api.get('/patient-interactions'),
+        api.get('/clinics')
+      ]);
+      const data = Array.isArray(recordsRes.data) ? recordsRes.data : [];
       setRecords(data);
+      setClinics(Array.isArray(clinicsRes.data) ? clinicsRes.data : []);
       return data;
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível carregar a gestão do paciente.');
@@ -67,8 +133,31 @@ function PatientManagement() {
     return acc;
   }, {}), [records]);
 
+  const statusGrouped = useMemo(() => records.reduce((acc, record) => {
+    acc[record.status] = (acc[record.status] || 0) + 1;
+    return acc;
+  }, {}), [records]);
+
+  const byType = useMemo(() => groupCount(records, (record) => typeLabels[record.type] || record.type), [records]);
+  const byChannel = useMemo(() => groupCount(records, (record) => channelLabels[record.channel] || record.channel), [records]);
+  const byClinic = useMemo(() => groupCount(records, (record) => record.clinic).slice(0, 10), [records]);
+  const byStatus = useMemo(() => groupCount(records, (record) => record.status), [records]);
+  const nextRecords = useMemo(() => records
+    .filter((record) => record.scheduledAt)
+    .slice()
+    .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt))
+    .slice(0, 10), [records]);
+
   const updateForm = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleChannelChange = (value) => {
+    setForm((prev) => ({
+      ...prev,
+      channel: value,
+      channelOther: value === 'outros' ? prev.channelOther : ''
+    }));
   };
 
   const saveRecord = async (event) => {
@@ -77,7 +166,19 @@ function PatientManagement() {
     setFeedback('');
 
     try {
-      await api.post('/patient-interactions', form);
+      if (form.channel === 'outros' && !form.channelOther.trim()) {
+        setFeedback('Informe o canal de entrada quando selecionar Outros.');
+        setSaving(false);
+        return;
+      }
+
+      const payload = {
+        ...form,
+        channel: form.channel === 'outros' ? form.channelOther.trim() : form.channel
+      };
+      delete payload.channelOther;
+
+      await api.post('/patient-interactions', payload);
       setForm(initialForm);
       await loadRecords();
       setFeedback('Movimento do paciente salvo com rastreabilidade.');
@@ -103,6 +204,126 @@ function PatientManagement() {
       setSaving(false);
     }
   };
+
+  if (isDashboard) {
+    return (
+      <main className="app-page">
+        <header className="page-heading">
+          <div>
+            <p className="eyebrow">Dashboard do Paciente</p>
+            <h1>BI de confirmações, agendamentos e reagendamentos</h1>
+            <p>Acompanhe volume por tipo, canal, unidade, status e próximos contatos.</p>
+          </div>
+
+          <div className="heading-actions">
+            <button className="outline-action" onClick={() => navigate('/pacientes')}>Gestão do Paciente</button>
+            <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
+          </div>
+        </header>
+
+        {feedback && <p className="form-feedback">{feedback}</p>}
+
+        <section className="kpi-grid management-kpi-grid" aria-label="Resumo do paciente">
+          <article className="kpi-card">
+            <span>Total</span>
+            <strong>{records.length}</strong>
+            <p>REGISTROS</p>
+          </article>
+          <article className="kpi-card success">
+            <span>Confirmações</span>
+            <strong>{grouped.confirmacao || 0}</strong>
+            <p>CONTATOS</p>
+          </article>
+          <article className="kpi-card progress">
+            <span>Agendamentos</span>
+            <strong>{grouped.agendamento || 0}</strong>
+            <p>NOVOS HORÁRIOS</p>
+          </article>
+          <article className="kpi-card warning">
+            <span>Reagendamentos</span>
+            <strong>{grouped.reagendamento || 0}</strong>
+            <p>ALTERAÇÕES</p>
+          </article>
+          <article className="kpi-card">
+            <span>Encerrados</span>
+            <strong>{statusGrouped.Encerrado || 0}</strong>
+            <p>FINALIZADOS</p>
+          </article>
+        </section>
+
+        {loading ? (
+          <section className="management-panel">
+            <p className="empty-state">Carregando dashboard do paciente...</p>
+          </section>
+        ) : (
+          <>
+            <section className="chart-grid patient-dashboard-grid">
+              <article className="chart-card">
+                <h2>Volume por tipo</h2>
+                <div className="chart-box">
+                  <Bar data={buildBarData(byType, 'Registros')} options={chartOptions} />
+                </div>
+              </article>
+              <article className="chart-card">
+                <h2>Canal de entrada</h2>
+                <div className="chart-box">
+                  <Doughnut data={buildDoughnutData(byChannel)} options={chartOptions} />
+                </div>
+              </article>
+              <article className="chart-card">
+                <h2>Volume por unidade</h2>
+                <div className="chart-box">
+                  <Bar data={buildBarData(byClinic, 'Registros', '#d08c31')} options={chartOptions} />
+                </div>
+              </article>
+              <article className="chart-card">
+                <h2>Status operacional</h2>
+                <div className="chart-box">
+                  <Doughnut data={buildDoughnutData(byStatus)} options={chartOptions} />
+                </div>
+              </article>
+            </section>
+
+            <section className="management-panel dashboard-base-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="eyebrow">Base filtrada</p>
+                  <h2>Próximos movimentos do paciente</h2>
+                </div>
+              </div>
+
+              <div className="data-table-wrap dashboard-table-wrap">
+                <table className="data-table dashboard-clean-table">
+                  <thead>
+                    <tr>
+                      <th>Paciente</th>
+                      <th>Tipo</th>
+                      <th>Canal</th>
+                      <th>Unidade</th>
+                      <th>Status</th>
+                      <th>Data</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {nextRecords.map((record) => (
+                      <tr key={record.id}>
+                        <td>{record.patient}</td>
+                        <td>{typeLabels[record.type] || record.type}</td>
+                        <td>{channelLabels[record.channel] || record.channel}</td>
+                        <td>{record.clinic}</td>
+                        <td>{record.status}</td>
+                        <td>{formatDateTime(record.scheduledAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          </>
+        )}
+      </main>
+    );
+  }
 
   return (
     <main className="app-page">
@@ -161,12 +382,12 @@ function PatientManagement() {
             <input className="field" value={form.patient} onChange={(event) => updateForm('patient', event.target.value)} required />
           </label>
           <label>
-            Telefone com WhatsApp <span className="whatsapp-symbol">☎</span>
+              Telefone com WhatsApp
             <input className="field" value={form.phone} onChange={(event) => updateForm('phone', event.target.value)} required />
           </label>
           <label>
             Canal de entrada
-            <select className="field" value={form.channel} onChange={(event) => updateForm('channel', event.target.value)}>
+            <select className="field" value={form.channel} onChange={(event) => handleChannelChange(event.target.value)}>
               <option value="whatsapp">WhatsApp</option>
               <option value="telefone">Telefone</option>
               <option value="email">E-mail</option>
@@ -175,9 +396,32 @@ function PatientManagement() {
               <option value="outros">Outros</option>
             </select>
           </label>
+          {form.channel === 'outros' && (
+            <label>
+              Descreva o canal
+              <input
+                className="field"
+                value={form.channelOther}
+                onChange={(event) => updateForm('channelOther', event.target.value.slice(0, 120))}
+                placeholder="Informe o canal de entrada"
+                maxLength={120}
+                required
+              />
+            </label>
+          )}
           <label>
             Unidade
-            <input className="field" value={form.clinic} onChange={(event) => updateForm('clinic', event.target.value)} required />
+            <select className="field" value={form.clinic} onChange={(event) => updateForm('clinic', event.target.value)} required>
+              <option value="">Selecione a unidade</option>
+              {clinics
+                .filter((clinic) => clinic?.name && String(clinic.active ?? 1) !== '0' && !String(clinic.name).includes('INATIVA'))
+                .sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR'))
+                .map((clinic) => (
+                  <option key={clinic.id} value={clinic.name}>
+                    {clinic.name} ({clinic.city || 'Cidade'}/{clinic.state || 'UF'})
+                  </option>
+                ))}
+            </select>
           </label>
           <label>
             Tipo

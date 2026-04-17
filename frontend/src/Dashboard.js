@@ -138,6 +138,17 @@ function priorityLabel(value) {
   return priorityOptions.find((option) => option.value === value)?.label || value || 'Não informado';
 }
 
+function lastComplaintActor(item) {
+  return item?.logs?.[0]?.actor_name
+    || item?.treatment_by_name
+    || item?.patient_contacted_by
+    || item?.first_attendance_by
+    || item?.sac_approval_by
+    || item?.supervisor_approval_by
+    || item?.forwarded_to_label
+    || 'Sem tratativa';
+}
+
 const chartOptions = {
   responsive: true,
   maintainAspectRatio: false,
@@ -482,6 +493,7 @@ function Dashboard() {
                     <th>Estado</th>
                     <th>Região</th>
                     <th>Coordenador</th>
+                    <th>Última tratativa por</th>
                     <th>Cadastro</th>
                   </tr>
                 </thead>
@@ -501,6 +513,7 @@ function Dashboard() {
                       <td>{item.state || 'Não informado'}</td>
                       <td>{item.region || 'Não informado'}</td>
                       <td>{item.coordinator_name || 'Não vinculado'}</td>
+                      <td>{lastComplaintActor(item)}</td>
                       <td>{formatShortDate(item.created_at)}</td>
                     </tr>
                   ))}

@@ -154,7 +154,7 @@ function Register() {
               </label>
 
               <label>
-                WhatsApp <span className="whatsapp-symbol">☎</span>
+                WhatsApp
                 <input
                   className="field"
                   value={form.whatsapp}
