@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'https://meu-sistema-nps-git-main-henriquemartins1987s-projects.vercel.app/'
+  baseURL: process.env.REACT_APP_API_URL || 'https://meu-sistema-nps.vercel.app/'
 });
 
 api.interceptors.request.use((config) => {
