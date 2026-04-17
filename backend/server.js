@@ -233,6 +233,10 @@ function canDeleteRecords(user) {
   return isMasterAdminUser(user) || user?.role === 'supervisor_crc';
 }
 
+function canViewDeletedRecords(user) {
+  return isAdminUser(user) || user?.role === 'supervisor_crc';
+}
+
 function classifyNpsFeedback(score, feedbackType) {
   const normalized = String(feedbackType || '').toLowerCase();
 
@@ -271,6 +275,71 @@ function normalizeBrazilPhone(value) {
 function isCompleteBrazilPhone(value) {
   const digits = String(value || '').replace(/\D/g, '');
   return digits.length === 13 && digits.startsWith('55');
+}
+
+function splitCsvLine(line) {
+  const values = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+
+    if (char === '"') {
+      if (inQuotes && next === '"') {
+        current += '"';
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if ((char === ';' || char === ',') && !inQuotes) {
+      values.push(current.trim());
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  values.push(current.trim());
+  return values.map((value) => value.replace(/^"|"$/g, '').trim());
+}
+
+function normalizeColumnName(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function parseBulkNpsCsv(content) {
+  const lines = String(content || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (!lines.length) return [];
+
+  const headers = splitCsvLine(lines[0]).map(normalizeColumnName);
+  const nameIndex = headers.findIndex((header) => ['nome', 'paciente', 'patient_name'].includes(header));
+  const phoneIndex = headers.findIndex((header) => ['telefone', 'whatsapp', 'telefone / whatsapp', 'telefone_whatsapp', 'patient_phone'].includes(header));
+
+  if (nameIndex === -1 || phoneIndex === -1) {
+    throw new Error('A planilha precisa conter as colunas Nome e Telefone / WhatsApp.');
+  }
+
+  return lines.slice(1).map((line) => {
+    const columns = splitCsvLine(line);
+    return {
+      name: String(columns[nameIndex] || '').trim(),
+      phone: normalizeBrazilPhone(columns[phoneIndex] || '')
+    };
+  }).filter((row) => row.name && row.phone);
 }
 
 function isStrongPassword(value) {
@@ -880,6 +949,9 @@ async function getComplaintRows(query = {}, user = null) {
       c.financial_involved,
       c.financial_description,
       c.financial_amount,
+      c.deleted_at,
+      c.deleted_by,
+      c.deletion_reason,
       c.created_at,
       c.updated_at,
       c.closed_at,
@@ -1398,6 +1470,9 @@ async function getNpsRows(query = {}, user = null) {
       n.nps_treatment_at,
       n.nps_treatment_by,
       n.nps_treatment_by_role,
+      n.deleted_at,
+      n.deleted_by,
+      n.deletion_reason,
       n.converted_complaint_id,
       n.converted_at,
       n.converted_by,
@@ -1599,6 +1674,22 @@ function authenticate(req, res, next) {
 
   } catch (error) {
     return res.status(401).json({ error: 'Token inválido' });
+  }
+}
+
+function optionalAuthenticate(req, res, next) {
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+
+  if (!token) {
+    return next();
+  }
+
+  try {
+    req.user = jwt.verify(token, SECRET);
+    return next();
+  } catch (error) {
+    return res.status(401).json({ error: 'Sessão inválida. Faça login novamente.' });
   }
 }
 
@@ -2753,6 +2844,90 @@ app.get('/nps/responses', authenticate, async (req, res) => {
   }
 });
 
+app.get('/nps/bulk-template', authenticate, async (req, res) => {
+  try {
+    const permissions = Array.isArray(req.user?.permissions) ? req.user.permissions : [];
+
+    if (!permissions.includes('nps_management') && !isAdminUser(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil nao possui acesso ao envio em massa de NPS.' });
+    }
+
+    const csv = [
+      'Nome;Telefone / WhatsApp',
+      'Paciente Exemplo;+5562999999999'
+    ].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="template-envio-nps.csv"');
+    res.send(`\uFEFF${csv}`);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao gerar o template de envio em massa.' });
+  }
+});
+
+app.post('/nps/bulk-dispatch', authenticate, upload.single('file'), async (req, res) => {
+  const permissions = Array.isArray(req.user?.permissions) ? req.user.permissions : [];
+
+  if (!permissions.includes('nps_management') && !isAdminUser(req.user)) {
+    if (req.file?.path) {
+      fs.unlink(req.file.path, () => {});
+    }
+    return res.status(403).json({ error: 'Seu perfil nao possui acesso ao envio em massa de NPS.' });
+  }
+
+  try {
+    const publicNpsLink = `${frontendUrl}/pesquisa-nps`;
+    const content = req.file?.path
+      ? fs.readFileSync(req.file.path, 'utf8')
+      : String(req.body?.content || '');
+
+    if (!String(content || '').trim()) {
+      return res.status(400).json({ error: 'Envie uma planilha CSV com nome e telefone dos pacientes.' });
+    }
+
+    const recipients = parseBulkNpsCsv(content);
+
+    if (!recipients.length) {
+      return res.status(400).json({ error: 'Nenhum paciente valido foi encontrado na planilha.' });
+    }
+
+    const invalidRecipients = recipients.filter((recipient) => !isCompleteBrazilPhone(recipient.phone));
+    const validRecipients = recipients.filter((recipient) => isCompleteBrazilPhone(recipient.phone));
+
+    if (!validRecipients.length) {
+      return res.status(400).json({ error: 'Nenhum telefone valido foi encontrado na planilha.' });
+    }
+
+    const baseMessage = 'Sua opinião é fundamental para melhorarmos nossos processos. Poderia dedicar 1 minuto para avaliar sua experiência conosco?';
+
+    await Promise.all(validRecipients.map((recipient) => (
+      sendWhatsappNotification({
+        event: 'nps_bulk_invite',
+        to: recipient.phone,
+        patientName: recipient.name,
+        link: publicNpsLink,
+        message: `${baseMessage}\n${publicNpsLink}`
+      })
+    )));
+
+    res.json({
+      message: `Envio em massa preparado para ${validRecipients.length} paciente(s).`,
+      total: recipients.length,
+      sent: validRecipients.length,
+      invalid: invalidRecipients.length,
+      link: publicNpsLink
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(400).json({ error: error.message || 'Erro ao processar a planilha de envio em massa.' });
+  } finally {
+    if (req.file?.path) {
+      fs.unlink(req.file.path, () => {});
+    }
+  }
+});
+
 app.post('/nps/responses/:id/convert', authenticate, async (req, res) => {
   try {
     const response = await saveNpsTreatment(req.params.id, req.user, {
@@ -2993,7 +3168,7 @@ app.get('/complaints', authenticate, async (req, res) => {
 // ============================================
 // CRIAR RECLAMAÇÃO (COM UPLOAD)
 // ============================================
-app.post('/complaints', upload.single('file'), async (req, res) => {
+app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req, res) => {
   try {
     const {
       clinic_id,
@@ -3013,6 +3188,10 @@ app.post('/complaints', upload.single('file'), async (req, res) => {
     const normalizedPriority = hasFinancialValue ? 'alta' : normalizePriority(priority);
     const normalizedOrigin = normalizeCreatedOrigin(created_origin);
     const dueAt = calculateDueAt(normalizedPriority);
+
+    if (!req.user && normalizedOrigin !== 'Marketing') {
+      return res.status(401).json({ error: 'Faça login para registrar protocolos internos.' });
+    }
 
     if (!clinic_id || !patient_name || !channel || !complaint_type || !description) {
       return res.status(400).json({ error: 'Preencha clínica, paciente, canal, classificação e descrição.' });
@@ -3130,7 +3309,10 @@ app.post('/complaints', upload.single('file'), async (req, res) => {
 
 app.get('/complaints/:id', authenticate, async (req, res) => {
   try {
-    const rows = await getComplaintRows({ id: req.params.id }, req.user);
+    const rows = await getComplaintRows({
+      id: req.params.id,
+      include_deleted: req.query.include_deleted || (canViewDeletedRecords(req.user) ? '1' : undefined)
+    }, req.user);
 
     if (!rows.length) {
       return res.status(404).json({ error: 'Reclamação não encontrada' });
@@ -3146,7 +3328,7 @@ app.get('/complaints/:id', authenticate, async (req, res) => {
 app.delete('/complaints/:id', authenticate, async (req, res) => {
   try {
     if (!canDeleteRecords(req.user)) {
-      return res.status(403).json({ error: 'Apenas o Administrador Master pode excluir reclamações.' });
+      return res.status(403).json({ error: 'Apenas o Administrador Master ou Supervisor do CRC pode excluir reclamações.' });
     }
 
     const reason = String(req.body?.reason || 'Exclusão administrativa').slice(0, 500);
@@ -3313,7 +3495,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       values.push(req.user.role);
       logEntries.push({
         action: 'patient_contacted',
-        message: 'Contato com paciente registrado para auditoria.'
+        message: 'Contato Realizado'
       });
     }
 
@@ -3354,7 +3536,11 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
     if (nextStatus === 'resolvida') {
       const hasTreatment = Boolean(complaint.treatment_at) || (cleanedComment && canAddTreatment(req.user));
       const treatmentRole = complaint.treatment_by_role || (canAddTreatment(req.user) ? req.user.role : null);
-      const hasManagementTreatment = hasTreatment && (treatmentRoles.has(treatmentRole) || treatmentRole === 'admin');
+      const hasManagementTreatment = hasTreatment && (
+        treatmentRoles.has(treatmentRole)
+        || treatmentRole === 'admin'
+        || treatmentRole === 'master_admin'
+      );
       const hasSupervisorApproval = Boolean(complaint.supervisor_approval_at)
         || (supervisor_accept && canSupervisorApprove(req.user));
 

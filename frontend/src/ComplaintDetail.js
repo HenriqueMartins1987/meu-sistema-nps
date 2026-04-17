@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import api from './api';
 import { isAdmin as isAdminUser, isMasterAdmin, priorityOptions, readUser, statusLabels } from './constants';
 
@@ -168,6 +168,7 @@ function buildOperationalStage(complaint) {
 
 function ComplaintDetail() {
   const { id } = useParams();
+  const location = useLocation();
   const navigate = useNavigate();
   const user = readUser();
   const [complaint, setComplaint] = useState(null);
@@ -187,6 +188,10 @@ function ComplaintDetail() {
   const stage = useMemo(() => buildOperationalStage(complaint), [complaint]);
   const priority = useMemo(() => getPriorityOption(complaint?.priority), [complaint]);
   const whatsappUrl = useMemo(() => buildWhatsappUrl(complaint?.patient_phone), [complaint]);
+  const includeDeleted = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get('include_deleted') === '1';
+  }, [location.search]);
 
   const isAdmin = isAdminUser(user);
   const canFormalTreatment = treatmentRoles.includes(user?.role) || isAdmin;
@@ -200,6 +205,7 @@ function ComplaintDetail() {
   const hasSupervisorApproval = Boolean(complaint?.supervisor_approval_at);
   const hasSacApproval = Boolean(complaint?.sac_approval_at);
   const hasPatientContact = Boolean(complaint?.patient_contacted_at);
+  const isDeletedRecord = Boolean(complaint?.deleted_at);
   const canMarkPatientContact = canSacClose && complaint?.status !== 'resolvida' && !hasPatientContact;
   const hasFirstAttendance = Boolean(complaint?.first_attendance_at);
   const canRegisterFirstAttendance = canSacClose
@@ -219,7 +225,7 @@ function ComplaintDetail() {
     setFeedback('');
 
     try {
-      const res = await api.get(`/complaints/${id}`);
+      const res = await api.get(`/complaints/${id}${includeDeleted ? '?include_deleted=1' : ''}`);
       setComplaint(res.data);
       setComment('');
     } catch (error) {
@@ -227,7 +233,7 @@ function ComplaintDetail() {
     } finally {
       setLoading(false);
     }
-  }, [id]);
+  }, [id, includeDeleted]);
 
   useEffect(() => {
     loadComplaint();
@@ -279,7 +285,7 @@ function ComplaintDetail() {
         status: 'em_andamento',
         patient_contacted: true
       });
-      setFeedback('Contato com o paciente registrado para auditoria.');
+      setFeedback('Contato Realizado');
       await loadComplaint();
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Erro ao registrar contato com o paciente.');
@@ -424,7 +430,7 @@ function ComplaintDetail() {
               Chamar no WhatsApp
             </a>
           )}
-          {canDeleteComplaint && (
+          {canDeleteComplaint && !isDeletedRecord && (
             <button
               className="outline-action danger-action"
               onClick={() => setShowDeleteModal(true)}
@@ -435,6 +441,19 @@ function ComplaintDetail() {
           )}
         </div>
       </header>
+
+      {isDeletedRecord && (
+        <section className="management-panel">
+          <div className="history-item">
+            <div className="history-item-head">
+              <strong>Protocolo excluído da operação</strong>
+              <span>{formatDate(complaint.deleted_at)}</span>
+            </div>
+            <small>{complaint.deleted_by || 'Usuário não informado'}</small>
+            <p>{complaint.deletion_reason || 'Sem motivo informado.'}</p>
+          </div>
+        </section>
+      )}
 
       <section className="sla-grid">
         <article className={`deadline-card ${deadline.state}`}>
@@ -681,26 +700,26 @@ function ComplaintDetail() {
 
           <div className="row-actions">
             {canRecordTreatment && complaint.status !== 'resolvida' && (
-              <button className="secondary-action" onClick={handleSaveTreatment} disabled={saving || !comment.trim()}>
+              <button className="secondary-action" onClick={handleSaveTreatment} disabled={saving || !comment.trim() || isDeletedRecord}>
                 {saving ? 'Salvando...' : 'Salvar atualização'}
               </button>
             )}
             {canSupervisorAccept && isHighPriority && complaint.status !== 'resolvida' && (
-              <button className="outline-action" onClick={handleSupervisorAccept} disabled={saving || !comment.trim()}>
+              <button className="outline-action" onClick={handleSupervisorAccept} disabled={saving || !comment.trim() || isDeletedRecord}>
                 Registrar aceite CRC
               </button>
             )}
             {canSacClose && complaint.status !== 'resolvida' && (
-              <button className="outline-action" onClick={handlePatientContact} disabled={saving || !canMarkPatientContact}>
+              <button className="outline-action" onClick={handlePatientContact} disabled={saving || !canMarkPatientContact || isDeletedRecord}>
                 {hasPatientContact ? 'Contato ja registrado' : 'Registrar contato com paciente'}
               </button>
             )}
             {canSacClose && complaint.status !== 'resolvida' && (
-              <button className="outline-action" onClick={() => setShowForwardModal(true)} disabled={saving || !canRegisterFirstAttendance}>
+              <button className="outline-action" onClick={() => setShowForwardModal(true)} disabled={saving || !canRegisterFirstAttendance || isDeletedRecord}>
                 {hasFirstAttendance ? 'Primeiro atendimento registrado' : 'Registrar primeiro atendimento'}
               </button>
             )}
-            <button className="primary-action" onClick={handleClose} disabled={saving || !canCloseNow}>
+            <button className="primary-action" onClick={handleClose} disabled={saving || !canCloseNow || isDeletedRecord}>
               {saving ? 'Fechando...' : 'Fechar protocolo'}
             </button>
           </div>
@@ -747,10 +766,6 @@ function ComplaintDetail() {
           <div className="modal-panel modal-confirm-panel">
             <p className="eyebrow">Excluir protocolo</p>
             <h2>Tem certeza que deseja excluir?</h2>
-            <p>
-              Esta ação remove o protocolo da operação e mantém o lastro de auditoria da exclusão.
-            </p>
-
             <div className="row-actions">
               <button
                 className="outline-action"

@@ -189,10 +189,7 @@ function ComplaintForm() {
       const res = await api.post('/complaints', formData);
       const protocol = res.data?.protocol || '';
       setSavedProtocol(protocol);
-      setFeedback(
-        `${protocolLabel} ${protocol} cadastrado com sucesso. `
-        + `A tela foi limpa para um novo ${isSimpleManifestation ? 'protocolo' : 'registro'}.`
-      );
+      setFeedback(`${protocolLabel} ${protocol} cadastrado com sucesso.`.trim());
       setForm(initialForm);
       formElement.reset();
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -231,7 +228,6 @@ function ComplaintForm() {
         <section className="protocol-success-card" aria-live="polite">
           <span>Protocolo cadastrado com sucesso</span>
           <strong>{savedProtocol}</strong>
-          <p>A tela foi limpa e já está pronta para um novo cadastro.</p>
         </section>
       )}
 

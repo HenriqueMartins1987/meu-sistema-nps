@@ -56,11 +56,34 @@ function notificationSummary(notification) {
   return truncateText(notification.message || notification.title);
 }
 
+function formatDateTime(value) {
+  if (!value) return 'Não informado';
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short'
+  }).format(new Date(value));
+}
+
+function complaintAgendaTone(item) {
+  const dueAt = item?.due_at ? new Date(item.due_at) : null;
+
+  if (!dueAt || Number.isNaN(dueAt.getTime())) return 'neutral';
+
+  const diffMs = dueAt.getTime() - Date.now();
+
+  if (diffMs < 0) return 'danger';
+  if (diffMs <= 24 * 60 * 60 * 1000) return 'warning';
+  return 'brand';
+}
+
 function HomeShellFixed() {
   const navigate = useNavigate();
   const user = useMemo(() => readUser(), []);
   const adminUser = isAdmin(user);
   const masterUser = isMasterAdmin(user);
+  const canManageComplaints = hasPermission(user, 'complaints_management');
+  const canManagePatients = hasPermission(user, 'patient_management');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationTab, setNotificationTab] = useState('unread');
@@ -69,6 +92,10 @@ function HomeShellFixed() {
   const [shareOpen, setShareOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [mustChangePassword, setMustChangePassword] = useState(Boolean(user?.mustChangePassword));
+  const [agendaItems, setAgendaItems] = useState([]);
+  const [agendaAlerts, setAgendaAlerts] = useState([]);
+  const [agendaLoading, setAgendaLoading] = useState(false);
+  const [agendaAlertOpen, setAgendaAlertOpen] = useState(false);
   const [passwordForm, setPasswordForm] = useState({
     current_password: '',
     new_password: '',
@@ -143,6 +170,110 @@ function HomeShellFixed() {
   useEffect(() => {
     loadNotifications();
   }, [loadNotifications]);
+
+  const loadAgenda = useCallback(async () => {
+    if (!canManageComplaints && !canManagePatients) {
+      setAgendaItems([]);
+      setAgendaAlerts([]);
+      return;
+    }
+
+    setAgendaLoading(true);
+
+    try {
+      const [complaintsRes, patientsRes] = await Promise.all([
+        canManageComplaints ? api.get('/complaints') : Promise.resolve({ data: [] }),
+        canManagePatients ? api.get('/patient-interactions') : Promise.resolve({ data: [] })
+      ]);
+
+      const complaints = Array.isArray(complaintsRes.data) ? complaintsRes.data : [];
+      const patientInteractions = Array.isArray(patientsRes.data) ? patientsRes.data : [];
+      const now = new Date();
+      const todayKey = now.toISOString().slice(0, 10);
+
+      const complaintAgenda = complaints
+        .filter((item) => item.status !== 'resolvida' && item.due_at)
+        .map((item) => {
+          const dueAt = new Date(item.due_at);
+
+          if (Number.isNaN(dueAt.getTime())) return null;
+
+          const tone = complaintAgendaTone(item);
+
+          return {
+            key: `complaint-${item.id}`,
+            type: 'Reclamação',
+            title: item.protocol || `GRC-${item.id}`,
+            description: `${item.patient_name || 'Paciente'} · ${item.clinic_name || 'Unidade não informada'}`,
+            detail: tone === 'danger'
+              ? `Prazo vencido desde ${formatDateTime(item.due_at)}`
+              : tone === 'warning'
+                ? `Prazo próximo: ${formatDateTime(item.due_at)}`
+                : `Prazo em ${formatDateTime(item.due_at)}`,
+            when: dueAt.getTime(),
+            tone,
+            urgent: tone === 'danger' || tone === 'warning',
+            link: `/gestao/${item.id}`
+          };
+        })
+        .filter(Boolean);
+
+      const patientAgenda = patientInteractions
+        .filter((item) => item.status !== 'Cancelado' && item.scheduledAt)
+        .map((item) => {
+          const scheduledAt = new Date(item.scheduledAt);
+
+          if (Number.isNaN(scheduledAt.getTime())) return null;
+          if (scheduledAt.toISOString().slice(0, 10) !== todayKey) return null;
+
+          return {
+            key: `patient-${item.id}`,
+            type: 'Paciente',
+            title: item.protocol || `PAC-${item.id}`,
+            description: `${item.patient || 'Paciente'} · ${item.clinic || 'Unidade não informada'}`,
+            detail: `Agenda de hoje às ${formatDateTime(item.scheduledAt)}`,
+            when: scheduledAt.getTime(),
+            tone: 'teal',
+            urgent: false,
+            link: `/pacientes?abrir=${item.id}`
+          };
+        })
+        .filter(Boolean);
+
+      const nextAgenda = [...complaintAgenda, ...patientAgenda]
+        .sort((a, b) => {
+          const priorityA = a.urgent ? 0 : 1;
+          const priorityB = b.urgent ? 0 : 1;
+          if (priorityA !== priorityB) return priorityA - priorityB;
+          return a.when - b.when;
+        })
+        .slice(0, 8);
+
+      const nextAlerts = complaintAgenda.filter((item) => item.urgent).slice(0, 4);
+
+      setAgendaItems(nextAgenda);
+      setAgendaAlerts(nextAlerts);
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível carregar a agenda operacional.');
+    } finally {
+      setAgendaLoading(false);
+    }
+  }, [canManageComplaints, canManagePatients]);
+
+  useEffect(() => {
+    loadAgenda();
+  }, [loadAgenda]);
+
+  useEffect(() => {
+    if (!agendaAlerts.length) return;
+
+    const alertKey = agendaAlerts.map((item) => item.key).join('|');
+
+    if (sessionStorage.getItem('home-agenda-alert') === alertKey) return;
+
+    sessionStorage.setItem('home-agenda-alert', alertKey);
+    setAgendaAlertOpen(true);
+  }, [agendaAlerts]);
 
   const totalAlerts = notificationGroups.unread.length + registrationRequests.length;
   const visibleNotifications = notificationTab === 'read' ? notificationGroups.read : notificationGroups.unread;
@@ -472,6 +603,43 @@ function HomeShellFixed() {
         </div>
       </section>
 
+      <section className="management-panel home-agenda-panel" aria-label="Agenda operacional">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Agenda</p>
+            <h2>Pendências do dia</h2>
+            <p className="base-subtitle">Prazos críticos e agenda operacional para acompanhamento imediato.</p>
+          </div>
+          <button className="outline-action" type="button" onClick={loadAgenda}>
+            Atualizar agenda
+          </button>
+        </div>
+
+        {agendaLoading ? (
+          <p className="empty-state">Carregando pendências do dia...</p>
+        ) : agendaItems.length === 0 ? (
+          <p className="empty-state">Nenhuma pendência crítica ou agenda do dia disponível.</p>
+        ) : (
+          <div className="home-agenda-list">
+            {agendaItems.map((item) => (
+              <button
+                key={item.key}
+                type="button"
+                className={`home-agenda-item ${item.tone}`}
+                onClick={() => navigate(item.link)}
+              >
+                <div className="home-agenda-item-top">
+                  <span>{item.type}</span>
+                  <strong>{item.title}</strong>
+                </div>
+                <p>{item.description}</p>
+                <small>{item.detail}</small>
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
+
       <section className="quick-grid" aria-label="Atalhos operacionais">
         <article className="quick-card accent-brand">
           <div className="quick-card-head">
@@ -520,6 +688,42 @@ function HomeShellFixed() {
           <strong className="quick-highlight">Links sem permissão deixam de aparecer para o usuário.</strong>
         </article>
       </section>
+
+      {agendaAlertOpen && agendaAlerts.length > 0 && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <section className="modal-panel agenda-alert-modal">
+            <p className="eyebrow">Alertas do dia</p>
+            <h2>Existem protocolos com prazo vencido ou próximo do vencimento.</h2>
+
+            <div className="home-agenda-list compact">
+              {agendaAlerts.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className={`home-agenda-item ${item.tone}`}
+                  onClick={() => {
+                    setAgendaAlertOpen(false);
+                    navigate(item.link);
+                  }}
+                >
+                  <div className="home-agenda-item-top">
+                    <span>{item.type}</span>
+                    <strong>{item.title}</strong>
+                  </div>
+                  <p>{item.description}</p>
+                  <small>{item.detail}</small>
+                </button>
+              ))}
+            </div>
+
+            <div className="row-actions">
+              <button className="outline-action" type="button" onClick={() => setAgendaAlertOpen(false)}>
+                Fechar
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

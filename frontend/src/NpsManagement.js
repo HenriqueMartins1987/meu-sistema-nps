@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from './api';
-import { isMasterAdmin, readUser } from './constants';
+import { isAdmin, isMasterAdmin, readUser } from './constants';
 
 const profileLabels = {
   detrator: 'Detrator',
@@ -83,8 +83,10 @@ function NpsManagement() {
     return Number.isFinite(parsedId) && parsedId > 0 ? parsedId : null;
   }, [location.search]);
   const currentUser = readUser();
+  const canViewDeletedRecords = isAdmin(currentUser) || currentUser?.role === 'supervisor_crc';
   const canDeleteRecords = isMasterAdmin(currentUser) || currentUser?.role === 'supervisor_crc';
   const [rows, setRows] = useState([]);
+  const [activeTab, setActiveTab] = useState('ativos');
   const [clinics, setClinics] = useState([]);
   const [filters, setFilters] = useState({
     profile: '',
@@ -101,7 +103,9 @@ function NpsManagement() {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [treatmentText, setTreatmentText] = useState('');
   const [treatmentStatus, setTreatmentStatus] = useState('em_tratativa');
+  const [bulkFile, setBulkFile] = useState(null);
   const [feedback, setFeedback] = useState('');
+  const [bulkSending, setBulkSending] = useState(false);
   const autoOpenNpsRef = useRef(false);
 
   const loadRows = useCallback(async () => {
@@ -110,7 +114,7 @@ function NpsManagement() {
 
     try {
       const [npsRes, clinicsRes] = await Promise.all([
-        api.get('/nps/responses'),
+        api.get(canViewDeletedRecords ? '/nps/responses?include_deleted=1' : '/nps/responses'),
         api.get('/clinics')
       ]);
       setRows(Array.isArray(npsRes.data) ? npsRes.data : []);
@@ -120,7 +124,7 @@ function NpsManagement() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canViewDeletedRecords]);
 
   useEffect(() => {
     loadRows();
@@ -149,6 +153,10 @@ function NpsManagement() {
     navigate(location.pathname, { replace: true });
   }, [focusNpsId, location.pathname, navigate, rows]);
 
+  const activeRows = useMemo(() => rows.filter((item) => !item.deleted_at), [rows]);
+  const deletedRows = useMemo(() => rows.filter((item) => item.deleted_at), [rows]);
+  const sourceRows = activeTab === 'excluidos' ? deletedRows : activeRows;
+
   const filterOptions = useMemo(() => ({
     clinics: uniqueList([...rows.map((item) => item.clinic_name), ...clinics.map((clinic) => clinic.name)]),
     states: uniqueList([...rows.map((item) => item.state), ...clinics.map((clinic) => clinic.state)]),
@@ -156,7 +164,7 @@ function NpsManagement() {
     coordinators: uniqueList([...rows.map((item) => item.coordinator_name), ...clinics.map((clinic) => clinic.coordinator_name)])
   }), [rows, clinics]);
 
-  const filteredRows = useMemo(() => rows
+  const filteredRows = useMemo(() => sourceRows
     .filter((item) => {
       const profile = item.nps_profile || profileFromScore(item.score);
       const status = getNpsStatus(item);
@@ -186,29 +194,73 @@ function NpsManagement() {
       );
     })
     .sort((a, b) => {
+      if (activeTab === 'excluidos') {
+        return new Date(b.deleted_at || b.created_at || 0) - new Date(a.deleted_at || a.created_at || 0);
+      }
+
       const profileDiff = profileWeight(a.nps_profile || profileFromScore(a.score))
         - profileWeight(b.nps_profile || profileFromScore(b.score));
 
       if (profileDiff !== 0) return profileDiff;
 
       return new Date(b.created_at || 0) - new Date(a.created_at || 0);
-    }), [rows, filters]);
+    }), [activeTab, filters, sourceRows]);
 
   const metrics = useMemo(() => {
-    const total = rows.length;
-    const promoters = rows.filter((item) => Number(item.score) >= 9).length;
-    const neutrals = rows.filter((item) => Number(item.score) >= 7 && Number(item.score) <= 8).length;
-    const detractors = rows.filter((item) => Number(item.score) <= 6).length;
-    const inTreatment = rows.filter((item) => getNpsStatus(item) === 'em_tratativa').length;
-    const treated = rows.filter((item) => getNpsStatus(item) === 'tratado').length;
-    const pendingDetractors = rows.filter((item) => Number(item.score) <= 6 && getNpsStatus(item) !== 'tratado').length;
+    const total = activeRows.length;
+    const promoters = activeRows.filter((item) => Number(item.score) >= 9).length;
+    const neutrals = activeRows.filter((item) => Number(item.score) >= 7 && Number(item.score) <= 8).length;
+    const detractors = activeRows.filter((item) => Number(item.score) <= 6).length;
+    const inTreatment = activeRows.filter((item) => getNpsStatus(item) === 'em_tratativa').length;
+    const treated = activeRows.filter((item) => getNpsStatus(item) === 'tratado').length;
+    const pendingDetractors = activeRows.filter((item) => Number(item.score) <= 6 && getNpsStatus(item) !== 'tratado').length;
     const nps = total ? Math.round(((promoters - detractors) / total) * 100) : 0;
 
-    return { total, promoters, neutrals, detractors, inTreatment, treated, pendingDetractors, nps };
-  }, [rows]);
+    return { total, promoters, neutrals, detractors, inTreatment, treated, pendingDetractors, nps, deleted: deletedRows.length };
+  }, [activeRows, deletedRows]);
 
   const updateFilter = (field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const response = await api.get('/nps/bulk-template', { responseType: 'blob' });
+      const blobUrl = window.URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = 'template-envio-nps.csv';
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(blobUrl);
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível baixar o template de envio em massa.');
+    }
+  };
+
+  const handleBulkDispatch = async () => {
+    if (!bulkFile) {
+      setFeedback('Selecione a planilha para envio em massa do link NPS.');
+      return;
+    }
+
+    setBulkSending(true);
+    setFeedback('');
+
+    try {
+      const formData = new FormData();
+      formData.append('file', bulkFile);
+      const response = await api.post('/nps/bulk-dispatch', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      setFeedback(response.data?.message || 'Envio em massa preparado com sucesso.');
+      setBulkFile(null);
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível processar a planilha de envio em massa.');
+    } finally {
+      setBulkSending(false);
+    }
   };
 
   const openTreatment = (item) => {
@@ -349,6 +401,38 @@ function NpsManagement() {
           <strong>{metrics.treated}</strong>
           <p>PROTOCOLOS NPS</p>
         </article>
+        {canViewDeletedRecords && (
+          <article className="kpi-card">
+            <span>Excluídas</span>
+            <strong>{metrics.deleted}</strong>
+            <p>LASTRO PRESERVADO</p>
+          </article>
+        )}
+      </section>
+
+      <section className="management-panel bulk-dispatch-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Envio em massa</p>
+            <h2>Link da pesquisa NPS para pacientes</h2>
+            <p className="base-subtitle">Mensagem padrão: Sua opinião é fundamental para melhorarmos nossos processos. Poderia dedicar 1 minuto para avaliar sua experiência conosco?</p>
+          </div>
+          <button type="button" className="outline-action" onClick={handleDownloadTemplate}>
+            Baixar template Excel
+          </button>
+        </div>
+
+        <div className="bulk-dispatch-actions">
+          <label className="field bulk-dispatch-field">
+            <span>Planilha CSV</span>
+            <input type="file" accept=".csv,text/csv" onChange={(event) => setBulkFile(event.target.files?.[0] || null)} />
+          </label>
+          <button type="button" className="primary-action" onClick={handleBulkDispatch} disabled={bulkSending}>
+            {bulkSending ? 'Processando...' : 'Enviar links em massa'}
+          </button>
+        </div>
+
+        {bulkFile && <small className="bulk-file-name">Arquivo selecionado: {bulkFile.name}</small>}
       </section>
 
       <section className="management-panel">
@@ -356,6 +440,16 @@ function NpsManagement() {
           <div>
             <p className="eyebrow">Pesquisas</p>
             <h2>Lista de respostas NPS</h2>
+            {canViewDeletedRecords && (
+              <div className="patient-tabs management-tabs">
+                <button type="button" className={activeTab === 'ativos' ? 'active' : ''} onClick={() => setActiveTab('ativos')}>
+                  Ativos ({activeRows.length})
+                </button>
+                <button type="button" className={activeTab === 'excluidos' ? 'active' : ''} onClick={() => setActiveTab('excluidos')}>
+                  Excluídas ({deletedRows.length})
+                </button>
+              </div>
+            )}
           </div>
 
           <div className="filters nps-management-filters">
@@ -417,6 +511,7 @@ function NpsManagement() {
               const status = getNpsStatus(item);
               const reasons = parseReasons(item.detractor_reasons);
               const isDetractor = profile === 'detrator';
+              const isDeleted = Boolean(item.deleted_at);
 
               return (
                 <article className={`nps-list-item ${profile}`} key={item.id}>
@@ -446,10 +541,12 @@ function NpsManagement() {
                   </div>
 
                   <div className="nps-action-stack">
-                    <span className={`deadline-chip ${status === 'tratado' ? 'closed' : isDetractor ? 'danger' : 'neutral'}`}>
-                      {isDetractor ? 'Relato para tratamento' : 'Registro NPS'}
+                    <span className={`deadline-chip ${isDeleted ? 'closed' : status === 'tratado' ? 'closed' : isDetractor ? 'danger' : 'neutral'}`}>
+                      {isDeleted ? 'Excluída da operação' : isDetractor ? 'Relato para tratamento' : 'Registro NPS'}
                     </span>
-                    {item.nps_treatment_at && (
+                    {isDeleted ? (
+                      <small>Excluída por {item.deleted_by || 'Usuário não informado'}</small>
+                    ) : item.nps_treatment_at && (
                       <small>Última tratativa: {formatDate(item.nps_treatment_at)}</small>
                     )}
                     <button
@@ -513,9 +610,14 @@ function NpsManagement() {
               ) : (
                 <p className="history-note">Sem indicação registrada.</p>
               )}
+              {selectedNps.deleted_at && (
+                <p className="history-note">
+                  Excluída por {selectedNps.deleted_by || 'Usuário não informado'} em {formatDate(selectedNps.deleted_at)}.
+                </p>
+              )}
             </div>
 
-            {(selectedNps.nps_profile || profileFromScore(selectedNps.score)) === 'detrator' && (
+            {!selectedNps.deleted_at && (selectedNps.nps_profile || profileFromScore(selectedNps.score)) === 'detrator' && (
               <>
                 <label>
                   Status da tratativa
@@ -565,7 +667,7 @@ function NpsManagement() {
                   Chamar no WhatsApp
                 </a>
               )}
-              {canDeleteRecords && (
+              {canDeleteRecords && !selectedNps.deleted_at && (
                 <button
                   className="outline-action danger-action"
                   onClick={() => setShowDeleteModal(true)}
@@ -586,7 +688,7 @@ function NpsManagement() {
                   Migrar para reclamação
                 </button>
               )}
-              {(selectedNps.nps_profile || profileFromScore(selectedNps.score)) === 'detrator' && (
+              {!selectedNps.deleted_at && (selectedNps.nps_profile || profileFromScore(selectedNps.score)) === 'detrator' && (
                 <button className="primary-action" onClick={handleSaveTreatment} disabled={savingId === selectedNps.id}>
                   {savingId === selectedNps.id ? 'Salvando...' : 'Salvar tratativa'}
                 </button>
@@ -601,10 +703,6 @@ function NpsManagement() {
           <section className="modal-panel modal-confirm-panel">
             <p className="eyebrow">Excluir NPS</p>
             <h2>Tem certeza que deseja excluir?</h2>
-            <p>
-              A exclusão retira o protocolo NPS da lista operacional e mantém o registro de auditoria.
-            </p>
-
             <div className="row-actions">
               <button
                 className="outline-action"

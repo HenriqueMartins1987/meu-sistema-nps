@@ -1,7 +1,14 @@
 import axios from 'axios';
 
+const isBrowser = typeof window !== 'undefined';
+const isLocalHost = isBrowser && ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const configuredApiUrl = process.env.REACT_APP_API_URL;
+const fallbackProductionApiUrl = '/api';
+const fallbackLocalApiUrl = 'http://localhost:3001';
+
 const api = axios.create({
-  baseURL: process.env.REACT_APP_API_URL || 'https://meu-sistema-nps-backend.onrender.com'
+  baseURL: configuredApiUrl || (isLocalHost ? fallbackLocalApiUrl : fallbackProductionApiUrl),
+  timeout: 30000
 });
 
 api.interceptors.request.use((config) => {

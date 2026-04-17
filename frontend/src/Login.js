@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import api from './api';
 import logo from './assets/logo.png';
 
@@ -32,6 +32,7 @@ const experienceModules = [
 
 function Login() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -42,6 +43,7 @@ function Login() {
     () => experienceModules.find((item) => item.id === activeModule) || experienceModules[0],
     [activeModule]
   );
+  const redirectPath = location.state?.from || '/home';
 
   const handleLogin = async (event) => {
     event.preventDefault();
@@ -58,13 +60,17 @@ function Login() {
       if (res.data.token || res.data.success) {
         localStorage.setItem('token', res.data.token || '');
         localStorage.setItem('user', JSON.stringify(res.data.user || { email, role: 'operator' }));
-        navigate('/home');
+        navigate(redirectPath, { replace: true });
         return;
       }
 
       setError('Login inválido');
     } catch (err) {
-      const message = err.response?.data?.message || err.response?.data?.error || 'Erro ao fazer login';
+      const message = err.response?.data?.message
+        || err.response?.data?.error
+        || (err.code === 'ECONNABORTED'
+          ? 'A conexão com a API expirou. Verifique se o backend está publicado e ativo.'
+          : 'Não foi possível conectar com a API de autenticação.');
       setError(message);
     } finally {
       setLoading(false);

@@ -36,6 +36,16 @@ const channelLabels = {
   outros: 'Outros'
 };
 
+const initialFilters = {
+  search: '',
+  clinic: '',
+  channel: '',
+  type: '',
+  status: '',
+  startDate: '',
+  endDate: ''
+};
+
 function todayDateValue() {
   const now = new Date();
   const year = now.getFullYear();
@@ -106,6 +116,7 @@ function PatientManagementPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const isDashboard = location.pathname.includes('/dashboard');
+  const isRegister = location.pathname.includes('/cadastro');
   const focusRecordId = useMemo(() => {
     const params = new URLSearchParams(location.search);
     const rawId = params.get('abrir') || params.get('id');
@@ -115,9 +126,11 @@ function PatientManagementPage() {
   const [form, setForm] = useState(buildInitialForm);
   const [records, setRecords] = useState([]);
   const [clinics, setClinics] = useState([]);
+  const [filters, setFilters] = useState(initialFilters);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [activeTab, setActiveTab] = useState('ativos');
   const [feedback, setFeedback] = useState('');
+  const [savedProtocol, setSavedProtocol] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
@@ -153,7 +166,7 @@ function PatientManagementPage() {
   }, [focusRecordId]);
 
   useEffect(() => {
-    if (isDashboard || !focusRecordId || autoOpenRecordRef.current || !records.length) {
+    if (isDashboard || isRegister || !focusRecordId || autoOpenRecordRef.current || !records.length) {
       return;
     }
 
@@ -168,7 +181,7 @@ function PatientManagementPage() {
     setSelectedRecord(targetRecord);
     setShowCancelModal(false);
     navigate(location.pathname, { replace: true });
-  }, [focusRecordId, isDashboard, location.pathname, navigate, records]);
+  }, [focusRecordId, isDashboard, isRegister, location.pathname, navigate, records]);
 
   const activeRecords = useMemo(() => records.filter((record) => record.status !== 'Cancelado'), [records]);
   const cancelledRecords = useMemo(() => records.filter((record) => record.status === 'Cancelado'), [records]);
@@ -190,13 +203,41 @@ function PatientManagementPage() {
   const byStatus = useMemo(() => groupCount(records, (record) => record.status), [records]);
 
   const upcomingRecords = useMemo(() => activeRecords
-    .filter((record) => record.scheduledAt)
+    .filter((record) => {
+      const searchable = [
+        record.protocol,
+        record.patient,
+        record.phone,
+        record.note,
+        record.clinic,
+        record.channel,
+        record.type,
+        record.status
+      ].map((value) => String(value || '').toLowerCase()).join(' ');
+      const scheduledAt = record.scheduledAt ? new Date(record.scheduledAt) : null;
+      const startDate = filters.startDate ? new Date(`${filters.startDate}T00:00:00`) : null;
+      const endDate = filters.endDate ? new Date(`${filters.endDate}T23:59:59`) : null;
+
+      return (
+        (!filters.search || searchable.includes(String(filters.search || '').toLowerCase()))
+        && (!filters.clinic || record.clinic === filters.clinic)
+        && (!filters.channel || record.channel === filters.channel)
+        && (!filters.type || record.type === filters.type)
+        && (!filters.status || record.status === filters.status)
+        && (!startDate || (scheduledAt && scheduledAt >= startDate))
+        && (!endDate || (scheduledAt && scheduledAt <= endDate))
+      );
+    })
     .slice()
     .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt))
-    .slice(0, 30), [activeRecords]);
+    .slice(0, 50), [activeRecords, filters]);
 
   const updateForm = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const updateFilter = (field, value) => {
+    setFilters((prev) => ({ ...prev, [field]: value }));
   };
 
   const handlePhoneChange = (value) => {
@@ -215,6 +256,7 @@ function PatientManagementPage() {
     event.preventDefault();
     setSaving(true);
     setFeedback('');
+    setSavedProtocol('');
 
     try {
       if (!isCompleteBrazilPhone(form.phone)) {
@@ -237,9 +279,11 @@ function PatientManagementPage() {
       delete payload.channelOther;
 
       const response = await api.post('/patient-interactions', payload);
+      const protocol = response.data?.protocol || '';
       setForm(buildInitialForm());
       await loadRecords();
-      setFeedback(`Agendamento salvo com sucesso. Protocolo ${response.data?.protocol || ''}`.trim());
+      setSavedProtocol(protocol);
+      setFeedback(protocol ? `Agendamento salvo com sucesso. Protocolo ${protocol}` : 'Agendamento salvo com sucesso.');
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível salvar o agendamento.');
     } finally {
@@ -293,6 +337,122 @@ function PatientManagementPage() {
     }
   };
 
+  if (isRegister) {
+    return (
+      <main className="app-page">
+        <header className="page-heading">
+          <div>
+            <p className="eyebrow">Paciente</p>
+            <h1>Cadastrar Paciente</h1>
+            <p>Registre o agendamento com protocolo, data atual e rastreabilidade operacional.</p>
+          </div>
+
+          <div className="heading-actions">
+            <button className="outline-action" onClick={() => navigate('/pacientes')}>Gestão do Paciente</button>
+            <button className="outline-action" onClick={() => navigate('/pacientes/dashboard')}>Dashboard Pacientes</button>
+            <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
+          </div>
+        </header>
+
+        {savedProtocol && (
+          <section className="protocol-success-card" aria-live="polite">
+            <span>Agendamento salvo com sucesso</span>
+            <strong>{savedProtocol}</strong>
+          </section>
+        )}
+        {feedback && !savedProtocol && <p className="form-feedback">{feedback}</p>}
+
+        <section className="management-panel">
+          <form className="public-form patient-intake-form patient-register-form" onSubmit={saveRecord}>
+            <div>
+              <p className="eyebrow">Novo agendamento</p>
+              <h2>Cadastrar Paciente</h2>
+            </div>
+
+            <label>
+              Paciente
+              <input className="field" value={form.patient} onChange={(event) => updateForm('patient', event.target.value)} required />
+            </label>
+
+            <label>
+              Telefone com WhatsApp
+              <input className="field" value={form.phone} onChange={(event) => handlePhoneChange(event.target.value)} required />
+            </label>
+
+            <label>
+              Canal de entrada
+              <select className="field" value={form.channel} onChange={(event) => handleChannelChange(event.target.value)}>
+                <option value="whatsapp">WhatsApp</option>
+                <option value="telefone">Telefone</option>
+                <option value="email">E-mail</option>
+                <option value="presencial">Presencial</option>
+                <option value="site">Site</option>
+                <option value="outros">Outros</option>
+              </select>
+            </label>
+
+            {form.channel === 'outros' && (
+              <label>
+                Descreva o canal
+                <input
+                  className="field"
+                  value={form.channelOther}
+                  onChange={(event) => updateForm('channelOther', event.target.value.slice(0, 120))}
+                  placeholder="Informe o canal de entrada"
+                  maxLength={120}
+                  required
+                />
+              </label>
+            )}
+
+            <label>
+              Unidade
+              <select className="field" value={form.clinic} onChange={(event) => updateForm('clinic', event.target.value)} required>
+                <option value="">Selecione a unidade</option>
+                {clinics
+                  .filter((clinic) => clinic?.name && String(clinic.active ?? 1) !== '0' && !String(clinic.name).includes('INATIVA'))
+                  .sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR'))
+                  .map((clinic) => (
+                    <option key={clinic.id} value={clinic.name}>
+                      {clinic.name} ({clinic.city || 'Cidade'}/{clinic.state || 'UF'})
+                    </option>
+                  ))}
+              </select>
+            </label>
+
+            <label>
+              Tipo
+              <select className="field" value={form.type} onChange={(event) => updateForm('type', event.target.value)}>
+                <option value="confirmacao">Confirmação</option>
+                <option value="agendamento">Agendamento</option>
+                <option value="reagendamento">Reagendamento</option>
+              </select>
+            </label>
+
+            <label>
+              Data
+              <input className="field" type="date" value={form.scheduledAt} onChange={(event) => updateForm('scheduledAt', event.target.value)} required />
+            </label>
+
+            <label>
+              Observações
+              <textarea className="field textarea" value={form.note} onChange={(event) => updateForm('note', event.target.value)} />
+            </label>
+
+            <div className="row-actions">
+              <button className="outline-action" type="button" onClick={() => navigate('/pacientes')}>
+                Voltar para gestão
+              </button>
+              <button className="primary-action" type="submit" disabled={saving}>
+                {saving ? 'Salvando...' : 'Salvar agendamento'}
+              </button>
+            </div>
+          </form>
+        </section>
+      </main>
+    );
+  }
+
   if (isDashboard) {
     return (
       <main className="app-page">
@@ -305,9 +465,62 @@ function PatientManagementPage() {
 
           <div className="heading-actions">
             <button className="outline-action" onClick={() => navigate('/pacientes')}>Gestão do Paciente</button>
+            <button className="outline-action" onClick={() => navigate('/pacientes/cadastro')}>Cadastrar Paciente</button>
             <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
           </div>
         </header>
+
+        <section className="dashboard-filter-panel">
+          <div className="dashboard-filter-heading">
+            <div>
+              <p className="eyebrow">Filtros</p>
+            </div>
+            <button className="outline-action" onClick={() => setFilters(initialFilters)}>
+              Limpar filtros
+            </button>
+          </div>
+
+          <div className="dashboard-filters">
+            <input
+              className="field"
+              value={filters.search}
+              onChange={(event) => updateFilter('search', event.target.value)}
+              placeholder="Buscar protocolo, paciente, unidade ou observação"
+            />
+            <select className="field" value={filters.clinic} onChange={(event) => updateFilter('clinic', event.target.value)}>
+              <option value="">Todas as unidades</option>
+              {clinics
+                .filter((clinic) => clinic?.name && String(clinic.active ?? 1) !== '0' && !String(clinic.name).includes('INATIVA'))
+                .sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR'))
+                .map((clinic) => (
+                  <option key={clinic.id} value={clinic.name}>{clinic.name}</option>
+                ))}
+            </select>
+            <select className="field" value={filters.channel} onChange={(event) => updateFilter('channel', event.target.value)}>
+              <option value="">Todos os canais</option>
+              <option value="whatsapp">WhatsApp</option>
+              <option value="telefone">Telefone</option>
+              <option value="email">E-mail</option>
+              <option value="presencial">Presencial</option>
+              <option value="site">Site</option>
+              <option value="outros">Outros</option>
+            </select>
+            <select className="field" value={filters.type} onChange={(event) => updateFilter('type', event.target.value)}>
+              <option value="">Todos os tipos</option>
+              <option value="confirmacao">Confirmação</option>
+              <option value="agendamento">Agendamento</option>
+              <option value="reagendamento">Reagendamento</option>
+            </select>
+            <select className="field" value={filters.status} onChange={(event) => updateFilter('status', event.target.value)}>
+              <option value="">Todos os status</option>
+              {Array.from(new Set(activeRecords.map((record) => record.status).filter(Boolean))).map((status) => (
+                <option key={status} value={status}>{status}</option>
+              ))}
+            </select>
+            <input className="field" type="date" value={filters.startDate} onChange={(event) => updateFilter('startDate', event.target.value)} />
+            <input className="field" type="date" value={filters.endDate} onChange={(event) => updateFilter('endDate', event.target.value)} />
+          </div>
+        </section>
 
         {feedback && <p className="form-feedback">{feedback}</p>}
 
@@ -427,17 +640,24 @@ function PatientManagementPage() {
       <header className="page-heading">
         <div>
           <p className="eyebrow">Gestão do Paciente</p>
-          <h1>Agendamento, confirmação e reagendamento</h1>
-          <p>Cadastre e acompanhe a agenda do paciente com protocolo, histórico e trilha de cancelados.</p>
+          <h1>Gestão do Paciente</h1>
+          <p>Consulte protocolos ativos e cancelados, acompanhe o histórico e acesse o cadastro em uma tela dedicada.</p>
         </div>
 
         <div className="heading-actions">
+          <button className="outline-action" onClick={() => navigate('/pacientes/cadastro')}>Cadastrar Paciente</button>
           <button className="outline-action" onClick={() => navigate('/pacientes/dashboard')}>Dashboard Pacientes</button>
           <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
         </div>
       </header>
 
-      {feedback && <p className="form-feedback">{feedback}</p>}
+      {savedProtocol && (
+        <section className="protocol-success-card" aria-live="polite">
+          <span>Agendamento salvo com sucesso</span>
+          <strong>{savedProtocol}</strong>
+        </section>
+      )}
+      {feedback && !savedProtocol && <p className="form-feedback">{feedback}</p>}
 
       <section className="kpi-grid nps-kpi-grid">
         <article className="kpi-card">
@@ -467,88 +687,7 @@ function PatientManagementPage() {
         </article>
       </section>
 
-      <section className="management-panel patient-management-grid">
-        <form className="public-form patient-intake-form" onSubmit={saveRecord}>
-          <div>
-            <p className="eyebrow">Novo agendamento</p>
-            <h2>Agendamento do Paciente</h2>
-          </div>
-
-          <label>
-            Paciente
-            <input className="field" value={form.patient} onChange={(event) => updateForm('patient', event.target.value)} required />
-          </label>
-
-          <label>
-            Telefone com WhatsApp
-            <input className="field" value={form.phone} onChange={(event) => handlePhoneChange(event.target.value)} required />
-          </label>
-
-          <label>
-            Canal de entrada
-            <select className="field" value={form.channel} onChange={(event) => handleChannelChange(event.target.value)}>
-              <option value="whatsapp">WhatsApp</option>
-              <option value="telefone">Telefone</option>
-              <option value="email">E-mail</option>
-              <option value="presencial">Presencial</option>
-              <option value="site">Site</option>
-              <option value="outros">Outros</option>
-            </select>
-          </label>
-
-          {form.channel === 'outros' && (
-            <label>
-              Descreva o canal
-              <input
-                className="field"
-                value={form.channelOther}
-                onChange={(event) => updateForm('channelOther', event.target.value.slice(0, 120))}
-                placeholder="Informe o canal de entrada"
-                maxLength={120}
-                required
-              />
-            </label>
-          )}
-
-          <label>
-            Unidade
-            <select className="field" value={form.clinic} onChange={(event) => updateForm('clinic', event.target.value)} required>
-              <option value="">Selecione a unidade</option>
-              {clinics
-                .filter((clinic) => clinic?.name && String(clinic.active ?? 1) !== '0' && !String(clinic.name).includes('INATIVA'))
-                .sort((a, b) => String(a.name).localeCompare(String(b.name), 'pt-BR'))
-                .map((clinic) => (
-                  <option key={clinic.id} value={clinic.name}>
-                    {clinic.name} ({clinic.city || 'Cidade'}/{clinic.state || 'UF'})
-                  </option>
-                ))}
-            </select>
-          </label>
-
-          <label>
-            Tipo
-            <select className="field" value={form.type} onChange={(event) => updateForm('type', event.target.value)}>
-              <option value="confirmacao">Confirmação</option>
-              <option value="agendamento">Agendamento</option>
-              <option value="reagendamento">Reagendamento</option>
-            </select>
-          </label>
-
-          <label>
-            Data
-            <input className="field" type="date" value={form.scheduledAt} onChange={(event) => updateForm('scheduledAt', event.target.value)} required />
-          </label>
-
-          <label>
-            Observações
-            <textarea className="field textarea" value={form.note} onChange={(event) => updateForm('note', event.target.value)} />
-          </label>
-
-          <button className="primary-action" type="submit" disabled={saving}>
-            {saving ? 'Salvando...' : 'Salvar agendamento'}
-          </button>
-        </form>
-
+      <section className="management-panel">
         <section className="patient-records-panel">
           <div className="patient-records-head">
             <div>
@@ -575,7 +714,7 @@ function PatientManagementPage() {
                   <th>Tipo</th>
                   <th>Unidade</th>
                   <th>Data e horário</th>
-                  <th>Última tratativa por</th>
+                  <th>{activeTab === 'cancelados' ? 'Cancelado por' : 'Última tratativa por'}</th>
                   <th>Leitura rápida</th>
                   <th>Ação</th>
                 </tr>
@@ -588,12 +727,19 @@ function PatientManagementPage() {
                     <td>{typeLabels[record.type] || record.type}</td>
                     <td>{record.clinic}</td>
                     <td>{formatDateTime(record.scheduledAt)}</td>
-                    <td>{record.lastActorName || 'Sem tratativa'}</td>
                     <td>
-                      <span className="tooltip-help inline-help patient-note-help" tabIndex="0" aria-label="Abrir resumo da observação">
-                        💬
-                        <span>{record.note || 'Sem observação registrada.'}</span>
-                      </span>
+                      {activeTab === 'cancelados'
+                        ? (record.cancelledByName || record.lastActorName || 'Sem registro')
+                        : (record.lastActorName || 'Sem tratativa')}
+                    </td>
+                    <td>
+                      <button
+                        type="button"
+                        className="outline-action compact-action patient-note-trigger"
+                        onClick={() => openRecord(record)}
+                      >
+                        Consultar
+                      </button>
                     </td>
                     <td>
                       <button className="outline-action compact-action" onClick={() => openRecord(record)}>
@@ -701,8 +847,6 @@ function PatientManagementPage() {
           <section className="modal-panel modal-confirm-panel">
             <p className="eyebrow">Cancelar agendamento</p>
             <h2>Tem certeza que deseja excluir?</h2>
-            <p>O agendamento será movido para a aba de cancelados, mantendo todo o histórico de auditoria.</p>
-
             <div className="row-actions">
               <button className="outline-action" type="button" onClick={() => setShowCancelModal(false)} disabled={saving}>
                 Voltar

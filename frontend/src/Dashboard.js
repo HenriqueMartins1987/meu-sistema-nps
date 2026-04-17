@@ -283,7 +283,7 @@ function Dashboard() {
       <header className="page-heading">
         <div>
           <p className="eyebrow">Dashboard</p>
-          <h1>BI INTERATIVO DE RECLAMAÇÕES</h1>
+          <h1>Dashboard de Reclamações</h1>
           <p>Combine filtros para analisar por unidade, localidade, classificação, criticidade e prazo.</p>
         </div>
 
