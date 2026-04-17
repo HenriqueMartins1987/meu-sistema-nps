@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from './api';
-import logo from './assets/logo.png';
+import logo from './assets/logo2.png';
 
 const experienceModules = [
   {
@@ -59,7 +59,7 @@ function Login() {
 
       if (res.data.token || res.data.success) {
         localStorage.setItem('token', res.data.token || '');
-        localStorage.setItem('user', JSON.stringify(res.data.user || { email, role: 'operator' }));
+        localStorage.setItem('user', JSON.stringify(res.data.user || { email, role: 'viewer', permissions: [] }));
         navigate(redirectPath, { replace: true });
         return;
       }

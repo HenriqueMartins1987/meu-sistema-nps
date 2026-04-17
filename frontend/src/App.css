@@ -1,17 +1,17 @@
 :root {
-  --ink: #102033;
-  --muted: #64748b;
-  --line: #d8e3df;
-  --line-strong: #b7cac4;
+  --ink: #1f1727;
+  --muted: #6f6475;
+  --line: #ddd5c9;
+  --line-strong: #c9b89f;
   --surface: #ffffff;
-  --surface-soft: #f4f8f6;
-  --surface-deep: #e8f1ee;
-  --brand: #0b6f5f;
-  --brand-strong: #064d43;
-  --brand-soft: #dff2ed;
-  --teal: #1f7a8c;
-  --leaf: #4c956c;
-  --gold: #d08c31;
+  --surface-soft: #faf7f2;
+  --surface-deep: #f2eadf;
+  --brand: #b78a4f;
+  --brand-strong: #5d4630;
+  --brand-soft: #f4ead8;
+  --teal: #3d2f4d;
+  --leaf: #7d6847;
+  --gold: #c79a5a;
   --danger: #c44536;
   --shadow-sm: 0 8px 20px rgba(16, 32, 51, 0.08);
   --shadow-md: 0 18px 45px rgba(16, 32, 51, 0.12);
@@ -51,8 +51,8 @@ a {
   display: grid;
   grid-template-columns: minmax(0, 1.16fr) minmax(430px, 0.84fr);
   background:
-    linear-gradient(132deg, rgba(6, 77, 67, 0.97), rgba(31, 122, 140, 0.88) 54%, rgba(76, 149, 108, 0.78)),
-    url('./assets/logo.png');
+    linear-gradient(132deg, rgba(5, 5, 8, 0.97), rgba(36, 27, 46, 0.92) 54%, rgba(132, 96, 46, 0.78)),
+    url('./assets/logo2.png');
   background-size: cover;
   background-position: center;
   color: #fff;
@@ -91,7 +91,8 @@ a {
 .login-brand-logo {
   width: 260px;
   max-width: 82%;
-  background: #fff;
+  background: #050507;
+  border: 1px solid rgba(183, 138, 79, 0.36);
   border-radius: 8px;
   padding: 16px;
   box-shadow: var(--shadow-lg);
@@ -246,6 +247,11 @@ a {
   width: 210px;
   max-width: 100%;
   display: block;
+  background: #050507;
+  border: 1px solid rgba(183, 138, 79, 0.28);
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: var(--shadow-sm);
 }
 
 .system-chip {
@@ -473,7 +479,7 @@ a {
   min-height: 100vh;
   background:
     linear-gradient(180deg, rgba(244, 248, 246, 0.96), rgba(232, 241, 238, 0.98)),
-    url('./assets/logo.png');
+    url('./assets/logo2.png');
   background-position: center;
   background-size: cover;
   padding: 30px;
@@ -566,7 +572,8 @@ a {
 
 .brand-mark img {
   width: 190px;
-  background: #fff;
+  background: #050507;
+  border: 1px solid rgba(183, 138, 79, 0.28);
   border-radius: 8px;
   padding: 8px 12px;
 }
@@ -2858,7 +2865,7 @@ a {
   min-height: 100vh;
   background:
     linear-gradient(180deg, rgba(244, 248, 246, 0.98), rgba(232, 241, 238, 0.98)),
-    url('./assets/logo.png');
+    url('./assets/logo2.png');
   background-position: center;
   background-size: cover;
   padding: 30px;
@@ -2943,7 +2950,8 @@ a {
 
 .public-hero-logo {
   width: 210px;
-  background: #fff;
+  background: #050507;
+  border: 1px solid rgba(183, 138, 79, 0.3);
   border-radius: 8px;
   padding: 12px 14px;
   box-shadow: var(--shadow-sm);

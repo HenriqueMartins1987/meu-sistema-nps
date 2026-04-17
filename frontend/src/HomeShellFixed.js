@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from './api';
-import logo from './assets/logo.png';
+import logo from './assets/logo2.png';
 import { hasPermission, isAdmin, isMasterAdmin, readUser } from './constants';
 
 const notificationTypeLabels = {
@@ -12,7 +12,8 @@ const notificationTypeLabels = {
   registration_request: 'Cadastro',
   registration_approved: 'Cadastro',
   registration_rejected: 'Cadastro',
-  nps_detractor_assigned: 'NPS detrator'
+  nps_detractor_assigned: 'NPS detrator',
+  nps_duplicate_phone: 'Alerta NPS'
 };
 
 function parseNotificationPayload(payload) {
@@ -170,6 +171,15 @@ function HomeShellFixed() {
   useEffect(() => {
     loadNotifications();
   }, [loadNotifications]);
+
+  useEffect(() => {
+    if (!notificationGroups.unread.some((item) => item.type === 'nps_duplicate_phone')) {
+      return;
+    }
+
+    setNotificationsOpen(true);
+    setNotificationTab('unread');
+  }, [notificationGroups.unread]);
 
   const loadAgenda = useCallback(async () => {
     if (!canManageComplaints && !canManagePatients) {

@@ -31,9 +31,11 @@ const defaultAdminPassword = process.env.MASTER_ADMIN_PASSWORD || process.env.DE
 const whatsappWebhookUrl = process.env.WHATSAPP_WEBHOOK_URL || '';
 const whatsappGroupId = process.env.WHATSAPP_GROUP_ID || '';
 const uploadDir = path.join(__dirname, 'uploads');
+const reportsDir = path.join(uploadDir, 'reports');
 const maxUploadSizeBytes = 10 * 1024 * 1024;
 
 fs.mkdirSync(uploadDir, { recursive: true });
+fs.mkdirSync(reportsDir, { recursive: true });
 
 // ============================================
 // MIDDLEWARES
@@ -135,6 +137,7 @@ const deadlineHoursByPriority = {
   media: 48,
   alta: 24
 };
+const resolutionSlaDays = 15;
 
 const treatmentRoles = new Set(['coordinator', 'manager', 'supervisor_crc']);
 const evidenceRoles = new Set(['coordinator', 'manager', 'supervisor_crc', 'sac_operator', 'admin']);
@@ -148,6 +151,19 @@ function calculateDueAt(priority) {
   const dueAt = new Date();
   dueAt.setHours(dueAt.getHours() + deadlineHoursByPriority[normalizePriority(priority)]);
   return dueAt;
+}
+
+function calculateResolutionDueAt(baseDate = new Date()) {
+  const dueAt = new Date(baseDate);
+  dueAt.setDate(dueAt.getDate() + resolutionSlaDays);
+  return dueAt;
+}
+
+function getRequestIp(req) {
+  const forwardedFor = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  const realIp = String(req.headers['x-real-ip'] || '').trim();
+  const remoteAddress = String(req.socket?.remoteAddress || req.ip || '').trim();
+  return forwardedFor || realIp || remoteAddress || 'ip-nao-informado';
 }
 
 function toMysqlDateTime(date) {
@@ -642,6 +658,9 @@ async function ensureDatabaseSchema() {
   await ensureColumn('nps_responses', 'converted_complaint_id', 'INT NULL');
   await ensureColumn('nps_responses', 'converted_at', 'TIMESTAMP NULL');
   await ensureColumn('nps_responses', 'converted_by', 'VARCHAR(160) NULL');
+  await ensureColumn('nps_responses', 'contact_share_allowed', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn('nps_responses', 'linked_patient_interaction_id', 'INT NULL');
+  await ensureColumn('nps_responses', 'ip_address', 'VARCHAR(120) NULL');
   await ensureColumn('nps_responses', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
 
   await pool.query(`
@@ -719,10 +738,14 @@ async function ensureDatabaseSchema() {
   await ensureColumn('complaints', 'forwarded_to_label', 'VARCHAR(160) NULL');
   await ensureColumn('complaints', 'forwarded_at', 'TIMESTAMP NULL');
   await ensureColumn('complaints', 'forwarded_by', 'VARCHAR(160) NULL');
+  await ensureColumn('complaints', 'assigned_coordinator_user_id', 'INT NULL');
+  await ensureColumn('complaints', 'assigned_coordinator_name', 'VARCHAR(160) NULL');
+  await ensureColumn('complaints', 'clinic_snapshot_name', 'VARCHAR(180) NULL');
   await ensureColumn('complaints', 'created_origin', "VARCHAR(80) DEFAULT 'Interno'");
   await ensureColumn('complaints', 'financial_involved', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn('complaints', 'financial_description', 'TEXT NULL');
   await ensureColumn('complaints', 'financial_amount', 'DECIMAL(12,2) NULL');
+  await ensureColumn('complaints', 'resolution_due_at', 'DATETIME NULL');
   await ensureColumn('complaints', 'deleted_at', 'TIMESTAMP NULL');
   await ensureColumn('complaints', 'deleted_by', 'VARCHAR(160) NULL');
   await ensureColumn('complaints', 'deletion_reason', 'TEXT NULL');
@@ -735,6 +758,17 @@ async function ensureDatabaseSchema() {
   await pool.query("ALTER TABLE complaints MODIFY COLUMN status VARCHAR(40) NOT NULL DEFAULT 'aberta'");
   await pool.query("ALTER TABLE complaints MODIFY COLUMN priority VARCHAR(40) DEFAULT 'media'");
   await pool.query("ALTER TABLE complaints MODIFY COLUMN created_origin VARCHAR(80) DEFAULT 'Interno'");
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS system_job_runs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      job_key VARCHAR(120) NOT NULL UNIQUE,
+      last_run_at TIMESTAMP NULL,
+      last_payload LONGTEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS complaint_evidences (
@@ -768,8 +802,7 @@ async function ensureDatabaseSchema() {
   );
 }
 
-async function ensureDefaultAdminUser() {
-  async function ensureDefaultClinics() {
+async function ensureDefaultClinics() {
   const [rows] = await pool.query('SELECT COUNT(*) AS total FROM clinics');
   const total = Number(rows[0]?.total || 0);
 
@@ -792,6 +825,8 @@ async function ensureDefaultAdminUser() {
 
   console.log('Clínicas padrão inseridas com sucesso.');
 }
+
+async function ensureDefaultAdminUser() {
   const passwordHash = await bcrypt.hash(defaultAdminPassword, 10);
 
   await pool.query(
@@ -864,12 +899,43 @@ async function backfillComplaintDeadlines() {
     const createdAt = row.created_at ? new Date(row.created_at) : new Date();
     const dueAt = new Date(createdAt);
     dueAt.setHours(dueAt.getHours() + deadlineHoursByPriority[normalizePriority(row.priority)]);
+    const resolutionDueAt = calculateResolutionDueAt(createdAt);
 
-    return pool.query('UPDATE complaints SET priority = ?, due_at = ? WHERE id = ?', [
+    return pool.query('UPDATE complaints SET priority = ?, due_at = ?, resolution_due_at = ? WHERE id = ?', [
       normalizePriority(row.priority),
       toMysqlDateTime(dueAt),
+      toMysqlDateTime(resolutionDueAt),
       row.id
     ]);
+  }));
+}
+
+async function backfillComplaintAssignments() {
+  const [rows] = await pool.query(
+    `SELECT id, clinic_id, assigned_coordinator_name, clinic_snapshot_name
+       FROM complaints`
+  );
+
+  await Promise.all(rows.map(async (row) => {
+    if (row.assigned_coordinator_name && row.clinic_snapshot_name) {
+      return null;
+    }
+
+    const assignment = await resolveCoordinatorAssignment(row.clinic_id);
+
+    return pool.query(
+      `UPDATE complaints
+          SET assigned_coordinator_user_id = COALESCE(assigned_coordinator_user_id, ?),
+              assigned_coordinator_name = COALESCE(assigned_coordinator_name, ?),
+              clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)
+        WHERE id = ?`,
+      [
+        assignment.coordinatorUserId,
+        assignment.coordinatorName || null,
+        assignment.clinicSnapshotName || null,
+        row.id
+      ]
+    );
   }));
 }
 
@@ -934,10 +1000,11 @@ async function getComplaintRows(query = {}, user = null) {
     const clinicIds = await getUserClinicIds(user.id);
 
     if (clinicIds.length) {
-      filters.clause += filters.clause ? ' AND c.clinic_id IN (?)' : 'WHERE c.clinic_id IN (?)';
-      filters.params.push(clinicIds);
+      filters.clause += filters.clause ? ' AND (c.clinic_id IN (?) OR c.assigned_coordinator_user_id = ?)' : 'WHERE (c.clinic_id IN (?) OR c.assigned_coordinator_user_id = ?)';
+      filters.params.push(clinicIds, user.id);
     } else {
-      filters.clause += filters.clause ? ' AND 1 = 0' : 'WHERE 1 = 0';
+      filters.clause += filters.clause ? ' AND c.assigned_coordinator_user_id = ?' : 'WHERE c.assigned_coordinator_user_id = ?';
+      filters.params.push(user.id);
     }
   }
 
@@ -957,6 +1024,7 @@ async function getComplaintRows(query = {}, user = null) {
       c.operator_comment,
       c.priority,
       c.due_at,
+      c.resolution_due_at,
       c.treatment_comment,
       c.treatment_by_role,
       c.treatment_by_name,
@@ -977,6 +1045,9 @@ async function getComplaintRows(query = {}, user = null) {
       c.forwarded_to_label,
       c.forwarded_at,
       c.forwarded_by,
+      c.assigned_coordinator_user_id,
+      c.assigned_coordinator_name,
+      c.clinic_snapshot_name,
       c.created_origin,
       c.financial_involved,
       c.financial_description,
@@ -987,11 +1058,11 @@ async function getComplaintRows(query = {}, user = null) {
       c.created_at,
       c.updated_at,
       c.closed_at,
-      cl.name AS clinic_name,
+      COALESCE(c.clinic_snapshot_name, cl.name) AS clinic_name,
       cl.city,
       cl.state,
       cl.region,
-      cl.coordinator_name
+      COALESCE(c.assigned_coordinator_name, cl.coordinator_name) AS coordinator_name
     FROM complaints c
     LEFT JOIN clinics cl ON cl.id = c.clinic_id
     ${filters.clause}
@@ -1075,6 +1146,7 @@ function toCsv(rows) {
     'status',
     'priority',
     'due_at',
+    'resolution_due_at',
     'operator_comment',
     'treatment_by_role',
     'treatment_by_name',
@@ -1112,6 +1184,68 @@ function toCsv(rows) {
   return lines.join('\n');
 }
 
+function escapePdfText(value) {
+  return String(value || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/\(/g, '\\(')
+    .replace(/\)/g, '\\)');
+}
+
+function buildSimplePdfBuffer(title, lines) {
+  const pageWidth = 595;
+  const pageHeight = 842;
+  const marginLeft = 36;
+  const startY = 800;
+  const lineHeight = 16;
+  const contentLines = [title, '', ...lines].slice(0, 42);
+  const content = contentLines.map((line, index) => {
+    const y = startY - (index * lineHeight);
+    return `BT /F1 11 Tf 1 0 0 1 ${marginLeft} ${y} Tm (${escapePdfText(line)}) Tj ET`;
+  }).join('\n');
+  const stream = `${content}\n`;
+  const objects = [
+    '1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj',
+    '2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj',
+    `3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj`,
+    `4 0 obj << /Length ${Buffer.byteLength(stream, 'utf8')} >> stream\n${stream}endstream endobj`,
+    '5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj'
+  ];
+  let pdf = '%PDF-1.4\n';
+  const offsets = [0];
+
+  objects.forEach((object) => {
+    offsets.push(Buffer.byteLength(pdf, 'utf8'));
+    pdf += `${object}\n`;
+  });
+
+  const xrefOffset = Buffer.byteLength(pdf, 'utf8');
+  pdf += `xref\n0 ${objects.length + 1}\n`;
+  pdf += '0000000000 65535 f \n';
+  offsets.slice(1).forEach((offset) => {
+    pdf += `${String(offset).padStart(10, '0')} 00000 n \n`;
+  });
+  pdf += `trailer << /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+  return Buffer.from(pdf, 'utf8');
+}
+
+function toMonthRange(monthRef) {
+  const base = monthRef && /^\d{4}-\d{2}$/.test(String(monthRef))
+    ? new Date(`${monthRef}-01T00:00:00`)
+    : new Date();
+  const start = new Date(base.getFullYear(), base.getMonth(), 1, 0, 0, 0, 0);
+  const end = new Date(base.getFullYear(), base.getMonth() + 1, 0, 23, 59, 59, 999);
+  return { start, end };
+}
+
+function slugify(value) {
+  return String(value || 'sem-coordenador')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '') || 'sem-coordenador';
+}
+
 function createEmailTransporter() {
   if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
     return null;
@@ -1128,7 +1262,7 @@ function createEmailTransporter() {
   });
 }
 
-async function sendEmail(to, subject, html) {
+async function sendEmail(to, subject, html, attachments = []) {
   const transporter = createEmailTransporter();
 
   if (!transporter) {
@@ -1141,7 +1275,8 @@ async function sendEmail(to, subject, html) {
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
     to,
     subject,
-    html
+    html,
+    attachments
   });
 }
 
@@ -1188,6 +1323,25 @@ async function createNotificationForAdmins(type, title, message, link = null, pa
   );
 
   await Promise.all(admins.map((admin) => createNotification(admin.id, type, title, message, link, payload)));
+}
+
+async function createNotificationForRoles(roles, type, title, message, link = null, payload = null) {
+  const normalizedRoles = Array.from(new Set((roles || []).filter(Boolean)));
+
+  if (!normalizedRoles.length) return [];
+
+  const placeholders = normalizedRoles.map(() => '?').join(',');
+  const [users] = await pool.query(
+    `SELECT id
+       FROM users
+      WHERE active = 1
+        AND deleted_at IS NULL
+        AND role IN (${placeholders})`,
+    normalizedRoles
+  );
+
+  await Promise.all(users.map((user) => createNotification(user.id, type, title, message, link, payload)));
+  return users.map((user) => user.id);
 }
 
 async function notifyClinicResponsibles(clinicId, type, title, message, link, payload = null) {
@@ -1325,6 +1479,50 @@ async function getUserClinicIds(userId) {
     .map((row) => Number(row.clinic_id))
     .filter((value) => Number.isInteger(value) && value > 0);
 }
+
+async function resolveCoordinatorAssignment(clinicId) {
+  if (!clinicId) {
+    return {
+      coordinatorUserId: null,
+      coordinatorName: 'Coordenador da unidade',
+      clinicSnapshotName: null
+    };
+  }
+
+  const [clinicRows] = await pool.query(
+    'SELECT id, name, coordinator_name FROM clinics WHERE id = ? LIMIT 1',
+    [clinicId]
+  );
+  const clinic = clinicRows[0] || {};
+  const configuredCoordinatorName = String(clinic.coordinator_name || '').trim();
+
+  const [coordinatorRows] = await pool.query(
+    `SELECT
+       u.id,
+       u.name
+     FROM users u
+     INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = ?
+     WHERE u.deleted_at IS NULL
+       AND u.active = 1
+       AND u.role = 'coordinator'
+     ORDER BY CASE
+       WHEN ? <> '' AND LOWER(TRIM(u.name)) = LOWER(TRIM(?)) THEN 0
+       ELSE 1
+     END,
+     u.name ASC
+     LIMIT 1`,
+    [clinicId, configuredCoordinatorName, configuredCoordinatorName]
+  );
+
+  const coordinator = coordinatorRows[0] || null;
+
+  return {
+    coordinatorUserId: coordinator?.id || null,
+    coordinatorName: coordinator?.name || configuredCoordinatorName || 'Coordenador da unidade',
+    clinicSnapshotName: clinic?.name || null
+  };
+}
+
 async function getClinicsForUser(user) {
   if (!user) return [];
 
@@ -1375,6 +1573,224 @@ async function getClinicsForUser(user) {
   );
 
   return rows;
+}
+
+async function getMonthlyDuplicateNpsPhones(monthRef) {
+  const { start, end } = toMonthRange(monthRef);
+  const [rows] = await pool.query(
+    `SELECT
+       n.patient_phone,
+       COUNT(*) AS total,
+       GROUP_CONCAT(DISTINCT n.patient_name ORDER BY n.patient_name SEPARATOR ' | ') AS patient_names,
+       GROUP_CONCAT(DISTINCT COALESCE(n.nps_protocol, CONCAT('NPS-', n.id)) ORDER BY n.created_at DESC SEPARATOR ' | ') AS protocols,
+       MAX(n.created_at) AS last_created_at
+     FROM nps_responses n
+     WHERE n.patient_phone IS NOT NULL
+       AND n.patient_phone <> ''
+       AND n.created_at BETWEEN ? AND ?
+     GROUP BY n.patient_phone
+     HAVING COUNT(*) > 1
+     ORDER BY total DESC, last_created_at DESC`,
+    [toMysqlDateTime(start), toMysqlDateTime(end)]
+  );
+
+  return rows.map((row) => ({
+    phone: row.patient_phone,
+    total: Number(row.total || 0),
+    patient_names: row.patient_names || '',
+    protocols: row.protocols || '',
+    last_created_at: row.last_created_at
+  }));
+}
+
+async function alertDuplicateNpsPhone(phone, protocol, npsId) {
+  const monthRef = new Date().toISOString().slice(0, 7);
+  const title = `Alerta NPS: telefone repetido ${phone}`;
+  const message = `O telefone ${phone} apareceu mais de uma vez nas pesquisas NPS deste mês. Último protocolo: ${protocol}.`;
+  const payload = { phone, protocol, npsId, month: monthRef };
+  await createNotificationForRoles(
+    ['supervisor_crc', 'admin', 'master_admin'],
+    'nps_duplicate_phone',
+    title,
+    message,
+    '/gestao-nps',
+    payload
+  );
+}
+
+async function createPromoterAgendaRecord({ npsId, patientName, patientPhone, clinicName }) {
+  const scheduledAt = new Date();
+  const note = 'Contato compartilhado pelo paciente promotor na pesquisa de satisfação.';
+  const [result] = await pool.query(
+    `INSERT INTO patient_interactions
+     (patient_name, patient_phone, channel, clinic_name, interaction_type, scheduled_at, note, status, created_by_name, created_by_role)
+     VALUES (?, ?, 'NPS', ?, 'agendamento', ?, ?, 'Registrado', 'Pesquisa NPS', 'externo')`,
+    [
+      patientName || 'Paciente promotor',
+      patientPhone,
+      clinicName || 'Unidade não informada',
+      toMysqlDateTime(scheduledAt),
+      note
+    ]
+  );
+  const protocol = formatPatientProtocol(result.insertId, scheduledAt);
+  await pool.query('UPDATE patient_interactions SET protocol = ? WHERE id = ?', [protocol, result.insertId]);
+  await insertPatientInteractionLog(result.insertId, 'Registro criado', `${note} Protocolo ${protocol}.`, {
+    name: 'Pesquisa NPS',
+    role: 'externo'
+  });
+  await pool.query('UPDATE nps_responses SET linked_patient_interaction_id = ? WHERE id = ?', [result.insertId, npsId]);
+  return { id: result.insertId, protocol };
+}
+
+async function getCoordinatorComplaintRows({ onlyOverdue = false } = {}) {
+  const [rows] = await pool.query(
+    `SELECT
+       c.id,
+       c.protocol,
+       c.patient_name,
+       c.status,
+       c.priority,
+       c.created_at,
+       c.resolution_due_at,
+        COALESCE(c.clinic_snapshot_name, cl.name) AS clinic_name,
+        COALESCE(c.assigned_coordinator_name, cl.coordinator_name) AS coordinator_name
+      FROM complaints c
+      LEFT JOIN clinics cl ON cl.id = c.clinic_id
+      WHERE c.deleted_at IS NULL
+        AND c.status <> 'resolvida'
+        ${onlyOverdue ? 'AND c.resolution_due_at IS NOT NULL AND c.resolution_due_at < NOW()' : ''}
+      ORDER BY COALESCE(c.assigned_coordinator_name, cl.coordinator_name, 'Sem coordenador') ASC, c.resolution_due_at ASC, c.created_at ASC`
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    coordinator_name: row.coordinator_name || 'Sem coordenador',
+    delayed: Boolean(row.resolution_due_at && new Date(row.resolution_due_at).getTime() < Date.now())
+  }));
+}
+
+async function writeCoordinatorReportPdf(coordinatorName, rows, referenceDate = new Date()) {
+  const title = `Relatorio semanal - ${coordinatorName}`;
+  const lines = [
+    `Gerado em: ${new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(referenceDate)}`,
+    `SLA de resolucao: ${resolutionSlaDays} dias`,
+    `Total de protocolos abertos: ${rows.length}`,
+    ''
+  ];
+
+  rows.forEach((row) => {
+    lines.push(
+      `${row.delayed ? '[ATRASADA]' : '[NO PRAZO]'} ${row.protocol || `GRC-${row.id}`} | ${row.clinic_name || 'Unidade'} | ${row.patient_name || 'Paciente'} | SLA ${row.resolution_due_at ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(row.resolution_due_at)) : 'Nao informado'}`
+    );
+  });
+
+  const fileName = `coordenador-${slugify(coordinatorName)}-${referenceDate.toISOString().slice(0, 10)}.pdf`;
+  const filePath = path.join(reportsDir, fileName);
+  fs.writeFileSync(filePath, buildSimplePdfBuffer(title, lines));
+  return {
+    fileName,
+    filePath,
+    url: `${publicBaseUrl}/uploads/reports/${fileName}`
+  };
+}
+
+async function dispatchCoordinatorDelayNotifications() {
+  const rows = await getCoordinatorComplaintRows({ onlyOverdue: true });
+  const grouped = rows.reduce((acc, row) => {
+    acc[row.coordinator_name] = acc[row.coordinator_name] || [];
+    acc[row.coordinator_name].push(row);
+    return acc;
+  }, {});
+  const coordinators = Object.keys(grouped);
+
+  await Promise.all(coordinators.map(async (coordinatorName) => {
+    const coordinatorRows = grouped[coordinatorName];
+    const message = [
+      `Atenção: demandas em atraso do coordenador ${coordinatorName}.`,
+      ...coordinatorRows.slice(0, 10).map((row) => `- ${row.protocol || `GRC-${row.id}`} | ${row.clinic_name || 'Unidade'} | SLA ${row.resolution_due_at ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(row.resolution_due_at)) : 'Nao informado'}`)
+    ].join('\n');
+
+    await sendWhatsappNotification({
+      event: 'coordinator_delay_alert',
+      coordinator: coordinatorName,
+      link: `${frontendUrl}/gestao`,
+      message
+    });
+  }));
+
+  return coordinators.length;
+}
+
+async function dispatchWeeklyCoordinatorReports() {
+  const rows = await getCoordinatorComplaintRows();
+  const grouped = rows.reduce((acc, row) => {
+    acc[row.coordinator_name] = acc[row.coordinator_name] || [];
+    acc[row.coordinator_name].push(row);
+    return acc;
+  }, {});
+  const coordinators = Object.keys(grouped);
+  const reports = [];
+
+  for (const coordinatorName of coordinators) {
+    const coordinatorRows = grouped[coordinatorName];
+    const report = await writeCoordinatorReportPdf(coordinatorName, coordinatorRows, new Date());
+    reports.push({ coordinatorName, ...report, total: coordinatorRows.length, delayed: coordinatorRows.filter((row) => row.delayed).length });
+
+    await sendWhatsappNotification({
+      event: 'weekly_coordinator_report',
+      coordinator: coordinatorName,
+      attachmentUrl: report.url,
+      link: report.url,
+      message: `Relatório semanal do coordenador ${coordinatorName}. Total de protocolos: ${coordinatorRows.length}. Atrasadas: ${coordinatorRows.filter((row) => row.delayed).length}.`
+    });
+
+    await sendEmail(
+      approvalEmail,
+      `Relatório semanal - ${coordinatorName}`,
+      `<p>Segue o relatório semanal do coordenador <strong>${coordinatorName}</strong>.</p><p>Total de protocolos: ${coordinatorRows.length}</p><p>Atrasadas: ${coordinatorRows.filter((row) => row.delayed).length}</p>`,
+      [{ filename: report.fileName, path: report.filePath }]
+    );
+  }
+
+  return reports;
+}
+
+async function recordJobRun(jobKey, payload = null) {
+  await pool.query(
+    `INSERT INTO system_job_runs (job_key, last_run_at, last_payload)
+     VALUES (?, NOW(), ?)
+     ON DUPLICATE KEY UPDATE last_run_at = NOW(), last_payload = VALUES(last_payload)`,
+    [jobKey, payload ? JSON.stringify(payload) : null]
+  );
+}
+
+async function shouldRunWeeklyCoordinatorReports(jobKey, now = new Date()) {
+  if (now.getDay() !== 1 || now.getHours() < 8) return false;
+
+  const weekStart = new Date(now);
+  weekStart.setHours(0, 0, 0, 0);
+  weekStart.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+
+  const [rows] = await pool.query('SELECT last_run_at FROM system_job_runs WHERE job_key = ?', [jobKey]);
+
+  if (!rows.length || !rows[0].last_run_at) return true;
+
+  return new Date(rows[0].last_run_at).getTime() < weekStart.getTime();
+}
+
+async function runScheduledCoordinatorReports() {
+  const jobKey = 'weekly_coordinator_report';
+
+  if (!(await shouldRunWeeklyCoordinatorReports(jobKey))) {
+    return;
+  }
+
+  const reports = await dispatchWeeklyCoordinatorReports();
+  if (reports.length) {
+    await dispatchCoordinatorDelayNotifications();
+  }
+  await recordJobRun(jobKey, { reports: reports.length });
 }
 
 async function notifyComplaintCreated(complaintId, protocol) {
@@ -1641,24 +2057,30 @@ async function convertNpsToComplaint(npsId, user) {
 
   const priority = priorityForNpsFeedback(nps.score, 'Reclamação');
   const dueAt = calculateDueAt(priority);
+  const resolutionDueAt = calculateResolutionDueAt();
   const description = buildNpsComplaintDescription(nps);
+  const assignment = await resolveCoordinatorAssignment(nps.clinic_id || null);
   const [result] = await pool.query(
     `INSERT INTO complaints
-     (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, created_origin)
-     VALUES (?, ?, ?, 'NPS', 'Reclamação NPS', ?, 'Pesquisa de satisfação', 'aberta', ?, ?, 'Externo')`,
+     (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, resolution_due_at, created_origin)
+     VALUES (?, ?, ?, 'NPS', 'Reclamação NPS', ?, 'Pesquisa de satisfação', 'aberta', ?, ?, ?, 'Externo')`,
     [
       nps.clinic_id || null,
       nps.patient_name || 'Paciente NPS',
       nps.patient_phone || null,
       description,
       priority,
-      toMysqlDateTime(dueAt)
+      toMysqlDateTime(dueAt),
+      toMysqlDateTime(resolutionDueAt)
     ]
   );
   const protocol = `GRC-${new Date().getFullYear()}-${String(result.insertId).padStart(6, '0')}`;
   await pool.query('UPDATE complaints SET protocol = ? WHERE id = ?', [protocol, result.insertId]);
-  const [clinicRows] = await pool.query('SELECT coordinator_name FROM clinics WHERE id = ?', [nps.clinic_id || null]);
-  const coordinatorLabel = clinicRows[0]?.coordinator_name || 'Coordenador da unidade';
+  await pool.query(
+    'UPDATE complaints SET assigned_coordinator_user_id = ?, assigned_coordinator_name = ?, clinic_snapshot_name = ? WHERE id = ?',
+    [assignment.coordinatorUserId, assignment.coordinatorName, assignment.clinicSnapshotName, result.insertId]
+  );
+  const coordinatorLabel = assignment.coordinatorName || 'Coordenador da unidade';
   await pool.query(
     `UPDATE complaints
         SET forwarded_to_role = 'coordinator',
@@ -1829,6 +2251,29 @@ app.get('/clinics', authenticate, async (req, res) => {
   } catch (error) {
     console.error('[GET /clinics] Erro ao buscar clínicas:', error);
     return res.status(500).json({ error: 'Erro ao buscar clínicas' });
+  }
+});
+
+app.get('/public/clinics', async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      `SELECT
+         id,
+         name,
+         city,
+         state,
+         region,
+         coordinator_name,
+         active
+       FROM clinics
+       WHERE active = 1
+       ORDER BY name ASC`
+    );
+
+    res.json(rows);
+  } catch (error) {
+    console.error('[GET /public/clinics] Erro ao buscar clínicas públicas:', error);
+    res.status(500).json({ error: 'Erro ao buscar clínicas públicas.' });
   }
 });
 
@@ -2575,14 +3020,23 @@ app.post('/login', async (req, res) => {
       return res.status(403).json({ message: 'Usuário desabilitado. Procure o administrador.' });
     }
 
-    const validPassword = user.password === password || await bcrypt.compare(password, user.password);
+    let validPassword = false;
+
+    if (user.password === password) {
+      validPassword = true;
+      const migratedHash = await bcrypt.hash(password, 10);
+      await pool.query('UPDATE users SET password = ? WHERE id = ?', [migratedHash, user.id]);
+      user.password = migratedHash;
+    } else {
+      validPassword = await bcrypt.compare(password, user.password);
+    }
 
     if (!validPassword) {
       return res.status(401).json({ message: 'Senha inválida' });
     }
 
     const { password: _password, ...safeUser } = user;
-    const role = safeUser.role || 'operator';
+    const role = safeUser.role || 'viewer';
     let permissions = defaultPermissionsForRole(role);
 
     try {
@@ -2600,13 +3054,11 @@ app.post('/login', async (req, res) => {
       success: true,
       token,
       user: {
-        user: {
-       ...safeUser,
+        ...safeUser,
         role,
         permissions,
         clinicIds,
         mustChangePassword
-      }
       }
     });
 
@@ -2777,6 +3229,7 @@ app.post('/nps/public', async (req, res) => {
       comment,
       feedback_type,
       recommend_yes,
+      contact_share_allowed,
       referral_name,
       referral_phone,
       improvement_comment,
@@ -2796,6 +3249,41 @@ app.post('/nps/public', async (req, res) => {
     const normalizedPatientPhone = normalizeBrazilPhone(patient_phone);
     const normalizedReferralPhone = referral_phone ? normalizeBrazilPhone(referral_phone) : '';
     const npsProfile = inferNpsProfile(numericScore);
+    const requestIp = getRequestIp(req);
+
+    const [sameDayPhoneRows] = await pool.query(
+      `SELECT id, nps_protocol
+         FROM nps_responses
+        WHERE patient_phone = ?
+          AND DATE(created_at) = CURDATE()
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [normalizedPatientPhone]
+    );
+
+    if (sameDayPhoneRows.length) {
+      return res.status(409).json({
+        error: 'Já existe uma avaliação registrada hoje para este telefone.'
+      });
+    }
+
+    if (requestIp && requestIp !== 'ip-nao-informado') {
+      const [sameDayIpRows] = await pool.query(
+        `SELECT id, nps_protocol
+           FROM nps_responses
+          WHERE ip_address = ?
+            AND DATE(created_at) = CURDATE()
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [requestIp]
+      );
+
+      if (sameDayIpRows.length) {
+        return res.status(409).json({
+          error: 'Já recebemos uma avaliação deste dispositivo hoje. Tente novamente amanhã.'
+        });
+      }
+    }
 
     if (npsProfile === 'promotor' && recommend_yes && (!referral_name || !isCompleteBrazilPhone(referral_phone))) {
       return res.status(400).json({ error: 'Informe nome e telefone completo da indicação.' });
@@ -2825,11 +3313,16 @@ app.post('/nps/public', async (req, res) => {
       classification,
       npsProfile
     );
+    const [clinicRows] = await pool.query(
+      'SELECT name FROM clinics WHERE id = ? LIMIT 1',
+      [clinic_id]
+    );
+    const clinicName = clinicRows[0]?.name || 'Unidade não informada';
 
     const [npsInsert] = await pool.query(
       `INSERT INTO nps_responses
-       (clinic_id, patient_name, patient_phone, score, comment, feedback_type, nps_profile, recommend_yes, referral_name, referral_phone, improvement_comment, detractor_reasons, detractor_feedback, source)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (clinic_id, patient_name, patient_phone, score, comment, feedback_type, nps_profile, recommend_yes, contact_share_allowed, referral_name, referral_phone, improvement_comment, detractor_reasons, detractor_feedback, source, ip_address)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         clinic_id || null,
         patient_name || null,
@@ -2839,12 +3332,14 @@ app.post('/nps/public', async (req, res) => {
         classification,
         npsProfile,
         recommend_yes ? 1 : 0,
+        contact_share_allowed ? 1 : 0,
         referral_name || null,
         normalizedReferralPhone || null,
         improvement_comment || null,
         normalizedReasons.length ? JSON.stringify(normalizedReasons) : null,
         detractor_feedback || null,
-        'link_publico'
+        'link_publico',
+        requestIp || null
       ]
     );
 
@@ -2852,10 +3347,11 @@ app.post('/nps/public', async (req, res) => {
 
     if (shouldCreateManifestation) {
       const priority = priorityForNpsFeedback(numericScore, classification);
+      const resolutionDueAt = calculateResolutionDueAt();
       const [result] = await pool.query(
         `INSERT INTO complaints
-         (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, created_origin)
-         VALUES (?, ?, ?, 'NPS', ?, ?, 'Pesquisa de satisfaÃ§Ã£o', 'aberta', ?, ?, 'Externo')`,
+         (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, resolution_due_at, created_origin)
+         VALUES (?, ?, ?, 'NPS', ?, ?, 'Pesquisa de satisfaÃ§Ã£o', 'aberta', ?, ?, ?, 'Externo')`,
         [
           clinic_id || null,
           patient_name || 'Paciente NPS',
@@ -2863,7 +3359,8 @@ app.post('/nps/public', async (req, res) => {
           classification,
           narrative,
           priority,
-          toMysqlDateTime(calculateDueAt(priority))
+          toMysqlDateTime(calculateDueAt(priority)),
+          toMysqlDateTime(resolutionDueAt)
         ]
       );
       const protocol = `GRC-${new Date().getFullYear()}-${String(result.insertId).padStart(6, '0')}`;
@@ -2886,6 +3383,26 @@ app.post('/nps/public', async (req, res) => {
       role: 'externo'
     });
 
+    let linkedPatientRecord = null;
+
+    if (npsProfile === 'promotor' && contact_share_allowed) {
+      linkedPatientRecord = await createPromoterAgendaRecord({
+        npsId: npsInsert.insertId,
+        patientName: patient_name,
+        patientPhone: normalizedPatientPhone,
+        clinicName
+      });
+      await insertNpsLog(
+        npsInsert.insertId,
+        'agenda_compartilhada',
+        `Paciente autorizou compartilhar o contato com a agenda. Protocolo vinculado: ${linkedPatientRecord.protocol}.`,
+        {
+          name: 'Link público NPS',
+          role: 'externo'
+        }
+      );
+    }
+
     await sendWhatsappNotification({
       event: 'nps_protocol_patient',
       to: normalizedPatientPhone,
@@ -2893,6 +3410,13 @@ app.post('/nps/public', async (req, res) => {
       npsId: npsInsert.insertId,
       message: `Sua pesquisa de satisfacao foi registrada com o protocolo ${protocol}.`
     });
+
+    const duplicatePhones = await getMonthlyDuplicateNpsPhones(new Date());
+    const duplicatePhoneEntry = duplicatePhones.find((item) => item.patient_phone === normalizedPatientPhone);
+
+    if (duplicatePhoneEntry && Number(duplicatePhoneEntry.total) > 1) {
+      await alertDuplicateNpsPhone(normalizedPatientPhone, protocol, npsInsert.insertId);
+    }
 
     if (npsProfile === 'detrator') {
       await notifyClinicResponsibles(
@@ -2905,7 +3429,13 @@ app.post('/nps/public', async (req, res) => {
       );
     }
 
-    res.status(201).json({ message: 'Pesquisa NPS salva com sucesso.', protocol, npsId: npsInsert.insertId });
+    res.status(201).json({
+      message: 'Pesquisa NPS salva com sucesso.',
+      protocol,
+      npsId: npsInsert.insertId,
+      linkedPatientProtocol: linkedPatientRecord?.protocol || null,
+      linkedPatientInteractionId: linkedPatientRecord?.id || null
+    });
 
   } catch (error) {
     console.error(error);
@@ -2946,6 +3476,20 @@ app.get('/nps/responses', authenticate, async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao buscar pesquisas NPS.' });
+  }
+});
+
+app.get('/nps/duplicate-report', authenticate, async (req, res) => {
+  try {
+    if (!isAdminUser(req.user) && req.user?.role !== 'supervisor_crc') {
+      return res.status(403).json({ error: 'Apenas Supervisor do CRC, Administrador e Administrador Master podem visualizar este relatório.' });
+    }
+
+    const rows = await getMonthlyDuplicateNpsPhones(req.query?.month);
+    res.json(rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao gerar o relatório de telefones duplicados do NPS.' });
   }
 });
 
@@ -3030,6 +3574,38 @@ app.post('/nps/bulk-dispatch', authenticate, upload.single('file'), async (req, 
     if (req.file?.path) {
       fs.unlink(req.file.path, () => {});
     }
+  }
+});
+
+app.post('/reports/coordinator-delays/dispatch', authenticate, async (req, res) => {
+  try {
+    if (!isAdminUser(req.user) && req.user?.role !== 'supervisor_crc') {
+      return res.status(403).json({ error: 'Acesso restrito para o disparo de alertas por coordenador.' });
+    }
+
+    await dispatchCoordinatorDelayNotifications();
+    res.json({ message: 'Alertas de atraso por coordenador enviados com sucesso.' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao enviar alertas de atraso por coordenador.' });
+  }
+});
+
+app.post('/reports/coordinator-weekly/dispatch', authenticate, async (req, res) => {
+  try {
+    if (!isAdminUser(req.user) && req.user?.role !== 'supervisor_crc') {
+      return res.status(403).json({ error: 'Acesso restrito para o disparo do relatório semanal por coordenador.' });
+    }
+
+    const reports = await dispatchWeeklyCoordinatorReports();
+    res.json({
+      message: 'Relatórios semanais por coordenador enviados com sucesso.',
+      total: reports.length,
+      reports
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao enviar o relatório semanal por coordenador.' });
   }
 });
 
@@ -3293,6 +3869,7 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
     const normalizedPriority = hasFinancialValue ? 'alta' : normalizePriority(priority);
     const normalizedOrigin = normalizeCreatedOrigin(created_origin);
     const dueAt = calculateDueAt(normalizedPriority);
+    const resolutionDueAt = calculateResolutionDueAt();
 
     if (!req.user && normalizedOrigin !== 'Marketing') {
       return res.status(401).json({ error: 'Faça login para registrar protocolos internos.' });
@@ -3315,11 +3892,12 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
     const file_url = req.file
       ? `${publicBaseUrl}/uploads/${req.file.filename}`
       : null;
+    const assignment = await resolveCoordinatorAssignment(clinic_id);
 
     const [result] = await pool.query(
       `INSERT INTO complaints 
-      (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, attachment_url, status, priority, due_at, created_origin, financial_involved, financial_description, financial_amount)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'aberta', ?, ?, ?, ?, ?, ?)`,
+      (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, attachment_url, status, priority, due_at, resolution_due_at, created_origin, financial_involved, financial_description, financial_amount)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'aberta', ?, ?, ?, ?, ?, ?, ?)`,
       [
         clinic_id,
         patient_name,
@@ -3331,6 +3909,7 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
         file_url,
         normalizedPriority,
         toMysqlDateTime(dueAt),
+        toMysqlDateTime(resolutionDueAt),
         normalizedOrigin,
         hasFinancialValue ? 1 : 0,
         hasFinancialValue ? financial_description || null : null,
@@ -3340,8 +3919,11 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
 
     const protocol = `GRC-${new Date().getFullYear()}-${String(result.insertId).padStart(6, '0')}`;
     await pool.query('UPDATE complaints SET protocol = ? WHERE id = ?', [protocol, result.insertId]);
-    const [clinicRows] = await pool.query('SELECT coordinator_name FROM clinics WHERE id = ?', [clinic_id]);
-    const coordinatorLabel = clinicRows[0]?.coordinator_name || 'Coordenador da unidade';
+    await pool.query(
+      'UPDATE complaints SET assigned_coordinator_user_id = ?, assigned_coordinator_name = ?, clinic_snapshot_name = ? WHERE id = ?',
+      [assignment.coordinatorUserId, assignment.coordinatorName, assignment.clinicSnapshotName, result.insertId]
+    );
+    const coordinatorLabel = assignment.coordinatorName || 'Coordenador da unidade';
     await pool.query(
       `UPDATE complaints
           SET forwarded_to_role = 'coordinator',
@@ -3466,7 +4048,7 @@ app.post('/complaints/:id/evidences', authenticate, upload.single('file'), async
       return res.status(400).json({ error: 'Selecione um arquivo de evidÃªncia.' });
     }
 
-    const [complaints] = await pool.query('SELECT id FROM complaints WHERE id = ?', [id]);
+    const complaints = await getComplaintRows({ id }, req.user);
 
     if (!complaints.length) {
       return res.status(404).json({ error: 'ReclamaÃ§Ã£o nÃ£o encontrada' });
@@ -3515,7 +4097,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       first_attendance,
       forward_to_role
     } = req.body;
-    const [rows] = await pool.query('SELECT * FROM complaints WHERE id = ?', [id]);
+    const rows = await getComplaintRows({ id }, req.user);
 
     if (!rows.length) {
       return res.status(404).json({ error: 'Reclamacao nao encontrada' });
@@ -3619,6 +4201,14 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         return res.status(400).json({ error: 'Selecione o responsável para a tratativa.' });
       }
 
+      let assignment = null;
+      let forwardedLabel = allowedForwardRoles[forward_to_role];
+
+      if (forward_to_role === 'coordinator') {
+        assignment = await resolveCoordinatorAssignment(complaint.clinic_id);
+        forwardedLabel = complaint.assigned_coordinator_name || assignment.coordinatorName || allowedForwardRoles[forward_to_role];
+      }
+
       updates.push('first_attendance_at = COALESCE(first_attendance_at, NOW())');
       updates.push('first_attendance_by = COALESCE(first_attendance_by, ?)');
       values.push(actorName);
@@ -3628,13 +4218,23 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       updates.push('forwarded_to_role = ?');
       values.push(forward_to_role);
       updates.push('forwarded_to_label = ?');
-      values.push(allowedForwardRoles[forward_to_role]);
+      values.push(forwardedLabel);
       updates.push('forwarded_at = NOW()');
       updates.push('forwarded_by = ?');
       values.push(actorName);
+
+      if (forward_to_role === 'coordinator' && !complaint.assigned_coordinator_name) {
+        updates.push('assigned_coordinator_user_id = ?');
+        values.push(assignment?.coordinatorUserId || null);
+        updates.push('assigned_coordinator_name = ?');
+        values.push(assignment?.coordinatorName || forwardedLabel);
+        updates.push('clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)');
+        values.push(assignment?.clinicSnapshotName || null);
+      }
+
       logEntries.push({
         action: 'first_attendance_forwarded',
-        message: `Primeiro atendimento registrado. Deadline travado e protocolo enviado para ${allowedForwardRoles[forward_to_role]}.`
+        message: `Primeiro atendimento registrado. Deadline travado e protocolo enviado para ${forwardedLabel}.`
       });
     }
 
@@ -3771,13 +4371,12 @@ async function startServer() {
   }
 
   try {
-await ensureDatabaseSchema();
-await ensureDefaultAdminUser();
-await ensureDefaultClinics();
-await backfillComplaintProtocols();
-await backfillNpsProtocols();
-await backfillPatientProtocols();
-await backfillComplaintDeadlines();
+    await ensureDefaultClinics();
+    await backfillComplaintProtocols();
+    await backfillNpsProtocols();
+    await backfillPatientProtocols();
+    await backfillComplaintDeadlines();
+    await backfillComplaintAssignments();
     console.log('Backfills operacionais validados');
   } catch (error) {
     console.warn('Não foi possível executar os backfills:', error.message);
@@ -3786,6 +4385,18 @@ await backfillComplaintDeadlines();
   app.listen(PORT, () => {
   console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
 });
+
+  setTimeout(() => {
+    runScheduledCoordinatorReports().catch((jobError) => {
+      console.warn('NÃ£o foi possÃ­vel executar a rotina inicial de relatÃ³rios:', jobError.message);
+    });
+  }, 3000);
+
+  setInterval(() => {
+    runScheduledCoordinatorReports().catch((jobError) => {
+      console.warn('NÃ£o foi possÃ­vel executar a rotina programada de relatÃ³rios:', jobError.message);
+    });
+  }, 15 * 60 * 1000);
 
 }
 

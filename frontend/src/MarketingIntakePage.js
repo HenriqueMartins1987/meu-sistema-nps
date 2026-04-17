@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import api from './api';
-import logo from './assets/logo.png';
+import logo from './assets/logo2.png';
 import {
   brazilPhonePattern,
   brazilPhoneTitle,
@@ -27,6 +27,7 @@ const channelOptions = [
   { value: 'WhatsApp', label: 'WhatsApp' },
   { value: 'Email', label: 'Email' },
   { value: 'Telefone', label: 'Telefone' },
+  { value: 'Reclame Aqui', label: 'Reclame Aqui' },
   { value: 'Site', label: 'Site' },
   { value: 'Outro', label: 'Outro' }
 ];
@@ -70,7 +71,7 @@ function MarketingIntakePage() {
   const [savedProtocol, setSavedProtocol] = useState('');
 
   useEffect(() => {
-    api.get('/clinics')
+    api.get('/public/clinics')
       .then((res) => setClinics(Array.isArray(res.data) ? res.data : []))
       .catch(() => setError('Nao foi possivel carregar as clinicas.'));
   }, []);

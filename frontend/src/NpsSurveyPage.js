@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import api from './api';
-import logo from './assets/logo.png';
+import logo from './assets/logo2.png';
 import {
   brazilPhonePattern,
   brazilPhoneTitle,
@@ -25,6 +25,7 @@ const initialForm = {
   patient_phone: defaultBrazilPhone,
   score: null,
   recommend_yes: '',
+  contact_share_allowed: '',
   referral_name: '',
   referral_phone: defaultBrazilPhone,
   improvement_comment: '',
@@ -41,7 +42,7 @@ function NpsSurveyPage() {
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.get('/clinics')
+    api.get('/public/clinics')
       .then((res) => setClinics(Array.isArray(res.data) ? res.data : []))
       .catch(() => setError('Não foi possível carregar as clínicas.'));
   }, []);
@@ -77,6 +78,7 @@ function NpsSurveyPage() {
       ...prev,
       score,
       recommend_yes: score >= 9 ? prev.recommend_yes : '',
+      contact_share_allowed: score >= 9 ? prev.contact_share_allowed : '',
       referral_name: score >= 9 ? prev.referral_name : '',
       referral_phone: score >= 9 ? prev.referral_phone || defaultBrazilPhone : defaultBrazilPhone,
       improvement_comment: score >= 7 && score <= 8 ? prev.improvement_comment : '',
@@ -135,6 +137,7 @@ function NpsSurveyPage() {
         score: Number(form.score),
         feedback_type: feedbackType,
         recommend_yes: form.recommend_yes === 'sim',
+        contact_share_allowed: form.contact_share_allowed === 'sim',
         referral_name: form.referral_name,
         referral_phone: form.referral_phone,
         improvement_comment: form.improvement_comment,
@@ -143,7 +146,11 @@ function NpsSurveyPage() {
         comment: ''
       });
 
-      setFeedback(`Obrigado. Sua pesquisa foi registrada com sucesso. Protocolo: ${res.data?.protocol || 'em processamento'}.`);
+      const linkedAgendaMessage = res.data?.linkedPatientProtocol
+        ? ` Seu contato foi compartilhado com a agenda sob o protocolo ${res.data.linkedPatientProtocol}.`
+        : '';
+
+      setFeedback(`Obrigado. Sua pesquisa foi registrada com sucesso. Protocolo: ${res.data?.protocol || 'em processamento'}.${linkedAgendaMessage}`);
       setForm(initialForm);
     } catch (requestError) {
       setError(requestError.response?.data?.error || 'Não foi possível enviar a pesquisa NPS.');
@@ -284,6 +291,24 @@ function NpsSurveyPage() {
                   </label>
                 </div>
               )}
+
+              <div className="public-form-title">
+                <p className="eyebrow">Contato</p>
+                <h2>Autoriza compartilhar seu contato com nossa agenda?</h2>
+              </div>
+
+              <div className="segmented-choice">
+                {['sim', 'nao'].map((option) => (
+                  <button
+                    key={`share-${option}`}
+                    type="button"
+                    className={`segment-button ${form.contact_share_allowed === option ? 'active' : ''}`}
+                    onClick={() => updateForm('contact_share_allowed', option)}
+                  >
+                    {option === 'sim' ? 'Sim' : 'Não'}
+                  </button>
+                ))}
+              </div>
             </section>
           )}
 

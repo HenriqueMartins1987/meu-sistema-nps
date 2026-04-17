@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from './api';
-import logo from './assets/logo.png';
+import logo from './assets/logo2.png';
 import {
   accessProfiles,
   brazilPhonePattern,

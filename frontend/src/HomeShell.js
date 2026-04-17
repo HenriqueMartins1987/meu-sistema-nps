@@ -2,7 +2,7 @@ export { default } from './HomeShellFixed';
 /*
 import { useNavigate } from 'react-router-dom';
 import api from './api';
-import logo from './assets/logo.png';
+import logo from './assets/logo2.png';
 import { hasPermission, isAdmin, isMasterAdmin, readUser } from './constants';
 
 const notificationTypeLabels = {

@@ -36,6 +36,7 @@ export const channels = [
   { value: 'google', label: 'Google' },
   { value: 'facebook', label: 'Facebook' },
   { value: 'instagram', label: 'Instagram' },
+  { value: 'reclame_aqui', label: 'Reclame Aqui' },
   { value: 'nps', label: 'NPS' },
   { value: 'presencial', label: 'Presencial' },
   { value: 'outros', label: 'Outros' }
@@ -115,7 +116,13 @@ export function labelFrom(list, value) {
 
 export function readUser() {
   try {
-    return JSON.parse(localStorage.getItem('user')) || null;
+    const parsed = JSON.parse(localStorage.getItem('user')) || null;
+
+    if (parsed?.user && !parsed?.email && !parsed?.id) {
+      return parsed.user;
+    }
+
+    return parsed;
   } catch (error) {
     return null;
   }
