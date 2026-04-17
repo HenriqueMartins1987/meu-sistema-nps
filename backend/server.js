@@ -2601,12 +2601,12 @@ app.post('/login', async (req, res) => {
       token,
       user: {
         user: {
-  ...safeUser,
-  role,
-  permissions,
-  clinicIds,
-  mustChangePassword
-}
+       ...safeUser,
+        role,
+        permissions,
+        clinicIds,
+        mustChangePassword
+      }
       }
     });
 
