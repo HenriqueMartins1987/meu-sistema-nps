@@ -38,7 +38,16 @@ fs.mkdirSync(uploadDir, { recursive: true });
 // ============================================
 // MIDDLEWARES
 // ============================================
-app.use(cors());
+app.use(cors({
+  origin: [
+    'http://localhost:3000',
+    'https://meu-sistema-nps.vercel.app'
+  ],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: false
+}));
+
 app.use(express.json());
 app.use('/uploads', express.static(uploadDir));
 
@@ -760,6 +769,29 @@ async function ensureDatabaseSchema() {
 }
 
 async function ensureDefaultAdminUser() {
+  async function ensureDefaultClinics() {
+  const [rows] = await pool.query('SELECT COUNT(*) AS total FROM clinics');
+  const total = Number(rows[0]?.total || 0);
+
+  if (total > 0) {
+    return;
+  }
+
+  await pool.query(
+    `INSERT INTO clinics (name, city, state, region, coordinator_name, active)
+     VALUES
+     (?, ?, ?, ?, ?, 1),
+     (?, ?, ?, ?, ?, 1),
+     (?, ?, ?, ?, ?, 1)`,
+    [
+      'Clínica Centro', 'Goiânia', 'GO', 'Centro-Oeste', 'Coordenação Centro',
+      'Clínica Trindade', 'Trindade', 'GO', 'Centro-Oeste', 'Coordenação Trindade',
+      'Clínica Aparecida', 'Aparecida de Goiânia', 'GO', 'Centro-Oeste', 'Coordenação Aparecida'
+    ]
+  );
+
+  console.log('Clínicas padrão inseridas com sucesso.');
+}
   const passwordHash = await bcrypt.hash(defaultAdminPassword, 10);
 
   await pool.query(
@@ -1284,8 +1316,65 @@ async function notifyOperationalComplaintTeam(title, message, link, payload = nu
 async function getUserClinicIds(userId) {
   if (!userId) return [];
 
-  const [rows] = await pool.query('SELECT clinic_id FROM user_clinics WHERE user_id = ?', [userId]);
-  return rows.map((row) => row.clinic_id);
+  const [rows] = await pool.query(
+    'SELECT clinic_id FROM user_clinics WHERE user_id = ?',
+    [userId]
+  );
+
+  return rows
+    .map((row) => Number(row.clinic_id))
+    .filter((value) => Number.isInteger(value) && value > 0);
+}
+async function getClinicsForUser(user) {
+  if (!user) return [];
+
+  if (isAdminUser(user)) {
+    const [rows] = await pool.query(
+      `SELECT
+         id,
+         name,
+         city,
+         state,
+         region,
+         coordinator_name,
+         active,
+         created_at,
+         updated_at
+       FROM clinics
+       WHERE active = 1
+       ORDER BY name ASC`
+    );
+
+    return rows;
+  }
+
+  const clinicIds = await getUserClinicIds(user.id);
+
+  if (!clinicIds.length) {
+    return [];
+  }
+
+  const placeholders = clinicIds.map(() => '?').join(',');
+
+  const [rows] = await pool.query(
+    `SELECT
+       id,
+       name,
+       city,
+       state,
+       region,
+       coordinator_name,
+       active,
+       created_at,
+       updated_at
+     FROM clinics
+     WHERE active = 1
+       AND id IN (${placeholders})
+     ORDER BY name ASC`,
+    clinicIds
+  );
+
+  return rows;
 }
 
 async function notifyComplaintCreated(complaintId, protocol) {
@@ -1719,13 +1808,27 @@ app.get('/', (req, res) => {
 // ============================================
 // CLINICS
 // ============================================
-app.get('/clinics', async (req, res) => {
+app.get('/clinics', authenticate, async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT * FROM clinics');
-    res.json(rows);
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.set('Surrogate-Control', 'no-store');
+
+    const rows = await getClinicsForUser(req.user);
+
+    if (!rows.length) {
+      console.warn('[GET /clinics] Nenhuma clínica encontrada.', {
+        userId: req.user?.id,
+        email: req.user?.email,
+        role: req.user?.role
+      });
+    }
+
+    return res.status(200).json(rows);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ error: 'Erro ao buscar clínicas' });
+    console.error('[GET /clinics] Erro ao buscar clínicas:', error);
+    return res.status(500).json({ error: 'Erro ao buscar clínicas' });
   }
 });
 
@@ -2497,11 +2600,13 @@ app.post('/login', async (req, res) => {
       success: true,
       token,
       user: {
-        ...safeUser,
-        role,
-        permissions,
-        clinicIds,
-        mustChangePassword
+        user: {
+  ...safeUser,
+  role,
+  permissions,
+  clinicIds,
+  mustChangePassword
+}
       }
     });
 
@@ -3666,10 +3771,13 @@ async function startServer() {
   }
 
   try {
-    await backfillComplaintProtocols();
-    await backfillNpsProtocols();
-    await backfillPatientProtocols();
-    await backfillComplaintDeadlines();
+await ensureDatabaseSchema();
+await ensureDefaultAdminUser();
+await ensureDefaultClinics();
+await backfillComplaintProtocols();
+await backfillNpsProtocols();
+await backfillPatientProtocols();
+await backfillComplaintDeadlines();
     console.log('Backfills operacionais validados');
   } catch (error) {
     console.warn('Não foi possível executar os backfills:', error.message);
