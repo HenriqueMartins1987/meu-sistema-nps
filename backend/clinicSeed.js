@@ -1,0 +1,63 @@
+const clinicSeed = [
+  { name: 'Águas Lindas', city: 'Águas Lindas de Goiás', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Anápolis 1', city: 'Anápolis', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Anápolis 2', city: 'Anápolis', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Barreiras', city: 'Barreiras', state: 'BA', region: 'Nordeste', coordinator_name: null, active: 1 },
+  { name: 'Campina Grande', city: 'Campina Grande', state: 'PB', region: 'Nordeste', coordinator_name: null, active: 1 },
+  { name: 'Canaã', city: 'Goiânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Castelo Branco', city: 'Goiânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Catalão', city: 'Catalão', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Ceilândia', city: 'Brasília', state: 'DF', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Formosa', city: 'Formosa', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Garavelo', city: 'Aparecida de Goiânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Goiana', city: 'Goiana', state: 'PE', region: 'Nordeste', coordinator_name: null, active: 1 },
+  { name: 'Goiânia 3', city: 'Goiânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Goiânia I', city: 'Goiânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Goiânia II', city: 'Goiânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Goianira', city: 'Goianira', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Gold Bueno', city: 'Goiânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Independência', city: 'Goiânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Inhumas', city: 'Inhumas', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Itumbiara', city: 'Itumbiara', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Jaciara', city: 'Jaciara', state: 'MT', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Jardim Ingá', city: 'Luziânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Jataí', city: 'Jataí', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'João Pessoa', city: 'João Pessoa', state: 'PB', region: 'Nordeste', coordinator_name: null, active: 1 },
+  { name: 'Luziânia', city: 'Luziânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Madre Germano', city: 'Goiânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Mangalô', city: 'Goiânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Morrinhos', city: 'Morrinhos', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Novo Gama', city: 'Novo Gama', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Núcleo', city: 'Brasília', state: 'DF', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Paracatu', city: 'Paracatu', state: 'MG', region: 'Sudeste', coordinator_name: null, active: 1 },
+  { name: 'Paranoá', city: 'Brasília', state: 'DF', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Parque Anhanguera', city: 'Goiânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Pernambuco', city: 'Recife', state: 'PE', region: 'Nordeste', coordinator_name: null, active: 1 },
+  { name: 'Planaltina', city: 'Planaltina', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Plano Piloto', city: 'Brasília', state: 'DF', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Porto Velho', city: 'Porto Velho', state: 'RO', region: 'Norte', coordinator_name: null, active: 1 },
+  { name: 'Quirinópolis', city: 'Quirinópolis', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Rio Verde', city: 'Rio Verde', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Rondonópolis', city: 'Rondonópolis', state: 'MT', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Santa Rita', city: 'Santa Rita', state: 'MA', region: 'Nordeste', coordinator_name: null, active: 1 },
+  { name: 'Santo Antão', city: 'Vitória de Santo Antão', state: 'PE', region: 'Nordeste', coordinator_name: null, active: 1 },
+  { name: 'Santo Antônio', city: 'Santo Antônio de Goiás', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Senador Canedo', city: 'Senador Canedo', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Taguatinga', city: 'Brasília', state: 'DF', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Trindade Centro', city: 'Trindade', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Trindade Maysa', city: 'Trindade', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Vila Concórdia', city: 'Goiânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Vila Nova', city: 'Goiânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Villa Brasília', city: 'Aparecida de Goiânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 }
+];
+
+const legacyDefaultClinicNames = [
+  'Clínica Centro',
+  'Clínica Trindade',
+  'Clínica Aparecida'
+];
+
+module.exports = {
+  clinicSeed,
+  legacyDefaultClinicNames
+};

@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { clearSession, readToken } from './session';
 
 const isBrowser = typeof window !== 'undefined';
 const isLocalHost = isBrowser && ['localhost', '127.0.0.1'].includes(window.location.hostname);
@@ -12,7 +13,7 @@ const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
+  const token = readToken();
 
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
@@ -20,6 +21,17 @@ api.interceptors.request.use((config) => {
 
   return config;
 });
+
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      clearSession();
+    }
+
+    return Promise.reject(error);
+  }
+);
 
 export const apiBaseUrl = api.defaults.baseURL;
 

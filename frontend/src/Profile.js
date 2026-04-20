@@ -9,6 +9,7 @@ import {
   isCompleteBrazilPhone,
   readUser
 } from './constants';
+import { updateStoredUser } from './session';
 
 function Profile() {
   const navigate = useNavigate();
@@ -44,7 +45,7 @@ function Profile() {
     try {
       const res = await api.patch('/profile', form);
       const updatedUser = { ...user, ...(res.data?.user || form) };
-      localStorage.setItem('user', JSON.stringify(updatedUser));
+      updateStoredUser(updatedUser);
       setFeedback('Dados atualizados com sucesso.');
       return;
     } catch (error) {
@@ -67,7 +68,7 @@ function Profile() {
         new_password: passwordForm.new_password
       });
       const updatedUser = { ...user, mustChangePassword: false };
-      localStorage.setItem('user', JSON.stringify(updatedUser));
+      updateStoredUser(updatedUser);
       setPasswordForm({ current_password: '', new_password: '', confirm_password: '' });
       setFeedback('Senha alterada com sucesso.');
     } catch (error) {

@@ -14,6 +14,7 @@ const fs = require('fs');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
 const axios = require('axios');
+const { clinicSeed, legacyDefaultClinicNames } = require('./clinicSeed');
 
 const app = express();
 
@@ -302,6 +303,49 @@ function isCompleteBrazilPhone(value) {
   return digits.length === 13 && digits.startsWith('55');
 }
 
+function decodePossiblyLatin1Text(value) {
+  const text = String(value || '');
+
+  if (!text) return '';
+  if (!/[ÃÂ]/.test(text)) return text;
+
+  try {
+    return Buffer.from(text, 'latin1').toString('utf8');
+  } catch (error) {
+    return text;
+  }
+}
+
+function normalizeClinicLookupValue(value) {
+  return decodePossiblyLatin1Text(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+function buildClinicLookupKey(clinic) {
+  return [
+    normalizeClinicLookupValue(clinic?.name),
+    normalizeClinicLookupValue(clinic?.city),
+    normalizeClinicLookupValue(clinic?.state)
+  ].join('|');
+}
+
+function buildClinicCatalogCode(clinic) {
+  return [
+    normalizeClinicLookupValue(clinic?.name),
+    normalizeClinicLookupValue(clinic?.city),
+    normalizeClinicLookupValue(clinic?.state)
+  ]
+    .filter(Boolean)
+    .join('-')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-')
+    .slice(0, 220);
+}
+
 function splitCsvLine(line) {
   const values = [];
   let current = '';
@@ -526,6 +570,7 @@ async function ensureDatabaseSchema() {
   await pool.query('ALTER TABLE users MODIFY COLUMN password VARCHAR(255) NOT NULL');
 
   await ensureColumn('clinics', 'coordinator_name', 'VARCHAR(160) NULL');
+  await ensureColumn('clinics', 'catalog_code', 'VARCHAR(220) NULL');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_clinics (
@@ -824,6 +869,152 @@ async function ensureDefaultClinics() {
   );
 
   console.log('Clínicas padrão inseridas com sucesso.');
+}
+
+async function syncClinicCatalog() {
+  const [rows] = await pool.query(
+    `SELECT
+       id,
+       name,
+       city,
+       state,
+       region,
+       coordinator_name,
+       active,
+       catalog_code
+     FROM clinics`
+  );
+  const clinicsByCatalogCode = new Map();
+  const clinicsByLookupKey = new Map();
+  const clinicsByNormalizedName = new Map();
+  const normalizedLegacyNames = new Set(legacyDefaultClinicNames.map((name) => normalizeClinicLookupValue(name)));
+  const seedCatalogCodes = new Set(clinicSeed.map((clinic) => buildClinicCatalogCode(clinic)));
+
+  rows.forEach((clinic) => {
+    const catalogCode = String(clinic.catalog_code || '').trim();
+    const lookupKey = buildClinicLookupKey(clinic);
+    const normalizedName = normalizeClinicLookupValue(clinic.name);
+
+    if (catalogCode) {
+      clinicsByCatalogCode.set(catalogCode, clinic);
+    }
+
+    if (lookupKey) {
+      clinicsByLookupKey.set(lookupKey, clinic);
+    }
+
+    if (normalizedName) {
+      const bucket = clinicsByNormalizedName.get(normalizedName) || [];
+      bucket.push(clinic);
+      clinicsByNormalizedName.set(normalizedName, bucket);
+    }
+  });
+
+  let inserted = 0;
+  let updated = 0;
+
+  for (const clinic of clinicSeed) {
+    const catalogCode = buildClinicCatalogCode(clinic);
+    const lookupKey = buildClinicLookupKey(clinic);
+    const normalizedName = normalizeClinicLookupValue(clinic.name);
+    const namedMatches = clinicsByNormalizedName.get(normalizedName) || [];
+    const existingClinic = clinicsByCatalogCode.get(catalogCode)
+      || clinicsByLookupKey.get(lookupKey)
+      || (namedMatches.length === 1 ? namedMatches[0] : null);
+
+    if (existingClinic) {
+      await pool.query(
+        `UPDATE clinics
+            SET catalog_code = ?,
+                name = ?,
+                city = ?,
+                state = ?,
+                region = ?,
+                coordinator_name = COALESCE(NULLIF(coordinator_name, ''), ?),
+                active = 1
+          WHERE id = ?`,
+        [
+          catalogCode,
+          clinic.name,
+          clinic.city,
+          clinic.state,
+          clinic.region,
+          clinic.coordinator_name || null,
+          existingClinic.id
+        ]
+      );
+      updated += 1;
+      clinicsByCatalogCode.set(catalogCode, { ...existingClinic, ...clinic, catalog_code: catalogCode, active: 1 });
+      clinicsByLookupKey.set(lookupKey, { ...existingClinic, ...clinic, catalog_code: catalogCode, active: 1 });
+      clinicsByNormalizedName.set(normalizedName, [{ ...existingClinic, ...clinic, catalog_code: catalogCode, active: 1 }]);
+      continue;
+    }
+
+    const [result] = await pool.query(
+      `INSERT INTO clinics (catalog_code, name, city, state, region, coordinator_name, active)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        catalogCode,
+        clinic.name,
+        clinic.city,
+        clinic.state,
+        clinic.region,
+        clinic.coordinator_name || null,
+        Number(clinic.active ?? 1)
+      ]
+    );
+
+    inserted += 1;
+    const insertedClinic = { id: result.insertId, ...clinic, catalog_code: catalogCode };
+    clinicsByCatalogCode.set(catalogCode, insertedClinic);
+    clinicsByLookupKey.set(lookupKey, insertedClinic);
+    clinicsByNormalizedName.set(normalizedName, [...namedMatches, insertedClinic]);
+  }
+
+  const legacyClinicIds = rows
+    .filter((clinic) => normalizedLegacyNames.has(normalizeClinicLookupValue(clinic.name)))
+    .map((clinic) => clinic.id);
+
+  if (legacyClinicIds.length) {
+    const placeholders = legacyClinicIds.map(() => '?').join(',');
+    await pool.query(
+      `UPDATE clinics
+          SET active = 0
+        WHERE id IN (${placeholders})`,
+      legacyClinicIds
+    );
+  }
+
+  const staleCatalogClinicIds = rows
+    .filter((clinic) => {
+      const normalizedName = normalizeClinicLookupValue(clinic.name);
+
+      if (!normalizedName || normalizedLegacyNames.has(normalizedName)) {
+        return false;
+      }
+
+      if (!clinicsByNormalizedName.has(normalizedName)) {
+        return false;
+      }
+
+      const hasSeedSibling = (clinicsByNormalizedName.get(normalizedName) || [])
+        .some((item) => seedCatalogCodes.has(String(item.catalog_code || '')));
+
+      return hasSeedSibling && !seedCatalogCodes.has(String(clinic.catalog_code || ''));
+    })
+    .map((clinic) => clinic.id);
+
+  if (staleCatalogClinicIds.length) {
+    const placeholders = staleCatalogClinicIds.map(() => '?').join(',');
+    await pool.query(
+      `UPDATE clinics
+          SET active = 0
+        WHERE id IN (${placeholders})`,
+      staleCatalogClinicIds
+    );
+  }
+
+  console.log(`Clínicas sincronizadas: ${inserted} novas e ${updated} atualizadas.`);
 }
 
 async function ensureDefaultAdminUser() {
@@ -2256,6 +2447,11 @@ app.get('/clinics', authenticate, async (req, res) => {
 
 app.get('/public/clinics', async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.set('Surrogate-Control', 'no-store');
+
     const [rows] = await pool.query(
       `SELECT
          id,
@@ -4372,6 +4568,7 @@ async function startServer() {
 
   try {
     await ensureDefaultClinics();
+    await syncClinicCatalog();
     await backfillComplaintProtocols();
     await backfillNpsProtocols();
     await backfillPatientProtocols();

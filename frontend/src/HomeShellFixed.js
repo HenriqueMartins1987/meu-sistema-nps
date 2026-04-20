@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from './api';
 import logo from './assets/logo2.png';
 import { hasPermission, isAdmin, isMasterAdmin, readUser } from './constants';
+import { clearSession, updateStoredUser } from './session';
 
 const notificationTypeLabels = {
   complaint_assigned: 'Protocolo',
@@ -390,7 +391,7 @@ function HomeShellFixed() {
       );
 
       const updatedUser = { ...(user || {}), mustChangePassword: false };
-      localStorage.setItem('user', JSON.stringify(updatedUser));
+      updateStoredUser(updatedUser);
       setNotificationGroups((prev) => ({
         unread: prev.unread.filter((notification) => notification.type !== 'password_reset'),
         read: prev.read
@@ -433,8 +434,7 @@ function HomeShellFixed() {
             <button
               className="outline-action"
               onClick={() => {
-                localStorage.removeItem('token');
-                localStorage.removeItem('user');
+                clearSession();
                 navigate('/');
               }}
             >

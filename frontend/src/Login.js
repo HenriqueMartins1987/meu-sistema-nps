@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from './api';
 import logo from './assets/logo2.png';
+import { saveSession } from './session';
 
 const experienceModules = [
   {
@@ -44,6 +45,7 @@ function Login() {
     [activeModule]
   );
   const redirectPath = location.state?.from || '/home';
+  const timedOut = location.state?.reason === 'idle_timeout';
 
   const handleLogin = async (event) => {
     event.preventDefault();
@@ -58,8 +60,7 @@ function Login() {
       });
 
       if (res.data.token || res.data.success) {
-        localStorage.setItem('token', res.data.token || '');
-        localStorage.setItem('user', JSON.stringify(res.data.user || { email, role: 'viewer', permissions: [] }));
+        saveSession(res.data.token || '', res.data.user || { email, role: 'viewer', permissions: [] });
         navigate(redirectPath, { replace: true });
         return;
       }
@@ -127,6 +128,10 @@ function Login() {
 
           <h2>Login</h2>
           <p>Entre para acompanhar e analisar a experiência do cliente com rastreabilidade.</p>
+
+          {timedOut && !error && (
+            <p className="form-feedback">Sua sessão expirou após 20 minutos sem atividade. Faça login novamente.</p>
+          )}
 
           <label className="login-field">
             E-mail corporativo
