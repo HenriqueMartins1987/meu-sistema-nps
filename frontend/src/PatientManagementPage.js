@@ -463,7 +463,7 @@ function PatientManagementPage() {
             <p>Acompanhe confirmações, agendamentos, reagendamentos, cancelamentos e o responsável pela última tratativa.</p>
           </div>
 
-          <div className="heading-actions">
+          <div className="heading-actions patient-dashboard-actions">
             <button className="outline-action" onClick={() => navigate('/pacientes')}>Gestão do Paciente</button>
             <button className="outline-action" onClick={() => navigate('/pacientes/cadastro')}>Cadastrar Paciente</button>
             <button className="outline-action" onClick={() => navigate('/home')}>Home</button>

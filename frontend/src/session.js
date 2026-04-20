@@ -20,6 +20,13 @@ export function touchSessionActivity() {
   localStorage.setItem(LAST_ACTIVITY_KEY, String(Date.now()));
 }
 
+export function readSessionLastActivityAt() {
+  if (!canUseStorage()) return 0;
+
+  const lastActivityAt = Number(localStorage.getItem(LAST_ACTIVITY_KEY) || 0);
+  return Number.isFinite(lastActivityAt) && lastActivityAt > 0 ? lastActivityAt : 0;
+}
+
 export function saveSession(token, user) {
   if (!canUseStorage()) return;
   localStorage.setItem(TOKEN_KEY, token || '');
@@ -40,6 +47,28 @@ export function clearSession() {
   localStorage.removeItem(LAST_ACTIVITY_KEY);
 }
 
+export function getRemainingSessionMs() {
+  const token = readToken();
+  const user = readUser();
+
+  if (!token || !(user?.id || user?.email)) {
+    return 0;
+  }
+
+  if (!canUseStorage()) {
+    return SESSION_IDLE_LIMIT_MS;
+  }
+
+  const lastActivityAt = readSessionLastActivityAt();
+
+  if (!lastActivityAt) {
+    touchSessionActivity();
+    return SESSION_IDLE_LIMIT_MS;
+  }
+
+  return Math.max(0, SESSION_IDLE_LIMIT_MS - (Date.now() - lastActivityAt));
+}
+
 export function hasActiveSession() {
   const token = readToken();
   const user = readUser();
@@ -52,7 +81,7 @@ export function hasActiveSession() {
     return true;
   }
 
-  const lastActivityAt = Number(localStorage.getItem(LAST_ACTIVITY_KEY) || 0);
+  const lastActivityAt = readSessionLastActivityAt();
 
   if (!lastActivityAt) {
     touchSessionActivity();

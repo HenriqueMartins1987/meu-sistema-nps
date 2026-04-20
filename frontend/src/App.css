@@ -91,12 +91,12 @@ a {
 .login-brand-logo {
   width: 260px;
   max-width: 82%;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 242, 234, 0.96));
-  border: 1px solid rgba(183, 138, 79, 0.22);
+  background: linear-gradient(180deg, rgba(34, 37, 42, 0.98), rgba(14, 16, 19, 0.98));
+  border: 1px solid rgba(199, 154, 90, 0.3);
   border-radius: 8px;
   padding: 16px;
   box-shadow: var(--shadow-lg);
-  filter: brightness(1.08) contrast(1.04);
+  filter: brightness(1.16) contrast(1.06);
 }
 
 .login-brand h1,
@@ -248,12 +248,12 @@ a {
   width: 210px;
   max-width: 100%;
   display: block;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 242, 234, 0.96));
-  border: 1px solid rgba(183, 138, 79, 0.2);
+  background: linear-gradient(180deg, rgba(34, 37, 42, 0.98), rgba(14, 16, 19, 0.98));
+  border: 1px solid rgba(199, 154, 90, 0.28);
   border-radius: 8px;
   padding: 10px 12px;
   box-shadow: var(--shadow-sm);
-  filter: brightness(1.08) contrast(1.04);
+  filter: brightness(1.16) contrast(1.06);
 }
 
 .system-chip {
@@ -507,8 +507,11 @@ a {
 
 .register-heading img {
   width: 100%;
-  background: #fff;
+  background: linear-gradient(180deg, rgba(34, 37, 42, 0.98), rgba(14, 16, 19, 0.98));
+  border: 1px solid rgba(199, 154, 90, 0.28);
   border-radius: 8px;
+  box-shadow: var(--shadow-sm);
+  filter: brightness(1.16) contrast(1.06);
 }
 
 .register-heading h1 {
@@ -568,17 +571,17 @@ a {
   padding: 14px 16px;
   position: sticky;
   top: 16px;
-  z-index: 10;
+  z-index: 22;
   backdrop-filter: blur(14px);
 }
 
 .brand-mark img {
   width: 190px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 242, 234, 0.96));
-  border: 1px solid rgba(183, 138, 79, 0.2);
+  background: linear-gradient(180deg, rgba(34, 37, 42, 0.98), rgba(14, 16, 19, 0.98));
+  border: 1px solid rgba(199, 154, 90, 0.28);
   border-radius: 8px;
   padding: 8px 12px;
-  filter: brightness(1.08) contrast(1.04);
+  filter: brightness(1.16) contrast(1.06);
 }
 
 .top-actions,
@@ -1223,7 +1226,7 @@ a {
   box-shadow: var(--shadow-sm);
   position: sticky;
   top: 16px;
-  z-index: 9;
+  z-index: 18;
   backdrop-filter: blur(14px);
 }
 
@@ -1440,6 +1443,10 @@ a {
   border-radius: 8px;
   padding: 24px;
   box-shadow: var(--shadow-md);
+  position: sticky;
+  top: 126px;
+  z-index: 16;
+  backdrop-filter: blur(12px);
 }
 
 .dashboard-filter-heading {
@@ -2810,6 +2817,17 @@ a {
   box-shadow: var(--shadow-md);
 }
 
+.patient-dashboard-actions {
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.patient-dashboard-actions .outline-action {
+  min-width: 170px;
+  white-space: nowrap;
+}
+
 .patient-dashboard-kpis .kpi-card {
   min-height: 142px;
 }
@@ -2886,6 +2904,77 @@ a {
   width: min(780px, 100%);
   max-height: min(88vh, 880px);
   overflow: auto;
+}
+
+.session-countdown {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 40;
+  min-width: 198px;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid rgba(199, 154, 90, 0.28);
+  border-radius: 8px;
+  background: rgba(21, 24, 29, 0.94);
+  color: #fff;
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(14px);
+}
+
+.session-countdown.warning {
+  border-color: rgba(196, 69, 54, 0.36);
+  background: rgba(76, 21, 18, 0.95);
+}
+
+.session-countdown-clock {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 50%;
+}
+
+.session-countdown-clock::before,
+.session-countdown-clock::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 50%;
+  width: 2px;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 999px;
+  transform-origin: bottom center;
+}
+
+.session-countdown-clock::before {
+  height: 5px;
+  transform: translateX(-50%) rotate(0deg);
+}
+
+.session-countdown-clock::after {
+  height: 7px;
+  transform: translateX(-50%) rotate(54deg);
+}
+
+.session-countdown-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.session-countdown-copy strong {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.session-countdown-copy span {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.78);
 }
 
 .public-page {
@@ -3239,6 +3328,20 @@ a {
     grid-column: auto;
   }
 
+  .dashboard-filter-panel {
+    position: static;
+  }
+
+  .patient-dashboard-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .patient-dashboard-actions .outline-action {
+    min-width: 0;
+  }
+
   .login-card-header {
     flex-direction: column;
   }
@@ -3319,5 +3422,13 @@ a {
 
   .score-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .session-countdown {
+    left: 20px;
+    right: 20px;
+    bottom: 20px;
+    min-width: 0;
+    justify-content: center;
   }
 }
