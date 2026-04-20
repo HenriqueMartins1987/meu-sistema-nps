@@ -91,11 +91,12 @@ a {
 .login-brand-logo {
   width: 260px;
   max-width: 82%;
-  background: #050507;
-  border: 1px solid rgba(183, 138, 79, 0.36);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 242, 234, 0.96));
+  border: 1px solid rgba(183, 138, 79, 0.22);
   border-radius: 8px;
   padding: 16px;
   box-shadow: var(--shadow-lg);
+  filter: brightness(1.08) contrast(1.04);
 }
 
 .login-brand h1,
@@ -247,11 +248,12 @@ a {
   width: 210px;
   max-width: 100%;
   display: block;
-  background: #050507;
-  border: 1px solid rgba(183, 138, 79, 0.28);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 242, 234, 0.96));
+  border: 1px solid rgba(183, 138, 79, 0.2);
   border-radius: 8px;
   padding: 10px 12px;
   box-shadow: var(--shadow-sm);
+  filter: brightness(1.08) contrast(1.04);
 }
 
 .system-chip {
@@ -572,10 +574,11 @@ a {
 
 .brand-mark img {
   width: 190px;
-  background: #050507;
-  border: 1px solid rgba(183, 138, 79, 0.28);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 242, 234, 0.96));
+  border: 1px solid rgba(183, 138, 79, 0.2);
   border-radius: 8px;
   padding: 8px 12px;
+  filter: brightness(1.08) contrast(1.04);
 }
 
 .top-actions,
@@ -2790,6 +2793,30 @@ a {
 .patient-dashboard-grid {
   width: min(1220px, 100%);
   margin: 0 auto 18px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+.patient-dashboard-grid .chart-card {
+  min-height: 360px;
+}
+
+.patient-dashboard-grid .chart-box {
+  height: 300px;
+}
+
+.patient-dashboard-panel,
+.patient-dashboard-base {
+  box-shadow: var(--shadow-md);
+}
+
+.patient-dashboard-kpis .kpi-card {
+  min-height: 142px;
+}
+
+.patient-dashboard-table td,
+.patient-dashboard-table th {
+  text-align: left;
 }
 
 .compact-action {

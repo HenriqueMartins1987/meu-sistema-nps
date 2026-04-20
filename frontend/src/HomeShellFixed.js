@@ -17,6 +17,29 @@ const notificationTypeLabels = {
   nps_duplicate_phone: 'Alerta NPS'
 };
 
+const notificationPayloadLabels = {
+  protocol: 'Protocolo',
+  complaintId: 'Código da reclamação',
+  npsId: 'Código da pesquisa NPS',
+  interactionId: 'Código do atendimento',
+  patientName: 'Paciente',
+  patient_name: 'Paciente',
+  clinicName: 'Clínica',
+  clinic_name: 'Clínica',
+  coordinatorName: 'Coordenador',
+  coordinator_name: 'Coordenador',
+  actorName: 'Usuário',
+  actor_name: 'Usuário',
+  score: 'Nota',
+  source: 'Origem',
+  phone: 'Telefone',
+  whatsapp: 'WhatsApp',
+  email: 'E-mail',
+  reason: 'Motivo',
+  status: 'Status',
+  role: 'Perfil'
+};
+
 function parseNotificationPayload(payload) {
   if (!payload) return null;
   if (typeof payload === 'object') return payload;
@@ -58,6 +81,43 @@ function notificationSummary(notification) {
   return truncateText(notification.message || notification.title);
 }
 
+function formatNotificationPayloadValue(value) {
+  if (value === null || value === undefined || value === '') return 'Não informado';
+  if (Array.isArray(value)) return value.join(', ');
+  if (typeof value === 'boolean') return value ? 'Sim' : 'Não';
+  return String(value);
+}
+
+function formatNotificationPayloadKey(key) {
+  if (notificationPayloadLabels[key]) {
+    return notificationPayloadLabels[key];
+  }
+
+  return String(key || '')
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^./, (letter) => letter.toUpperCase());
+}
+
+function buildNotificationDetails(notification) {
+  const payload = parseNotificationPayload(notification?.payload);
+
+  if (!payload || typeof payload !== 'object') {
+    return [];
+  }
+
+  const hiddenKeys = new Set(['link']);
+
+  return Object.entries(payload)
+    .filter(([key, value]) => !hiddenKeys.has(key) && value !== null && value !== undefined && value !== '')
+    .map(([key, value]) => ({
+      label: formatNotificationPayloadKey(key),
+      value: formatNotificationPayloadValue(value)
+    }));
+}
+
 function formatDateTime(value) {
   if (!value) return 'Não informado';
 
@@ -90,6 +150,7 @@ function HomeShellFixed() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationTab, setNotificationTab] = useState('unread');
   const [notificationGroups, setNotificationGroups] = useState({ unread: [], read: [] });
+  const [selectedNotification, setSelectedNotification] = useState(null);
   const [registrationRequests, setRegistrationRequests] = useState([]);
   const [shareOpen, setShareOpen] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -289,6 +350,10 @@ function HomeShellFixed() {
   const totalAlerts = notificationGroups.unread.length + registrationRequests.length;
   const visibleNotifications = notificationTab === 'read' ? notificationGroups.read : notificationGroups.unread;
   const shareText = `Pesquisa de Satisfação Grupo Sorria: ${npsLink}`;
+  const selectedNotificationDetails = useMemo(
+    () => buildNotificationDetails(selectedNotification),
+    [selectedNotification]
+  );
 
   const handleNavigate = (path) => {
     setDrawerOpen(false);
@@ -335,12 +400,15 @@ function HomeShellFixed() {
   };
 
   const openNotification = async (notification) => {
+    let nextNotification = notification;
+
     try {
       if (notification.status !== 'read') {
         await api.post(`/notifications/${notification.id}/read`);
+        nextNotification = { ...notification, status: 'read', read_at: new Date().toISOString() };
         setNotificationGroups((prev) => ({
           unread: prev.unread.filter((item) => item.id !== notification.id),
-          read: [{ ...notification, status: 'read', read_at: new Date().toISOString() }, ...prev.read]
+          read: [nextNotification, ...prev.read]
             .filter((item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index)
             .slice(0, 500)
         }));
@@ -349,7 +417,22 @@ function HomeShellFixed() {
       setFeedback(error.response?.data?.error || 'Não foi possível abrir a notificação.');
     }
 
-    navigate(resolveNotificationLink(notification));
+    setNotificationsOpen(false);
+    setSelectedNotification(nextNotification);
+  };
+
+  const handleNotificationTarget = () => {
+    if (!selectedNotification) return;
+
+    const target = resolveNotificationLink(selectedNotification);
+    setSelectedNotification(null);
+
+    if (/^https?:\/\//i.test(target)) {
+      window.open(target, '_blank', 'noopener,noreferrer');
+      return;
+    }
+
+    navigate(target);
   };
 
   const handleDeleteNotification = async (notificationId) => {
@@ -529,6 +612,42 @@ function HomeShellFixed() {
 
             <button className="primary-action" type="submit">Alterar senha</button>
           </form>
+        </div>
+      )}
+
+      {selectedNotification && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <section className="modal-panel notification-detail-modal">
+            <div className="notification-item-top">
+              <span>{notificationBadge(selectedNotification)}</span>
+              <small>{formatNotificationDate(selectedNotification.read_at || selectedNotification.created_at)}</small>
+            </div>
+
+            <div className="notification-detail-copy">
+              <h2>{selectedNotification.title || 'Atualização do sistema'}</h2>
+              <p>{selectedNotification.message || notificationSummary(selectedNotification)}</p>
+            </div>
+
+            {selectedNotificationDetails.length > 0 && (
+              <div className="notification-detail-grid">
+                {selectedNotificationDetails.map((detail) => (
+                  <article className="notification-detail-row" key={`${detail.label}-${detail.value}`}>
+                    <span>{detail.label}</span>
+                    <strong>{detail.value}</strong>
+                  </article>
+                ))}
+              </div>
+            )}
+
+            <div className="row-actions">
+              <button className="outline-action" type="button" onClick={() => setSelectedNotification(null)}>
+                Fechar
+              </button>
+              <button className="primary-action" type="button" onClick={handleNotificationTarget}>
+                Abrir item relacionado
+              </button>
+            </div>
+          </section>
         </div>
       )}
 

@@ -459,8 +459,8 @@ function PatientManagementPage() {
         <header className="page-heading">
           <div>
             <p className="eyebrow">Dashboard do Paciente</p>
-            <h1>Dashboard Pacientes</h1>
-            <p>Acompanhe confirmações, agendamentos, reagendamentos, cancelamentos e responsáveis pela última tratativa.</p>
+            <h1>Dashboard de Pacientes</h1>
+            <p>Acompanhe confirmações, agendamentos, reagendamentos, cancelamentos e o responsável pela última tratativa.</p>
           </div>
 
           <div className="heading-actions">
@@ -470,10 +470,12 @@ function PatientManagementPage() {
           </div>
         </header>
 
-        <section className="dashboard-filter-panel">
+        <section className="dashboard-filter-panel patient-dashboard-panel">
           <div className="dashboard-filter-heading">
             <div>
               <p className="eyebrow">Filtros</p>
+              <h2>Base de acompanhamento</h2>
+              <p className="base-subtitle">Refine a visão operacional por unidade, canal, tipo, status e período.</p>
             </div>
             <button className="outline-action" onClick={() => setFilters(initialFilters)}>
               Limpar filtros
@@ -524,7 +526,7 @@ function PatientManagementPage() {
 
         {feedback && <p className="form-feedback">{feedback}</p>}
 
-        <section className="kpi-grid management-kpi-grid" aria-label="Resumo do paciente">
+        <section className="kpi-grid management-kpi-grid patient-dashboard-kpis" aria-label="Resumo do paciente">
           <article className="kpi-card">
             <span>Total</span>
             <strong>{records.length}</strong>
@@ -558,7 +560,7 @@ function PatientManagementPage() {
           </section>
         ) : (
           <>
-            <section className="chart-grid patient-dashboard-grid">
+            <section className="chart-grid dashboard-chart-grid patient-dashboard-grid">
               <article className="chart-card">
                 <h2>Volume por tipo</h2>
                 <div className="chart-box">
@@ -585,12 +587,12 @@ function PatientManagementPage() {
               </article>
             </section>
 
-            <section className="management-panel dashboard-base-panel">
+            <section className="management-panel dashboard-base-panel patient-dashboard-base">
               <div className="panel-heading">
                 <div>
                   <p className="eyebrow">Base filtrada</p>
                   <h2 className="table-title-with-help">
-                    Agenda operacional dos pacientes
+                    Agenda operacional de pacientes
                     <span className="tooltip-help inline-help" tabIndex="0" aria-label="Horário de Brasília">
                       ?
                       <span>O horário exibido segue o horário oficial de Brasília.</span>
@@ -601,7 +603,7 @@ function PatientManagementPage() {
               </div>
 
               <div className="data-table-wrap dashboard-table-wrap">
-                <table className="data-table dashboard-clean-table">
+                <table className="data-table dashboard-clean-table patient-dashboard-table">
                   <thead>
                     <tr>
                       <th>Protocolo</th>
@@ -706,7 +708,7 @@ function PatientManagementPage() {
           </div>
 
           <div className="data-table-wrap dashboard-table-wrap">
-            <table className="data-table dashboard-clean-table">
+            <table className="data-table dashboard-clean-table patient-dashboard-table">
               <thead>
                 <tr>
                   <th>Protocolo</th>
