@@ -50,7 +50,7 @@ export function ProtectedRoute() {
       setRemainingMs(getRemainingSessionMs());
     };
 
-    const activityEvents = ['mousemove', 'mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
+    const activityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
 
     activityEvents.forEach((eventName) => {
       window.addEventListener(eventName, markActivity, { passive: true });

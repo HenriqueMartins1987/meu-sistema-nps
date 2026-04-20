@@ -503,6 +503,10 @@ a {
   box-shadow: var(--shadow-md);
   padding: 30px;
   margin-bottom: 18px;
+  position: sticky;
+  top: 16px;
+  z-index: 18;
+  backdrop-filter: blur(14px);
 }
 
 .register-heading img {
@@ -2837,6 +2841,154 @@ a {
   text-align: left;
 }
 
+.crm-heading-actions,
+.crm-filter-actions {
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.crm-kpi-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.crm-stage-grid {
+  width: min(1220px, 100%);
+  margin: 0 auto 18px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.crm-stage-card {
+  min-height: 150px;
+  display: grid;
+  gap: 8px;
+  text-align: left;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.98);
+  padding: 18px;
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+
+.crm-stage-card.active {
+  border-color: var(--brand);
+  box-shadow: var(--shadow-md);
+}
+
+.crm-stage-card span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.crm-stage-card strong {
+  color: var(--ink);
+  font-size: 30px;
+  line-height: 1;
+}
+
+.crm-stage-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.crm-stage-card.danger {
+  border-top: 4px solid var(--danger);
+}
+
+.crm-stage-card.warning {
+  border-top: 4px solid var(--gold);
+}
+
+.crm-stage-card.teal {
+  border-top: 4px solid var(--teal);
+}
+
+.crm-stage-card.leaf {
+  border-top: 4px solid var(--leaf);
+}
+
+.crm-chart-grid .chart-card {
+  min-height: 360px;
+}
+
+.crm-base-panel {
+  margin-bottom: 18px;
+}
+
+.crm-table td,
+.crm-table th {
+  text-align: left;
+  vertical-align: top;
+}
+
+.crm-person-cell {
+  display: grid;
+  gap: 4px;
+}
+
+.crm-person-cell strong {
+  color: var(--ink);
+}
+
+.crm-person-cell small {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.crm-stage-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 30px;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--muted);
+}
+
+.crm-stage-pill.recuperacao-ativa {
+  border-color: rgba(196, 69, 54, 0.26);
+  background: rgba(196, 69, 54, 0.08);
+  color: var(--danger);
+}
+
+.crm-stage-pill.primeiro-atendimento,
+.crm-stage-pill.agenda-do-dia {
+  border-color: rgba(208, 140, 49, 0.28);
+  background: rgba(208, 140, 49, 0.1);
+  color: #8a5311;
+}
+
+.crm-stage-pill.em-acompanhamento,
+.crm-stage-pill.relacionamento {
+  border-color: rgba(31, 122, 140, 0.24);
+  background: rgba(31, 122, 140, 0.08);
+  color: #165767;
+}
+
+.crm-stage-pill.retorno-final,
+.crm-stage-pill.promotor {
+  border-color: rgba(11, 111, 95, 0.24);
+  background: rgba(223, 242, 237, 0.88);
+  color: var(--brand-strong);
+}
+
+.crm-stage-pill.encerrado,
+.crm-stage-pill.cancelado {
+  border-color: rgba(125, 104, 71, 0.24);
+  background: rgba(125, 104, 71, 0.08);
+  color: #5d4630;
+}
+
 .compact-action {
   min-height: 34px;
   padding: 0 10px;
@@ -3340,6 +3492,18 @@ a {
 
   .patient-dashboard-actions .outline-action {
     min-width: 0;
+  }
+
+  .crm-heading-actions,
+  .crm-filter-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+  }
+
+  .crm-kpi-grid,
+  .crm-stage-grid {
+    grid-template-columns: 1fr;
   }
 
   .login-card-header {

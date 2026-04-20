@@ -16,6 +16,7 @@ import NpsManagement from './NpsManagement';
 import NpsDashboard from './NpsDashboard';
 import AdminPanel from './AdminPanel';
 import PatientManagement from './PatientManagementPage';
+import CrmWorkspace from './CrmWorkspace';
 import { ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
 import './App.css';
 
@@ -43,6 +44,7 @@ function App() {
         <Route path="/pacientes" element={<PatientManagement />} />
         <Route path="/pacientes/cadastro" element={<PatientManagement />} />
         <Route path="/pacientes/dashboard" element={<PatientManagement />} />
+        <Route path="/crm" element={<CrmWorkspace />} />
       </Route>
     </Routes>
   );

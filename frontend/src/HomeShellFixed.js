@@ -193,6 +193,12 @@ function HomeShellFixed() {
       ]
     },
     {
+      title: 'Relacionamento',
+      items: [
+        { label: 'CRM de Relacionamento', path: '/crm', permission: 'home' }
+      ]
+    },
+    {
       title: 'Administração',
       items: [
         { label: 'Painel Gerencial', path: '/admin', permission: 'admin_panel', adminOnly: true },
