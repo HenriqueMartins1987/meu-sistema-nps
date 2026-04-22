@@ -1,0 +1,36 @@
+%PDF-1.4
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >> endobj
+4 0 obj << /Length 1694 >> stream
+BT /F1 11 Tf 1 0 0 1 36 800 Tm (Relatorio semanal - Coordenador da unidade) Tj ET
+BT /F1 11 Tf 1 0 0 1 36 784 Tm () Tj ET
+BT /F1 11 Tf 1 0 0 1 36 768 Tm (Gerado em: 20/04/2026, 08:29) Tj ET
+BT /F1 11 Tf 1 0 0 1 36 752 Tm (SLA de resolucao: 15 dias) Tj ET
+BT /F1 11 Tf 1 0 0 1 36 736 Tm (Total de protocolos abertos: 11) Tj ET
+BT /F1 11 Tf 1 0 0 1 36 720 Tm () Tj ET
+BT /F1 11 Tf 1 0 0 1 36 704 Tm ([NO PRAZO] GRC-2026-000002 | Campina Grande | Henrique Moura | SLA 30/04/2026, 09:10) Tj ET
+BT /F1 11 Tf 1 0 0 1 36 688 Tm ([NO PRAZO] GRC-2026-000004 | Goiânia II | Henrique Moura | SLA 30/04/2026, 15:21) Tj ET
+BT /F1 11 Tf 1 0 0 1 36 672 Tm ([NO PRAZO] GRC-2026-000007 | Barreiras | Teste Codex Protocolo | SLA 01/05/2026, 15:59) Tj ET
+BT /F1 11 Tf 1 0 0 1 36 656 Tm ([NO PRAZO] GRC-2026-000008 | Barreiras | Teste Codex Localhost | SLA 01/05/2026, 16:02) Tj ET
+BT /F1 11 Tf 1 0 0 1 36 640 Tm ([NO PRAZO] GRC-2026-000009 | Anápolis 1 | ate | SLA 01/05/2026, 16:10) Tj ET
+BT /F1 11 Tf 1 0 0 1 36 624 Tm ([NO PRAZO] GRC-2026-000010 | Anápolis 1 | kkkkkkkk | SLA 01/05/2026, 16:25) Tj ET
+BT /F1 11 Tf 1 0 0 1 36 608 Tm ([NO PRAZO] GRC-2026-000011 | Águas lindas | Henrique Moura | SLA 02/05/2026, 09:58) Tj ET
+BT /F1 11 Tf 1 0 0 1 36 592 Tm ([NO PRAZO] GRC-2026-000013 | Independência | teste | SLA 02/05/2026, 10:37) Tj ET
+BT /F1 11 Tf 1 0 0 1 36 576 Tm ([NO PRAZO] GRC-2026-000014 | Barreiras | Paciente Teste Fechamento | SLA 02/05/2026, 13:56) Tj ET
+BT /F1 11 Tf 1 0 0 1 36 560 Tm ([NO PRAZO] GRC-2026-000015 | Barreiras | Paciente Teste Fluxo | SLA 02/05/2026, 13:57) Tj ET
+BT /F1 11 Tf 1 0 0 1 36 544 Tm ([NO PRAZO] GRC-2026-000017 | Gold Bueno | Teste 3 | SLA 02/05/2026, 14:31) Tj ET
+endstream endobj
+5 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000001986 00000 n 
+trailer << /Size 6 /Root 1 0 R >>
+startxref
+2056
+%%EOF

@@ -1,0 +1,5 @@
+[config] JWT_SECRET nÃ£o informado. Usando valor de desenvolvimento apenas para ambiente local.
+[config] SMTP nÃ£o configurado. Os envios de e-mail ficarÃ£o somente em log.
+[config] WHATSAPP_WEBHOOK_URL nÃ£o configurado. Os envios de WhatsApp ficarÃ£o somente em log.
+(node:8972) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+(Use `node --trace-deprecation ...` to show where the warning was created)
