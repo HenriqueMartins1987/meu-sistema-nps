@@ -260,7 +260,7 @@ function canDeleteRecords(user) {
 }
 
 function canViewDeletedRecords(user) {
-  return isAdminUser(user) || user?.role === 'supervisor_crc';
+  return isMasterAdminUser(user);
 }
 
 function classifyNpsFeedback(score, feedbackType) {
@@ -1182,8 +1182,9 @@ function buildComplaintFilters(query) {
 
 async function getComplaintRows(query = {}, user = null) {
   const filters = buildComplaintFilters(query);
+  const includeDeleted = Boolean(query.include_deleted) && canViewDeletedRecords(user);
 
-  if (!query.include_deleted) {
+  if (!includeDeleted) {
     filters.clause += filters.clause ? ' AND c.deleted_at IS NULL' : 'WHERE c.deleted_at IS NULL';
   }
 
@@ -2089,13 +2090,14 @@ function buildNpsComplaintDescription(nps) {
 async function getNpsRows(query = {}, user = null) {
   const where = [];
   const params = [];
+  const includeDeleted = Boolean(query.include_deleted) && canViewDeletedRecords(user);
 
   if (query.id) {
     where.push('n.id = ?');
     params.push(query.id);
   }
 
-  if (!query.include_deleted) {
+  if (!includeDeleted) {
     where.push('n.deleted_at IS NULL');
   }
 

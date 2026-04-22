@@ -1,7 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from './api';
-import { complaintTypes, priorityOptions, statusLabels, statusOptions } from './constants';
+import {
+  complaintTypes,
+  isMasterAdmin,
+  priorityOptions,
+  readUser,
+  statusLabels,
+  statusOptions
+} from './constants';
 
 const pageSize = 50;
 
@@ -219,7 +226,10 @@ function ComplaintListItem({ item, onOpen }) {
 
 function DashboardManagement() {
   const navigate = useNavigate();
+  const currentUser = readUser();
+  const canViewDeleted = isMasterAdmin(currentUser);
   const [complaints, setComplaints] = useState([]);
+  const [viewMode, setViewMode] = useState('active');
   const [filters, setFilters] = useState({
     status: '',
     type: '',
@@ -237,7 +247,9 @@ function DashboardManagement() {
       setFeedback('');
 
       try {
-        const res = await api.get('/complaints');
+        const res = await api.get('/complaints', {
+          params: canViewDeleted ? { include_deleted: 1 } : undefined
+        });
         setComplaints(Array.isArray(res.data) ? res.data : []);
       } catch (error) {
         setFeedback('Não foi possível carregar os protocolos.');
@@ -247,15 +259,25 @@ function DashboardManagement() {
     };
 
     loadComplaints();
-  }, []);
+  }, [canViewDeleted]);
+
+  useEffect(() => {
+    if (!canViewDeleted && viewMode === 'deleted') {
+      setViewMode('active');
+    }
+  }, [canViewDeleted, viewMode]);
 
   useEffect(() => {
     setPage(1);
-  }, [filters]);
+  }, [filters, viewMode]);
 
   const activeComplaints = useMemo(() => complaints.filter((item) => !item.deleted_at), [complaints]);
+  const deletedComplaints = useMemo(() => complaints.filter((item) => item.deleted_at), [complaints]);
+  const scopedComplaints = useMemo(() => (
+    viewMode === 'deleted' && canViewDeleted ? deletedComplaints : activeComplaints
+  ), [activeComplaints, canViewDeleted, deletedComplaints, viewMode]);
 
-  const filteredComplaints = useMemo(() => activeComplaints.filter((item) => {
+  const filteredComplaints = useMemo(() => scopedComplaints.filter((item) => {
     const matchesStatus = !filters.status || item.status === filters.status;
     const matchesType = !filters.type || item.complaint_type === filters.type;
     const matchesClinic = !filters.clinic || item.clinic_name === filters.clinic;
@@ -285,7 +307,7 @@ function DashboardManagement() {
     if (aDue !== bDue) return aDue - bDue;
 
     return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
-  }), [activeComplaints, filters]);
+  }), [filters, scopedComplaints]);
 
   const clinicOptions = useMemo(() => (
     Array.from(new Set(complaints.map((item) => item.clinic_name).filter(Boolean)))
@@ -472,7 +494,7 @@ function DashboardManagement() {
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Protocolos</p>
-            <h2>Lista priorizada para tratativa</h2>
+            <h2>{viewMode === 'deleted' ? 'Protocolos excluídos com auditoria' : 'Lista priorizada para tratativa'}</h2>
           </div>
 
           <div className="export-actions">
@@ -485,6 +507,25 @@ function DashboardManagement() {
               <span>Baixar PDF</span>
             </button>
           </div>
+
+          {canViewDeleted && (
+            <div className="patient-tabs" role="tablist" aria-label="Visões da gestão de reclamações">
+              <button
+                type="button"
+                className={viewMode === 'active' ? 'active' : ''}
+                onClick={() => setViewMode('active')}
+              >
+                Ativos
+              </button>
+              <button
+                type="button"
+                className={viewMode === 'deleted' ? 'active' : ''}
+                onClick={() => setViewMode('deleted')}
+              >
+                Excluídos
+              </button>
+            </div>
+          )}
 
           <div className="filters management-filters">
             <input
