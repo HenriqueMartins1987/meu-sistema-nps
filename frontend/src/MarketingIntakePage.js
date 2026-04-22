@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import api from './api';
-import logo from './assets/logo2.png';
+import logo from './assets/logo3.png';
 import {
   brazilPhonePattern,
   brazilPhoneTitle,

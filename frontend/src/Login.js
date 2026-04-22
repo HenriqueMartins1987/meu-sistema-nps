@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from './api';
-import logo from './assets/logo2.png';
+import logo from './assets/logo3.png';
 import { saveSession } from './session';
 
 const experienceModules = [

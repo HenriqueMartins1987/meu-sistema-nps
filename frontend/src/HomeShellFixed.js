@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from './api';
-import logo from './assets/logo2.png';
+import logo from './assets/logo3.png';
 import { hasPermission, isAdmin, isMasterAdmin, readUser } from './constants';
 import { clearSession, updateStoredUser } from './session';
 

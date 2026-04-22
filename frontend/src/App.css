@@ -1,21 +1,21 @@
 :root {
-  --ink: #1f1727;
-  --muted: #6f6475;
-  --line: #ddd5c9;
-  --line-strong: #c9b89f;
-  --surface: #ffffff;
-  --surface-soft: #faf7f2;
-  --surface-deep: #f2eadf;
-  --brand: #b78a4f;
-  --brand-strong: #5d4630;
-  --brand-soft: #f4ead8;
-  --teal: #3d2f4d;
-  --leaf: #7d6847;
-  --gold: #c79a5a;
+  --ink: #161218;
+  --muted: #6c5a4e;
+  --line: #ddcfbc;
+  --line-strong: #c8a978;
+  --surface: #fffdfa;
+  --surface-soft: #f8f3eb;
+  --surface-deep: #f0e4d3;
+  --brand: #c89a57;
+  --brand-strong: #8e6731;
+  --brand-soft: #f6ebda;
+  --teal: #3b3029;
+  --leaf: #6d573b;
+  --gold: #d4a764;
   --danger: #c44536;
-  --shadow-sm: 0 8px 20px rgba(16, 32, 51, 0.08);
-  --shadow-md: 0 18px 45px rgba(16, 32, 51, 0.12);
-  --shadow-lg: 0 28px 70px rgba(16, 32, 51, 0.18);
+  --shadow-sm: 0 8px 20px rgba(12, 12, 16, 0.08);
+  --shadow-md: 0 18px 45px rgba(12, 12, 16, 0.14);
+  --shadow-lg: 0 28px 70px rgba(12, 12, 16, 0.22);
 }
 
 * {
@@ -51,10 +51,12 @@ a {
   display: grid;
   grid-template-columns: minmax(0, 1.16fr) minmax(430px, 0.84fr);
   background:
-    linear-gradient(132deg, rgba(5, 5, 8, 0.97), rgba(36, 27, 46, 0.92) 54%, rgba(132, 96, 46, 0.78)),
-    url('./assets/logo2.png');
-  background-size: cover;
-  background-position: center;
+    radial-gradient(circle at 18% 22%, rgba(212, 167, 100, 0.18), transparent 28%),
+    linear-gradient(132deg, rgba(4, 4, 5, 0.98), rgba(19, 18, 20, 0.96) 58%, rgba(92, 66, 34, 0.84)),
+    url('./assets/logo3.png');
+  background-size: auto, cover, 560px auto;
+  background-position: left 8% top 14%, center, left 18% center;
+  background-repeat: no-repeat;
   color: #fff;
 }
 
@@ -480,10 +482,12 @@ a {
 .app-page {
   min-height: 100vh;
   background:
-    linear-gradient(180deg, rgba(244, 248, 246, 0.96), rgba(232, 241, 238, 0.98)),
-    url('./assets/logo2.png');
-  background-position: center;
-  background-size: cover;
+    radial-gradient(circle at top, rgba(212, 167, 100, 0.16), transparent 24%),
+    linear-gradient(180deg, rgba(20, 17, 20, 0.96), rgba(34, 28, 25, 0.94)),
+    url('./assets/logo3.png');
+  background-position: top center, center, center 120px;
+  background-size: auto, cover, 460px auto;
+  background-repeat: no-repeat;
   padding: 30px;
 }
 
@@ -3132,10 +3136,12 @@ a {
 .public-page {
   min-height: 100vh;
   background:
-    linear-gradient(180deg, rgba(244, 248, 246, 0.98), rgba(232, 241, 238, 0.98)),
-    url('./assets/logo2.png');
-  background-position: center;
-  background-size: cover;
+    radial-gradient(circle at top, rgba(212, 167, 100, 0.16), transparent 24%),
+    linear-gradient(180deg, rgba(20, 17, 20, 0.97), rgba(34, 28, 25, 0.95)),
+    url('./assets/logo3.png');
+  background-position: top center, center, center 110px;
+  background-size: auto, cover, 430px auto;
+  background-repeat: no-repeat;
   padding: 30px;
 }
 
@@ -3400,6 +3406,143 @@ a {
   width: 18px;
   height: 18px;
   accent-color: var(--brand);
+}
+
+.login-panel {
+  background: linear-gradient(180deg, rgba(255, 252, 247, 0.94), rgba(246, 239, 229, 0.98));
+}
+
+.login-card,
+.register-heading,
+.topbar,
+.page-heading,
+.management-panel,
+.dashboard-filter-panel,
+.feedback-intake-panel,
+.quick-card,
+.kpi-card,
+.chart-card,
+.form-section,
+.restricted-panel,
+.public-hero,
+.public-form-band,
+.modal-panel {
+  border-color: rgba(200, 154, 87, 0.18);
+  box-shadow: 0 20px 44px rgba(10, 10, 14, 0.18);
+}
+
+.topbar,
+.page-heading,
+.dashboard-filter-panel,
+.management-panel,
+.feedback-intake-panel {
+  background: rgba(255, 252, 247, 0.95);
+}
+
+.home-hero,
+.complaint-heading,
+.public-hero.public-hero-centered {
+  background: linear-gradient(135deg, rgba(255, 252, 247, 0.99), rgba(244, 234, 217, 0.96));
+  border-color: rgba(200, 154, 87, 0.2);
+}
+
+.home-hero::after,
+.public-hero::after {
+  background: linear-gradient(180deg, rgba(200, 154, 87, 0.14), rgba(12, 12, 16, 0.02));
+}
+
+.primary-action {
+  background: linear-gradient(135deg, #d4a764, #9b6d34);
+  border-color: #a7773c;
+  box-shadow: 0 14px 28px rgba(155, 109, 52, 0.24);
+}
+
+.primary-action:hover:not(:disabled) {
+  background: linear-gradient(135deg, #bf8f4e, #835a27);
+  border-color: #835a27;
+}
+
+.secondary-action {
+  background: linear-gradient(135deg, #2d2727, #5b4730);
+  border-color: #3b3028;
+  box-shadow: 0 14px 28px rgba(18, 16, 16, 0.24);
+}
+
+.field:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 4px rgba(200, 154, 87, 0.16);
+}
+
+.form-feedback {
+  background: rgba(200, 154, 87, 0.1);
+  color: var(--brand-strong);
+  border-color: rgba(200, 154, 87, 0.22);
+}
+
+.protocol-success-card {
+  border-color: rgba(200, 154, 87, 0.22);
+  border-left-color: var(--brand);
+  background: linear-gradient(135deg, rgba(212, 167, 100, 0.12), rgba(255, 252, 247, 0.98));
+}
+
+.system-chip,
+.quick-number,
+.register-highlights span,
+.public-pill-row span,
+.account-action {
+  border-color: rgba(200, 154, 87, 0.22);
+  background: rgba(200, 154, 87, 0.12);
+  color: var(--brand-strong);
+}
+
+.quick-card::before,
+.home-menu-top {
+  background: linear-gradient(90deg, #d4a764, #986c35);
+}
+
+.quick-card.accent-teal::before {
+  background: linear-gradient(90deg, #6f5942, #2d2727);
+}
+
+.quick-card.accent-gold::before {
+  background: linear-gradient(90deg, #e0bc82, #b3803d);
+}
+
+.quick-card.accent-leaf::before {
+  background: linear-gradient(90deg, #8b734d, #5c4930);
+}
+
+.home-menu-top {
+  border-color: rgba(200, 154, 87, 0.3);
+  box-shadow: 0 12px 26px rgba(155, 109, 52, 0.18);
+}
+
+.notification-button,
+.gear-action {
+  border-color: rgba(200, 154, 87, 0.22);
+  background: rgba(255, 252, 247, 0.96);
+}
+
+.notification-item.unread {
+  border-color: rgba(200, 154, 87, 0.24);
+  background: linear-gradient(135deg, rgba(247, 237, 221, 0.9), rgba(255, 255, 255, 0.98));
+}
+
+.public-link-stack a,
+.share-popover button,
+.share-popover a {
+  border-color: rgba(200, 154, 87, 0.18);
+}
+
+.login-highlights span,
+.login-module-card,
+.login-insight-card {
+  border-color: rgba(212, 167, 100, 0.28);
+}
+
+.login-module-card,
+.login-insight-card {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 @media (max-width: 1020px) {
