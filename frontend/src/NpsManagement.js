@@ -241,7 +241,10 @@ function NpsManagement() {
       link.remove();
       window.URL.revokeObjectURL(blobUrl);
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível baixar o template de envio em massa.');
+      const backendMessage = typeof error.response?.data === 'string'
+        ? error.response.data
+        : error.response?.data?.error;
+      setFeedback(backendMessage || error.message || 'Não foi possível baixar o template de envio em massa.');
     }
   };
 
@@ -257,13 +260,14 @@ function NpsManagement() {
     try {
       const formData = new FormData();
       formData.append('file', bulkFile);
-      const response = await api.post('/nps/bulk-dispatch', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
-      });
+      const response = await api.post('/nps/bulk-dispatch', formData);
       setFeedback(response.data?.message || 'Envio em massa preparado com sucesso.');
       setBulkFile(null);
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível processar a planilha de envio em massa.');
+      const backendMessage = typeof error.response?.data === 'string'
+        ? error.response.data
+        : error.response?.data?.error;
+      setFeedback(backendMessage || error.message || 'Não foi possível processar a planilha de envio em massa.');
     } finally {
       setBulkSending(false);
     }

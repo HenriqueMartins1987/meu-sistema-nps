@@ -380,6 +380,7 @@ function splitCsvLine(line) {
 
 function normalizeColumnName(value) {
   return String(value || '')
+    .replace(/^\uFEFF/, '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
@@ -387,7 +388,8 @@ function normalizeColumnName(value) {
 }
 
 function parseBulkNpsCsv(content) {
-  const lines = String(content || '')
+  const normalizedContent = decodePossiblyLatin1Text(String(content || '')).replace(/^\uFEFF/, '');
+  const lines = normalizedContent
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean);
@@ -396,7 +398,15 @@ function parseBulkNpsCsv(content) {
 
   const headers = splitCsvLine(lines[0]).map(normalizeColumnName);
   const nameIndex = headers.findIndex((header) => ['nome', 'paciente', 'patient_name'].includes(header));
-  const phoneIndex = headers.findIndex((header) => ['telefone', 'whatsapp', 'telefone / whatsapp', 'telefone_whatsapp', 'patient_phone'].includes(header));
+  const phoneIndex = headers.findIndex((header) => [
+    'telefone',
+    'whatsapp',
+    'telefone / whatsapp',
+    'telefone_whatsapp',
+    'telefone whatsapp',
+    'telefone/whatsapp',
+    'patient_phone'
+  ].includes(header));
 
   if (nameIndex === -1 || phoneIndex === -1) {
     throw new Error('A planilha precisa conter as colunas Nome e Telefone / WhatsApp.');
