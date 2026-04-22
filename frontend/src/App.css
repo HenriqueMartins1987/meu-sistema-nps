@@ -482,13 +482,32 @@ a {
 .app-page {
   min-height: 100vh;
   background:
-    radial-gradient(circle at top, rgba(212, 167, 100, 0.16), transparent 24%),
-    linear-gradient(180deg, rgba(20, 17, 20, 0.96), rgba(34, 28, 25, 0.94)),
+    radial-gradient(circle at top, rgba(212, 167, 100, 0.12), transparent 24%),
+    linear-gradient(180deg, rgba(255, 252, 247, 0.98), rgba(244, 236, 224, 0.96)),
     url('./assets/logo3.png');
-  background-position: top center, center, center 120px;
-  background-size: auto, cover, 460px auto;
+  background-position: top center, center, center 180px;
+  background-size: auto, cover, 680px auto;
   background-repeat: no-repeat;
   padding: 30px;
+  position: relative;
+  isolation: isolate;
+}
+
+.register-page::before,
+.app-page::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: url('./assets/logo3.png') center 220px / clamp(520px, 54vw, 820px) auto no-repeat;
+  opacity: 0.035;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.register-page > *,
+.app-page > * {
+  position: relative;
+  z-index: 1;
 }
 
 .register-shell {
@@ -2450,27 +2469,29 @@ a {
 
 .deadline-card {
   min-height: 132px;
-  background: rgba(255, 255, 255, 0.96);
-  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(33, 34, 39, 0.96), rgba(53, 44, 35, 0.96));
+  border: 1px solid rgba(212, 167, 100, 0.22);
   border-radius: 8px;
   padding: 18px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-md);
   display: grid;
-  align-content: space-between;
-  gap: 8px;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
 }
 
 .deadline-card span,
 .approval-card span,
 .mini-badge {
-  color: var(--muted);
+  color: rgba(227, 220, 210, 0.72);
   font-size: 12px;
   font-weight: 900;
   text-transform: uppercase;
 }
 
 .deadline-card strong {
-  color: var(--ink);
+  color: #fff;
   font-size: 22px;
   line-height: 1.1;
   overflow-wrap: anywhere;
@@ -2479,34 +2500,54 @@ a {
 .deadline-card p,
 .approval-card p {
   margin: 0;
-  color: var(--muted);
+  color: rgba(227, 220, 210, 0.78);
   font-weight: 700;
 }
 
 .deadline-card.ontime,
 .deadline-card.closed,
 .approval-card.done {
-  border-color: rgba(11, 111, 95, 0.28);
-  background: rgba(223, 242, 237, 0.86);
+  border-color: rgba(118, 176, 154, 0.28);
+  background: linear-gradient(180deg, rgba(24, 54, 49, 0.96), rgba(34, 70, 64, 0.94));
 }
 
 .deadline-card.warning,
 .deadline-card.priority-media,
 .approval-card.pending {
-  border-color: rgba(208, 140, 49, 0.32);
-  background: rgba(208, 140, 49, 0.1);
+  border-color: rgba(212, 167, 100, 0.32);
+  background: linear-gradient(180deg, rgba(74, 52, 29, 0.96), rgba(97, 69, 39, 0.94));
 }
 
 .deadline-card.overdue,
 .deadline-card.priority-alta {
-  border-color: rgba(196, 69, 54, 0.32);
-  background: rgba(196, 69, 54, 0.09);
+  border-color: rgba(196, 69, 54, 0.36);
+  background: linear-gradient(180deg, rgba(78, 27, 24, 0.96), rgba(103, 37, 32, 0.94));
 }
 
 .deadline-card.priority-baixa,
 .approval-card.neutral {
-  border-color: rgba(31, 122, 140, 0.24);
-  background: rgba(31, 122, 140, 0.08);
+  border-color: rgba(120, 160, 177, 0.28);
+  background: linear-gradient(180deg, rgba(27, 51, 61, 0.96), rgba(34, 67, 80, 0.94));
+}
+
+.deadline-card.aberta,
+.deadline-card.em_andamento,
+.deadline-card.resolvida,
+.deadline-card.stage {
+  border-color: rgba(212, 167, 100, 0.24);
+}
+
+.deadline-card.aberta {
+  background: linear-gradient(180deg, rgba(78, 27, 24, 0.96), rgba(103, 37, 32, 0.94));
+}
+
+.deadline-card.em_andamento,
+.deadline-card.stage {
+  background: linear-gradient(180deg, rgba(74, 52, 29, 0.96), rgba(97, 69, 39, 0.94));
+}
+
+.deadline-card.resolvida {
+  background: linear-gradient(180deg, rgba(24, 54, 49, 0.96), rgba(34, 70, 64, 0.94));
 }
 
 .executive-detail-grid {
@@ -2636,9 +2677,32 @@ a {
   background: #fff;
 }
 
+.approval-card span {
+  color: var(--muted);
+}
+
+.approval-card p {
+  color: var(--muted);
+}
+
 .approval-card strong {
   color: var(--ink);
   font-size: 18px;
+}
+
+.approval-card.done {
+  border-color: rgba(11, 111, 95, 0.28);
+  background: rgba(223, 242, 237, 0.86);
+}
+
+.approval-card.pending {
+  border-color: rgba(208, 140, 49, 0.32);
+  background: rgba(208, 140, 49, 0.1);
+}
+
+.approval-card.neutral {
+  border-color: rgba(31, 122, 140, 0.24);
+  background: rgba(31, 122, 140, 0.08);
 }
 
 .command-center-card h2 {
