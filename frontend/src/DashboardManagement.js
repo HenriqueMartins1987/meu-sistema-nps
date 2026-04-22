@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from './api';
-import { complaintTypes, isAdmin, priorityOptions, readUser, statusLabels, statusOptions } from './constants';
+import { complaintTypes, priorityOptions, statusLabels, statusOptions } from './constants';
 
 const pageSize = 50;
 
@@ -219,10 +219,7 @@ function ComplaintListItem({ item, onOpen }) {
 
 function DashboardManagement() {
   const navigate = useNavigate();
-  const currentUser = readUser();
-  const canViewDeletedRecords = isAdmin(currentUser) || currentUser?.role === 'supervisor_crc';
   const [complaints, setComplaints] = useState([]);
-  const [activeTab, setActiveTab] = useState('ativos');
   const [filters, setFilters] = useState({
     status: '',
     type: '',
@@ -240,7 +237,7 @@ function DashboardManagement() {
       setFeedback('');
 
       try {
-        const res = await api.get(canViewDeletedRecords ? '/complaints?include_deleted=1' : '/complaints');
+        const res = await api.get('/complaints');
         setComplaints(Array.isArray(res.data) ? res.data : []);
       } catch (error) {
         setFeedback('Não foi possível carregar os protocolos.');
@@ -250,17 +247,15 @@ function DashboardManagement() {
     };
 
     loadComplaints();
-  }, [canViewDeletedRecords]);
+  }, []);
 
   useEffect(() => {
     setPage(1);
-  }, [filters, activeTab]);
+  }, [filters]);
 
   const activeComplaints = useMemo(() => complaints.filter((item) => !item.deleted_at), [complaints]);
-  const deletedComplaints = useMemo(() => complaints.filter((item) => item.deleted_at), [complaints]);
-  const sourceComplaints = activeTab === 'excluidos' ? deletedComplaints : activeComplaints;
 
-  const filteredComplaints = useMemo(() => sourceComplaints.filter((item) => {
+  const filteredComplaints = useMemo(() => activeComplaints.filter((item) => {
     const matchesStatus = !filters.status || item.status === filters.status;
     const matchesType = !filters.type || item.complaint_type === filters.type;
     const matchesClinic = !filters.clinic || item.clinic_name === filters.clinic;
@@ -280,10 +275,6 @@ function DashboardManagement() {
 
     return matchesStatus && matchesType && matchesClinic && matchesSla && matchesSearch;
   }).sort((a, b) => {
-    if (activeTab === 'excluidos') {
-      return new Date(b.deleted_at || b.updated_at || 0).getTime() - new Date(a.deleted_at || a.updated_at || 0).getTime();
-    }
-
     const rankDiff = deadlineRank(a) - deadlineRank(b);
 
     if (rankDiff !== 0) return rankDiff;
@@ -294,7 +285,7 @@ function DashboardManagement() {
     if (aDue !== bDue) return aDue - bDue;
 
     return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
-  }), [activeTab, filters, sourceComplaints]);
+  }), [activeComplaints, filters]);
 
   const clinicOptions = useMemo(() => (
     Array.from(new Set(complaints.map((item) => item.clinic_name).filter(Boolean)))
@@ -308,10 +299,8 @@ function DashboardManagement() {
     const resolved = activeComplaints.filter((item) => item.status === 'resolvida').length;
     const overdue = activeComplaints.filter((item) => buildDeadlineInfo(item).state === 'overdue').length;
     const warning = activeComplaints.filter((item) => buildDeadlineInfo(item).state === 'warning').length;
-    const deleted = deletedComplaints.length;
-
-    return { total, open, inProgress, resolved, overdue, warning, deleted };
-  }, [activeComplaints, deletedComplaints]);
+    return { total, open, inProgress, resolved, overdue, warning };
+  }, [activeComplaints]);
 
   const totalPages = Math.max(1, Math.ceil(filteredComplaints.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -477,13 +466,6 @@ function DashboardManagement() {
           <strong>{metrics.resolved}</strong>
           <p>PROTOCOLOS ENCERRADOS</p>
         </article>
-        {canViewDeletedRecords && (
-          <article className="kpi-card">
-            <span>Excluídas</span>
-            <strong>{metrics.deleted}</strong>
-            <p>LASTRO DE AUDITORIA</p>
-          </article>
-        )}
       </section>
 
       <section className="management-panel">
@@ -491,16 +473,6 @@ function DashboardManagement() {
           <div>
             <p className="eyebrow">Protocolos</p>
             <h2>Lista priorizada para tratativa</h2>
-            {canViewDeletedRecords && (
-              <div className="patient-tabs management-tabs">
-                <button type="button" className={activeTab === 'ativos' ? 'active' : ''} onClick={() => setActiveTab('ativos')}>
-                  Ativos ({activeComplaints.length})
-                </button>
-                <button type="button" className={activeTab === 'excluidos' ? 'active' : ''} onClick={() => setActiveTab('excluidos')}>
-                  Excluídos ({deletedComplaints.length})
-                </button>
-              </div>
-            )}
           </div>
 
           <div className="export-actions">
@@ -578,7 +550,7 @@ function DashboardManagement() {
                 <ComplaintListItem
                   item={item}
                   key={item.id}
-                  onOpen={() => navigate(`/gestao/${item.id}${item.deleted_at ? '?include_deleted=1' : ''}`)}
+                  onOpen={() => navigate(`/gestao/${item.id}`)}
                 />
               ))}
             </div>

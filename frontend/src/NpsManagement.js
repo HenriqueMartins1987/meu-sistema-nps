@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from './api';
-import { isAdmin, isMasterAdmin, readUser } from './constants';
+import { isMasterAdmin, readUser } from './constants';
 
 const profileLabels = {
   detrator: 'Detrator',
@@ -83,10 +83,8 @@ function NpsManagement() {
     return Number.isFinite(parsedId) && parsedId > 0 ? parsedId : null;
   }, [location.search]);
   const currentUser = readUser();
-  const canViewDeletedRecords = isAdmin(currentUser) || currentUser?.role === 'supervisor_crc';
   const canDeleteRecords = isMasterAdmin(currentUser) || currentUser?.role === 'supervisor_crc';
   const [rows, setRows] = useState([]);
-  const [activeTab, setActiveTab] = useState('ativos');
   const [clinics, setClinics] = useState([]);
   const [filters, setFilters] = useState({
     profile: '',
@@ -114,7 +112,7 @@ function NpsManagement() {
 
     try {
       const [npsRes, clinicsRes] = await Promise.all([
-        api.get(canViewDeletedRecords ? '/nps/responses?include_deleted=1' : '/nps/responses'),
+        api.get('/nps/responses'),
         api.get('/clinics')
       ]);
       setRows(Array.isArray(npsRes.data) ? npsRes.data : []);
@@ -124,7 +122,7 @@ function NpsManagement() {
     } finally {
       setLoading(false);
     }
-  }, [canViewDeletedRecords]);
+  }, []);
 
   useEffect(() => {
     loadRows();
@@ -154,8 +152,6 @@ function NpsManagement() {
   }, [focusNpsId, location.pathname, navigate, rows]);
 
   const activeRows = useMemo(() => rows.filter((item) => !item.deleted_at), [rows]);
-  const deletedRows = useMemo(() => rows.filter((item) => item.deleted_at), [rows]);
-  const sourceRows = activeTab === 'excluidos' ? deletedRows : activeRows;
 
   const filterOptions = useMemo(() => ({
     clinics: uniqueList([...rows.map((item) => item.clinic_name), ...clinics.map((clinic) => clinic.name)]),
@@ -164,7 +160,7 @@ function NpsManagement() {
     coordinators: uniqueList([...rows.map((item) => item.coordinator_name), ...clinics.map((clinic) => clinic.coordinator_name)])
   }), [rows, clinics]);
 
-  const filteredRows = useMemo(() => sourceRows
+  const filteredRows = useMemo(() => activeRows
     .filter((item) => {
       const profile = item.nps_profile || profileFromScore(item.score);
       const status = getNpsStatus(item);
@@ -194,17 +190,13 @@ function NpsManagement() {
       );
     })
     .sort((a, b) => {
-      if (activeTab === 'excluidos') {
-        return new Date(b.deleted_at || b.created_at || 0) - new Date(a.deleted_at || a.created_at || 0);
-      }
-
       const profileDiff = profileWeight(a.nps_profile || profileFromScore(a.score))
         - profileWeight(b.nps_profile || profileFromScore(b.score));
 
       if (profileDiff !== 0) return profileDiff;
 
       return new Date(b.created_at || 0) - new Date(a.created_at || 0);
-    }), [activeTab, filters, sourceRows]);
+    }), [activeRows, filters]);
 
   const metrics = useMemo(() => {
     const total = activeRows.length;
@@ -216,8 +208,8 @@ function NpsManagement() {
     const pendingDetractors = activeRows.filter((item) => Number(item.score) <= 6 && getNpsStatus(item) !== 'tratado').length;
     const nps = total ? Math.round(((promoters - detractors) / total) * 100) : 0;
 
-    return { total, promoters, neutrals, detractors, inTreatment, treated, pendingDetractors, nps, deleted: deletedRows.length };
-  }, [activeRows, deletedRows]);
+    return { total, promoters, neutrals, detractors, inTreatment, treated, pendingDetractors, nps };
+  }, [activeRows]);
 
   const updateFilter = (field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value }));
@@ -401,13 +393,6 @@ function NpsManagement() {
           <strong>{metrics.treated}</strong>
           <p>PROTOCOLOS NPS</p>
         </article>
-        {canViewDeletedRecords && (
-          <article className="kpi-card">
-            <span>Excluídas</span>
-            <strong>{metrics.deleted}</strong>
-            <p>LASTRO PRESERVADO</p>
-          </article>
-        )}
       </section>
 
       <section className="management-panel bulk-dispatch-panel">
@@ -440,16 +425,6 @@ function NpsManagement() {
           <div>
             <p className="eyebrow">Pesquisas</p>
             <h2>Lista de respostas NPS</h2>
-            {canViewDeletedRecords && (
-              <div className="patient-tabs management-tabs">
-                <button type="button" className={activeTab === 'ativos' ? 'active' : ''} onClick={() => setActiveTab('ativos')}>
-                  Ativos ({activeRows.length})
-                </button>
-                <button type="button" className={activeTab === 'excluidos' ? 'active' : ''} onClick={() => setActiveTab('excluidos')}>
-                  Excluídas ({deletedRows.length})
-                </button>
-              </div>
-            )}
           </div>
 
           <div className="filters nps-management-filters">
