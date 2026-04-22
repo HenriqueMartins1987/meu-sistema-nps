@@ -330,6 +330,18 @@ function isCompleteBrazilPhone(value) {
   return digits.length === 13 && digits.startsWith('55');
 }
 
+const sensitiveActivityKeys = new Set([
+  'password',
+  'current_password',
+  'new_password',
+  'token',
+  'authorization',
+  'jwt',
+  'secret',
+  'smtp_pass',
+  'db_password'
+]);
+
 function getUserEmailTarget(user) {
   return String(user?.email || '').trim().toLowerCase();
 }
@@ -346,6 +358,150 @@ function buildNotificationHtml(message, link) {
     ? `<p>${messageHtml}</p><p><a href="${actionLink}">Abrir no sistema</a></p>`
     : `<p>${messageHtml}</p>`;
 }
+
+function sanitizeActivityValue(value, key = '') {
+  if (value === null || value === undefined) return value;
+  if (sensitiveActivityKeys.has(String(key || '').toLowerCase())) return '[redacted]';
+  if (Array.isArray(value)) return value.slice(0, 15).map((item) => sanitizeActivityValue(item));
+  if (typeof value === 'object') {
+    return Object.entries(value).reduce((acc, [entryKey, entryValue]) => {
+      acc[entryKey] = sanitizeActivityValue(entryValue, entryKey);
+      return acc;
+    }, {});
+  }
+
+  const text = String(value);
+  return text.length > 300 ? `${text.slice(0, 297)}...` : text;
+}
+
+function shouldEmailMasterForActivity(req) {
+  if (req.method === 'OPTIONS') return false;
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return true;
+  if (req.method === 'GET' && /^\/registration-requests\/[^/]+\/approve$/i.test(req.path || '')) return true;
+  return false;
+}
+
+function buildActivityActorLabel(req) {
+  if (req.user) {
+    return `${req.user.name || 'Usuario'} (${req.user.email || req.user.role || 'sem e-mail'})`;
+  }
+
+  const login = String(req.body?.email || req.body?.username || '').trim().toLowerCase();
+  if (login) return `Acesso externo (${login})`;
+  return 'Origem externa';
+}
+
+function buildActivityEmailHtml(req, responseBody) {
+  const createdAt = new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'medium',
+    timeZone: 'America/Sao_Paulo'
+  }).format(new Date());
+  const sanitizedBody = sanitizeActivityValue(req.body || {});
+  const sanitizedParams = sanitizeActivityValue(req.params || {});
+  const sanitizedQuery = sanitizeActivityValue(req.query || {});
+  const sanitizedResponse = sanitizeActivityValue(responseBody || {});
+  const fileInfo = req.file
+    ? { original_name: req.file.originalname, size_bytes: req.file.size }
+    : null;
+  const redirectLocation = typeof req.res?.getHeader === 'function'
+    ? req.res.getHeader('Location')
+    : null;
+
+  return `
+    <h2>Nova movimentacao registrada no Sistema GRC</h2>
+    <p><strong>Data/Hora:</strong> ${createdAt} (Brasilia)</p>
+    <p><strong>Usuario:</strong> ${buildActivityActorLabel(req)}</p>
+    <p><strong>Metodo:</strong> ${req.method}</p>
+    <p><strong>Rota:</strong> ${req.originalUrl}</p>
+    <p><strong>Status HTTP:</strong> ${req.res?.statusCode || 0}</p>
+    <p><strong>IP:</strong> ${getRequestIp(req)}</p>
+    <p><strong>Resumo:</strong> ${sanitizeActivityValue(responseBody?.message || responseBody?.error || 'Movimentacao concluida.')}</p>
+    ${redirectLocation ? `<p><strong>Destino:</strong> ${sanitizeActivityValue(redirectLocation)}</p>` : ''}
+    <p><strong>Body:</strong></p>
+    <pre>${JSON.stringify(sanitizedBody, null, 2)}</pre>
+    <p><strong>Params:</strong></p>
+    <pre>${JSON.stringify(sanitizedParams, null, 2)}</pre>
+    <p><strong>Query:</strong></p>
+    <pre>${JSON.stringify(sanitizedQuery, null, 2)}</pre>
+    ${fileInfo ? `<p><strong>Arquivo:</strong></p><pre>${JSON.stringify(fileInfo, null, 2)}</pre>` : ''}
+    <p><strong>Resposta:</strong></p>
+    <pre>${JSON.stringify(sanitizedResponse, null, 2)}</pre>
+  `;
+}
+
+function buildActivityEmailSubject(req, responseBody) {
+  const route = String(req.path || req.originalUrl || 'rota-nao-informada').split('?')[0] || '/';
+  const summary = sanitizeActivityValue(responseBody?.message || 'Movimentacao registrada');
+  return `Sistema GRC | ${req.method} ${route} | ${summary}`.slice(0, 190);
+}
+
+function normalizeActivityResponseBody(body) {
+  if (body === undefined || body === null) return null;
+
+  if (Buffer.isBuffer(body)) {
+    return `[buffer ${body.length} bytes]`;
+  }
+
+  if (typeof body === 'string') {
+    try {
+      return JSON.parse(body);
+    } catch (error) {
+      return body;
+    }
+  }
+
+  return body;
+}
+
+function installMasterActivityEmailNotifier() {
+  app.use((req, res, next) => {
+    if (!masterAdminEmail || !shouldEmailMasterForActivity(req)) {
+      return next();
+    }
+
+    let responseBody;
+    let notificationSent = false;
+    const originalJson = res.json.bind(res);
+    const originalSend = res.send.bind(res);
+
+    res.json = (body) => {
+      responseBody = body;
+      return originalJson(body);
+    };
+
+    res.send = (body) => {
+      if (responseBody === undefined) {
+        responseBody = body;
+      }
+
+      return originalSend(body);
+    };
+
+    res.on('finish', () => {
+      if (notificationSent) return;
+      notificationSent = true;
+
+      if (res.statusCode < 200 || res.statusCode >= 400) return;
+
+      const normalizedResponse = normalizeActivityResponseBody(responseBody);
+      const subject = buildActivityEmailSubject(req, normalizedResponse);
+      const html = buildActivityEmailHtml(req, normalizedResponse);
+
+      setImmediate(async () => {
+        try {
+          await sendEmail(masterAdminEmail, subject, html);
+        } catch (error) {
+          console.warn('Nao foi possivel enviar a auditoria por e-mail ao Administrador Master:', error.message);
+        }
+      });
+    });
+
+    return next();
+  });
+}
+
+installMasterActivityEmailNotifier();
 
 function decodePossiblyLatin1Text(value) {
   const text = String(value || '');
