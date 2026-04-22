@@ -273,6 +273,20 @@ function Dashboard() {
   const byRegion = useMemo(() => groupCount(filteredRows, (item) => item.region), [filteredRows]);
   const byPriority = useMemo(() => groupCount(filteredRows, (item) => priorityLabel(item.priority)), [filteredRows]);
   const byChannel = useMemo(() => groupCount(filteredRows, (item) => item.channel).slice(0, 10), [filteredRows]);
+  const baseTableHighlights = useMemo(() => {
+    const units = new Set(filteredRows.map((item) => item.clinic_name).filter(Boolean)).size;
+    const coordinators = new Set(filteredRows.map((item) => item.coordinator_name).filter(Boolean)).size;
+    const highPriority = filteredRows.filter((item) => item.priority === 'alta').length;
+    const overdue = filteredRows.filter((item) => buildDeadlineInfo(item) === 'overdue').length;
+
+    return [
+      { label: 'Protocolos', value: filteredRows.length },
+      { label: 'Unidades', value: units },
+      { label: 'Coordenadores', value: coordinators },
+      { label: 'Alta prioridade', value: highPriority },
+      { label: 'Vencidos', value: overdue }
+    ];
+  }, [filteredRows]);
 
   const updateFilter = (field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value }));
@@ -480,39 +494,61 @@ function Dashboard() {
               </div>
             </div>
 
+            <div className="dashboard-base-summary">
+              {baseTableHighlights.map((item) => (
+                <article className="dashboard-summary-card" key={item.label}>
+                  <span>{item.label}</span>
+                  <strong>{item.value}</strong>
+                </article>
+              ))}
+            </div>
+
             <div className="data-table-wrap dashboard-table-wrap">
               <table className="data-table dashboard-clean-table">
                 <thead>
                   <tr>
                     <th>Protocolo</th>
-                    <th>Clínica</th>
+                    <th>Paciente e unidade</th>
                     <th>Tipo</th>
                     <th>Status</th>
-                    <th>Origem</th>
                     <th>Prioridade</th>
-                    <th>Estado</th>
-                    <th>Região</th>
+                    <th>Origem</th>
+                    <th>Localizacao</th>
                     <th>Coordenador</th>
-                    <th>Última tratativa por</th>
+                    <th>Ultima tratativa por</th>
                     <th>Cadastro</th>
                   </tr>
                 </thead>
                 <tbody>
                   {filteredRows.slice(0, 100).map((item) => (
                     <tr key={item.id}>
-                      <td>{item.protocol || item.id}</td>
-                      <td>{item.clinic_name || 'Não informado'}</td>
-                      <td>{item.complaint_type || 'Não informado'}</td>
+                      <td>
+                        <div className="table-cell-stack">
+                          <span className="cell-primary">{item.protocol || item.id}</span>
+                          <span className="cell-secondary">{formatShortDate(item.created_at)}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="table-cell-stack">
+                          <span className="cell-primary">{item.patient_name || 'Nao informado'}</span>
+                          <span className="cell-secondary">{item.clinic_name || 'Unidade nao informada'}</span>
+                        </div>
+                      </td>
+                      <td>{item.complaint_type || 'Nao informado'}</td>
                       <td>
                         <span className={`status-pill ${item.status || 'aberta'}`}>
                           {statusLabels[item.status] || item.status || 'Aberta'}
                         </span>
                       </td>
-                      <td>{item.created_origin || 'Interno'}</td>
                       <td>{priorityLabel(item.priority)}</td>
-                      <td>{item.state || 'Não informado'}</td>
-                      <td>{item.region || 'Não informado'}</td>
-                      <td>{item.coordinator_name || 'Não vinculado'}</td>
+                      <td>{item.created_origin || 'Interno'}</td>
+                      <td>
+                        <div className="table-cell-stack">
+                          <span className="cell-primary">{item.city || 'Cidade nao informada'} / {item.state || 'UF'}</span>
+                          <span className="cell-secondary">{item.region || 'Regiao nao informada'}</span>
+                        </div>
+                      </td>
+                      <td>{item.coordinator_name || 'Nao vinculado'}</td>
                       <td>{lastComplaintActor(item)}</td>
                       <td>{formatShortDate(item.created_at)}</td>
                     </tr>

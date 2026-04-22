@@ -4,7 +4,7 @@ import { clearSession, readToken } from './session';
 const isBrowser = typeof window !== 'undefined';
 const isLocalHost = isBrowser && ['localhost', '127.0.0.1'].includes(window.location.hostname);
 const configuredApiUrl = process.env.REACT_APP_API_URL;
-const fallbackProductionApiUrl = 'https://meu-sistema-nps-backend.onrender.com';
+const fallbackProductionApiUrl = isBrowser ? '/api' : 'https://meu-sistema-nps-backend.onrender.com';
 const fallbackLocalApiUrl = 'http://localhost:3001';
 
 const api = axios.create({

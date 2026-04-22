@@ -34,18 +34,45 @@ const whatsappGroupId = process.env.WHATSAPP_GROUP_ID || '';
 const uploadDir = path.join(__dirname, 'uploads');
 const reportsDir = path.join(uploadDir, 'reports');
 const maxUploadSizeBytes = 10 * 1024 * 1024;
+const configuredAllowedOrigins = Array.from(new Set([
+  frontendUrl,
+  ...String(process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean),
+  'http://localhost:3000',
+  'https://meu-sistema-nps.vercel.app',
+  'https://grcconsultoria.net.br',
+  'https://www.grcconsultoria.net.br'
+]));
 
 fs.mkdirSync(uploadDir, { recursive: true });
 fs.mkdirSync(reportsDir, { recursive: true });
+
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (configuredAllowedOrigins.includes(origin)) return true;
+  if (/^https:\/\/([a-z0-9-]+\.)*grcconsultoria\.net\.br$/i.test(origin)) return true;
+  if (/^https:\/\/([a-z0-9-]+\.)*vercel\.app$/i.test(origin)) return true;
+
+  try {
+    const hostname = new URL(origin).hostname.toLowerCase();
+    return hostname === 'localhost'
+      || hostname === '127.0.0.1'
+      || hostname === 'grcconsultoria.net.br'
+      || hostname === 'www.grcconsultoria.net.br'
+      || hostname.endsWith('.vercel.app')
+      || hostname.endsWith('.grcconsultoria.net.br');
+  } catch (error) {
+    return false;
+  }
+}
 
 // ============================================
 // MIDDLEWARES
 // ============================================
 app.use(cors({
-  origin: [
-    'http://localhost:3000',
-    'https://meu-sistema-nps.vercel.app'
-  ],
+  origin: (origin, callback) => callback(null, isAllowedOrigin(origin) ? (origin || true) : false),
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: false
@@ -301,6 +328,23 @@ function normalizeBrazilPhone(value) {
 function isCompleteBrazilPhone(value) {
   const digits = String(value || '').replace(/\D/g, '');
   return digits.length === 13 && digits.startsWith('55');
+}
+
+function getUserEmailTarget(user) {
+  return String(user?.email || '').trim().toLowerCase();
+}
+
+function getUserWhatsappTarget(user) {
+  const normalized = normalizeBrazilPhone(user?.whatsapp || user?.phone || '');
+  return isCompleteBrazilPhone(normalized) ? normalized : '';
+}
+
+function buildNotificationHtml(message, link) {
+  const messageHtml = String(message || '').replace(/\n/g, '<br />');
+  const actionLink = link || frontendUrl;
+  return actionLink
+    ? `<p>${messageHtml}</p><p><a href="${actionLink}">Abrir no sistema</a></p>`
+    : `<p>${messageHtml}</p>`;
 }
 
 function decodePossiblyLatin1Text(value) {
@@ -1546,31 +1590,66 @@ async function createNotificationForRoles(roles, type, title, message, link = nu
   return users.map((user) => user.id);
 }
 
+async function notifyUserThroughChannels(user, type, title, message, link = null, payload = null, extraWhatsappPayload = null) {
+  if (!user?.id) return;
+
+  try {
+    await createNotification(user.id, type, title, message, link, payload);
+  } catch (error) {
+    console.warn('Nao foi possivel criar notificacao para o usuario:', error.message);
+  }
+
+  const email = getUserEmailTarget(user);
+  if (email) {
+    try {
+      await sendEmail(email, title, buildNotificationHtml(message, link));
+    } catch (error) {
+      console.warn('Nao foi possivel enviar e-mail da notificacao:', error.message);
+    }
+  }
+
+  const whatsapp = getUserWhatsappTarget(user);
+  if (whatsapp) {
+    try {
+      await sendWhatsappNotification({
+        event: type,
+        to: whatsapp,
+        userId: user.id,
+        link,
+        message: link ? `${message}\n${link}` : message,
+        ...(extraWhatsappPayload || {})
+      });
+    } catch (error) {
+      console.warn('Nao foi possivel enviar WhatsApp da notificacao:', error.message);
+    }
+  }
+}
+
 async function notifyClinicResponsibles(clinicId, type, title, message, link, payload = null) {
   if (!clinicId) return [];
 
   const [clinicRows] = await pool.query('SELECT coordinator_name FROM clinics WHERE id = ?', [clinicId]);
   const coordinatorName = String(clinicRows[0]?.coordinator_name || '').trim();
   const [users] = await pool.query(
-    `SELECT DISTINCT u.id, u.name, u.email, u.whatsapp
+    `SELECT DISTINCT u.id, u.name, u.email, u.whatsapp, u.phone, u.role
       FROM users u
-       LEFT JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = ?
+      INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = ?
       WHERE u.active = 1
         AND u.deleted_at IS NULL
-        AND uc.user_id IS NOT NULL`,
+        AND u.role IN ('coordinator', 'manager')`,
     [clinicId]
   );
   const filteredUsers = users.filter((user) => (
     user.id
     && (
-      user.email
-      || user.whatsapp
+      getUserEmailTarget(user)
+      || getUserWhatsappTarget(user)
     )
   ));
 
   if (coordinatorName) {
     const [coordinatorUsers] = await pool.query(
-      `SELECT DISTINCT id, name, email, whatsapp
+      `SELECT DISTINCT id, name, email, whatsapp, phone, role
          FROM users
         WHERE active = 1
           AND deleted_at IS NULL
@@ -1586,37 +1665,7 @@ async function notifyClinicResponsibles(clinicId, type, title, message, link, pa
   }
 
   await Promise.all(filteredUsers.map(async (user) => {
-    try {
-      await createNotification(user.id, type, title, message, link, payload);
-    } catch (error) {
-      console.warn('Nao foi possivel criar notificacao para responsavel da unidade:', error.message);
-    }
-
-    if (user.email) {
-      try {
-        await sendEmail(
-          user.email,
-          title,
-          `<p>${message.replace(/\n/g, '<br />')}</p><p><a href="${link}">Abrir no sistema</a></p>`
-        );
-      } catch (error) {
-        console.warn('Nao foi possivel enviar e-mail para responsavel da unidade:', error.message);
-      }
-    }
-
-    if (user.whatsapp) {
-      try {
-        await sendWhatsappNotification({
-          event: type,
-          to: user.whatsapp,
-          userId: user.id,
-          link,
-          message: `${message}\n${link}`
-        });
-      } catch (error) {
-        console.warn('Nao foi possivel enviar WhatsApp para responsavel da unidade:', error.message);
-      }
-    }
+    await notifyUserThroughChannels(user, type, title, message, link, payload, { role: user.role });
   }));
 
   return filteredUsers.map((user) => user.id).filter(Boolean);
@@ -1625,7 +1674,7 @@ async function notifyClinicResponsibles(clinicId, type, title, message, link, pa
 async function notifyOperationalComplaintTeam(title, message, link, payload = null, excludedUserIds = []) {
   const excluded = new Set((excludedUserIds || []).map((id) => Number(id)));
   const [users] = await pool.query(
-    `SELECT DISTINCT id, name, email, whatsapp, role
+    `SELECT DISTINCT id, name, email, whatsapp, phone, role
        FROM users
       WHERE active = 1
         AND deleted_at IS NULL
@@ -1634,38 +1683,15 @@ async function notifyOperationalComplaintTeam(title, message, link, payload = nu
   const recipients = users.filter((user) => user.id && !excluded.has(Number(user.id)));
 
   await Promise.all(recipients.map(async (user) => {
-    try {
-      await createNotification(user.id, 'complaint_operational_alert', title, message, link, payload);
-    } catch (error) {
-      console.warn('Nao foi possivel criar notificacao operacional da reclamacao:', error.message);
-    }
-
-    if (user.email) {
-      try {
-        await sendEmail(
-          user.email,
-          title,
-          `<p>${message.replace(/\n/g, '<br />')}</p><p><a href="${link}">Abrir no sistema</a></p>`
-        );
-      } catch (error) {
-        console.warn('Nao foi possivel enviar e-mail operacional da reclamacao:', error.message);
-      }
-    }
-
-    if (user.whatsapp) {
-      try {
-        await sendWhatsappNotification({
-          event: 'complaint_operational_alert',
-          to: user.whatsapp,
-          userId: user.id,
-          role: user.role,
-          link,
-          message: `${message}\n${link}`
-        });
-      } catch (error) {
-        console.warn('Nao foi possivel enviar WhatsApp operacional da reclamacao:', error.message);
-      }
-    }
+    await notifyUserThroughChannels(
+      user,
+      'complaint_operational_alert',
+      title,
+      message,
+      link,
+      payload,
+      { role: user.role }
+    );
   }));
 }
 
@@ -3019,7 +3045,7 @@ app.patch('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
 
 app.post('/admin/users/:id/reset-password', authenticate, requireAdmin, async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT id, role, email FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
+    const [rows] = await pool.query('SELECT id, role, email, name FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
 
     if (!rows.length) {
       return res.status(404).json({ error: 'Usuário não encontrado.' });
@@ -3045,6 +3071,22 @@ app.post('/admin/users/:id/reset-password', authenticate, requireAdmin, async (r
       '/perfil',
       { temporaryPassword: true }
     );
+
+    try {
+      await sendEmail(
+        user.email,
+        'Senha reiniciada - Sistema GRC',
+        `
+          <p>Olá, ${user.name || 'colaborador'}.</p>
+          <p>Sua senha foi reiniciada pelo administrador.</p>
+          <p><strong>Senha temporária:</strong> 123456789</p>
+          <p>Na próxima entrada, a alteração da senha será obrigatória.</p>
+          <p><a href="${frontendUrl}">Acessar o sistema</a></p>
+        `
+      );
+    } catch (error) {
+      console.warn('Nao foi possivel enviar e-mail de reset de senha:', error.message);
+    }
 
     res.json({ message: 'Senha reiniciada para 123456789.' });
   } catch (error) {
@@ -3367,7 +3409,7 @@ app.post('/profile/change-password', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'A nova senha deve ter no mínimo 8 caracteres, letra maiúscula, letra minúscula, número e caractere especial.' });
     }
 
-    const [rows] = await pool.query('SELECT id, password FROM users WHERE id = ? AND deleted_at IS NULL', [req.user.id]);
+    const [rows] = await pool.query('SELECT id, password, email, name FROM users WHERE id = ? AND deleted_at IS NULL', [req.user.id]);
 
     if (!rows.length) {
       return res.status(404).json({ error: 'Usuário não encontrado.' });
@@ -3382,6 +3424,20 @@ app.post('/profile/change-password', authenticate, async (req, res) => {
 
     const passwordHash = await bcrypt.hash(new_password, 10);
     await pool.query('UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?', [passwordHash, user.id]);
+    try {
+      await sendEmail(
+        user.email,
+        'Senha alterada - Sistema GRC',
+        `
+          <p>Olá, ${user.name || 'colaborador'}.</p>
+          <p>Registramos uma alteração de senha no seu acesso ao Sistema GRC.</p>
+          <p>Se foi você quem realizou a mudança, nenhuma ação adicional é necessária.</p>
+          <p>Se não reconhece esta alteração, procure imediatamente o administrador.</p>
+        `
+      );
+    } catch (error) {
+      console.warn('Nao foi possivel enviar e-mail de alteracao de senha:', error.message);
+    }
 
     res.json({ message: 'Senha alterada com sucesso.' });
   } catch (error) {
