@@ -3494,6 +3494,41 @@ a {
   background: linear-gradient(180deg, rgba(196, 69, 54, 0.08), rgba(255, 255, 255, 0.98));
 }
 
+.public-contact-import {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid rgba(200, 154, 87, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.public-contact-import-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.public-contact-import-copy h3,
+.public-contact-import-copy p {
+  margin: 0;
+}
+
+.public-contact-import-copy h3 {
+  color: var(--ink);
+  font-size: 20px;
+}
+
+.public-contact-import-copy p {
+  color: var(--muted);
+}
+
+.public-contact-import-button {
+  min-width: 220px;
+  white-space: nowrap;
+}
+
 .checkbox-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -3560,6 +3595,233 @@ a {
 .home-hero::after,
 .public-hero::after {
   background: linear-gradient(180deg, rgba(200, 154, 87, 0.14), rgba(12, 12, 16, 0.02));
+}
+
+.app-page,
+.register-page,
+.public-page {
+  display: grid;
+  align-content: start;
+  gap: 22px;
+}
+
+.topbar,
+.page-heading,
+.dashboard-filter-panel,
+.management-panel,
+.feedback-intake-panel,
+.home-hero,
+.form-section,
+.quick-card,
+.kpi-card,
+.chart-card,
+.admin-user-list,
+.public-hero,
+.public-form-band,
+.register-heading {
+  position: relative;
+  overflow: hidden;
+}
+
+.page-heading::before,
+.dashboard-filter-panel::before,
+.management-panel::before,
+.form-section::before,
+.public-form-band::before,
+.public-hero::before,
+.admin-user-list::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 4px;
+  background: linear-gradient(90deg, rgba(212, 167, 100, 0.96), rgba(143, 102, 49, 0.9));
+  pointer-events: none;
+}
+
+.page-heading {
+  min-height: 150px;
+  align-items: flex-end;
+  padding: 30px;
+  box-shadow: 0 24px 52px rgba(10, 10, 14, 0.18);
+}
+
+.page-heading > div:first-child,
+.dashboard-filter-heading > div:first-child,
+.panel-heading > div:first-child,
+.patient-records-head > div:first-child,
+.public-form-title,
+.register-heading > div:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.page-heading h1,
+.dashboard-filter-heading h2,
+.panel-heading h2,
+.patient-records-head h2,
+.public-form-title h2 {
+  margin: 0;
+}
+
+.page-heading p,
+.dashboard-filter-heading p,
+.panel-heading p,
+.patient-records-head p,
+.public-form-title p,
+.base-subtitle {
+  max-width: 860px;
+}
+
+.heading-actions,
+.top-actions,
+.form-actions,
+.row-actions,
+.export-actions,
+.feedback-intake-actions,
+.patient-dashboard-actions,
+.crm-heading-actions,
+.crm-filter-actions {
+  align-items: center;
+}
+
+.heading-actions {
+  justify-content: flex-end;
+}
+
+.panel-heading,
+.dashboard-filter-heading,
+.patient-records-head,
+.nps-list-headline,
+.nps-modal-title,
+.notification-head,
+.drawer-head {
+  padding-bottom: 16px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid rgba(200, 154, 87, 0.18);
+}
+
+.form-shell,
+.public-form-shell,
+.register-form {
+  gap: 20px;
+}
+
+.form-section {
+  gap: 16px;
+  padding: 26px;
+}
+
+.form-grid,
+.filters,
+.management-filters,
+.nps-management-filters,
+.dashboard-filters,
+.admin-form-grid,
+.admin-check-grid {
+  align-items: start;
+}
+
+.quick-card,
+.kpi-card,
+.chart-card,
+.form-section,
+.management-panel,
+.dashboard-filter-panel,
+.admin-user-list,
+.public-form-band,
+.public-hero {
+  box-shadow: 0 22px 48px rgba(10, 10, 14, 0.16);
+}
+
+.quick-card,
+.kpi-card,
+.chart-card,
+.form-section,
+.admin-user-list,
+.public-form-band {
+  min-width: 0;
+}
+
+.kpi-card {
+  gap: 8px;
+  padding: 22px 18px;
+}
+
+.kpi-card strong {
+  font-size: clamp(30px, 3vw, 38px);
+}
+
+.chart-card {
+  display: grid;
+  align-content: start;
+  gap: 18px;
+  min-height: 360px;
+}
+
+.chart-box {
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.8), rgba(248, 243, 235, 0.72));
+}
+
+.dashboard-base-panel,
+.patient-dashboard-base,
+.crm-base-panel,
+.patient-records-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.data-table-wrap,
+.dashboard-table-wrap {
+  border-radius: 8px;
+  overflow: auto;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42), 0 10px 24px rgba(10, 10, 14, 0.08);
+}
+
+.data-table,
+.dashboard-clean-table {
+  margin-top: 0;
+}
+
+.data-table th,
+.data-table td {
+  vertical-align: top;
+}
+
+.data-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-soft);
+}
+
+.data-table tbody tr:nth-child(even) {
+  background: rgba(248, 243, 235, 0.72);
+}
+
+.data-table tbody tr:hover {
+  background: rgba(200, 154, 87, 0.08);
+}
+
+.empty-state {
+  border: 1px dashed rgba(200, 154, 87, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.admin-user-list {
+  padding: 20px;
+}
+
+.public-form-band,
+.public-hero {
+  padding: 28px;
+}
+
+.public-hero {
+  min-height: 260px;
 }
 
 .primary-action {
@@ -3657,6 +3919,12 @@ a {
 }
 
 @media (max-width: 1020px) {
+  .app-page,
+  .register-page,
+  .public-page {
+    gap: 18px;
+  }
+
   .login-page,
   .home-hero,
   .complaint-summary,
@@ -3690,6 +3958,30 @@ a {
   .register-page,
   .app-page {
     padding: 20px;
+  }
+
+  .page-heading,
+  .dashboard-filter-panel,
+  .management-panel,
+  .public-form-band,
+  .public-hero,
+  .admin-user-list {
+    padding: 22px;
+  }
+
+  .page-heading {
+    min-height: 0;
+  }
+
+  .panel-heading,
+  .dashboard-filter-heading,
+  .patient-records-head,
+  .nps-list-headline,
+  .nps-modal-title,
+  .notification-head,
+  .drawer-head {
+    padding-bottom: 14px;
+    margin-bottom: 14px;
   }
 
   .register-heading {
@@ -3738,6 +4030,10 @@ a {
     position: static;
   }
 
+  .chart-card {
+    min-height: 0;
+  }
+
   .patient-dashboard-actions {
     width: 100%;
     flex-wrap: wrap;
@@ -3766,6 +4062,16 @@ a {
 
   .public-hero {
     grid-template-columns: 1fr;
+  }
+
+  .public-contact-import {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .public-contact-import-button {
+    min-width: 0;
+    width: 100%;
   }
 
   .score-grid {
@@ -3810,6 +4116,13 @@ a {
   .feedback-intake-panel,
   .home-hero {
     padding: 22px;
+  }
+
+  .page-heading,
+  .public-form-band,
+  .public-hero,
+  .admin-user-list {
+    padding: 20px;
   }
 
   .top-actions,

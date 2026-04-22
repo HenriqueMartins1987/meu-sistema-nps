@@ -179,6 +179,25 @@ function HomeShellPage() {
     setFeedback('Link da pesquisa copiado para compartilhamento.');
   };
 
+  const openNpsSurveyPopup = () => {
+    const width = 560;
+    const height = 820;
+    const left = Math.max(0, Math.round((window.screen.width - width) / 2));
+    const top = Math.max(0, Math.round((window.screen.height - height) / 2));
+    const popup = window.open(
+      npsLink,
+      'pesquisa-nps-popup',
+      `popup=yes,width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
+    );
+
+    if (!popup) {
+      window.location.assign(npsLink);
+      return;
+    }
+
+    popup.focus();
+  };
+
   const openNotification = async (notification) => {
     try {
       if (notification.status !== 'read') {
@@ -438,7 +457,7 @@ function HomeShellPage() {
 
         <div className="qr-code-box">
           <img src={qrCodeUrl} alt="QR Code da pesquisa NPS" />
-          <button className="outline-action" onClick={() => navigate('/pesquisa-nps')}>Abrir pesquisa NPS</button>
+          <button className="outline-action" onClick={openNpsSurveyPopup}>Abrir pesquisa NPS</button>
           <div className="share-popover-wrap">
             <button className="primary-action" onClick={() => setShareOpen((prev) => !prev)}>Compartilhar</button>
             {shareOpen && (

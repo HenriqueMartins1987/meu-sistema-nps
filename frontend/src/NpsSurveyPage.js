@@ -40,6 +40,13 @@ function NpsSurveyPage() {
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [error, setError] = useState('');
+  const canImportContacts = useMemo(() => (
+    typeof window !== 'undefined'
+    && window.isSecureContext
+    && typeof navigator !== 'undefined'
+    && navigator.contacts
+    && typeof navigator.contacts.select === 'function'
+  ), []);
 
   useEffect(() => {
     api.get('/public/clinics')
@@ -86,6 +93,46 @@ function NpsSurveyPage() {
       detractor_other: score <= 6 ? prev.detractor_other : '',
       detractor_feedback: score <= 6 ? prev.detractor_feedback : ''
     }));
+  };
+
+  const handleImportReferralContact = async () => {
+    if (!canImportContacts) {
+      setError('Seu navegador nao permite acessar a agenda do telefone por esta pagina. Preencha manualmente os dados da indicacao.');
+      return;
+    }
+
+    setError('');
+
+    try {
+      const supportedProperties = typeof navigator.contacts?.getProperties === 'function'
+        ? await navigator.contacts.getProperties()
+        : ['name', 'tel'];
+      const requestedProperties = ['name', 'tel'].filter((property) => supportedProperties.includes(property));
+      const [selectedContact] = await navigator.contacts.select(requestedProperties, { multiple: false });
+
+      if (!selectedContact) {
+        return;
+      }
+
+      const selectedName = Array.isArray(selectedContact.name)
+        ? selectedContact.name.find(Boolean) || ''
+        : selectedContact.name || '';
+      const selectedPhone = Array.isArray(selectedContact.tel)
+        ? selectedContact.tel.find(Boolean) || ''
+        : selectedContact.tel || '';
+
+      setForm((prev) => ({
+        ...prev,
+        referral_name: selectedName || prev.referral_name,
+        referral_phone: selectedPhone ? formatBrazilPhoneInput(selectedPhone) : prev.referral_phone
+      }));
+    } catch (contactError) {
+      if (contactError?.name === 'AbortError') {
+        return;
+      }
+
+      setError('Nao foi possivel importar o contato da agenda. Voce pode preencher os dados manualmente.');
+    }
   };
 
   const handleSubmit = async (event) => {
@@ -263,33 +310,54 @@ function NpsSurveyPage() {
               </div>
 
               {form.recommend_yes === 'sim' && (
-                <div className="form-grid two">
-                  <label>
-                    Nome para indicação
-                    <input
-                      className="field"
-                      value={form.referral_name}
-                      onChange={(event) => updateForm('referral_name', event.target.value)}
-                      placeholder="Nome do familiar ou amigo"
-                      required
-                    />
-                  </label>
+                <>
+                  <div className="public-contact-import">
+                    <div className="public-contact-import-copy">
+                      <p className="eyebrow">Agenda do telefone</p>
+                      <h3>Importe um contato da agenda para agilizar a indica&ccedil;&atilde;o.</h3>
+                      <p>
+                        Em celulares compat&iacute;veis, o sistema pode abrir sua agenda para preencher
+                        automaticamente o nome e o telefone da indica&ccedil;&atilde;o.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      className="outline-action public-contact-import-button"
+                      onClick={handleImportReferralContact}
+                      disabled={!canImportContacts}
+                    >
+                      {canImportContacts ? 'Importar da agenda' : 'Agenda indispon&iacute;vel neste aparelho'}
+                    </button>
+                  </div>
 
-                  <label>
-                    Telefone / WhatsApp
-                    <input
-                      className="field"
-                      value={form.referral_phone}
-                      onChange={(event) => updateForm('referral_phone', formatBrazilPhoneInput(event.target.value))}
-                      placeholder="+55DDDNÚMERO"
-                      pattern={brazilPhonePattern}
-                      title={brazilPhoneTitle}
-                      minLength={14}
-                      maxLength={14}
-                      required
-                    />
-                  </label>
-                </div>
+                  <div className="form-grid two">
+                    <label>
+                      Nome para indica&ccedil;&atilde;o
+                      <input
+                        className="field"
+                        value={form.referral_name}
+                        onChange={(event) => updateForm('referral_name', event.target.value)}
+                        placeholder="Nome do familiar ou amigo"
+                        required
+                      />
+                    </label>
+
+                    <label>
+                      Telefone / WhatsApp
+                      <input
+                        className="field"
+                        value={form.referral_phone}
+                        onChange={(event) => updateForm('referral_phone', formatBrazilPhoneInput(event.target.value))}
+                        placeholder="+55DDDNUMERO"
+                        pattern={brazilPhonePattern}
+                        title={brazilPhoneTitle}
+                        minLength={14}
+                        maxLength={14}
+                        required
+                      />
+                    </label>
+                  </div>
+                </>
               )}
 
               <div className="public-form-title">
