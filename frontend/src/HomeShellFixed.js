@@ -19,17 +19,17 @@ const notificationTypeLabels = {
 
 const notificationPayloadLabels = {
   protocol: 'Protocolo',
-  complaintId: 'CÃ³digo da reclamaÃ§Ã£o',
-  npsId: 'CÃ³digo da pesquisa NPS',
-  interactionId: 'CÃ³digo do atendimento',
+  complaintId: 'Código da reclamação',
+  npsId: 'Código da pesquisa NPS',
+  interactionId: 'Código do atendimento',
   patientName: 'Paciente',
   patient_name: 'Paciente',
-  clinicName: 'ClÃ­nica',
-  clinic_name: 'ClÃ­nica',
+  clinicName: 'Clínica',
+  clinic_name: 'Clínica',
   coordinatorName: 'Coordenador',
   coordinator_name: 'Coordenador',
-  actorName: 'UsuÃ¡rio',
-  actor_name: 'UsuÃ¡rio',
+  actorName: 'Usuário',
+  actor_name: 'Usuário',
   score: 'Nota',
   source: 'Origem',
   phone: 'Telefone',
@@ -67,7 +67,7 @@ function formatNotificationDate(value) {
 }
 
 function notificationBadge(notification) {
-  return notificationTypeLabels[notification.type] || 'NotificaÃ§Ã£o';
+  return notificationTypeLabels[notification.type] || 'Notificação';
 }
 
 function notificationSummary(notification) {
@@ -82,7 +82,7 @@ function notificationSummary(notification) {
 }
 
 function formatNotificationPayloadValue(value) {
-  if (value === null || value === undefined || value === '') return 'NÃ£o informado';
+  if (value === null || value === undefined || value === '') return 'Não informado';
   if (Array.isArray(value)) return value.join(', ');
   if (typeof value === 'boolean') return value ? 'Sim' : 'Não';
   return String(value);
@@ -119,7 +119,7 @@ function buildNotificationDetails(notification) {
 }
 
 function formatDateTime(value) {
-  if (!value) return 'NÃ£o informado';
+  if (!value) return 'Não informado';
 
   return new Intl.DateTimeFormat('pt-BR', {
     dateStyle: 'short',
@@ -170,25 +170,25 @@ function HomeShellFixed() {
 
   const menuSections = useMemo(() => ([
     {
-      title: 'ReclamaÃ§Ãµes',
+      title: 'Reclamações',
       items: [
         { label: 'Novo Protocolo', path: '/cadastro', permission: 'complaints_register' },
-        { label: 'Painel de GestÃ£o de ReclamaÃ§Ãµes', path: '/gestao', permission: 'complaints_management' },
-        { label: 'Dashboard de ReclamaÃ§Ãµes', path: '/dashboard', permission: 'complaints_dashboard' }
+        { label: 'Painel de Gestão de Reclamações', path: '/gestao', permission: 'complaints_management' },
+        { label: 'Dashboard de Reclamações', path: '/dashboard', permission: 'complaints_dashboard' }
       ]
     },
     {
       title: 'NPS',
       items: [
-        { label: 'Painel de GestÃ£o NPS', path: '/gestao-nps', permission: 'nps_management' },
+        { label: 'Painel de Gestão NPS', path: '/gestao-nps', permission: 'nps_management' },
         { label: 'Dashboard NPS', path: '/dashboard-nps', permission: 'nps_dashboard' },
-        { label: 'Pesquisa NPS pÃºblica', path: '/pesquisa-nps', permission: 'nps_management' }
+        { label: 'Pesquisa NPS pública', path: '/pesquisa-nps', permission: 'nps_management' }
       ]
     },
     {
       title: 'Pacientes',
       items: [
-        { label: 'GestÃ£o do Paciente', path: '/pacientes', permission: 'patient_management' },
+        { label: 'Gestão do Paciente', path: '/pacientes', permission: 'patient_management' },
         { label: 'Dashboard do Paciente', path: '/pacientes/dashboard', permission: 'patient_management' }
       ]
     },
@@ -199,7 +199,7 @@ function HomeShellFixed() {
       ]
     },
     {
-      title: 'AdministraÃ§Ã£o',
+      title: 'Administração',
       items: [
         { label: 'Painel Gerencial', path: '/admin', permission: 'admin_panel', adminOnly: true },
         { label: 'Minha conta', path: '/perfil', permission: 'home' }
@@ -280,9 +280,9 @@ function HomeShellFixed() {
 
           return {
             key: `complaint-${item.id}`,
-            type: 'ReclamaÃ§Ã£o',
+            type: 'Reclamação',
             title: item.protocol || `GRC-${item.id}`,
-            description: `${item.patient_name || 'Paciente'} Â· ${item.clinic_name || 'Unidade nÃ£o informada'}`,
+            description: `${item.patient_name || 'Paciente'} · ${item.clinic_name || 'Unidade não informada'}`,
             detail: tone === 'danger'
               ? `Prazo vencido desde ${formatDateTime(item.due_at)}`
               : tone === 'warning'
@@ -308,8 +308,8 @@ function HomeShellFixed() {
             key: `patient-${item.id}`,
             type: 'Paciente',
             title: item.protocol || `PAC-${item.id}`,
-            description: `${item.patient || 'Paciente'} Â· ${item.clinic || 'Unidade nÃ£o informada'}`,
-            detail: `Agenda de hoje Ã s ${formatDateTime(item.scheduledAt)}`,
+            description: `${item.patient || 'Paciente'} · ${item.clinic || 'Unidade não informada'}`,
+            detail: `Agenda de hoje às ${formatDateTime(item.scheduledAt)}`,
             when: scheduledAt.getTime(),
             tone: 'teal',
             urgent: false,
@@ -355,7 +355,7 @@ function HomeShellFixed() {
 
   const totalAlerts = notificationGroups.unread.length + registrationRequests.length;
   const visibleNotifications = notificationTab === 'read' ? notificationGroups.read : notificationGroups.unread;
-  const shareText = `Pesquisa de SatisfaÃ§Ã£o Grupo Sorria: ${npsLink}`;
+  const shareText = `Pesquisa de Satisfação Grupo Sorria: ${npsLink}`;
   const selectedNotificationDetails = useMemo(
     () => buildNotificationDetails(selectedNotification),
     [selectedNotification]
@@ -407,8 +407,8 @@ function HomeShellFixed() {
     try {
       if (navigator.share) {
         await navigator.share({
-          title: 'Pesquisa de SatisfaÃ§Ã£o',
-          text: 'Responda nossa pesquisa de satisfaÃ§Ã£o.',
+          title: 'Pesquisa de Satisfação',
+          text: 'Responda nossa pesquisa de satisfação.',
           url: npsLink
         });
         closeShareModal();
@@ -420,7 +420,7 @@ function HomeShellFixed() {
       closeShareModal();
     } catch (error) {
       if (error?.name !== 'AbortError') {
-        setFeedback('NÃ£o foi possÃ­vel compartilhar a pesquisa agora.');
+        setFeedback('Não foi possível compartilhar a pesquisa agora.');
       }
     }
   };
@@ -431,7 +431,7 @@ function HomeShellFixed() {
       setFeedback('Link da pesquisa copiado.');
       closeShareModal();
     } catch (error) {
-      setFeedback('NÃƒÂ£o foi possÃƒÂ­vel copiar o link da pesquisa.');
+      setFeedback('Não foi possível copiar o link da pesquisa.');
     }
   };
 
@@ -510,7 +510,7 @@ function HomeShellFixed() {
         unread: prev.unread.filter((item) => item.id !== notificationId),
         read: prev.read.filter((item) => item.id !== notificationId)
       }));
-      setFeedback('NotificaÃ§Ã£o removida do histÃ³rico.');
+      setFeedback('Notificação removida do histórico.');
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível excluir a notificação.');
     }
@@ -525,7 +525,7 @@ function HomeShellFixed() {
     setFeedback('');
 
     if (passwordForm.new_password !== passwordForm.confirm_password) {
-      setFeedback('A confirmaÃ§Ã£o da nova senha nÃ£o confere.');
+      setFeedback('A confirmação da nova senha não confere.');
       return;
     }
 
@@ -571,12 +571,12 @@ function HomeShellFixed() {
           <div className="home-account-row">
             {adminUser && (
               <button type="button" className="gear-action" onClick={() => navigate('/admin')} aria-label="Painel gerencial">
-                âš™
+                ⚙
               </button>
             )}
             <button type="button" className="notification-button" onClick={openNotificationsModal}>
-              <span className="bell-icon" aria-hidden="true">ðŸ””</span>
-              <span className="sr-only">NotificaÃ§Ãµes</span>
+              <span className="bell-icon" aria-hidden="true">🔔</span>
+              <span className="sr-only">Notificações</span>
               <strong>{totalAlerts}</strong>
             </button>
             <button type="button" className="ghost-action account-action" onClick={() => navigate('/perfil')}>
@@ -599,9 +599,9 @@ function HomeShellFixed() {
       {mustChangePassword && (
         <div className="modal-backdrop forced-password-backdrop" role="dialog" aria-modal="true">
           <form className="modal-panel forced-password-modal" onSubmit={handleForcedPasswordChange}>
-            <p className="eyebrow">SeguranÃ§a</p>
+            <p className="eyebrow">Segurança</p>
             <h2>Altere sua senha para continuar</h2>
-            <p>Sua senha foi reiniciada. Por seguranÃ§a, o acesso ao sistema sÃ³ serÃ¡ liberado apÃ³s cadastrar uma nova senha forte.</p>
+            <p>Sua senha foi reiniciada. Por segurança, o acesso ao sistema só será liberado após cadastrar uma nova senha forte.</p>
 
             <label>
               Senha atual
@@ -634,7 +634,7 @@ function HomeShellFixed() {
             </div>
 
             <div className="notification-detail-copy">
-              <h2>{selectedNotification.title || 'AtualizaÃ§Ã£o do sistema'}</h2>
+              <h2>{selectedNotification.title || 'Atualização do sistema'}</h2>
               <p>{selectedNotification.message || notificationSummary(selectedNotification)}</p>
             </div>
 
@@ -831,8 +831,8 @@ function HomeShellFixed() {
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Agenda</p>
-            <h2>PendÃªncias do dia</h2>
-            <p className="base-subtitle">Prazos crÃ­ticos e agenda operacional para acompanhamento imediato.</p>
+            <h2>Pendências do dia</h2>
+            <p className="base-subtitle">Prazos críticos e agenda operacional para acompanhamento imediato.</p>
           </div>
           <button className="outline-action" type="button" onClick={loadAgenda}>
             Atualizar agenda
@@ -840,9 +840,9 @@ function HomeShellFixed() {
         </div>
 
         {agendaLoading ? (
-          <p className="empty-state">Carregando pendÃªncias do dia...</p>
+          <p className="empty-state">Carregando pendências do dia...</p>
         ) : agendaItems.length === 0 ? (
-          <p className="empty-state">Nenhuma pendÃªncia crÃ­tica ou agenda do dia disponÃ­vel.</p>
+          <p className="empty-state">Nenhuma pendência crítica ou agenda do dia disponível.</p>
         ) : (
           <div className="home-agenda-list">
             {agendaItems.map((item) => (
@@ -867,22 +867,22 @@ function HomeShellFixed() {
       <section className="quick-grid" aria-label="Atalhos operacionais">
         <article className="quick-card accent-brand">
           <div className="quick-card-head">
-            <span className="quick-number">ReclamaÃ§Ãµes</span>
-            <span className="quick-tag">GovernanÃ§a</span>
+            <span className="quick-number">Reclamações</span>
+            <span className="quick-tag">Governança</span>
           </div>
-          <h2>GestÃ£o de protocolos com alÃ§ada e evidÃªncias</h2>
-          <p>Cadastro, aceite, tratativa, anexos, prazos e histÃ³rico por usuÃ¡rio.</p>
-          <strong className="quick-highlight">Cada usuÃ¡rio visualiza apenas o que sua alÃ§ada permite.</strong>
+          <h2>Gestão de protocolos com alçada e evidências</h2>
+          <p>Cadastro, aceite, tratativa, anexos, prazos e histórico por usuário.</p>
+          <strong className="quick-highlight">Cada usuário visualiza apenas o que sua alçada permite.</strong>
         </article>
 
         <article className="quick-card accent-teal">
           <div className="quick-card-head">
             <span className="quick-number">NPS</span>
-            <span className="quick-tag">SatisfaÃ§Ã£o</span>
+            <span className="quick-tag">Satisfação</span>
           </div>
-          <h2>Promotores, neutros e detratores em trilha prÃ³pria</h2>
-          <p>O detrator pode virar reclamaÃ§Ã£o quando a operaÃ§Ã£o decidir tratar como protocolo SAC.</p>
-          <strong className="quick-highlight">A avaliaÃ§Ã£o continua auditÃ¡vel no protocolo NPS.</strong>
+          <h2>Promotores, neutros e detratores em trilha própria</h2>
+          <p>O detrator pode virar reclamação quando a operação decidir tratar como protocolo SAC.</p>
+          <strong className="quick-highlight">A avaliação continua auditável no protocolo NPS.</strong>
         </article>
 
         <article className="quick-card accent-gold">
@@ -890,26 +890,26 @@ function HomeShellFixed() {
             <span className="quick-number">Pacientes</span>
             <span className="quick-tag">Agenda</span>
           </div>
-          <h2>Agendamento do Paciente com protocolo e histÃ³rico</h2>
-          <p>Cadastre confirmaÃ§Ãµes, agendamentos e reagendamentos com data atual, protocolo prÃ³prio e trilha de cancelados.</p>
+          <h2>Agendamento do Paciente com protocolo e histórico</h2>
+          <p>Cadastre confirmações, agendamentos e reagendamentos com data atual, protocolo próprio e trilha de cancelados.</p>
           {hasPermission(user, 'patient_management') ? (
             <div className="quick-card-actions">
               <button className="primary-action" onClick={() => navigate('/pacientes')}>Cadastrar paciente</button>
               <button className="outline-action" onClick={() => navigate('/pacientes/dashboard')}>Dashboard Pacientes</button>
             </div>
           ) : (
-            <strong className="quick-highlight">A rotina fica disponÃ­vel conforme a alÃ§ada do usuÃ¡rio.</strong>
+            <strong className="quick-highlight">A rotina fica disponível conforme a alçada do usuário.</strong>
           )}
         </article>
 
         <article className="quick-card accent-leaf">
           <div className="quick-card-head">
             <span className="quick-number">Admin</span>
-            <span className="quick-tag">AlÃ§adas</span>
+            <span className="quick-tag">Alçadas</span>
           </div>
-          <h2>Painel gerencial para usuÃ¡rios, telas e unidades</h2>
-          <p>Administrador e master ajustam acesso, vÃ­nculo com clÃ­nicas e status dos colaboradores.</p>
-          <strong className="quick-highlight">Links sem permissÃ£o deixam de aparecer para o usuÃ¡rio.</strong>
+          <h2>Painel gerencial para usuários, telas e unidades</h2>
+          <p>Administrador e master ajustam acesso, vínculo com clínicas e status dos colaboradores.</p>
+          <strong className="quick-highlight">Links sem permissão deixam de aparecer para o usuário.</strong>
         </article>
       </section>
 
@@ -917,7 +917,7 @@ function HomeShellFixed() {
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <section className="modal-panel agenda-alert-modal">
             <p className="eyebrow">Alertas do dia</p>
-            <h2>Existem protocolos com prazo vencido ou prÃ³ximo do vencimento.</h2>
+            <h2>Existem protocolos com prazo vencido ou próximo do vencimento.</h2>
 
             <div className="home-agenda-list compact">
               {agendaAlerts.map((item) => (

@@ -156,7 +156,7 @@ function AdminPanel() {
     setFeedback('');
 
     if (!isCompleteBrazilPhone(draft.phone) || !isCompleteBrazilPhone(draft.whatsapp)) {
-      setFeedback('Informe telefone e WhatsApp completos no formato +55DDDNÃƒÅ¡MERO.');
+      setFeedback('Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.');
       return;
     }
 
@@ -255,12 +255,12 @@ function AdminPanel() {
       <header className="page-heading">
         <div>
           <p className="eyebrow">Painel Gerencial</p>
-          <h1>GestÃƒÂ£o de UsuÃƒÂ¡rios</h1>
-          <p>Controle quem acessa cada tela e quais clÃƒÂ­nicas ficam sob responsabilidade do colaborador.</p>
+          <h1>Gestão de Usuários</h1>
+          <p>Controle quem acessa cada tela e quais clínicas ficam sob responsabilidade do colaborador.</p>
         </div>
 
         <div className="heading-actions">
-          <button className="primary-action" onClick={() => setCreateOpen(true)}>Cadastrar novo usuÃƒÂ¡rio</button>
+          <button className="primary-action" onClick={() => setCreateOpen(true)}>Cadastrar novo usuário</button>
           <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
         </div>
       </header>
@@ -277,7 +277,7 @@ function AdminPanel() {
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Colaboradores</p>
-                <h2>UsuÃƒÂ¡rios cadastrados</h2>
+                <h2>Usuários cadastrados</h2>
               </div>
             </div>
 
@@ -293,7 +293,7 @@ function AdminPanel() {
                 {filteredUsers.length === 0 && <option value="">Nenhum colaborador encontrado</option>}
                 {filteredUsers.map((user) => (
                   <option key={user.id} value={user.id}>
-                    {user.name} Ã‚Â· {user.email}
+                    {user.name} · {user.email}
                   </option>
                 ))}
               </select>
@@ -312,14 +312,14 @@ function AdminPanel() {
             <section className="management-panel admin-detail-panel">
               <div className="panel-heading">
                 <div>
-                  <p className="eyebrow">AlÃƒÂ§ada</p>
+                  <p className="eyebrow">Alçada</p>
                   <h2>{selectedUser.name}</h2>
                 </div>
                 <div className="heading-actions">
                   {!isSelectedMaster && <button className="outline-action" onClick={disableUser}>Desabilitar</button>}
                   {!isSelectedMaster && <button className="outline-action" onClick={resetPassword}>Reiniciar senha</button>}
                   {!isSelectedMaster && <button className="outline-action danger-action" onClick={deleteUser}>Excluir</button>}
-                  <button className="primary-action" onClick={saveUser}>Salvar alteraÃƒÂ§ÃƒÂµes</button>
+                  <button className="primary-action" onClick={saveUser}>Salvar alterações</button>
                 </div>
               </div>
 
@@ -364,7 +364,7 @@ function AdminPanel() {
                   />
                 </label>
                 <label>
-                  ÃƒÂrea ou unidade
+                  Área ou unidade
                   <input className="field" value={draft.department} onChange={(event) => updateDraft('department', event.target.value)} />
                 </label>
               </div>
@@ -377,14 +377,14 @@ function AdminPanel() {
                     onChange={(event) => updateDraft('active', event.target.checked)}
                     disabled={isSelectedMaster}
                   />
-                  UsuÃƒÂ¡rio habilitado
+                  Usuário habilitado
                 </label>
               </div>
 
               <section className="admin-check-section">
                 <div>
                   <p className="eyebrow">Telas liberadas</p>
-                  <h3>Fluxo de alÃƒÂ§ada por tela</h3>
+                  <h3>Fluxo de alçada por tela</h3>
                   <div className="mini-actions">
                     <button type="button" className="outline-action" onClick={selectAllPermissions}>Selecionar todas</button>
                     <button type="button" className="ghost-action" onClick={clearPermissions}>Limpar</button>
@@ -406,7 +406,7 @@ function AdminPanel() {
 
               <section className="admin-check-section">
                 <div>
-                  <p className="eyebrow">ClÃƒÂ­nicas vinculadas</p>
+                  <p className="eyebrow">Clínicas vinculadas</p>
                   <h3>Responsabilidade por unidade</h3>
                   <div className="mini-actions">
                     <button type="button" className="outline-action" onClick={selectAllClinics}>Selecionar todas</button>
@@ -421,7 +421,7 @@ function AdminPanel() {
                         checked={draft.clinicIds.includes(clinic.id)}
                         onChange={() => toggleClinic(clinic.id)}
                       />
-                      {clinic.name} Ã‚Â· {clinic.city || 'Cidade'} / {clinic.state || 'UF'}
+                      {clinic.name} · {clinic.city || 'Cidade'} / {clinic.state || 'UF'}
                     </label>
                   ))}
                 </div>
@@ -435,7 +435,7 @@ function AdminPanel() {
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <section className="modal-panel create-user-modal">
             <div>
-              <p className="eyebrow">Novo usuÃƒÂ¡rio</p>
+              <p className="eyebrow">Novo usuário</p>
               <h2>Cadastrar colaborador</h2>
               <p>O sistema gerará uma senha temporária segura e enviará o acesso automaticamente para o colaborador.</p>
             </div>
@@ -470,7 +470,7 @@ function AdminPanel() {
                 <input className="field" value={newUser.whatsapp} onChange={(event) => updateNewUser('whatsapp', formatBrazilPhoneInput(event.target.value))} maxLength={14} />
               </label>
               <label className="admin-form-span">
-                ÃƒÂrea ou unidade
+                Área ou unidade
                 <input className="field" value={newUser.department} onChange={(event) => updateNewUser('department', event.target.value)} />
               </label>
             </div>

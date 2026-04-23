@@ -22,7 +22,7 @@ const chartOptions = {
 };
 
 const typeLabels = {
-  confirmacao: 'ConfirmaÃƒÂ§ÃƒÂ£o',
+  confirmacao: 'Confirmação',
   agendamento: 'Agendamento',
   reagendamento: 'Reagendamento'
 };
@@ -71,7 +71,7 @@ function groupCount(items, key) {
   const map = new Map();
 
   items.forEach((item) => {
-    const value = key(item) || 'NÃƒÂ£o informado';
+    const value = key(item) || 'Não informado';
     map.set(value, (map.get(value) || 0) + 1);
   });
 
@@ -104,7 +104,7 @@ function buildDoughnutData(rows) {
 }
 
 function formatDateTime(value) {
-  if (!value) return 'NÃƒÂ£o informado';
+  if (!value) return 'Não informado';
 
   return new Intl.DateTimeFormat('pt-BR', {
     dateStyle: 'short',
@@ -260,7 +260,7 @@ function PatientManagementPage() {
 
     try {
       if (!isCompleteBrazilPhone(form.phone)) {
-        setFeedback('Informe o telefone completo no formato +55DDDNÃƒÅ¡MERO.');
+        setFeedback('Informe o telefone completo no formato +55DDDNÚMERO.');
         setSaving(false);
         return;
       }
@@ -310,7 +310,7 @@ function PatientManagementPage() {
     try {
       await api.patch(`/patient-interactions/${selectedRecord.id}`, { status, action });
       await refreshSelectedRecord(selectedRecord.id);
-      setFeedback('Agendamento atualizado com histÃƒÂ³rico.');
+      setFeedback('Agendamento atualizado com histórico.');
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível atualizar o agendamento.');
     } finally {
@@ -348,7 +348,7 @@ function PatientManagementPage() {
           </div>
 
           <div className="heading-actions">
-            <button className="outline-action" onClick={() => navigate('/pacientes')}>GestÃƒÂ£o do Paciente</button>
+            <button className="outline-action" onClick={() => navigate('/pacientes')}>Gestão do Paciente</button>
             <button className="outline-action" onClick={() => navigate('/pacientes/dashboard')}>Dashboard Pacientes</button>
             <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
           </div>
@@ -423,7 +423,7 @@ function PatientManagementPage() {
             <label>
               Tipo
               <select className="field" value={form.type} onChange={(event) => updateForm('type', event.target.value)}>
-                <option value="confirmacao">ConfirmaÃƒÂ§ÃƒÂ£o</option>
+                <option value="confirmacao">Confirmação</option>
                 <option value="agendamento">Agendamento</option>
                 <option value="reagendamento">Reagendamento</option>
               </select>
@@ -441,7 +441,7 @@ function PatientManagementPage() {
 
             <div className="row-actions">
               <button className="outline-action" type="button" onClick={() => navigate('/pacientes')}>
-                Voltar para gestÃƒÂ£o
+                Voltar para gestão
               </button>
               <button className="primary-action" type="submit" disabled={saving}>
                 {saving ? 'Salvando...' : 'Salvar agendamento'}
@@ -718,12 +718,12 @@ function PatientManagementPage() {
         <article className="kpi-card warning">
           <span>Reagendamentos</span>
           <strong>{grouped.reagendamento || 0}</strong>
-          <p>ALTERAÃƒâ€¡Ãƒâ€¢ES</p>
+          <p>ALTERAÇÕES</p>
         </article>
         <article className="kpi-card danger">
           <span>Cancelados</span>
           <strong>{cancelledRecords.length}</strong>
-          <p>LASTRO DISPONÃƒÂVEL</p>
+          <p>LASTRO DISPONÍVEL</p>
         </article>
       </section>
 
@@ -753,10 +753,10 @@ function PatientManagementPage() {
                   <th>Paciente</th>
                   <th>Tipo</th>
                   <th>Unidade</th>
-                  <th>Data e horÃƒÂ¡rio</th>
+                  <th>Data e horário</th>
                   <th>{activeTab === 'cancelados' ? 'Cancelado por' : 'Última tratativa por'}</th>
-                  <th>Leitura rÃƒÂ¡pida</th>
-                  <th>AÃƒÂ§ÃƒÂ£o</th>
+                  <th>Leitura rápida</th>
+                  <th>Ação</th>
                 </tr>
               </thead>
               <tbody>
@@ -869,7 +869,7 @@ function PatientManagementPage() {
                     <strong>{item.action}</strong>
                     <span>{formatDateTime(item.at)}</span>
                   </div>
-                  <small>{item.actor_name || 'UsuÃƒÂ¡rio do sistema'} Ã‚Â· {item.actor_role || 'Perfil nÃƒÂ£o informado'}</small>
+                  <small>{item.actor_name || 'Usuário do sistema'} · {item.actor_role || 'Perfil não informado'}</small>
                   <p>{item.note}</p>
                 </article>
               ))}

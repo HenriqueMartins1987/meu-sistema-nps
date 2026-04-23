@@ -1,5 +1,5 @@
 ﻿// ============================================
-// IMPORTAÃ‡Ã•ES
+// IMPORTAÇÕES
 // ============================================
 require('dotenv').config({ quiet: true });
 
@@ -115,7 +115,7 @@ const initialPasswordChangeLimiter = rateLimit({
 });
 
 // ============================================
-// CONFIGURAÃ‡ÃƒO DE UPLOAD (CORRETA)
+// CONFIGURAÇÃO DE UPLOAD (CORRETA)
 // ============================================
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -149,14 +149,14 @@ const pool = mysql.createPool({
 const complaintTypeSuggestions = [
   'Atendimento e acolhimento',
   'Agendamento, atraso ou tempo de espera',
-  'ComunicaÃ§Ã£o e explicaÃ§Ã£o do tratamento',
-  'OrÃ§amento, cobranÃ§a ou contrato',
+  'Comunicação e explicação do tratamento',
+  'Orçamento, cobrança ou contrato',
   'Qualidade do tratamento realizado',
-  'Dor, complicaÃ§Ã£o ou pÃ³s-atendimento',
-  'Resultado estÃ©tico ou expectativa',
-  'Higiene, biosseguranÃ§a ou estrutura',
-  'DocumentaÃ§Ã£o, laudos ou prontuÃ¡rio',
-  'Conduta da equipe clÃ­nica',
+  'Dor, complicação ou pós-atendimento',
+  'Resultado estético ou expectativa',
+  'Higiene, biossegurança ou estrutura',
+  'Documentação, laudos ou prontuário',
+  'Conduta da equipe clínica',
   'Outros'
 ];
 
@@ -167,7 +167,7 @@ const collaboratorPositions = [
   'Gerente de unidade',
   'Gerente regional',
   'Analista de Qualidade / NPS',
-  'RecepÃ§Ã£o / Atendimento',
+  'Recepção / Atendimento',
   'Administrativo',
   'Diretoria',
   'Outros'
@@ -185,11 +185,11 @@ const accessProfiles = {
 const screenPermissions = {
   home: 'Home',
   complaints_register: 'Cadastro de protocolos',
-  complaints_management: 'Painel de gestÃ£o de reclamaÃ§Ãµes',
-  complaints_dashboard: 'Dashboard de reclamaÃ§Ãµes',
-  nps_management: 'Painel de gestÃ£o NPS',
+  complaints_management: 'Painel de gestão de reclamações',
+  complaints_dashboard: 'Dashboard de reclamações',
+  nps_management: 'Painel de gestão NPS',
   nps_dashboard: 'Dashboard NPS',
-  patient_management: 'GestÃ£o do paciente',
+  patient_management: 'Gestão do paciente',
   admin_panel: 'Painel gerencial'
 };
 
@@ -200,7 +200,7 @@ const deadlineHoursByPriority = {
 };
 const resolutionSlaDays = 15;
 const patientInteractionTypeLabels = {
-  confirmacao: 'ConfirmaÃ§Ã£o',
+  confirmacao: 'Confirmação',
   agendamento: 'Agendamento',
   reagendamento: 'Reagendamento'
 };
@@ -271,7 +271,7 @@ function normalizeNpsStatus(value) {
 }
 
 function getActorName(user) {
-  return user?.name || user?.email || 'UsuÃ¡rio autenticado';
+  return user?.name || user?.email || 'Usuário autenticado';
 }
 
 function isAdminUser(user) {
@@ -340,18 +340,18 @@ function classifyNpsFeedback(score, feedbackType) {
   const normalized = String(feedbackType || '').toLowerCase();
 
   if (normalized.includes('elog')) return 'Elogio';
-  if (normalized.includes('sug')) return 'SugestÃ£o';
-  if (normalized.includes('reclam')) return 'ReclamaÃ§Ã£o';
+  if (normalized.includes('sug')) return 'Sugestão';
+  if (normalized.includes('reclam')) return 'Reclamação';
 
   const numericScore = Number(score);
 
   if (numericScore >= 9) return 'Elogio';
-  if (numericScore >= 7) return 'SugestÃ£o';
-  return 'ReclamaÃ§Ã£o';
+  if (numericScore >= 7) return 'Sugestão';
+  return 'Reclamação';
 }
 
 function priorityForNpsFeedback(score, classification) {
-  if (classification === 'ReclamaÃ§Ã£o' && Number(score) <= 6) return 'alta';
+  if (classification === 'Reclamação' && Number(score) <= 6) return 'alta';
   return 'baixa';
 }
 
@@ -406,7 +406,7 @@ function buildNotificationHtml(message, link) {
 }
 
 function formatMessageDateTime(value) {
-  if (!value) return 'NÃ£o informado';
+  if (!value) return 'Não informado';
 
   return new Intl.DateTimeFormat('pt-BR', {
     dateStyle: 'short',
@@ -562,13 +562,59 @@ function decodePossiblyLatin1Text(value) {
   const text = String(value || '');
 
   if (!text) return '';
-  if (!/[ÃƒÃ‚]/.test(text)) return text;
+  if (!/[\u00c3\u00c2\u0192\u00e2\u00c5\u00f0\ufffd]/u.test(text)) return text;
 
-  try {
-    return Buffer.from(text, 'latin1').toString('utf8');
-  } catch (error) {
-    return text;
+  const windows1252Map = new Map([
+    [0x20ac, 0x80], [0x201a, 0x82], [0x0192, 0x83], [0x201e, 0x84], [0x2026, 0x85], [0x2020, 0x86],
+    [0x2021, 0x87], [0x02c6, 0x88], [0x2030, 0x89], [0x0160, 0x8a], [0x2039, 0x8b], [0x0152, 0x8c],
+    [0x017d, 0x8e], [0x2018, 0x91], [0x2019, 0x92], [0x201c, 0x93], [0x201d, 0x94], [0x2022, 0x95],
+    [0x2013, 0x96], [0x2014, 0x97], [0x02dc, 0x98], [0x2122, 0x99], [0x0161, 0x9a], [0x203a, 0x9b],
+    [0x0153, 0x9c], [0x017e, 0x9e], [0x0178, 0x9f]
+  ]);
+
+  const markerCount = (input) => (input.match(/[\u00c3\u00c2\u0192\u00e2\u00c5\u00f0\ufffd]/gu) || []).length;
+
+  const toWindows1252Buffer = (input) => {
+    const bytes = [];
+
+    for (const ch of input) {
+      const code = ch.codePointAt(0);
+
+      if (windows1252Map.has(code)) {
+        bytes.push(windows1252Map.get(code));
+      } else if (code <= 0xff) {
+        bytes.push(code);
+      } else {
+        return null;
+      }
+    }
+
+    return Buffer.from(bytes);
+  };
+
+  let normalized = text;
+
+  for (let index = 0; index < 4; index += 1) {
+    const bytes = toWindows1252Buffer(normalized);
+
+    if (!bytes) break;
+
+    const candidate = bytes.toString('utf8');
+
+    if (markerCount(candidate) < markerCount(normalized)) {
+      normalized = candidate;
+      continue;
+    }
+
+    break;
   }
+
+  return normalized
+    .replaceAll('\u00c3\u00b0\u0178\u201d\u201d', '🔔')
+    .replaceAll('\u00c3\u00b0\u00c5\u00b8\u00e2\u20ac\u009d\u00e2\u20ac\u009d', '🔔')
+    .replaceAll('\u00c3\u00a2\u00c5\u00a1\u00e2\u201e\u00a2', '⚙')
+    .replaceAll('\u00c3\u201a\u00c2\u00b7', '·')
+    .replaceAll('\u00c2\u00b7', '·');
 }
 
 function normalizeClinicLookupValue(value) {
@@ -742,7 +788,7 @@ function inferNpsProfile(score) {
 }
 
 function buildNpsNarrative(payload, classification, profile) {
-  const notes = [`Registro originado da pesquisa NPS com classificaÃ§Ã£o ${classification}.`];
+  const notes = [`Registro originado da pesquisa NPS com classificação ${classification}.`];
   const comment = String(payload.comment || '').trim();
   const improvement = String(payload.improvement_comment || '').trim();
   const detractorFeedback = String(payload.detractor_feedback || '').trim();
@@ -762,7 +808,7 @@ function buildNpsNarrative(payload, classification, profile) {
     notes.push(
       referralParts.length
         ? `Cliente informou que indicaria ${referralParts.join(' - ')}.`
-        : 'Cliente informou que indicaria a experiÃªncia para um familiar ou amigo.'
+        : 'Cliente informou que indicaria a experiência para um familiar ou amigo.'
     );
   }
 
@@ -772,7 +818,7 @@ function buildNpsNarrative(payload, classification, profile) {
 
   if (profile === 'detrator') {
     if (reasons.length) {
-      notes.push(`Pontos crÃ­ticos sinalizados: ${reasons.join(', ')}.`);
+      notes.push(`Pontos críticos sinalizados: ${reasons.join(', ')}.`);
     }
 
     if (detractorFeedback) {
@@ -1203,13 +1249,13 @@ async function ensureDefaultClinics() {
      (?, ?, ?, ?, ?, 1),
      (?, ?, ?, ?, ?, 1)`,
     [
-      'ClÃ­nica Centro', 'GoiÃ¢nia', 'GO', 'Centro-Oeste', 'CoordenaÃ§Ã£o Centro',
-      'ClÃ­nica Trindade', 'Trindade', 'GO', 'Centro-Oeste', 'CoordenaÃ§Ã£o Trindade',
-      'ClÃ­nica Aparecida', 'Aparecida de GoiÃ¢nia', 'GO', 'Centro-Oeste', 'CoordenaÃ§Ã£o Aparecida'
+      'Clínica Centro', 'Goiânia', 'GO', 'Centro-Oeste', 'Coordenação Centro',
+      'Clínica Trindade', 'Trindade', 'GO', 'Centro-Oeste', 'Coordenação Trindade',
+      'Clínica Aparecida', 'Aparecida de Goiânia', 'GO', 'Centro-Oeste', 'Coordenação Aparecida'
     ]
   );
 
-  console.log('ClÃ­nicas padrÃ£o inseridas com sucesso.');
+  console.log('Clínicas padrão inseridas com sucesso.');
 }
 
 async function syncClinicCatalog() {
@@ -1355,7 +1401,7 @@ async function syncClinicCatalog() {
     );
   }
 
-  console.log(`ClÃ­nicas sincronizadas: ${inserted} novas e ${updated} atualizadas.`);
+  console.log(`Clínicas sincronizadas: ${inserted} novas e ${updated} atualizadas.`);
 }
 
 async function ensureDefaultAdminUser() {
@@ -1364,7 +1410,7 @@ async function ensureDefaultAdminUser() {
   await pool.query(
     `INSERT INTO users
      (name, email, password, role, position, phone, whatsapp, department, permissions, active)
-     VALUES (?, ?, ?, 'master_admin', 'Administrador Master', '+5562999999999', '+5562999999999', 'AdministraÃ§Ã£o', ?, 1)
+     VALUES (?, ?, ?, 'master_admin', 'Administrador Master', '+5562999999999', '+5562999999999', 'Administração', ?, 1)
      ON DUPLICATE KEY UPDATE
        name = VALUES(name),
        password = VALUES(password),
@@ -1657,7 +1703,7 @@ async function getComplaintRows(query = {}, user = null) {
 
 function groupRows(rows, field) {
   return rows.reduce((acc, row) => {
-    const label = row[field] || 'NÃ£o informado';
+    const label = row[field] || 'Não informado';
     acc[label] = (acc[label] || 0) + 1;
     return acc;
   }, {});
@@ -2087,7 +2133,7 @@ async function sendUserAccessNotifications(user, temporaryPassword) {
     user.id,
     'password_reset',
     'Primeiro acesso liberado',
-    'Seu acesso foi criado. Use a senha temporÃ¡ria recebida e altere a senha no primeiro login.',
+    'Seu acesso foi criado. Use a senha temporária recebida e altere a senha no primeiro login.',
     '/perfil',
     { temporaryPassword: true, firstAccess: true }
   );
@@ -2318,7 +2364,7 @@ async function dispatchNoShowNotifications(record, actor) {
     scheduledAt: record.scheduled_at,
     actorName: actor?.name || getActorName(actor)
   };
-  const title = `Paciente nÃ£o compareceu - ${record.protocol || `PAC-${record.id}`}`;
+  const title = `Paciente não compareceu - ${record.protocol || `PAC-${record.id}`}`;
   const message = buildNoShowAlertMessage({
     id: record.id,
     protocol: record.protocol,
@@ -2471,7 +2517,7 @@ async function getMonthlyDuplicateNpsPhones(monthRef) {
 async function alertDuplicateNpsPhone(phone, protocol, npsId) {
   const monthRef = new Date().toISOString().slice(0, 7);
   const title = `Alerta NPS: telefone repetido ${phone}`;
-  const message = `O telefone ${phone} apareceu mais de uma vez nas pesquisas NPS deste mÃªs. Ãšltimo protocolo: ${protocol}.`;
+  const message = `O telefone ${phone} apareceu mais de uma vez nas pesquisas NPS deste mês. Último protocolo: ${protocol}.`;
   const payload = { phone, protocol, npsId, month: monthRef };
   await createNotificationForRoles(
     ['supervisor_crc', 'admin', 'master_admin'],
@@ -2485,7 +2531,7 @@ async function alertDuplicateNpsPhone(phone, protocol, npsId) {
 
 async function createPromoterAgendaRecord({ npsId, patientName, patientPhone, clinicName }) {
   const scheduledAt = new Date();
-  const note = 'Contato compartilhado pelo paciente promotor na pesquisa de satisfaÃ§Ã£o.';
+  const note = 'Contato compartilhado pelo paciente promotor na pesquisa de satisfação.';
   const [result] = await pool.query(
     `INSERT INTO patient_interactions
      (patient_name, patient_phone, channel, clinic_name, interaction_type, scheduled_at, note, status, created_by_name, created_by_role)
@@ -2493,7 +2539,7 @@ async function createPromoterAgendaRecord({ npsId, patientName, patientPhone, cl
     [
       patientName || 'Paciente promotor',
       patientPhone,
-      clinicName || 'Unidade nÃ£o informada',
+      clinicName || 'Unidade não informada',
       toMysqlDateTime(scheduledAt),
       note
     ]
@@ -2572,7 +2618,7 @@ async function dispatchCoordinatorDelayNotifications() {
   await Promise.all(coordinators.map(async (coordinatorName) => {
     const coordinatorRows = grouped[coordinatorName];
     const message = [
-      `AtenÃ§Ã£o: demandas em atraso do coordenador ${coordinatorName}.`,
+      `Atenção: demandas em atraso do coordenador ${coordinatorName}.`,
       ...coordinatorRows.slice(0, 10).map((row) => `- ${row.protocol || `GRC-${row.id}`} | ${row.clinic_name || 'Unidade'} | SLA ${row.resolution_due_at ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(row.resolution_due_at)) : 'Nao informado'}`)
     ].join('\n');
 
@@ -2607,13 +2653,13 @@ async function dispatchWeeklyCoordinatorReports() {
       coordinator: coordinatorName,
       attachmentUrl: report.url,
       link: report.url,
-      message: `RelatÃ³rio semanal do coordenador ${coordinatorName}. Total de protocolos: ${coordinatorRows.length}. Atrasadas: ${coordinatorRows.filter((row) => row.delayed).length}.`
+      message: `Relatório semanal do coordenador ${coordinatorName}. Total de protocolos: ${coordinatorRows.length}. Atrasadas: ${coordinatorRows.filter((row) => row.delayed).length}.`
     });
 
     await sendEmail(
       approvalEmail,
-      `RelatÃ³rio semanal - ${coordinatorName}`,
-      `<p>Segue o relatÃ³rio semanal do coordenador <strong>${coordinatorName}</strong>.</p><p>Total de protocolos: ${coordinatorRows.length}</p><p>Atrasadas: ${coordinatorRows.filter((row) => row.delayed).length}</p>`,
+      `Relatório semanal - ${coordinatorName}`,
+      `<p>Segue o relatório semanal do coordenador <strong>${coordinatorName}</strong>.</p><p>Total de protocolos: ${coordinatorRows.length}</p><p>Atrasadas: ${coordinatorRows.filter((row) => row.delayed).length}</p>`,
       [{ filename: report.fileName, path: report.filePath }]
     );
   }
@@ -2679,19 +2725,19 @@ async function notifyComplaintCreated(complaintId, protocol) {
   const complaint = rows[0] || {};
   const clinic = complaint.clinic_name
     ? `${complaint.clinic_name}${complaint.city ? ` - ${complaint.city}/${complaint.state || 'UF'}` : ''}`
-    : 'Unidade nÃ£o informada';
+    : 'Unidade não informada';
   const title = `Novo protocolo ${protocol || complaint.protocol || complaintId}`;
   const link = `${frontendUrl}/gestao/${complaintId}`;
   const message = [
     title,
-    `Paciente: ${complaint.patient_name || 'NÃ£o informado'}`,
+    `Paciente: ${complaint.patient_name || 'Não informado'}`,
     `Unidade: ${clinic}`,
-    `Tipo: ${complaint.complaint_type || 'NÃ£o informado'}`,
-    `Prioridade: ${complaint.priority || 'NÃ£o informada'}`,
+    `Tipo: ${complaint.complaint_type || 'Não informado'}`,
+    `Prioridade: ${complaint.priority || 'Não informada'}`,
     `Origem: ${complaint.created_origin || 'Interno'}`
   ].join('\n');
   const payload = { complaintId, protocol: protocol || complaint.protocol || complaintId };
-  const detailedMessage = `${message}\n\nAcesse o protocolo para dar ciÃªncia e iniciar a tratativa.`;
+  const detailedMessage = `${message}\n\nAcesse o protocolo para dar ciência e iniciar a tratativa.`;
   const operationalMessage = `${message}\n\nSupervisor do CRC e Operador de SAC devem acompanhar o protocolo ate a conclusao.`;
 
   try {
@@ -2735,7 +2781,7 @@ async function notifyComplaintCreated(complaintId, protocol) {
 
 function buildNpsComplaintDescription(nps) {
   const notes = [
-    `ReclassificaÃ§Ã£o de cliente detrator da pesquisa de satisfaÃ§Ã£o. Nota NPS: ${nps.score}.`
+    `Reclassificação de cliente detrator da pesquisa de satisfação. Nota NPS: ${nps.score}.`
   ];
 
   if (nps.detractor_feedback) {
@@ -2754,7 +2800,7 @@ function buildNpsComplaintDescription(nps) {
   }
 
   if (nps.comment) {
-    notes.push(`ObservaÃ§Ã£o adicional: ${nps.comment}`);
+    notes.push(`Observação adicional: ${nps.comment}`);
   }
 
   return notes.join('\n\n');
@@ -2900,7 +2946,7 @@ async function convertNpsToComplaint(npsId, user) {
   const [rows] = await pool.query('SELECT * FROM nps_responses WHERE id = ?', [npsId]);
 
   if (!rows.length) {
-    const error = new Error('Pesquisa NPS nÃ£o encontrada.');
+    const error = new Error('Pesquisa NPS não encontrada.');
     error.statusCode = 404;
     throw error;
   }
@@ -2909,7 +2955,7 @@ async function convertNpsToComplaint(npsId, user) {
   const profile = nps.nps_profile || inferNpsProfile(nps.score);
 
   if (profile !== 'detrator') {
-    const error = new Error('Apenas clientes detratores podem ser reclassificados como reclamaÃ§Ã£o.');
+    const error = new Error('Apenas clientes detratores podem ser reclassificados como reclamação.');
     error.statusCode = 409;
     throw error;
   }
@@ -2921,7 +2967,7 @@ async function convertNpsToComplaint(npsId, user) {
     };
   }
 
-  const priority = priorityForNpsFeedback(nps.score, 'ReclamaÃ§Ã£o');
+  const priority = priorityForNpsFeedback(nps.score, 'Reclamação');
   const dueAt = calculateDueAt(priority);
   const resolutionDueAt = calculateResolutionDueAt();
   const description = buildNpsComplaintDescription(nps);
@@ -2929,7 +2975,7 @@ async function convertNpsToComplaint(npsId, user) {
   const [result] = await pool.query(
     `INSERT INTO complaints
      (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, resolution_due_at, created_origin)
-     VALUES (?, ?, ?, 'NPS', 'ReclamaÃ§Ã£o NPS', ?, 'Pesquisa de satisfaÃ§Ã£o', 'aberta', ?, ?, ?, 'Externo')`,
+     VALUES (?, ?, ?, 'NPS', 'Reclamação NPS', ?, 'Pesquisa de satisfação', 'aberta', ?, ?, ?, 'Externo')`,
     [
       nps.clinic_id || null,
       nps.patient_name || 'Paciente NPS',
@@ -2960,12 +3006,12 @@ async function convertNpsToComplaint(npsId, user) {
     'UPDATE nps_responses SET converted_complaint_id = ?, converted_at = NOW(), converted_by = ? WHERE id = ?',
     [result.insertId, getActorName(user), npsId]
   );
-  await insertComplaintLog(result.insertId, 'nps_reclassified', `Pesquisa NPS ${npsId} reclassificada como reclamaÃ§Ã£o para tratativa.`, user);
-  await insertComplaintLog(result.insertId, 'assigned_to_coordinator', `Protocolo vinculado ao responsÃ¡vel ${coordinatorLabel}.`, {
+  await insertComplaintLog(result.insertId, 'nps_reclassified', `Pesquisa NPS ${npsId} reclassificada como reclamação para tratativa.`, user);
+  await insertComplaintLog(result.insertId, 'assigned_to_coordinator', `Protocolo vinculado ao responsável ${coordinatorLabel}.`, {
     name: 'Sistema GRC',
     role: 'sistema'
   });
-  await insertNpsLog(npsId, 'migrado_para_reclamacao', `Detrator migrado para reclamaÃ§Ã£o ${protocol}.`, user);
+  await insertNpsLog(npsId, 'migrado_para_reclamacao', `Detrator migrado para reclamação ${protocol}.`, user);
   await notifyComplaintCreated(result.insertId, protocol);
 
   return {
@@ -2979,7 +3025,7 @@ async function saveNpsTreatment(npsId, user, payload = {}, options = {}) {
   const [rows] = await pool.query('SELECT * FROM nps_responses WHERE id = ?', [npsId]);
 
   if (!rows.length) {
-    const error = new Error('Pesquisa NPS nÃ£o encontrada.');
+    const error = new Error('Pesquisa NPS não encontrada.');
     error.statusCode = 404;
     throw error;
   }
@@ -2988,7 +3034,7 @@ async function saveNpsTreatment(npsId, user, payload = {}, options = {}) {
   const profile = nps.nps_profile || inferNpsProfile(nps.score);
 
   if (profile !== 'detrator') {
-    const error = new Error('A tratativa de NPS estÃ¡ disponÃ­vel para clientes detratores.');
+    const error = new Error('A tratativa de NPS está disponível para clientes detratores.');
     error.statusCode = 409;
     throw error;
   }
@@ -3042,7 +3088,7 @@ async function authenticate(req, res, next) {
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
 
   if (!token) {
-    return res.status(401).json({ error: 'Token nÃ£o informado' });
+    return res.status(401).json({ error: 'Token não informado' });
   }
 
   try {
@@ -3067,7 +3113,7 @@ async function authenticate(req, res, next) {
     return next();
 
   } catch (error) {
-    return res.status(401).json({ error: 'Token invÃ¡lido' });
+    return res.status(401).json({ error: 'Token inválido' });
   }
 }
 
@@ -3083,7 +3129,7 @@ function optionalAuthenticate(req, res, next) {
     req.user = jwt.verify(token, SECRET);
     return next();
   } catch (error) {
-    return res.status(401).json({ error: 'SessÃ£o invÃ¡lida. FaÃ§a login novamente.' });
+    return res.status(401).json({ error: 'Sessão inválida. Faça login novamente.' });
   }
 }
 
@@ -3107,7 +3153,7 @@ function requireMasterAdmin(req, res, next) {
 // TESTE
 // ============================================
 app.get('/', (req, res) => {
-  res.send('API funcionando ðŸš€');
+  res.send('API funcionando 🚀');
 });
 
 app.post('/api/test-whatsapp', authenticate, requireAdmin, async (req, res) => {
@@ -3242,7 +3288,7 @@ app.get('/clinics', authenticate, async (req, res) => {
     const rows = await getClinicsForUser(req.user);
 
     if (!rows.length) {
-      console.warn('[GET /clinics] Nenhuma clÃ­nica encontrada.', {
+      console.warn('[GET /clinics] Nenhuma clínica encontrada.', {
         userId: req.user?.id,
         email: req.user?.email,
         role: req.user?.role
@@ -3251,8 +3297,8 @@ app.get('/clinics', authenticate, async (req, res) => {
 
     return res.status(200).json(rows);
   } catch (error) {
-    console.error('[GET /clinics] Erro ao buscar clÃ­nicas:', error);
-    return res.status(500).json({ error: 'Erro ao buscar clÃ­nicas' });
+    console.error('[GET /clinics] Erro ao buscar clínicas:', error);
+    return res.status(500).json({ error: 'Erro ao buscar clínicas' });
   }
 });
 
@@ -3279,8 +3325,8 @@ app.get('/public/clinics', async (req, res) => {
 
     res.json(rows);
   } catch (error) {
-    console.error('[GET /public/clinics] Erro ao buscar clÃ­nicas pÃºblicas:', error);
-    res.status(500).json({ error: 'Erro ao buscar clÃ­nicas pÃºblicas.' });
+    console.error('[GET /public/clinics] Erro ao buscar clínicas públicas:', error);
+    res.status(500).json({ error: 'Erro ao buscar clínicas públicas.' });
   }
 });
 
@@ -3317,12 +3363,12 @@ app.post('/registration-requests', async (req, res) => {
 
     if (!isStrongPassword(password)) {
       return res.status(400).json({
-        error: 'A senha deve ter no mÃ­nimo 8 caracteres, letra maiÃºscula, letra minÃºscula, nÃºmero e caractere especial.'
+        error: 'A senha deve ter no mínimo 8 caracteres, letra maiúscula, letra minúscula, número e caractere especial.'
       });
     }
 
     if (!accessProfiles[role]) {
-      return res.status(400).json({ error: 'Perfil de acesso invÃ¡lido.' });
+      return res.status(400).json({ error: 'Perfil de acesso inválido.' });
     }
 
     const normalizedEmail = String(email).trim().toLowerCase();
@@ -3330,7 +3376,7 @@ app.post('/registration-requests', async (req, res) => {
     const normalizedWhatsapp = normalizeBrazilPhone(whatsapp);
 
     if (!isCompleteBrazilPhone(normalizedPhone) || !isCompleteBrazilPhone(normalizedWhatsapp)) {
-      return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÃšMERO.' });
+      return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.' });
     }
 
     const [users] = await pool.query('SELECT id FROM users WHERE email = ?', [normalizedEmail]);
@@ -3340,7 +3386,7 @@ app.post('/registration-requests', async (req, res) => {
     );
 
     if (users.length || pending.length) {
-      return res.status(409).json({ error: 'JÃ¡ existe usuÃ¡rio ou cadastro pendente para este e-mail.' });
+      return res.status(409).json({ error: 'Já existe usuário ou cadastro pendente para este e-mail.' });
     }
 
     const token = crypto.randomBytes(32).toString('hex');
@@ -3367,29 +3413,29 @@ app.post('/registration-requests', async (req, res) => {
 
     await sendEmail(
       approvalEmail,
-      'Novo cadastro aguardando aprovaÃ§Ã£o - Sistema GRC',
+      'Novo cadastro aguardando aprovação - Sistema GRC',
       `
-        <h2>Novo cadastro aguardando aprovaÃ§Ã£o</h2>
+        <h2>Novo cadastro aguardando aprovação</h2>
         <p><strong>Nome:</strong> ${name}</p>
         <p><strong>E-mail:</strong> ${normalizedEmail}</p>
         <p><strong>Cargo:</strong> ${position}</p>
         <p><strong>Perfil solicitado:</strong> ${accessProfiles[role]}</p>
         <p><strong>Telefone:</strong> ${normalizedPhone}</p>
         <p><strong>WhatsApp:</strong> ${normalizedWhatsapp}</p>
-        <p><strong>Ãrea/unidade:</strong> ${department || 'NÃ£o informado'}</p>
+        <p><strong>Área/unidade:</strong> ${department || 'Não informado'}</p>
         <p><a href="${approvalLink}">Aprovar cadastro</a></p>
       `
     );
     await createNotificationForAdmins(
       'registration_request',
-      'Novo cadastro aguardando aprovaÃ§Ã£o',
+      'Novo cadastro aguardando aprovação',
       `${name} solicitou acesso como ${accessProfiles[role]}.`,
       '/home',
       { requestEmail: normalizedEmail }
     );
 
     res.status(201).json({
-      message: 'Cadastro enviado para aprovaÃ§Ã£o. O administrador serÃ¡ notificado por e-mail.'
+      message: 'Cadastro enviado para aprovação. O administrador será notificado por e-mail.'
     });
   } catch (error) {
     console.error(error);
@@ -3571,7 +3617,7 @@ app.post('/admin/registration-requests/:id/reject', authenticate, requireMasterA
     );
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'Cadastro nÃ£o encontrado ou jÃ¡ analisado.' });
+      return res.status(404).json({ error: 'Cadastro não encontrado ou já analisado.' });
     }
 
     const request = rows[0];
@@ -3581,8 +3627,8 @@ app.post('/admin/registration-requests/:id/reject', authenticate, requireMasterA
     );
     await sendEmail(
       request.email,
-      'Cadastro nÃ£o aprovado - Sistema GRC',
-      '<p>Seu cadastro foi analisado e nÃ£o foi aprovado neste momento.</p>'
+      'Cadastro não aprovado - Sistema GRC',
+      '<p>Seu cadastro foi analisado e não foi aprovado neste momento.</p>'
     );
     await createNotificationForAdmins(
       'registration_rejected',
@@ -3631,7 +3677,7 @@ app.get('/admin/users', authenticate, requireAdmin, async (req, res) => {
     }));
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao buscar usuÃ¡rios.' });
+    res.status(500).json({ error: 'Erro ao buscar usuários.' });
   }
 });
 
@@ -3749,7 +3795,7 @@ app.patch('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'UsuÃ¡rio nÃ£o encontrado.' });
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
     }
 
     const current = rows[0];
@@ -3757,15 +3803,15 @@ app.patch('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
     const currentEmail = String(current.email || '').toLowerCase();
 
     if (requestedRole === 'master_admin' && currentEmail !== masterAdminEmail) {
-      return res.status(403).json({ error: 'Administrador Master Ã© exclusivo para henrique.martins@grcconsultoria.net.br.' });
+      return res.status(403).json({ error: 'Administrador Master é exclusivo para henrique.martins@grcconsultoria.net.br.' });
     }
 
     if (currentEmail === masterAdminEmail && requestedRole !== 'master_admin') {
-      return res.status(403).json({ error: 'O usuÃ¡rio master nÃ£o pode ser rebaixado para outro perfil.' });
+      return res.status(403).json({ error: 'O usuário master não pode ser rebaixado para outro perfil.' });
     }
 
     if (currentEmail === masterAdminEmail && req.body.active === false) {
-      return res.status(403).json({ error: 'O Administrador Master nÃ£o pode ser desabilitado.' });
+      return res.status(403).json({ error: 'O Administrador Master não pode ser desabilitado.' });
     }
 
     if ((current.role === 'master_admin' || requestedRole === 'master_admin') && !isMasterAdminUser(req.user)) {
@@ -3776,7 +3822,7 @@ app.patch('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
     const normalizedWhatsapp = req.body.whatsapp ? normalizeBrazilPhone(req.body.whatsapp) : current.whatsapp;
 
     if (!isCompleteBrazilPhone(normalizedPhone) || !isCompleteBrazilPhone(normalizedWhatsapp)) {
-      return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÃšMERO.' });
+      return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.' });
     }
 
     const nextRole = currentEmail === masterAdminEmail ? 'master_admin' : requestedRole;
@@ -3818,10 +3864,10 @@ app.patch('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
       )));
     }
 
-    res.json({ message: 'UsuÃ¡rio atualizado com sucesso.' });
+    res.json({ message: 'Usuário atualizado com sucesso.' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao atualizar usuÃ¡rio.' });
+    res.status(500).json({ error: 'Erro ao atualizar usuário.' });
   }
 });
 
@@ -3874,17 +3920,17 @@ app.delete('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
     const [rows] = await pool.query('SELECT id, role, email FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'UsuÃ¡rio nÃ£o encontrado.' });
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
     }
 
     const user = rows[0];
 
     if (String(user.email).toLowerCase() === masterAdminEmail) {
-      return res.status(403).json({ error: 'O Administrador Master nÃ£o pode ser excluÃ­do ou desabilitado.' });
+      return res.status(403).json({ error: 'O Administrador Master não pode ser excluído ou desabilitado.' });
     }
 
     if ((user.role === 'master_admin' || String(user.email).toLowerCase() === masterAdminEmail) && !isMasterAdminUser(req.user)) {
-      return res.status(403).json({ error: 'Apenas o Administrador Master pode excluir esse usuÃ¡rio.' });
+      return res.status(403).json({ error: 'Apenas o Administrador Master pode excluir esse usuário.' });
     }
 
     await pool.query(
@@ -3893,10 +3939,10 @@ app.delete('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
     );
     await pool.query('DELETE FROM user_clinics WHERE user_id = ?', [user.id]);
 
-    res.json({ message: 'UsuÃ¡rio excluÃ­do com lastro de auditoria.' });
+    res.json({ message: 'Usuário excluído com lastro de auditoria.' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao excluir usuÃ¡rio.' });
+    res.status(500).json({ error: 'Erro ao excluir usuário.' });
   }
 });
 
@@ -3933,7 +3979,7 @@ app.get('/notifications', authenticate, async (req, res) => {
     res.json(rows);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao buscar notificaÃ§Ãµes.' });
+    res.status(500).json({ error: 'Erro ao buscar notificações.' });
   }
 });
 
@@ -3945,10 +3991,10 @@ app.post('/notifications/:id/read', authenticate, async (req, res) => {
         WHERE id = ? AND (user_id = ? OR ? = 1)`,
       [req.params.id, req.user.id, isAdminUser(req.user) ? 1 : 0]
     );
-    res.json({ message: 'NotificaÃ§Ã£o marcada como lida.' });
+    res.json({ message: 'Notificação marcada como lida.' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao atualizar notificaÃ§Ã£o.' });
+    res.status(500).json({ error: 'Erro ao atualizar notificação.' });
   }
 });
 
@@ -3963,7 +4009,7 @@ app.delete('/notifications/:id', authenticate, async (req, res) => {
     );
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'NotificaÃ§Ã£o nÃ£o encontrada.' });
+      return res.status(404).json({ error: 'Notificação não encontrada.' });
     }
 
     await pool.query(
@@ -3973,10 +4019,10 @@ app.delete('/notifications/:id', authenticate, async (req, res) => {
       [req.params.id, req.user.id]
     );
 
-    res.json({ message: 'NotificaÃ§Ã£o removida do histÃ³rico.' });
+    res.json({ message: 'Notificação removida do histórico.' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao excluir notificaÃ§Ã£o.' });
+    res.status(500).json({ error: 'Erro ao excluir notificação.' });
   }
 });
 
@@ -3985,13 +4031,13 @@ app.delete('/patient-interactions/:id', authenticate, async (req, res) => {
     const [rows] = await pool.query('SELECT id, status, protocol, created_at FROM patient_interactions WHERE id = ?', [req.params.id]);
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'Agendamento nÃ£o encontrado.' });
+      return res.status(404).json({ error: 'Agendamento não encontrado.' });
     }
 
     const record = rows[0];
 
     if (record.status === 'Cancelado') {
-      return res.json({ message: 'Agendamento jÃ¡ estÃ¡ na aba de cancelados.' });
+      return res.json({ message: 'Agendamento já está na aba de cancelados.' });
     }
 
     await pool.query(
@@ -4035,13 +4081,13 @@ app.post('/login', async (req, res) => {
     );
 
     if (rows.length === 0) {
-      return res.status(401).json({ message: 'UsuÃ¡rio nÃ£o encontrado' });
+      return res.status(401).json({ message: 'Usuário não encontrado' });
     }
 
     const user = rows[0];
 
     if (!user.active || user.deleted_at) {
-      return res.status(403).json({ message: 'UsuÃ¡rio desabilitado. Procure o administrador.' });
+      return res.status(403).json({ message: 'Usuário desabilitado. Procure o administrador.' });
     }
 
     let validPassword = false;
@@ -4056,7 +4102,7 @@ app.post('/login', async (req, res) => {
     }
 
     if (!validPassword) {
-      return res.status(401).json({ message: 'Senha invÃ¡lida' });
+      return res.status(401).json({ message: 'Senha inválida' });
     }
 
     const authenticatedUser = await buildAuthenticatedUser(user);
@@ -4081,7 +4127,7 @@ app.patch('/profile', authenticate, async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [req.user.id]);
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'UsuÃ¡rio nÃ£o encontrado.' });
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
     }
 
     const current = rows[0];
@@ -4089,14 +4135,14 @@ app.patch('/profile', authenticate, async (req, res) => {
     const requestedEmail = String(req.body.email || current.email).trim().toLowerCase();
 
     if (currentEmail === masterAdminEmail && requestedEmail !== masterAdminEmail) {
-      return res.status(403).json({ error: 'O e-mail do Administrador Master nÃ£o pode ser alterado.' });
+      return res.status(403).json({ error: 'O e-mail do Administrador Master não pode ser alterado.' });
     }
 
     if (requestedEmail !== currentEmail) {
       const [duplicates] = await pool.query('SELECT id FROM users WHERE email = ? AND id <> ? AND deleted_at IS NULL', [requestedEmail, current.id]);
 
       if (duplicates.length) {
-        return res.status(409).json({ error: 'JÃ¡ existe outro usuÃ¡rio com este e-mail.' });
+        return res.status(409).json({ error: 'Já existe outro usuário com este e-mail.' });
       }
     }
 
@@ -4104,7 +4150,7 @@ app.patch('/profile', authenticate, async (req, res) => {
     const normalizedWhatsapp = normalizeBrazilPhone(req.body.whatsapp || current.whatsapp);
 
     if (!isCompleteBrazilPhone(normalizedPhone) || !isCompleteBrazilPhone(normalizedWhatsapp)) {
-      return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÃšMERO.' });
+      return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.' });
     }
 
     await pool.query(
@@ -4343,7 +4389,7 @@ app.post('/nps/public', async (req, res) => {
     }
 
     if (!clinic_id || !patient_name || !isCompleteBrazilPhone(patient_phone)) {
-      return res.status(400).json({ error: 'Informe clÃ­nica, nome e telefone completo no formato +55DDDNÃšMERO.' });
+      return res.status(400).json({ error: 'Informe clínica, nome e telefone completo no formato +55DDDNÚMERO.' });
     }
 
     const normalizedPatientPhone = normalizeBrazilPhone(patient_phone);
@@ -4363,7 +4409,7 @@ app.post('/nps/public', async (req, res) => {
 
     if (sameDayPhoneRows.length) {
       return res.status(409).json({
-        error: 'JÃ¡ existe uma avaliaÃ§Ã£o registrada hoje para este telefone.'
+        error: 'Já existe uma avaliação registrada hoje para este telefone.'
       });
     }
 
@@ -4380,17 +4426,17 @@ app.post('/nps/public', async (req, res) => {
 
       if (sameDayIpRows.length) {
         return res.status(409).json({
-          error: 'JÃ¡ recebemos uma avaliaÃ§Ã£o deste dispositivo hoje. Tente novamente amanhÃ£.'
+          error: 'Já recebemos uma avaliação deste dispositivo hoje. Tente novamente amanhã.'
         });
       }
     }
 
     if (npsProfile === 'promotor' && recommend_yes && (!referral_name || !isCompleteBrazilPhone(referral_phone))) {
-      return res.status(400).json({ error: 'Informe nome e telefone completo da indicaÃ§Ã£o.' });
+      return res.status(400).json({ error: 'Informe nome e telefone completo da indicação.' });
     }
 
     if (npsProfile === 'detrator' && !String(detractor_feedback || '').trim()) {
-      return res.status(400).json({ error: 'Informe a reclamaÃ§Ã£o detalhada para concluir a pesquisa.' });
+      return res.status(400).json({ error: 'Informe a reclamação detalhada para concluir a pesquisa.' });
     }
 
     const normalizedReasons = Array.isArray(detractor_reasons)
@@ -4417,7 +4463,7 @@ app.post('/nps/public', async (req, res) => {
       'SELECT name FROM clinics WHERE id = ? LIMIT 1',
       [clinic_id]
     );
-    const clinicName = clinicRows[0]?.name || 'Unidade nÃ£o informada';
+    const clinicName = clinicRows[0]?.name || 'Unidade não informada';
 
     const [npsInsert] = await pool.query(
       `INSERT INTO nps_responses
@@ -4451,7 +4497,7 @@ app.post('/nps/public', async (req, res) => {
       const [result] = await pool.query(
         `INSERT INTO complaints
          (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, resolution_due_at, created_origin)
-         VALUES (?, ?, ?, 'NPS', ?, ?, 'Pesquisa de satisfaÃƒÂ§ÃƒÂ£o', 'aberta', ?, ?, ?, 'Externo')`,
+         VALUES (?, ?, ?, 'NPS', ?, ?, 'Pesquisa de satisfação', 'aberta', ?, ?, ?, 'Externo')`,
         [
           clinic_id || null,
           patient_name || 'Paciente NPS',
@@ -4467,10 +4513,10 @@ app.post('/nps/public', async (req, res) => {
       await pool.query('UPDATE complaints SET protocol = ? WHERE id = ?', [protocol, result.insertId]);
       await pool.query(
         'UPDATE nps_responses SET converted_complaint_id = ?, converted_at = NOW(), converted_by = ? WHERE id = ?',
-        [result.insertId, 'Link pÃºblico NPS', npsInsert.insertId]
+        [result.insertId, 'Link público NPS', npsInsert.insertId]
       );
-      await insertComplaintLog(result.insertId, 'created', `Protocolo ${protocol} criado pelo link pÃºblico de NPS.`, {
-        name: 'Link pÃºblico NPS',
+      await insertComplaintLog(result.insertId, 'created', `Protocolo ${protocol} criado pelo link público de NPS.`, {
+        name: 'Link público NPS',
         role: 'externo'
       });
       await notifyComplaintCreated(result.insertId, protocol);
@@ -4478,8 +4524,8 @@ app.post('/nps/public', async (req, res) => {
 
     const protocol = formatNpsProtocol(npsInsert.insertId);
     await pool.query('UPDATE nps_responses SET nps_protocol = ? WHERE id = ?', [protocol, npsInsert.insertId]);
-    await insertNpsLog(npsInsert.insertId, 'created', `Pesquisa de satisfaÃ§Ã£o registrada no protocolo ${protocol}.`, {
-      name: 'Link pÃºblico NPS',
+    await insertNpsLog(npsInsert.insertId, 'created', `Pesquisa de satisfação registrada no protocolo ${protocol}.`, {
+      name: 'Link público NPS',
       role: 'externo'
     });
 
@@ -4497,7 +4543,7 @@ app.post('/nps/public', async (req, res) => {
         'agenda_compartilhada',
         `Paciente autorizou compartilhar o contato com a agenda. Protocolo vinculado: ${linkedPatientRecord.protocol}.`,
         {
-          name: 'Link pÃºblico NPS',
+          name: 'Link público NPS',
           role: 'externo'
         }
       );
@@ -4582,14 +4628,14 @@ app.get('/nps/responses', authenticate, async (req, res) => {
 app.get('/nps/duplicate-report', authenticate, async (req, res) => {
   try {
     if (!isAdminUser(req.user) && req.user?.role !== 'supervisor_crc') {
-      return res.status(403).json({ error: 'Apenas Supervisor do CRC, Administrador e Administrador Master podem visualizar este relatÃ³rio.' });
+      return res.status(403).json({ error: 'Apenas Supervisor do CRC, Administrador e Administrador Master podem visualizar este relatório.' });
     }
 
     const rows = await getMonthlyDuplicateNpsPhones(req.query?.month);
     res.json(rows);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao gerar o relatÃ³rio de telefones duplicados do NPS.' });
+    res.status(500).json({ error: 'Erro ao gerar o relatório de telefones duplicados do NPS.' });
   }
 });
 
@@ -4648,7 +4694,7 @@ app.post('/nps/bulk-dispatch', authenticate, upload.single('file'), async (req, 
       return res.status(400).json({ error: 'Nenhum telefone valido foi encontrado na planilha.' });
     }
 
-    const baseMessage = 'Sua opiniÃ£o Ã© fundamental para melhorarmos nossos processos. Poderia dedicar 1 minuto para avaliar sua experiÃªncia conosco?';
+    const baseMessage = 'Sua opinião é fundamental para melhorarmos nossos processos. Poderia dedicar 1 minuto para avaliar sua experiência conosco?';
 
     await Promise.all(validRecipients.map((recipient) => (
       sendWhatsappNotification({
@@ -4694,18 +4740,18 @@ app.post('/reports/coordinator-delays/dispatch', authenticate, async (req, res) 
 app.post('/reports/coordinator-weekly/dispatch', authenticate, async (req, res) => {
   try {
     if (!isAdminUser(req.user) && req.user?.role !== 'supervisor_crc') {
-      return res.status(403).json({ error: 'Acesso restrito para o disparo do relatÃ³rio semanal por coordenador.' });
+      return res.status(403).json({ error: 'Acesso restrito para o disparo do relatório semanal por coordenador.' });
     }
 
     const reports = await dispatchWeeklyCoordinatorReports();
     res.json({
-      message: 'RelatÃ³rios semanais por coordenador enviados com sucesso.',
+      message: 'Relatórios semanais por coordenador enviados com sucesso.',
       total: reports.length,
       reports
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao enviar o relatÃ³rio semanal por coordenador.' });
+    res.status(500).json({ error: 'Erro ao enviar o relatório semanal por coordenador.' });
   }
 });
 
@@ -4733,13 +4779,13 @@ app.post('/nps/responses/:id/convert-complaint', authenticate, async (req, res) 
     const result = await convertNpsToComplaint(req.params.id, req.user);
     res.status(result.alreadyConverted ? 200 : 201).json({
       message: result.alreadyConverted
-        ? 'Pesquisa NPS jÃ¡ estava vinculada a uma reclamaÃ§Ã£o.'
-        : 'Detrator migrado para reclamaÃ§Ã£o.',
+        ? 'Pesquisa NPS já estava vinculada a uma reclamação.'
+        : 'Detrator migrado para reclamação.',
       ...result
     });
   } catch (error) {
     console.error(error);
-    res.status(error.statusCode || 500).json({ error: error.message || 'Erro ao migrar NPS para reclamaÃ§Ã£o.' });
+    res.status(error.statusCode || 500).json({ error: error.message || 'Erro ao migrar NPS para reclamação.' });
   }
 });
 
@@ -4763,13 +4809,13 @@ app.delete('/nps/responses/:id', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Apenas o Administrador Master ou Supervisor do CRC pode excluir NPS.' });
     }
 
-    const reason = String(req.body?.reason || 'ExclusÃ£o administrativa').slice(0, 500);
+    const reason = String(req.body?.reason || 'Exclusão administrativa').slice(0, 500);
     await pool.query(
       'UPDATE nps_responses SET deleted_at = NOW(), deleted_by = ?, deletion_reason = ? WHERE id = ?',
       [getActorName(req.user), reason, req.params.id]
     );
-    await insertNpsLog(req.params.id, 'excluido', `NPS excluÃ­do por ${getActorName(req.user)}. Motivo: ${reason}`, req.user);
-    res.json({ message: 'NPS excluÃ­do com lastro de auditoria.' });
+    await insertNpsLog(req.params.id, 'excluido', `NPS excluído por ${getActorName(req.user)}. Motivo: ${reason}`, req.user);
+    res.json({ message: 'NPS excluído com lastro de auditoria.' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao excluir NPS.' });
@@ -4850,7 +4896,7 @@ app.get('/patient-interactions', authenticate, async (req, res) => {
     })));
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao buscar gestÃ£o do paciente.' });
+    res.status(500).json({ error: 'Erro ao buscar gestão do paciente.' });
   }
 });
 
@@ -4881,7 +4927,7 @@ app.post('/patient-interactions', authenticate, async (req, res) => {
     }
 
     if (Number.isNaN(scheduledDate.getTime())) {
-      return res.status(400).json({ error: 'Informe uma data vÃ¡lida.' });
+      return res.status(400).json({ error: 'Informe uma data válida.' });
     }
 
     const [result] = await pool.query(
@@ -4907,14 +4953,14 @@ app.post('/patient-interactions', authenticate, async (req, res) => {
     res.status(201).json({ message: 'Agendamento do paciente registrado.', id: result.insertId, protocol });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao salvar gestÃ£o do paciente.' });
+    res.status(500).json({ error: 'Erro ao salvar gestão do paciente.' });
   }
 });
 
 app.patch('/patient-interactions/:id', authenticate, async (req, res) => {
   try {
     const status = String(req.body.status || '').trim();
-    const action = String(req.body.action || status || 'AtualizaÃ§Ã£o').trim();
+    const action = String(req.body.action || status || 'Atualização').trim();
 
     if (!status) {
       return res.status(400).json({ error: 'Informe o novo status.' });
@@ -4926,7 +4972,7 @@ app.patch('/patient-interactions/:id', authenticate, async (req, res) => {
     );
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'Agendamento nÃ£o encontrado.' });
+      return res.status(404).json({ error: 'Agendamento não encontrado.' });
     }
 
     const currentRecord = rows[0];
@@ -4947,12 +4993,12 @@ app.patch('/patient-interactions/:id', authenticate, async (req, res) => {
     res.json({ message: 'Agendamento atualizado.' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao atualizar gestÃ£o do paciente.' });
+    res.status(500).json({ error: 'Erro ao atualizar gestão do paciente.' });
   }
 });
 
 // ============================================
-// LISTAR RECLAMAÃ‡Ã•ES
+// LISTAR RECLAMAÇÕES
 // ============================================
 app.get('/complaints', authenticate, async (req, res) => {
   try {
@@ -4960,12 +5006,12 @@ app.get('/complaints', authenticate, async (req, res) => {
     res.json(rows);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao buscar reclamaÃ§Ãµes' });
+    res.status(500).json({ error: 'Erro ao buscar reclamações' });
   }
 });
 
 // ============================================
-// CRIAR RECLAMAÃ‡ÃƒO (COM UPLOAD)
+// CRIAR RECLAMAÇÃO (COM UPLOAD)
 // ============================================
 app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req, res) => {
   try {
@@ -4990,19 +5036,19 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
     const resolutionDueAt = calculateResolutionDueAt();
 
     if (!req.user && normalizedOrigin !== 'Marketing') {
-      return res.status(401).json({ error: 'FaÃ§a login para registrar protocolos internos.' });
+      return res.status(401).json({ error: 'Faça login para registrar protocolos internos.' });
     }
 
     if (!clinic_id || !patient_name || !channel || !complaint_type || !description) {
-      return res.status(400).json({ error: 'Preencha clÃ­nica, paciente, canal, classificaÃ§Ã£o e descriÃ§Ã£o.' });
+      return res.status(400).json({ error: 'Preencha clínica, paciente, canal, classificação e descrição.' });
     }
 
     if (!isCompleteBrazilPhone(patient_phone)) {
-      return res.status(400).json({ error: 'Informe o telefone completo no formato +55DDDNÃšMERO.' });
+      return res.status(400).json({ error: 'Informe o telefone completo no formato +55DDDNÚMERO.' });
     }
 
     if (hasFinancialValue && (!String(financial_description || '').trim() || Number(financial_amount || 0) <= 0)) {
-      return res.status(400).json({ error: 'Informe a descriÃ§Ã£o e o valor envolvido no registro financeiro.' });
+      return res.status(400).json({ error: 'Informe a descrição e o valor envolvido no registro financeiro.' });
     }
 
     const normalizedPatientPhone = normalizeBrazilPhone(patient_phone);
@@ -5052,10 +5098,10 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
       [coordinatorLabel, normalizedOrigin === 'Interno' ? 'Cadastro interno' : normalizedOrigin, result.insertId]
     );
     await insertComplaintLog(result.insertId, 'created', `Protocolo ${protocol} cadastrado com origem ${normalizedOrigin}.`, {
-      name: normalizedOrigin === 'Interno' ? 'UsuÃ¡rio interno' : normalizedOrigin,
+      name: normalizedOrigin === 'Interno' ? 'Usuário interno' : normalizedOrigin,
       role: normalizedOrigin.toLowerCase()
     });
-    await insertComplaintLog(result.insertId, 'assigned_to_coordinator', `Protocolo vinculado ao responsÃ¡vel ${coordinatorLabel}.`, {
+    await insertComplaintLog(result.insertId, 'assigned_to_coordinator', `Protocolo vinculado ao responsável ${coordinatorLabel}.`, {
       name: 'Sistema GRC',
       role: 'sistema'
     });
@@ -5101,14 +5147,14 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
     }
 
     res.json({
-      message: 'ReclamaÃ§Ã£o salva com sucesso',
+      message: 'Reclamação salva com sucesso',
       id: result.insertId,
       protocol
     });
 
   } catch (error) {
     console.error("ERRO:", error);
-    res.status(500).json({ error: 'Erro ao salvar reclamaÃ§Ã£o' });
+    res.status(500).json({ error: 'Erro ao salvar reclamação' });
   }
 });
 
@@ -5120,38 +5166,38 @@ app.get('/complaints/:id', authenticate, async (req, res) => {
     }, req.user);
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'ReclamaÃ§Ã£o nÃ£o encontrada' });
+      return res.status(404).json({ error: 'Reclamação não encontrada' });
     }
 
     res.json(rows[0]);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao buscar reclamaÃ§Ã£o' });
+    res.status(500).json({ error: 'Erro ao buscar reclamação' });
   }
 });
 
 app.delete('/complaints/:id', authenticate, async (req, res) => {
   try {
     if (!canDeleteRecords(req.user)) {
-      return res.status(403).json({ error: 'Apenas o Administrador Master ou Supervisor do CRC pode excluir reclamaÃ§Ãµes.' });
+      return res.status(403).json({ error: 'Apenas o Administrador Master ou Supervisor do CRC pode excluir reclamações.' });
     }
 
-    const reason = String(req.body?.reason || 'ExclusÃ£o administrativa').slice(0, 500);
+    const reason = String(req.body?.reason || 'Exclusão administrativa').slice(0, 500);
     await pool.query(
       'UPDATE complaints SET deleted_at = NOW(), deleted_by = ?, deletion_reason = ? WHERE id = ?',
       [getActorName(req.user), reason, req.params.id]
     );
-    await insertComplaintLog(req.params.id, 'excluido', `ReclamaÃ§Ã£o excluÃ­da por ${getActorName(req.user)}. Motivo: ${reason}`, req.user);
+    await insertComplaintLog(req.params.id, 'excluido', `Reclamação excluída por ${getActorName(req.user)}. Motivo: ${reason}`, req.user);
 
-    res.json({ message: 'ReclamaÃ§Ã£o excluÃ­da com lastro de auditoria.' });
+    res.json({ message: 'Reclamação excluída com lastro de auditoria.' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao excluir reclamaÃ§Ã£o.' });
+    res.status(500).json({ error: 'Erro ao excluir reclamação.' });
   }
 });
 
 // ============================================
-// ATUALIZAR RECLAMAÃ‡ÃƒO
+// ATUALIZAR RECLAMAÇÃO
 // ============================================
 app.post('/complaints/:id/evidences', authenticate, upload.single('file'), async (req, res) => {
   try {
@@ -5159,17 +5205,17 @@ app.post('/complaints/:id/evidences', authenticate, upload.single('file'), async
     const { description } = req.body;
 
     if (!canAttachEvidence(req.user)) {
-      return res.status(403).json({ error: 'Seu perfil nÃƒÂ£o pode anexar evidÃƒÂªncias nesta reclamaÃƒÂ§ÃƒÂ£o.' });
+      return res.status(403).json({ error: 'Seu perfil não pode anexar evidências nesta reclamação.' });
     }
 
     if (!req.file) {
-      return res.status(400).json({ error: 'Selecione um arquivo de evidÃƒÂªncia.' });
+      return res.status(400).json({ error: 'Selecione um arquivo de evidência.' });
     }
 
     const complaints = await getComplaintRows({ id }, req.user);
 
     if (!complaints.length) {
-      return res.status(404).json({ error: 'ReclamaÃƒÂ§ÃƒÂ£o nÃƒÂ£o encontrada' });
+      return res.status(404).json({ error: 'Reclamação não encontrada' });
     }
 
     const fileUrl = `${publicBaseUrl}/uploads/${req.file.filename}`;
@@ -5195,10 +5241,10 @@ app.post('/complaints/:id/evidences', authenticate, upload.single('file'), async
       req.user
     );
 
-    res.status(201).json({ message: 'EvidÃƒÂªncia anexada com sucesso' });
+    res.status(201).json({ message: 'Evidência anexada com sucesso' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao anexar evidÃƒÂªncia' });
+    res.status(500).json({ error: 'Erro ao anexar evidência' });
   }
 });
 
@@ -5316,7 +5362,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       };
 
       if (!allowedForwardRoles[forward_to_role]) {
-        return res.status(400).json({ error: 'Selecione o responsÃ¡vel para a tratativa.' });
+        return res.status(400).json({ error: 'Selecione o responsável para a tratativa.' });
       }
 
       let assignment = null;
@@ -5411,10 +5457,10 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       insertComplaintLog(id, entry.action, entry.message, req.user)
     )));
 
-    res.json({ message: 'ReclamaÃ§Ã£o atualizada com sucesso' });
+    res.json({ message: 'Reclamação atualizada com sucesso' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao atualizar reclamaÃ§Ã£o' });
+    res.status(500).json({ error: 'Erro ao atualizar reclamação' });
   }
 });
 
@@ -5476,16 +5522,16 @@ app.use((error, req, res, next) => {
 async function startServer() {
   try {
     await ensureDatabaseSchema();
-    console.log('Schema validado para gestÃ£o GRC');
+    console.log('Schema validado para gestão GRC');
   } catch (error) {
-    console.warn('NÃ£o foi possÃ­vel validar o schema do banco:', error.message);
+    console.warn('Não foi possível validar o schema do banco:', error.message);
   }
 
   try {
     await ensureDefaultAdminUser();
     console.log('Administrador Master validado');
   } catch (error) {
-    console.warn('NÃ£o foi possÃ­vel validar o Administrador Master:', error.message);
+    console.warn('Não foi possível validar o Administrador Master:', error.message);
   }
 
   try {
@@ -5498,16 +5544,16 @@ async function startServer() {
     await backfillComplaintAssignments();
     console.log('Backfills operacionais validados');
   } catch (error) {
-    console.warn('NÃ£o foi possÃ­vel executar os backfills:', error.message);
+    console.warn('Não foi possível executar os backfills:', error.message);
   }
 
   app.listen(PORT, () => {
-  console.log(`ðŸš€ Servidor rodando em http://localhost:${PORT}`);
+  console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
 });
 
   setTimeout(() => {
     runScheduledCoordinatorReports().catch((jobError) => {
-      console.warn('NÃƒÂ£o foi possÃƒÂ­vel executar a rotina inicial de relatÃƒÂ³rios:', jobError.message);
+      console.warn('Não foi possível executar a rotina inicial de relatórios:', jobError.message);
     });
     dispatchUpcomingAppointmentReminders().catch((jobError) => {
       console.warn('Nao foi possivel executar a rotina inicial de lembretes de agendamento:', jobError.message);
@@ -5516,7 +5562,7 @@ async function startServer() {
 
   setInterval(() => {
     runScheduledCoordinatorReports().catch((jobError) => {
-      console.warn('NÃƒÂ£o foi possÃƒÂ­vel executar a rotina programada de relatÃƒÂ³rios:', jobError.message);
+      console.warn('Não foi possível executar a rotina programada de relatórios:', jobError.message);
     });
   }, 15 * 60 * 1000);
 
@@ -5545,5 +5591,3 @@ module.exports = {
     signUserToken
   }
 };
-
-

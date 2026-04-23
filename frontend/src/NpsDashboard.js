@@ -60,7 +60,7 @@ function groupCount(items, key) {
   const map = new Map();
 
   items.forEach((item) => {
-    const value = key(item) || 'NÃƒÂ£o informado';
+    const value = key(item) || 'Não informado';
     map.set(value, (map.get(value) || 0) + 1);
   });
 
