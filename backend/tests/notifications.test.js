@@ -6,7 +6,8 @@ const {
   DEFAULT_EMAIL_FROM,
   getEmailFrom,
   getEmailProvider,
-  renderUserAccessEmail
+  renderUserAccessEmail,
+  sendWelcomeEmail
 } = require('../services/emailService');
 const {
   buildAppointmentReminderMessage,
@@ -39,14 +40,20 @@ test('getEmailProvider prefers resend when API key is configured', () => {
 
 test('getEmailFrom uses configured sender and falls back to default', () => {
   const previousFrom = process.env.EMAIL_FROM;
+  const previousSmtpFrom = process.env.SMTP_FROM;
+  const previousSmtpUser = process.env.SMTP_USER;
 
   delete process.env.EMAIL_FROM;
+  delete process.env.SMTP_FROM;
+  delete process.env.SMTP_USER;
   assert.equal(getEmailFrom(), DEFAULT_EMAIL_FROM);
 
-  process.env.EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.net.br>';
-  assert.equal(getEmailFrom(), 'GRC Consultoria <contato@grcconsultoria.net.br>');
+  process.env.EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>';
+  assert.equal(getEmailFrom(), 'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>');
 
   process.env.EMAIL_FROM = previousFrom;
+  process.env.SMTP_FROM = previousSmtpFrom;
+  process.env.SMTP_USER = previousSmtpUser;
 });
 
 test('renderUserAccessEmail returns the user access template', () => {
@@ -61,6 +68,29 @@ test('renderUserAccessEmail returns the user access template', () => {
   assert.match(template.html, /Maria Silva/);
   assert.match(template.html, /maria@example.com/);
   assert.match(template.html, /Tmp@12345/);
+});
+
+test('sendWelcomeEmail forwards the rendered template to the configured sender', async () => {
+  let payload = null;
+
+  const result = await sendWelcomeEmail({
+    to: 'maria@example.com',
+    name: 'Maria Silva',
+    loginEmail: 'maria@example.com',
+    password: 'Tmp@12345',
+    appUrl: 'https://meu-sistema-nps.vercel.app/',
+    sender: async (message) => {
+      payload = message;
+      return { provider: 'mock', id: 'email-1' };
+    }
+  });
+
+  assert.equal(result.provider, 'mock');
+  assert.equal(payload.to, 'maria@example.com');
+  assert.equal(payload.subject, 'Seu acesso ao portal foi criado');
+  assert.match(payload.html, /Maria Silva/);
+  assert.match(payload.html, /Tmp@12345/);
+  assert.match(payload.text, /maria@example.com/);
 });
 
 test('normalizeWhatsAppPhone normalizes brazilian phones to E.164 digits', () => {

@@ -8,17 +8,15 @@ const mysql = require('mysql2/promise');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { z } = require('zod');
 const { clinicSeed, legacyDefaultClinicNames } = require('./clinicSeed');
-const {
-  sendEmail: dispatchEmail,
-  renderPasswordResetEmail,
-  renderRegistrationApprovedEmail,
-  renderUserAccessEmail
-} = require('./services/emailService');
+const emailService = require('./services/emailService');
 const {
   buildAppointmentReminderMessage,
   buildNoShowAlertMessage,
@@ -91,6 +89,11 @@ function isAllowedOrigin(origin) {
 // ============================================
 // MIDDLEWARES
 // ============================================
+app.disable('x-powered-by');
+app.use(helmet({
+  crossOriginResourcePolicy: false
+}));
+
 app.use(cors({
   origin: (origin, callback) => callback(null, isAllowedOrigin(origin) ? (origin || true) : false),
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -100,6 +103,16 @@ app.use(cors({
 
 app.use(express.json());
 app.use('/uploads', express.static(uploadDir));
+
+const initialPasswordChangeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Muitas tentativas de troca de senha. Aguarde alguns minutos e tente novamente.'
+  }
+});
 
 // ============================================
 // CONFIGURAÃ‡ÃƒO DE UPLOAD (CORRETA)
@@ -670,6 +683,54 @@ function isStrongPassword(value) {
     && /[a-z]/.test(password)
     && /\d/.test(password)
     && /[^A-Za-z0-9]/.test(password);
+}
+
+const adminUserCreateSchema = z.object({
+  name: z.string().trim().min(1, 'Preencha o nome completo.').max(160),
+  email: z.string().trim().email('Informe um e-mail válido.').max(180),
+  role: z.string().trim().min(1, 'Informe o perfil de acesso.').max(60),
+  position: z.string().trim().min(1, 'Informe o cargo.').max(160),
+  phone: z.string().trim().min(1, 'Informe o telefone.').max(40),
+  whatsapp: z.string().trim().min(1, 'Informe o WhatsApp.').max(40),
+  department: z.string().trim().max(160).optional().or(z.literal('')).or(z.null()),
+  permissions: z.array(z.string().trim().min(1)).max(50).optional(),
+  clinicIds: z.array(z.union([z.string(), z.number()])).max(200).optional()
+});
+
+const changeInitialPasswordSchema = z.object({
+  current_password: z.string().trim().min(1, 'Informe a senha atual.').max(160),
+  new_password: z.string().trim().min(8, 'A nova senha deve ter no mínimo 8 caracteres.').max(160)
+});
+
+const testEmailSchema = z.object({
+  to: z.string().trim().email('Informe um e-mail de destino válido.').optional(),
+  name: z.string().trim().max(160).optional(),
+  loginEmail: z.string().trim().email('Informe um login válido.').optional(),
+  password: z.string().trim().min(8, 'A senha temporária precisa ter no mínimo 8 caracteres.').max(120).optional()
+});
+
+function parseBodyWithSchema(schema, payload) {
+  const result = schema.safeParse(payload || {});
+
+  if (!result.success) {
+    return {
+      error: result.error.issues[0]?.message || 'Dados inválidos.'
+    };
+  }
+
+  return {
+    data: result.data
+  };
+}
+
+function isPasswordChangeRouteAllowed(req) {
+  const method = String(req.method || '').toUpperCase();
+  const pathname = String(req.path || '').toLowerCase();
+
+  return method === 'POST' && (
+    pathname === '/profile/change-password'
+    || pathname === '/api/change-initial-password'
+  );
 }
 
 function inferNpsProfile(score) {
@@ -1719,13 +1780,54 @@ function slugify(value) {
 }
 
 async function sendEmail(to, subject, html, attachments = []) {
-  return dispatchEmail({
+  return emailService.sendEmail({
     to,
     subject,
     html,
     text: String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
     attachments
   });
+}
+
+function parsePermissionsFromUser(user) {
+  const role = user?.role || 'viewer';
+  let permissions = defaultPermissionsForRole(role);
+
+  try {
+    permissions = user?.permissions ? JSON.parse(user.permissions) : permissions;
+  } catch (error) {
+    permissions = defaultPermissionsForRole(role);
+  }
+
+  return permissions;
+}
+
+async function buildAuthenticatedUser(user) {
+  const { password: _password, ...safeUser } = user;
+  const role = safeUser.role || 'viewer';
+  const permissions = parsePermissionsFromUser(safeUser);
+  const clinicIds = await getUserClinicIds(user.id);
+  const mustChangePassword = Boolean(user.must_change_password);
+
+  return {
+    ...safeUser,
+    role,
+    permissions,
+    clinicIds,
+    mustChangePassword
+  };
+}
+
+function signUserToken(user) {
+  return jwt.sign({
+    id: user.id,
+    email: user.email,
+    role: user.role,
+    name: user.name,
+    permissions: user.permissions,
+    clinicIds: user.clinicIds,
+    mustChangePassword: Boolean(user.mustChangePassword)
+  }, SECRET);
 }
 
 async function createWhatsAppLog({
@@ -1949,20 +2051,20 @@ async function notifyUserThroughChannels(user, type, title, message, link = null
 }
 
 async function sendUserAccessNotifications(user, temporaryPassword) {
-  const emailTemplate = renderUserAccessEmail({
-    name: user.name,
-    email: user.email,
-    temporaryPassword,
-    appUrl: appBaseUrl
-  });
   let emailSent = false;
   let whatsappSent = false;
   let emailError = null;
   let whatsappError = null;
 
   try {
-    await sendEmail(user.email, emailTemplate.subject, emailTemplate.html);
-    emailSent = true;
+    const emailResult = await emailService.sendWelcomeEmail({
+      to: user.email,
+      name: user.name,
+      loginEmail: user.email,
+      password: temporaryPassword,
+      appUrl: appBaseUrl
+    });
+    emailSent = !emailResult?.skipped;
   } catch (error) {
     emailError = error.message;
     console.warn('Nao foi possivel enviar o e-mail de primeiro acesso:', error.message);
@@ -1994,7 +2096,7 @@ async function sendUserAccessNotifications(user, temporaryPassword) {
 }
 
 async function sendRegistrationApprovedNotifications(user) {
-  const emailTemplate = renderRegistrationApprovedEmail({
+  const emailTemplate = emailService.renderRegistrationApprovedEmail({
     name: user.name,
     appUrl: appBaseUrl
   });
@@ -2004,8 +2106,8 @@ async function sendRegistrationApprovedNotifications(user) {
   let whatsappError = null;
 
   try {
-    await sendEmail(user.email, emailTemplate.subject, emailTemplate.html);
-    emailSent = true;
+    const emailResult = await sendEmail(user.email, emailTemplate.subject, emailTemplate.html);
+    emailSent = !emailResult?.skipped;
   } catch (error) {
     emailError = error.message;
     console.warn('Nao foi possivel enviar o e-mail de aprovacao do cadastro:', error.message);
@@ -2024,19 +2126,19 @@ async function sendRegistrationApprovedNotifications(user) {
 }
 
 async function sendPasswordResetNotifications(user, temporaryPassword) {
-  const emailTemplate = renderPasswordResetEmail({
-    name: user.name,
-    temporaryPassword,
-    appUrl: appBaseUrl
-  });
   let emailSent = false;
   let whatsappSent = false;
   let emailError = null;
   let whatsappError = null;
 
   try {
-    await sendEmail(user.email, emailTemplate.subject, emailTemplate.html);
-    emailSent = true;
+    const emailTemplate = emailService.renderPasswordResetEmail({
+      name: user.name,
+      temporaryPassword,
+      appUrl: appBaseUrl
+    });
+    const emailResult = await sendEmail(user.email, emailTemplate.subject, emailTemplate.html);
+    emailSent = !emailResult?.skipped;
   } catch (error) {
     emailError = error.message;
     console.warn('Nao foi possivel enviar e-mail de reset de senha:', error.message);
@@ -2935,7 +3037,7 @@ async function saveNpsTreatment(npsId, user, payload = {}, options = {}) {
   return updated;
 }
 
-function authenticate(req, res, next) {
+async function authenticate(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
 
@@ -2945,6 +3047,23 @@ function authenticate(req, res, next) {
 
   try {
     req.user = jwt.verify(token, SECRET);
+
+    if (req.user?.id && req.user.mustChangePassword) {
+      const [rows] = await pool.query(
+        'SELECT must_change_password FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+        [req.user.id]
+      );
+      const mustChangePassword = Boolean(rows[0]?.must_change_password);
+      req.user.mustChangePassword = mustChangePassword;
+
+      if (mustChangePassword && !isPasswordChangeRouteAllowed(req)) {
+        return res.status(403).json({
+          error: 'Troca obrigatória de senha no primeiro acesso.',
+          mustChangePassword: true
+        });
+      }
+    }
+
     return next();
 
   } catch (error) {
@@ -3015,6 +3134,43 @@ app.post('/api/test-whatsapp', authenticate, requireAdmin, async (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ success: false, error: 'Erro ao enviar WhatsApp de teste.' });
+  }
+});
+
+app.post('/api/test-email', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const parsed = parseBodyWithSchema(testEmailSchema, req.body);
+
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
+
+    const payload = parsed.data;
+    const to = payload.to || masterAdminEmail;
+    const password = payload.password || generateTemporaryPassword();
+    const loginEmail = payload.loginEmail || to;
+
+    const result = await emailService.sendWelcomeEmail({
+      to,
+      name: payload.name || 'Administrador Master',
+      loginEmail,
+      password,
+      appUrl: appBaseUrl
+    });
+
+    return res.json({
+      success: !result?.skipped,
+      provider: result?.provider || emailService.getEmailProvider(),
+      to,
+      messageId: result?.id || null,
+      warning: result?.skipped ? 'O envio foi ignorado por configuração do provedor.' : null
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao enviar o e-mail de teste.'
+    });
   }
 });
 
@@ -3481,6 +3637,12 @@ app.get('/admin/users', authenticate, requireAdmin, async (req, res) => {
 
 app.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
   try {
+    const parsed = parseBodyWithSchema(adminUserCreateSchema, req.body);
+
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
+
     const {
       name,
       email,
@@ -3491,13 +3653,7 @@ app.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
       department,
       permissions,
       clinicIds
-    } = req.body || {};
-
-    if (!name || !email || !role || !position || !phone || !whatsapp) {
-      return res.status(400).json({
-        error: 'Preencha nome completo, e-mail, perfil, cargo, telefone e WhatsApp.'
-      });
-    }
+    } = parsed.data;
 
     if (role === 'master_admin') {
       return res.status(403).json({ error: 'Administrador Master é exclusivo para o usuário master.' });
@@ -3527,6 +3683,11 @@ app.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
     const allowedPermissions = Array.isArray(permissions)
       ? permissions.filter((permission) => screenPermissions[permission])
       : defaultPermissionsForRole(role);
+    const normalizedClinicIds = Array.isArray(clinicIds)
+      ? clinicIds
+        .map((clinicId) => Number(clinicId))
+        .filter((clinicId) => Number.isFinite(clinicId) && clinicId > 0)
+      : [];
     const temporaryPassword = generateTemporaryPassword();
     const passwordHash = await bcrypt.hash(temporaryPassword, 10);
     const [result] = await pool.query(
@@ -3547,8 +3708,8 @@ app.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
       ]
     );
 
-    if (Array.isArray(clinicIds) && clinicIds.length) {
-      await Promise.all(clinicIds.map((clinicId) => (
+    if (normalizedClinicIds.length) {
+      await Promise.all(normalizedClinicIds.map((clinicId) => (
         pool.query(
           'INSERT INTO user_clinics (user_id, clinic_id, can_edit) VALUES (?, ?, 1)',
           [result.insertId, clinicId]
@@ -3568,10 +3729,15 @@ app.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
       temporaryPassword
     );
 
+    const warning = !notificationResult.emailSent
+      ? 'Usuário criado, mas houve falha no envio do e-mail com a senha temporária.'
+      : null;
+
     res.status(201).json({
       message: 'Usuário criado com sucesso. O link de acesso foi enviado com a senha temporária.',
       id: result.insertId,
-      notifications: notificationResult
+      notifications: notificationResult,
+      ...(warning ? { warning } : {})
     });
   } catch (error) {
     console.error(error);
@@ -3893,31 +4059,15 @@ app.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Senha invÃ¡lida' });
     }
 
-    const { password: _password, ...safeUser } = user;
-    const role = safeUser.role || 'viewer';
-    let permissions = defaultPermissionsForRole(role);
-
-    try {
-      permissions = safeUser.permissions ? JSON.parse(safeUser.permissions) : permissions;
-    } catch (error) {
-      permissions = defaultPermissionsForRole(role);
-    }
-
-    const clinicIds = await getUserClinicIds(user.id);
-    const mustChangePassword = Boolean(user.must_change_password);
-    const token = jwt.sign({ id: user.id, email: user.email, role, name: user.name, permissions, clinicIds, mustChangePassword }, SECRET);
+    const authenticatedUser = await buildAuthenticatedUser(user);
+    const token = signUserToken(authenticatedUser);
 
     res.json({
       message: 'Login ok',
       success: true,
       token,
-      user: {
-        ...safeUser,
-        role,
-        permissions,
-        clinicIds,
-        mustChangePassword
-      }
+      passwordChangeRequired: Boolean(authenticatedUser.mustChangePassword),
+      user: authenticatedUser
     });
 
   } catch (error) {
@@ -4005,52 +4155,130 @@ app.patch('/profile', authenticate, async (req, res) => {
   }
 });
 
-app.post('/profile/change-password', authenticate, async (req, res) => {
+async function changeUserPassword({ userId, currentPassword, newPassword }) {
+  if (!currentPassword || !newPassword) {
+    const error = new Error('Informe a senha atual e a nova senha.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (!isStrongPassword(newPassword)) {
+    const error = new Error('A nova senha deve ter no mínimo 8 caracteres, letra maiúscula, letra minúscula, número e caractere especial.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  if (String(currentPassword) === String(newPassword)) {
+    const error = new Error('A nova senha deve ser diferente da senha atual.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const [rows] = await pool.query(
+    `SELECT id, name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password, created_at, updated_at
+       FROM users
+      WHERE id = ? AND deleted_at IS NULL`,
+    [userId]
+  );
+
+  if (!rows.length) {
+    const error = new Error('Usuário não encontrado.');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const user = rows[0];
+  const validPassword = user.password === currentPassword || await bcrypt.compare(currentPassword, user.password);
+
+  if (!validPassword) {
+    const error = new Error('Senha atual inválida.');
+    error.statusCode = 401;
+    throw error;
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  await pool.query('UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?', [passwordHash, user.id]);
+
   try {
-    const { current_password, new_password } = req.body || {};
+    await sendEmail(
+      user.email,
+      'Senha alterada - Sistema GRC',
+      `
+        <p>Olá, ${user.name || 'colaborador'}.</p>
+        <p>Registramos uma alteração de senha no seu acesso ao Sistema GRC.</p>
+        <p>Se foi você quem realizou a mudança, nenhuma ação adicional é necessária.</p>
+        <p>Se não reconhece esta alteração, procure imediatamente o administrador.</p>
+      `
+    );
+  } catch (error) {
+    console.warn('Nao foi possivel enviar e-mail de alteracao de senha:', error.message);
+  }
 
-    if (!current_password || !new_password) {
-      return res.status(400).json({ error: 'Informe a senha atual e a nova senha.' });
+  const [updatedRows] = await pool.query(
+    `SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, created_at, updated_at
+       FROM users
+      WHERE id = ?`,
+    [user.id]
+  );
+  const authenticatedUser = await buildAuthenticatedUser(updatedRows[0]);
+
+  return {
+    user: authenticatedUser,
+    token: signUserToken(authenticatedUser)
+  };
+}
+
+app.post('/api/change-initial-password', initialPasswordChangeLimiter, authenticate, async (req, res) => {
+  try {
+    if (!req.user?.mustChangePassword) {
+      return res.status(409).json({ error: 'A troca inicial de senha já foi concluída.' });
     }
 
-    if (!isStrongPassword(new_password)) {
-      return res.status(400).json({ error: 'A nova senha deve ter no mÃ­nimo 8 caracteres, letra maiÃºscula, letra minÃºscula, nÃºmero e caractere especial.' });
+    const parsed = parseBodyWithSchema(changeInitialPasswordSchema, req.body);
+
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
     }
 
-    const [rows] = await pool.query('SELECT id, password, email, name FROM users WHERE id = ? AND deleted_at IS NULL', [req.user.id]);
+    const result = await changeUserPassword({
+      userId: req.user.id,
+      currentPassword: parsed.data.current_password,
+      newPassword: parsed.data.new_password
+    });
 
-    if (!rows.length) {
-      return res.status(404).json({ error: 'UsuÃ¡rio nÃ£o encontrado.' });
-    }
-
-    const user = rows[0];
-    const validPassword = user.password === current_password || await bcrypt.compare(current_password, user.password);
-
-    if (!validPassword) {
-      return res.status(401).json({ error: 'Senha atual invÃ¡lida.' });
-    }
-
-    const passwordHash = await bcrypt.hash(new_password, 10);
-    await pool.query('UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?', [passwordHash, user.id]);
-    try {
-      await sendEmail(
-        user.email,
-        'Senha alterada - Sistema GRC',
-        `
-          <p>OlÃ¡, ${user.name || 'colaborador'}.</p>
-          <p>Registramos uma alteraÃ§Ã£o de senha no seu acesso ao Sistema GRC.</p>
-          <p>Se foi vocÃª quem realizou a mudanÃ§a, nenhuma aÃ§Ã£o adicional Ã© necessÃ¡ria.</p>
-          <p>Se nÃ£o reconhece esta alteraÃ§Ã£o, procure imediatamente o administrador.</p>
-        `
-      );
-    } catch (error) {
-      console.warn('Nao foi possivel enviar e-mail de alteracao de senha:', error.message);
-    }
-
-    res.json({ message: 'Senha alterada com sucesso.' });
+    res.json({
+      message: 'Senha inicial alterada com sucesso.',
+      token: result.token,
+      user: result.user
+    });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao alterar senha.' });
+    res.status(error.statusCode || 500).json({ error: error.message || 'Erro ao alterar a senha inicial.' });
+  }
+});
+
+app.post('/profile/change-password', initialPasswordChangeLimiter, authenticate, async (req, res) => {
+  try {
+    const parsed = parseBodyWithSchema(changeInitialPasswordSchema, req.body);
+
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
+
+    const result = await changeUserPassword({
+      userId: req.user.id,
+      currentPassword: parsed.data.current_password,
+      newPassword: parsed.data.new_password
+    });
+
+    res.json({
+      message: req.user?.mustChangePassword ? 'Senha inicial alterada com sucesso.' : 'Senha alterada com sucesso.',
+      token: result.token,
+      user: result.user
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(error.statusCode || 500).json({ error: error.message || 'Erro ao alterar senha.' });
   }
 });
 
@@ -5300,6 +5528,22 @@ async function startServer() {
 
 }
 
-startServer();
+if (require.main === module) {
+  startServer();
+}
+
+module.exports = {
+  app,
+  pool,
+  startServer,
+  __testables: {
+    buildAuthenticatedUser,
+    changeUserPassword,
+    isPasswordChangeRouteAllowed,
+    parseBodyWithSchema,
+    sendUserAccessNotifications,
+    signUserToken
+  }
+};
 
 
