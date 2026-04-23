@@ -4383,25 +4383,50 @@ a {
 .complaints-dashboard-page .page-heading,
 .nps-dashboard-page .page-heading,
 .patient-dashboard-page .page-heading {
-  align-items: flex-end;
+  min-height: 0;
+  align-items: center;
+  padding: 26px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: var(--shadow-sm);
+  overflow: visible;
+}
+
+.complaints-dashboard-page .page-heading::before,
+.nps-dashboard-page .page-heading::before,
+.patient-dashboard-page .page-heading::before,
+.complaints-dashboard-page .dashboard-filter-panel::before,
+.nps-dashboard-page .dashboard-filter-panel::before,
+.patient-dashboard-page .dashboard-filter-panel::before,
+.complaints-dashboard-page .management-panel::before,
+.nps-dashboard-page .management-panel::before,
+.patient-dashboard-page .management-panel::before {
+  display: none;
 }
 
 .complaints-dashboard-page .dashboard-filter-panel,
 .nps-dashboard-page .dashboard-filter-panel,
 .patient-dashboard-page .dashboard-filter-panel {
-  top: 112px;
+  top: 126px;
+  padding: 24px;
+  background: rgba(255, 255, 255, 0.97);
+  border-color: var(--line);
+  box-shadow: var(--shadow-md);
+  overflow: visible;
 }
 
 .complaints-dashboard-page .dashboard-base-summary,
 .nps-dashboard-page .dashboard-base-summary,
 .patient-dashboard-page .dashboard-base-summary {
-  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
 .complaints-dashboard-page .dashboard-summary-card,
 .nps-dashboard-page .dashboard-summary-card,
 .patient-dashboard-page .dashboard-summary-card {
-  padding: 18px;
+  min-height: 0;
+  padding: 14px 16px;
+  align-content: start;
+  box-shadow: var(--shadow-sm);
 }
 
 .complaints-dashboard-page .dashboard-clean-table td,
@@ -4419,13 +4444,224 @@ a {
 .complaints-dashboard-page .dashboard-table-wrap,
 .nps-dashboard-page .dashboard-table-wrap,
 .patient-dashboard-page .dashboard-table-wrap {
-  border-color: rgba(200, 154, 87, 0.2);
+  border-color: var(--line);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42), 0 10px 24px rgba(10, 10, 14, 0.08);
 }
 
 .complaints-dashboard-page .dashboard-clean-table th,
 .nps-dashboard-page .dashboard-clean-table th,
 .patient-dashboard-page .dashboard-clean-table th {
-  background: rgba(248, 241, 230, 0.96);
+  background: var(--surface-soft);
+}
+
+.complaints-dashboard-page .management-panel,
+.nps-dashboard-page .management-panel,
+.patient-dashboard-page .management-panel,
+.complaints-dashboard-page .chart-card,
+.nps-dashboard-page .chart-card,
+.patient-dashboard-page .chart-card {
+  background: rgba(255, 255, 255, 0.97);
+  border-color: var(--line);
+  box-shadow: var(--shadow-md);
+  overflow: visible;
+}
+
+.complaints-dashboard-page .chart-card,
+.nps-dashboard-page .chart-card,
+.patient-dashboard-page .chart-card {
+  gap: 16px;
+}
+
+.complaints-dashboard-page .chart-box,
+.nps-dashboard-page .chart-box,
+.patient-dashboard-page .chart-box {
+  background: rgba(255, 255, 255, 0.88);
+}
+
+.complaints-dashboard-page .dashboard-filter-heading,
+.nps-dashboard-page .dashboard-filter-heading,
+.patient-dashboard-page .dashboard-filter-heading,
+.complaints-dashboard-page .panel-heading,
+.nps-dashboard-page .panel-heading,
+.patient-dashboard-page .panel-heading {
+  padding-bottom: 0;
+  margin-bottom: 14px;
+  border-bottom: none;
+}
+
+.home-command-bar {
+  min-height: 96px;
+  padding: 18px 22px;
+  gap: 24px;
+}
+
+.home-brand-zone {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.home-command-bar .brand-mark {
+  display: flex;
+  align-items: center;
+}
+
+.home-command-bar .brand-mark img {
+  width: clamp(118px, 12vw, 138px);
+  min-width: 118px;
+  padding: 10px 14px;
+}
+
+.home-command-bar .home-menu-top,
+.home-command-bar .notification-button,
+.home-command-bar .gear-action,
+.home-account-row > .ghost-action,
+.home-account-row > .outline-action {
+  min-height: 44px;
+}
+
+.home-command-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+  min-width: 0;
+}
+
+.home-account-row {
+  justify-content: flex-end;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.home-account-row > .ghost-action,
+.home-account-row > .outline-action {
+  min-width: 120px;
+  justify-content: center;
+}
+
+.home-hero {
+  grid-template-columns: minmax(0, 1.18fr) minmax(300px, 340px);
+  align-items: stretch;
+  gap: 28px;
+  padding: 36px;
+}
+
+.home-copy {
+  display: grid;
+  align-content: center;
+  gap: 12px;
+}
+
+.home-copy h1 {
+  margin: 0;
+  font-size: clamp(40px, 4.2vw, 56px);
+  line-height: 1.02;
+}
+
+.home-copy p {
+  margin: 0;
+}
+
+.home-copy > p:last-child {
+  max-width: 720px;
+  font-size: 16px;
+  line-height: 1.6;
+}
+
+.home-actions {
+  display: grid;
+  align-content: center;
+  gap: 12px;
+  min-width: 0;
+  width: 100%;
+}
+
+.home-actions .primary-action,
+.home-actions .secondary-action,
+.home-actions .outline-action {
+  width: 100%;
+  min-height: 46px;
+  justify-content: center;
+  text-align: center;
+  padding: 0 16px;
+}
+
+.home-qr-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 24px;
+  padding: 24px 26px;
+}
+
+.home-qr-panel > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.home-qr-panel .quick-highlight {
+  overflow-wrap: anywhere;
+}
+
+.qr-code-box {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+}
+
+.qr-code-box .outline-action,
+.qr-code-box .primary-action {
+  width: 100%;
+  min-width: 170px;
+}
+
+.home-agenda-panel {
+  padding: 24px 26px;
+}
+
+.home-agenda-panel .panel-heading {
+  align-items: center;
+}
+
+.home-agenda-panel .empty-state {
+  margin: 0;
+  min-height: 120px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.quick-grid {
+  align-items: stretch;
+}
+
+.quick-card {
+  min-height: 250px;
+  padding: 26px 22px;
+}
+
+.quick-card h2 {
+  font-size: clamp(28px, 2.1vw, 32px);
+  line-height: 1.1;
+}
+
+.quick-card p {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.quick-card-head {
+  align-items: flex-start;
+}
+
+.quick-highlight {
+  display: block;
+  margin-top: auto;
 }
 
 .notification-center-modal .notification-item,
@@ -4444,6 +4680,34 @@ a {
 }
 
 @media (max-width: 720px) {
+  .home-command-bar {
+    min-height: 0;
+    padding: 18px;
+  }
+
+  .home-command-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .home-account-row {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .home-qr-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .qr-code-box {
+    width: 100%;
+  }
+
+  .qr-code-box .outline-action,
+  .qr-code-box .primary-action {
+    min-width: 0;
+  }
+
   .share-modal-actions {
     grid-template-columns: 1fr;
   }
@@ -4458,5 +4722,22 @@ a {
   .nps-dashboard-page .chart-box,
   .patient-dashboard-page .chart-box {
     min-height: 220px;
+  }
+}
+
+@media (max-width: 620px) {
+  .home-command-bar .brand-mark img {
+    width: 108px;
+    min-width: 108px;
+  }
+
+  .home-copy h1 {
+    font-size: clamp(34px, 9vw, 42px);
+  }
+
+  .home-account-row > .ghost-action,
+  .home-account-row > .outline-action {
+    width: 100%;
+    min-width: 0;
   }
 }
