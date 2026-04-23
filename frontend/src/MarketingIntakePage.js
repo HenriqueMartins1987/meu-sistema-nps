@@ -73,7 +73,7 @@ function MarketingIntakePage() {
   useEffect(() => {
     api.get('/public/clinics')
       .then((res) => setClinics(Array.isArray(res.data) ? res.data : []))
-      .catch(() => setError('Nao foi possivel carregar as clinicas.'));
+      .catch(() => setError('Não foi possível carregar as clínicas.'));
   }, []);
 
   const activeClinics = useMemo(() => (
@@ -187,7 +187,7 @@ function MarketingIntakePage() {
       formElement.reset();
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (requestError) {
-      setError(normalizeProtocolError(requestError.response?.data?.error || 'Nao foi possivel registrar o protocolo.'));
+      setError(normalizeProtocolError(requestError.response?.data?.error || 'Não foi possível registrar o protocolo.'));
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
       setLoading(false);
@@ -217,11 +217,11 @@ function MarketingIntakePage() {
         <form className="public-form-shell" onSubmit={handleSubmit}>
           <section className="public-form-band">
             <div className="public-form-title">
-              <p className="eyebrow">Classificacao</p>
-              <h2>Tipo de manifestacao</h2>
+              <p className="eyebrow">Classificação</p>
+              <h2>Tipo de manifestação</h2>
             </div>
 
-            <div className="segmented-choice" role="radiogroup" aria-label="Tipo de manifestacao">
+            <div className="segmented-choice" role="radiogroup" aria-label="Tipo de manifestação">
               {manifestationOptions.map((option) => (
                 <button
                   key={option.value}
@@ -295,9 +295,9 @@ function MarketingIntakePage() {
             {isComplaint ? (
               <div className="form-grid two">
                 <label>
-                  Classificacao do protocolo
+                  Classificação do protocolo
                   <select className="field" value={form.complaint_category} onChange={(event) => handleCategoryChange(event.target.value)} required>
-                    <option value="">Selecione a classificacao</option>
+                    <option value="">Selecione a classificação</option>
                     {complaintCategories.map((type) => (
                       <option key={type.value} value={type.value}>{type.label}</option>
                     ))}
@@ -305,9 +305,9 @@ function MarketingIntakePage() {
                 </label>
 
                 <label>
-                  Servico envolvido
+                  Serviço envolvido
                   <select className="field" value={form.service_type} onChange={(event) => updateForm('service_type', event.target.value)}>
-                    <option value="">Selecione o servico</option>
+                    <option value="">Selecione o serviço</option>
                     {serviceTypes.map((service) => (
                       <option key={service.value} value={service.value}>{service.label}</option>
                     ))}
@@ -316,9 +316,9 @@ function MarketingIntakePage() {
               </div>
             ) : (
               <label>
-                Servico envolvido
+                Serviço envolvido
                 <select className="field" value={form.service_type} onChange={(event) => updateForm('service_type', event.target.value)}>
-                  <option value="">Selecione o servico, se houver</option>
+                  <option value="">Selecione o serviço, se houver</option>
                   {serviceTypes.map((service) => (
                     <option key={service.value} value={service.value}>{service.label}</option>
                   ))}
@@ -338,7 +338,7 @@ function MarketingIntakePage() {
                 <label>
                   Envolve valor financeiro?
                   <select className="field" value={form.financial_involved} onChange={(event) => handleFinancialChange(event.target.value)} required>
-                    <option value="nao">Nao</option>
+                    <option value="nao">Não</option>
                     <option value="sim">Sim</option>
                   </select>
                 </label>

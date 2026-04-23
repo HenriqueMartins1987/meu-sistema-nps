@@ -634,7 +634,7 @@ function ComplaintDetail() {
                   <span>{roleLabels[log.actor_role] || log.actor_role || 'Atualização'}</span>
                 </div>
                 <p>{log.message || 'Atualização registrada no protocolo.'}</p>
-                <small>{log.actor_name || 'Usuario do sistema'}</small>
+                <small>{log.actor_name || 'Usuário do sistema'}</small>
               </article>
             )) : (
               <p className="empty-mini">Ainda não existem registros complementares na linha do tempo.</p>
@@ -673,7 +673,7 @@ function ComplaintDetail() {
             </div>
             <div className={`approval-card ${hasSacApproval ? 'done' : 'pending'}`}>
               <span>Aceite SAC</span>
-              <strong>{hasSacApproval ? 'Concluido' : 'Pendente'}</strong>
+              <strong>{hasSacApproval ? 'Concluído' : 'Pendente'}</strong>
               <p>{hasSacApproval ? `${complaint.sac_approval_by || 'SAC'} · ${formatDate(complaint.sac_approval_at)}` : 'Gerado no fechamento pelo Operador de SAC.'}</p>
             </div>
           </div>
@@ -711,7 +711,7 @@ function ComplaintDetail() {
             )}
             {canSacClose && complaint.status !== 'resolvida' && (
               <button className="outline-action" onClick={handlePatientContact} disabled={saving || !canMarkPatientContact || isDeletedRecord}>
-                {hasPatientContact ? 'Contato ja registrado' : 'Registrar contato com paciente'}
+                {hasPatientContact ? 'Contato já registrado' : 'Registrar contato com paciente'}
               </button>
             )}
             {canSacClose && complaint.status !== 'resolvida' && (

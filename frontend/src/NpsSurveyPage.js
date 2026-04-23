@@ -151,7 +151,7 @@ function NpsSurveyPage() {
         return;
       }
 
-      setError('Nao foi possivel importar o contato da agenda. Voce pode preencher os dados manualmente.');
+      setError('Não foi possível importar o contato da agenda. Você pode preencher os dados manualmente.');
     }
   };
 
@@ -167,7 +167,7 @@ function NpsSurveyPage() {
       const parsedContact = parseVcardContact(fileContent);
 
       if (!parsedContact.name && !parsedContact.phone) {
-        setError('Nao foi possivel identificar nome ou telefone no contato selecionado.');
+        setError('Não foi possível identificar nome ou telefone no contato selecionado.');
         return;
       }
 
@@ -180,7 +180,7 @@ function NpsSurveyPage() {
       }));
       setError('');
     } catch (fileError) {
-      setError('Nao foi possivel importar o contato selecionado.');
+      setError('Não foi possível importar o contato selecionado.');
     } finally {
       event.target.value = '';
     }

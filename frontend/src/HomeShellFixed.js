@@ -84,7 +84,7 @@ function notificationSummary(notification) {
 function formatNotificationPayloadValue(value) {
   if (value === null || value === undefined || value === '') return 'NÃ£o informado';
   if (Array.isArray(value)) return value.join(', ');
-  if (typeof value === 'boolean') return value ? 'Sim' : 'NÃ£o';
+  if (typeof value === 'boolean') return value ? 'Sim' : 'Não';
   return String(value);
 }
 
@@ -232,7 +232,7 @@ function HomeShellFixed() {
         setMustChangePassword(true);
       }
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel carregar as notificaÃ§Ãµes.');
+      setFeedback(error.response?.data?.error || 'Não foi possível carregar as notificações.');
     }
   }, [masterUser]);
 
@@ -286,7 +286,7 @@ function HomeShellFixed() {
             detail: tone === 'danger'
               ? `Prazo vencido desde ${formatDateTime(item.due_at)}`
               : tone === 'warning'
-                ? `Prazo prÃ³ximo: ${formatDateTime(item.due_at)}`
+                ? `Prazo próximo: ${formatDateTime(item.due_at)}`
                 : `Prazo em ${formatDateTime(item.due_at)}`,
             when: dueAt.getTime(),
             tone,
@@ -332,7 +332,7 @@ function HomeShellFixed() {
       setAgendaItems(nextAgenda);
       setAgendaAlerts(nextAlerts);
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel carregar a agenda operacional.');
+      setFeedback(error.response?.data?.error || 'Não foi possível carregar a agenda operacional.');
     } finally {
       setAgendaLoading(false);
     }
@@ -399,7 +399,7 @@ function HomeShellFixed() {
       await loadNotifications();
       setFeedback(decision === 'approve' ? 'Cadastro aprovado.' : 'Cadastro rejeitado.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel analisar o cadastro.');
+      setFeedback(error.response?.data?.error || 'Não foi possível analisar o cadastro.');
     }
   };
 
@@ -482,7 +482,7 @@ function HomeShellFixed() {
         }));
       }
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel abrir a notificaÃ§Ã£o.');
+      setFeedback(error.response?.data?.error || 'Não foi possível abrir a notificação.');
     }
 
     setNotificationsOpen(false);
@@ -512,7 +512,7 @@ function HomeShellFixed() {
       }));
       setFeedback('NotificaÃ§Ã£o removida do histÃ³rico.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel excluir a notificaÃ§Ã£o.');
+      setFeedback(error.response?.data?.error || 'Não foi possível excluir a notificação.');
     }
   };
 
@@ -551,7 +551,7 @@ function HomeShellFixed() {
       setPasswordForm({ current_password: '', new_password: '', confirm_password: '' });
       setFeedback('Senha alterada com sucesso.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel alterar a senha.');
+      setFeedback(error.response?.data?.error || 'Não foi possível alterar a senha.');
     }
   };
 
@@ -665,13 +665,13 @@ function HomeShellFixed() {
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <section className="modal-panel notification-center-modal">
             <div className="notification-head">
-              <strong>NotificaÃ§Ãµes</strong>
+              <strong>Notificações</strong>
               <button type="button" className="ghost-action" onClick={loadNotifications}>Atualizar</button>
             </div>
 
             <div className="notification-tabs">
               <button type="button" className={notificationTab === 'unread' ? 'active' : ''} onClick={() => setNotificationTab('unread')}>
-                NÃ£o lidas ({totalAlerts})
+                Não lidas ({totalAlerts})
               </button>
               <button type="button" className={notificationTab === 'read' ? 'active' : ''} onClick={() => setNotificationTab('read')}>
                 Lidas ({notificationGroups.read.length})
@@ -701,7 +701,7 @@ function HomeShellFixed() {
                   <span>{notificationBadge(notification)}</span>
                   <small>{formatNotificationDate(notification.read_at || notification.created_at)}</small>
                 </div>
-                <strong>{notification.title || 'AtualizaÃ§Ã£o do sistema'}</strong>
+                <strong>{notification.title || 'Atualização do sistema'}</strong>
                 <p>{notificationSummary(notification)}</p>
                 <div className="notification-actions">
                   <button type="button" className="outline-action" onClick={() => openNotification(notification)}>
@@ -716,8 +716,8 @@ function HomeShellFixed() {
               </article>
             ))}
 
-            {notificationTab === 'unread' && totalAlerts === 0 && <p className="empty-mini">Nenhuma nova notificaÃ§Ã£o.</p>}
-            {notificationTab === 'read' && notificationGroups.read.length === 0 && <p className="empty-mini">Nenhuma notificaÃ§Ã£o lida no histÃ³rico.</p>}
+            {notificationTab === 'unread' && totalAlerts === 0 && <p className="empty-mini">Nenhuma nova notificação.</p>}
+            {notificationTab === 'read' && notificationGroups.read.length === 0 && <p className="empty-mini">Nenhuma notificação lida no histórico.</p>}
 
             <div className="row-actions">
               <button type="button" className="outline-action" onClick={closeNotificationsModal}>
@@ -734,7 +734,7 @@ function HomeShellFixed() {
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Compartilhar</p>
-                <h2>Divulgar pesquisa de satisfaÃ§Ã£o</h2>
+                <h2>Divulgar pesquisa de satisfação</h2>
                 <p className="base-subtitle">Escolha como deseja enviar o link da pesquisa.</p>
               </div>
             </div>
@@ -742,7 +742,7 @@ function HomeShellFixed() {
             <div className="share-modal-actions">
               <button type="button" className="primary-action" onClick={handleShareNps}>Compartilhar</button>
               <button type="button" className="outline-action" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, '_blank', 'noopener,noreferrer')}>WhatsApp</button>
-              <a className="outline-action share-link-action" href={`mailto:?subject=Pesquisa de SatisfaÃ§Ã£o&body=${encodeURIComponent(shareText)}`}>E-mail</a>
+              <a className="outline-action share-link-action" href={`mailto:?subject=Pesquisa de Satisfação&body=${encodeURIComponent(shareText)}`}>E-mail</a>
               <button type="button" className="outline-action" onClick={handleCopyNpsLink}>
                 Copiar link
               </button>
@@ -783,10 +783,10 @@ function HomeShellFixed() {
       <section className="home-hero">
         <div className="home-copy">
           <p className="eyebrow">Sistema GRC</p>
-          <h1>GestÃ£o profissional da voz do cliente.</h1>
+          <h1>Gestão profissional da voz do cliente.</h1>
           <p>
-            Centralize reclamaÃ§Ãµes, NPS, elogios, sugestÃµes e rotinas do paciente com trilhas separadas,
-            permissÃµes por perfil e rastreabilidade executiva.
+            Centralize reclamações, NPS, elogios, sugestões e rotinas do paciente com trilhas separadas,
+            permissões por perfil e rastreabilidade executiva.
           </p>
         </div>
 
@@ -795,13 +795,13 @@ function HomeShellFixed() {
             <button className="primary-action" onClick={() => navigate('/cadastro')}>Novo Protocolo</button>
           )}
           {hasPermission(user, 'complaints_management') && (
-            <button className="secondary-action" onClick={() => navigate('/gestao')}>Painel de GestÃ£o de ReclamaÃ§Ãµes</button>
+            <button className="secondary-action" onClick={() => navigate('/gestao')}>Painel de Gestão de Reclamações</button>
           )}
           {hasPermission(user, 'complaints_dashboard') && (
-            <button className="secondary-action" onClick={() => navigate('/dashboard')}>Dashboard de ReclamaÃ§Ãµes</button>
+            <button className="secondary-action" onClick={() => navigate('/dashboard')}>Dashboard de Reclamações</button>
           )}
           {hasPermission(user, 'nps_management') && (
-            <button className="outline-action" onClick={() => navigate('/gestao-nps')}>Painel de GestÃ£o NPS</button>
+            <button className="outline-action" onClick={() => navigate('/gestao-nps')}>Painel de Gestão NPS</button>
           )}
           {hasPermission(user, 'nps_dashboard') && (
             <button className="outline-action" onClick={() => navigate('/dashboard-nps')}>Dashboard NPS</button>
@@ -814,9 +814,9 @@ function HomeShellFixed() {
 
       <section className="feedback-intake-panel home-qr-panel" aria-label="QR Code NPS">
         <div>
-          <p className="eyebrow">Pesquisa de SatisfaÃ§Ã£o</p>
-          <h2>QR Code para pesquisa de SatisfaÃ§Ã£o</h2>
-          <p>Abra a cÃ¢mera do celular e leia o cÃ³digo para acessar diretamente a pesquisa.</p>
+          <p className="eyebrow">Pesquisa de Satisfação</p>
+          <h2>QR Code para pesquisa de Satisfação</h2>
+          <p>Abra a câmera do celular e leia o código para acessar diretamente a pesquisa.</p>
           <strong className="quick-highlight">{npsLink}</strong>
         </div>
 

@@ -331,7 +331,7 @@ function Dashboard() {
               placeholder="Buscar protocolo, paciente, clínica ou relato"
               list="dashboard-search-suggestions"
             />
-            <button type="button" aria-label="Buscar" onClick={() => updateFilter('search', filters.search.trim())}>⌕</button>
+            <button type="button" aria-label="Buscar" onClick={() => updateFilter('search', filters.search.trim())}>🔎</button>
             <datalist id="dashboard-search-suggestions">
               {searchSuggestions.map((value) => (
                 <option key={value} value={value} />
@@ -511,10 +511,10 @@ function Dashboard() {
                     <th>Protocolo</th>
                     <th>Paciente</th>
                     <th>Unidade e localizacao</th>
-                    <th>Classificacao</th>
+                    <th>Classificação</th>
                     <th>Status e prazo</th>
-                    <th>Responsavel</th>
-                    <th>Ultima tratativa por</th>
+                    <th>Responsável</th>
+                    <th>Última tratativa por</th>
                     <th>Cadastro</th>
                   </tr>
                 </thead>
@@ -527,24 +527,24 @@ function Dashboard() {
                       <td>
                         <div className="table-cell-stack">
                           <span className="cell-primary">{item.protocol || item.id}</span>
-                          <span className="cell-secondary">{item.channel || 'Canal nao informado'}</span>
+                          <span className="cell-secondary">{item.channel || 'Canal não informado'}</span>
                         </div>
                       </td>
                       <td>
                         <div className="table-cell-stack">
-                          <span className="cell-primary">{item.patient_name || 'Nao informado'}</span>
-                          <span className="cell-secondary">{item.patient_phone || 'Telefone nao informado'}</span>
+                          <span className="cell-primary">{item.patient_name || 'Não informado'}</span>
+                          <span className="cell-secondary">{item.patient_phone || 'Telefone não informado'}</span>
                         </div>
                       </td>
                       <td>
                         <div className="table-cell-stack">
-                          <span className="cell-primary">{item.clinic_name || 'Unidade nao informada'}</span>
-                          <span className="cell-secondary">{item.city || 'Cidade nao informada'} / {item.state || 'UF'} - {item.region || 'Regiao nao informada'}</span>
+                          <span className="cell-primary">{item.clinic_name || 'Unidade não informada'}</span>
+                          <span className="cell-secondary">{item.city || 'Cidade não informada'} / {item.state || 'UF'} - {item.region || 'Região não informada'}</span>
                         </div>
                       </td>
                       <td>
                         <div className="table-cell-stack">
-                          <span className="cell-primary">{item.complaint_type || 'Nao informado'}</span>
+                          <span className="cell-primary">{item.complaint_type || 'Não informado'}</span>
                           <span className="cell-secondary">{priorityLabel(item.priority)} - {item.created_origin || 'Interno'}</span>
                         </div>
                       </td>
@@ -560,7 +560,7 @@ function Dashboard() {
                       </td>
                       <td>
                         <div className="table-cell-stack">
-                          <span className="cell-primary">{item.coordinator_name || 'Nao vinculado'}</span>
+                          <span className="cell-primary">{item.coordinator_name || 'Não vinculado'}</span>
                           <span className="cell-secondary">{item.forwarded_to_label || 'Sem encaminhamento'}</span>
                         </div>
                       </td>

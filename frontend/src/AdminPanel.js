@@ -27,7 +27,7 @@ function buildNewUserDraft() {
 
 function roleLabel(role) {
   if (role === 'master_admin') return 'Administrador Master';
-  return accessProfiles.find((profile) => profile.value === role)?.label || role || 'Perfil nÃƒÂ£o informado';
+  return accessProfiles.find((profile) => profile.value === role)?.label || role || 'Perfil não informado';
 }
 
 function AdminPanel() {
@@ -78,7 +78,7 @@ function AdminPanel() {
         setSelectedUserId(String(userRows[0].id));
       }
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel carregar o painel gerencial.');
+      setFeedback(error.response?.data?.error || 'Não foi possível carregar o painel gerencial.');
     } finally {
       setLoading(false);
     }
@@ -163,9 +163,9 @@ function AdminPanel() {
     try {
       await api.patch(`/admin/users/${selectedUser.id}`, draft);
       await loadData();
-      setFeedback('UsuÃƒÂ¡rio atualizado com sucesso.');
+      setFeedback('Usuário atualizado com sucesso.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel atualizar o usuÃƒÂ¡rio.');
+      setFeedback(error.response?.data?.error || 'Não foi possível atualizar o usuário.');
     }
   };
 
@@ -175,9 +175,9 @@ function AdminPanel() {
     try {
       await api.patch(`/admin/users/${selectedUser.id}`, { ...draft, active: false });
       await loadData();
-      setFeedback('UsuÃƒÂ¡rio desabilitado.');
+      setFeedback('Usuário desabilitado.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel desabilitar o usuÃƒÂ¡rio.');
+      setFeedback(error.response?.data?.error || 'Não foi possível desabilitar o usuário.');
     }
   };
 
@@ -188,9 +188,9 @@ function AdminPanel() {
       await api.delete(`/admin/users/${selectedUser.id}`);
       setSelectedUserId('');
       await loadData();
-      setFeedback('UsuÃƒÂ¡rio excluÃƒÂ­do com lastro de auditoria.');
+      setFeedback('Usuário excluído com lastro de auditoria.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel excluir o usuÃƒÂ¡rio.');
+      setFeedback(error.response?.data?.error || 'Não foi possível excluir o usuário.');
     }
   };
 
@@ -205,7 +205,7 @@ function AdminPanel() {
         `Senha reiniciada com sucesso. ${emailSent ? 'E-mail enviado.' : 'E-mail pendente.'} ${whatsappSent ? 'WhatsApp enviado.' : 'WhatsApp pendente.'}`
       );
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel reiniciar a senha.');
+      setFeedback(error.response?.data?.error || 'Não foi possível reiniciar a senha.');
     }
   };
 
@@ -213,12 +213,12 @@ function AdminPanel() {
     setFeedback('');
 
     if (!newUser.name || !newUser.email || !newUser.position) {
-      setFeedback('Preencha nome completo, e-mail e cargo para criar o usuÃƒÂ¡rio.');
+      setFeedback('Preencha nome completo, e-mail e cargo para criar o usuário.');
       return;
     }
 
     if (!isCompleteBrazilPhone(newUser.phone) || !isCompleteBrazilPhone(newUser.whatsapp)) {
-      setFeedback('Informe telefone e WhatsApp completos no formato +55DDDNÃƒÅ¡MERO.');
+      setFeedback('Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.');
       return;
     }
 
@@ -235,10 +235,10 @@ function AdminPanel() {
       const emailSent = response.data?.notifications?.emailSent;
       const whatsappSent = response.data?.notifications?.whatsappSent;
       setFeedback(
-        `Usuario criado com sucesso. Senha temporaria gerada com envio ${emailSent ? 'por e-mail' : 'de e-mail pendente'} e ${whatsappSent ? 'por WhatsApp' : 'de WhatsApp pendente'}.`
+        `Usuário criado com sucesso. Senha temporária gerada com envio ${emailSent ? 'por e-mail' : 'de e-mail pendente'} e ${whatsappSent ? 'por WhatsApp' : 'de WhatsApp pendente'}.`
       );
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel criar o usuÃƒÂ¡rio.');
+      setFeedback(error.response?.data?.error || 'Não foi possível criar o usuário.');
     } finally {
       setCreating(false);
     }
@@ -303,7 +303,7 @@ function AdminPanel() {
               <article className="admin-user-button active">
                 <strong>{selectedUser.name}</strong>
                 <span>{selectedUser.email}</span>
-                <small>{selectedUser.active ? 'Ativo' : 'Desabilitado'} Ã‚Â· {roleLabel(selectedUser.role)}</small>
+                <small>{selectedUser.active ? 'Ativo' : 'Desabilitado'} · {roleLabel(selectedUser.role)}</small>
               </article>
             )}
           </aside>
@@ -437,7 +437,7 @@ function AdminPanel() {
             <div>
               <p className="eyebrow">Novo usuÃƒÂ¡rio</p>
               <h2>Cadastrar colaborador</h2>
-              <p>O sistema gerara uma senha temporaria segura e enviara o acesso automaticamente para o colaborador.</p>
+              <p>O sistema gerará uma senha temporária segura e enviará o acesso automaticamente para o colaborador.</p>
             </div>
 
             <div className="admin-form-grid">
@@ -480,7 +480,7 @@ function AdminPanel() {
                 Cancelar
               </button>
               <button className="primary-action" onClick={createUser} disabled={creating}>
-                {creating ? 'Cadastrando...' : 'Salvar usuÃƒÂ¡rio'}
+                {creating ? 'Cadastrando...' : 'Salvar usuário'}
               </button>
             </div>
           </section>
