@@ -4335,20 +4335,20 @@ a {
 .complaints-dashboard-page .dashboard-chart-grid,
 .nps-dashboard-page .dashboard-chart-grid,
 .patient-dashboard-page .dashboard-chart-grid {
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;
 }
 
 .complaints-dashboard-page .chart-card,
 .nps-dashboard-page .chart-card,
 .patient-dashboard-page .chart-card {
-  min-height: 360px;
+  min-height: 380px;
 }
 
 .complaints-dashboard-page .chart-box,
 .nps-dashboard-page .chart-box,
 .patient-dashboard-page .chart-box {
-  min-height: 260px;
+  min-height: 280px;
 }
 
 .complaints-dashboard-page .dashboard-base-panel,
@@ -4383,50 +4383,28 @@ a {
 .complaints-dashboard-page .page-heading,
 .nps-dashboard-page .page-heading,
 .patient-dashboard-page .page-heading {
-  min-height: 0;
-  align-items: center;
-  padding: 26px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: var(--shadow-sm);
-  overflow: visible;
-}
-
-.complaints-dashboard-page .page-heading::before,
-.nps-dashboard-page .page-heading::before,
-.patient-dashboard-page .page-heading::before,
-.complaints-dashboard-page .dashboard-filter-panel::before,
-.nps-dashboard-page .dashboard-filter-panel::before,
-.patient-dashboard-page .dashboard-filter-panel::before,
-.complaints-dashboard-page .management-panel::before,
-.nps-dashboard-page .management-panel::before,
-.patient-dashboard-page .management-panel::before {
-  display: none;
+  align-items: flex-end;
 }
 
 .complaints-dashboard-page .dashboard-filter-panel,
 .nps-dashboard-page .dashboard-filter-panel,
 .patient-dashboard-page .dashboard-filter-panel {
-  top: 126px;
-  padding: 24px;
-  background: rgba(255, 255, 255, 0.97);
-  border-color: var(--line);
-  box-shadow: var(--shadow-md);
-  overflow: visible;
+  position: static;
+  top: auto;
 }
 
 .complaints-dashboard-page .dashboard-base-summary,
 .nps-dashboard-page .dashboard-base-summary,
 .patient-dashboard-page .dashboard-base-summary {
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
 }
 
 .complaints-dashboard-page .dashboard-summary-card,
 .nps-dashboard-page .dashboard-summary-card,
 .patient-dashboard-page .dashboard-summary-card {
-  min-height: 0;
-  padding: 14px 16px;
-  align-content: start;
-  box-shadow: var(--shadow-sm);
+  min-height: 104px;
+  padding: 18px;
+  align-content: center;
 }
 
 .complaints-dashboard-page .dashboard-clean-table td,
@@ -4444,38 +4422,13 @@ a {
 .complaints-dashboard-page .dashboard-table-wrap,
 .nps-dashboard-page .dashboard-table-wrap,
 .patient-dashboard-page .dashboard-table-wrap {
-  border-color: var(--line);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42), 0 10px 24px rgba(10, 10, 14, 0.08);
+  border-color: rgba(200, 154, 87, 0.2);
 }
 
 .complaints-dashboard-page .dashboard-clean-table th,
 .nps-dashboard-page .dashboard-clean-table th,
 .patient-dashboard-page .dashboard-clean-table th {
-  background: var(--surface-soft);
-}
-
-.complaints-dashboard-page .management-panel,
-.nps-dashboard-page .management-panel,
-.patient-dashboard-page .management-panel,
-.complaints-dashboard-page .chart-card,
-.nps-dashboard-page .chart-card,
-.patient-dashboard-page .chart-card {
-  background: rgba(255, 255, 255, 0.97);
-  border-color: var(--line);
-  box-shadow: var(--shadow-md);
-  overflow: visible;
-}
-
-.complaints-dashboard-page .chart-card,
-.nps-dashboard-page .chart-card,
-.patient-dashboard-page .chart-card {
-  gap: 16px;
-}
-
-.complaints-dashboard-page .chart-box,
-.nps-dashboard-page .chart-box,
-.patient-dashboard-page .chart-box {
-  background: rgba(255, 255, 255, 0.88);
+  background: rgba(248, 241, 230, 0.96);
 }
 
 .complaints-dashboard-page .dashboard-filter-heading,
@@ -4484,9 +4437,9 @@ a {
 .complaints-dashboard-page .panel-heading,
 .nps-dashboard-page .panel-heading,
 .patient-dashboard-page .panel-heading {
-  padding-bottom: 0;
-  margin-bottom: 14px;
-  border-bottom: none;
+  padding-bottom: 16px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid rgba(200, 154, 87, 0.18);
 }
 
 .home-command-bar {
@@ -4722,6 +4675,14 @@ a {
   .nps-dashboard-page .chart-box,
   .patient-dashboard-page .chart-box {
     min-height: 220px;
+  }
+}
+
+@media (max-width: 1120px) {
+  .complaints-dashboard-page .dashboard-chart-grid,
+  .nps-dashboard-page .dashboard-chart-grid,
+  .patient-dashboard-page .dashboard-chart-grid {
+    grid-template-columns: 1fr;
   }
 }
 
