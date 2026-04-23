@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api from './api';
 import logo from './assets/logo3.png';
 import {
@@ -34,13 +34,28 @@ const initialForm = {
   detractor_feedback: ''
 };
 
+function parseVcardContact(content) {
+  const lines = String(content || '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const nameLine = lines.find((line) => line.startsWith('FN:')) || '';
+  const telLine = lines.find((line) => line.toUpperCase().startsWith('TEL')) || '';
+
+  return {
+    name: nameLine.replace(/^FN:/i, '').trim(),
+    phone: telLine.includes(':') ? telLine.split(':').slice(1).join(':').trim() : ''
+  };
+}
+
 function NpsSurveyPage() {
   const [clinics, setClinics] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState('');
   const [error, setError] = useState('');
-  const canImportContacts = useMemo(() => (
+  const referralContactInputRef = useRef(null);
+  const supportsNativeContactPicker = useMemo(() => (
     typeof window !== 'undefined'
     && window.isSecureContext
     && typeof navigator !== 'undefined'
@@ -96,8 +111,12 @@ function NpsSurveyPage() {
   };
 
   const handleImportReferralContact = async () => {
-    if (!canImportContacts) {
-      setError('Seu navegador nao permite acessar a agenda do telefone por esta pagina. Preencha manualmente os dados da indicacao.');
+    if (!supportsNativeContactPicker) {
+      if (typeof referralContactInputRef.current?.showPicker === 'function') {
+        referralContactInputRef.current.showPicker();
+      } else {
+        referralContactInputRef.current?.click();
+      }
       return;
     }
 
@@ -108,7 +127,8 @@ function NpsSurveyPage() {
         ? await navigator.contacts.getProperties()
         : ['name', 'tel'];
       const requestedProperties = ['name', 'tel'].filter((property) => supportedProperties.includes(property));
-      const [selectedContact] = await navigator.contacts.select(requestedProperties, { multiple: false });
+      const contactProperties = requestedProperties.length ? requestedProperties : ['name', 'tel'];
+      const [selectedContact] = await navigator.contacts.select(contactProperties, { multiple: false });
 
       if (!selectedContact) {
         return;
@@ -132,6 +152,37 @@ function NpsSurveyPage() {
       }
 
       setError('Nao foi possivel importar o contato da agenda. Voce pode preencher os dados manualmente.');
+    }
+  };
+
+  const handleReferralContactFile = async (event) => {
+    const [selectedFile] = Array.from(event.target.files || []);
+
+    if (!selectedFile) {
+      return;
+    }
+
+    try {
+      const fileContent = await selectedFile.text();
+      const parsedContact = parseVcardContact(fileContent);
+
+      if (!parsedContact.name && !parsedContact.phone) {
+        setError('Nao foi possivel identificar nome ou telefone no contato selecionado.');
+        return;
+      }
+
+      setForm((prev) => ({
+        ...prev,
+        referral_name: parsedContact.name || prev.referral_name,
+        referral_phone: parsedContact.phone
+          ? formatBrazilPhoneInput(parsedContact.phone)
+          : prev.referral_phone
+      }));
+      setError('');
+    } catch (fileError) {
+      setError('Nao foi possivel importar o contato selecionado.');
+    } finally {
+      event.target.value = '';
     }
   };
 
@@ -221,8 +272,8 @@ function NpsSurveyPage() {
           </div>
         </header>
 
-        <form className="public-form-shell" onSubmit={handleSubmit}>
-          <section className="public-form-band">
+        <form className="public-form-shell nps-public-form" onSubmit={handleSubmit}>
+          <section className="public-form-band nps-form-intro">
             <div className="form-grid two">
               <label>
                 Clínica
@@ -245,9 +296,11 @@ function NpsSurveyPage() {
                 Nome do paciente
                 <input
                   className="field"
+                  autoComplete="name"
                   value={form.patient_name}
                   onChange={(event) => updateForm('patient_name', event.target.value)}
                   placeholder="Nome completo"
+                  enterKeyHint="next"
                   required
                 />
               </label>
@@ -257,6 +310,9 @@ function NpsSurveyPage() {
               Telefone / WhatsApp
               <input
                 className="field"
+                type="tel"
+                inputMode="tel"
+                autoComplete="tel"
                 value={form.patient_phone}
                 onChange={(event) => updateForm('patient_phone', formatBrazilPhoneInput(event.target.value))}
                 placeholder="+55DDDNÚMERO"
@@ -264,12 +320,13 @@ function NpsSurveyPage() {
                 title={brazilPhoneTitle}
                 minLength={14}
                 maxLength={14}
+                enterKeyHint="done"
                 required
               />
             </label>
           </section>
 
-          <section className="public-form-band">
+          <section className="public-form-band nps-score-section">
             <div className="public-form-title">
               <p className="eyebrow">Pergunta principal</p>
               <h2>De 1 a 10, o quanto você indicaria nossa clínica para um amigo ou familiar?</h2>
@@ -290,7 +347,7 @@ function NpsSurveyPage() {
           </section>
 
           {profile === 'promotor' && (
-            <section className="public-form-band survey-flow-card promoter-card">
+            <section className="public-form-band survey-flow-card promoter-card nps-flow-section">
               <div className="public-form-title">
                 <p className="eyebrow">Promotor</p>
                 <h2>Você teria alguém para indicar para uma avaliação?</h2>
@@ -316,18 +373,25 @@ function NpsSurveyPage() {
                       <p className="eyebrow">Agenda do telefone</p>
                       <h3>Importe um contato da agenda para agilizar a indica&ccedil;&atilde;o.</h3>
                       <p>
-                        Em celulares compat&iacute;veis, o sistema pode abrir sua agenda para preencher
-                        automaticamente o nome e o telefone da indica&ccedil;&atilde;o.
+                        Em celulares compat&iacute;veis, o sistema pode abrir sua agenda. Nos demais aparelhos,
+                        voc&ecirc; pode importar um contato salvo do telefone.
                       </p>
                     </div>
                     <button
                       type="button"
                       className="outline-action public-contact-import-button"
                       onClick={handleImportReferralContact}
-                      disabled={!canImportContacts}
                     >
-                      {canImportContacts ? 'Importar da agenda' : 'Agenda indispon&iacute;vel neste aparelho'}
+                      {supportsNativeContactPicker ? 'Importar da agenda' : 'Importar contato do aparelho'}
                     </button>
+                    <input
+                      ref={referralContactInputRef}
+                      type="file"
+                      accept=".vcf,text/vcard"
+                      className="sr-only"
+                      tabIndex={-1}
+                      onChange={handleReferralContactFile}
+                    />
                   </div>
 
                   <div className="form-grid two">
@@ -335,9 +399,11 @@ function NpsSurveyPage() {
                       Nome para indica&ccedil;&atilde;o
                       <input
                         className="field"
+                        autoComplete="name"
                         value={form.referral_name}
                         onChange={(event) => updateForm('referral_name', event.target.value)}
                         placeholder="Nome do familiar ou amigo"
+                        enterKeyHint="next"
                         required
                       />
                     </label>
@@ -346,6 +412,9 @@ function NpsSurveyPage() {
                       Telefone / WhatsApp
                       <input
                         className="field"
+                        type="tel"
+                        inputMode="tel"
+                        autoComplete="tel"
                         value={form.referral_phone}
                         onChange={(event) => updateForm('referral_phone', formatBrazilPhoneInput(event.target.value))}
                         placeholder="+55DDDNUMERO"
@@ -353,6 +422,7 @@ function NpsSurveyPage() {
                         title={brazilPhoneTitle}
                         minLength={14}
                         maxLength={14}
+                        enterKeyHint="done"
                         required
                       />
                     </label>
@@ -381,7 +451,7 @@ function NpsSurveyPage() {
           )}
 
           {profile === 'neutro' && (
-            <section className="public-form-band survey-flow-card neutral-card">
+            <section className="public-form-band survey-flow-card neutral-card nps-flow-section">
               <div className="public-form-title">
                 <p className="eyebrow">Neutro</p>
                 <h2>O que faltou para sua experiência ser excelente?</h2>
@@ -402,7 +472,7 @@ function NpsSurveyPage() {
           )}
 
           {profile === 'detrator' && (
-            <section className="public-form-band survey-flow-card detractor-card">
+            <section className="public-form-band survey-flow-card detractor-card nps-flow-section">
               <div className="public-form-title">
                 <p className="eyebrow">Detrator</p>
                 <h2>O que mais impactou negativamente sua experiência?</h2>
@@ -452,7 +522,7 @@ function NpsSurveyPage() {
           {error && <p className="form-error">{error}</p>}
           {feedback && <p className="form-feedback">{feedback}</p>}
 
-          <div className="form-actions">
+          <div className="form-actions nps-submit-bar">
             <button className="primary-action" type="submit" disabled={loading}>
               {loading ? 'Enviando...' : 'Enviar pesquisa'}
             </button>

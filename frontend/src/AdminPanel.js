@@ -27,7 +27,7 @@ function buildNewUserDraft() {
 
 function roleLabel(role) {
   if (role === 'master_admin') return 'Administrador Master';
-  return accessProfiles.find((profile) => profile.value === role)?.label || role || 'Perfil não informado';
+  return accessProfiles.find((profile) => profile.value === role)?.label || role || 'Perfil nÃƒÂ£o informado';
 }
 
 function AdminPanel() {
@@ -78,7 +78,7 @@ function AdminPanel() {
         setSelectedUserId(String(userRows[0].id));
       }
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível carregar o painel gerencial.');
+      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel carregar o painel gerencial.');
     } finally {
       setLoading(false);
     }
@@ -156,16 +156,16 @@ function AdminPanel() {
     setFeedback('');
 
     if (!isCompleteBrazilPhone(draft.phone) || !isCompleteBrazilPhone(draft.whatsapp)) {
-      setFeedback('Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.');
+      setFeedback('Informe telefone e WhatsApp completos no formato +55DDDNÃƒÅ¡MERO.');
       return;
     }
 
     try {
       await api.patch(`/admin/users/${selectedUser.id}`, draft);
       await loadData();
-      setFeedback('Usuário atualizado com sucesso.');
+      setFeedback('UsuÃƒÂ¡rio atualizado com sucesso.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível atualizar o usuário.');
+      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel atualizar o usuÃƒÂ¡rio.');
     }
   };
 
@@ -175,9 +175,9 @@ function AdminPanel() {
     try {
       await api.patch(`/admin/users/${selectedUser.id}`, { ...draft, active: false });
       await loadData();
-      setFeedback('Usuário desabilitado.');
+      setFeedback('UsuÃƒÂ¡rio desabilitado.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível desabilitar o usuário.');
+      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel desabilitar o usuÃƒÂ¡rio.');
     }
   };
 
@@ -188,9 +188,9 @@ function AdminPanel() {
       await api.delete(`/admin/users/${selectedUser.id}`);
       setSelectedUserId('');
       await loadData();
-      setFeedback('Usuário excluído com lastro de auditoria.');
+      setFeedback('UsuÃƒÂ¡rio excluÃƒÂ­do com lastro de auditoria.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível excluir o usuário.');
+      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel excluir o usuÃƒÂ¡rio.');
     }
   };
 
@@ -198,10 +198,14 @@ function AdminPanel() {
     setFeedback('');
 
     try {
-      await api.post(`/admin/users/${selectedUser.id}/reset-password`);
-      setFeedback('Senha reiniciada para 123456789.');
+      const response = await api.post(`/admin/users/${selectedUser.id}/reset-password`);
+      const emailSent = response.data?.notifications?.emailSent;
+      const whatsappSent = response.data?.notifications?.whatsappSent;
+      setFeedback(
+        `Senha reiniciada com sucesso. ${emailSent ? 'E-mail enviado.' : 'E-mail pendente.'} ${whatsappSent ? 'WhatsApp enviado.' : 'WhatsApp pendente.'}`
+      );
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível reiniciar a senha.');
+      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel reiniciar a senha.');
     }
   };
 
@@ -209,12 +213,12 @@ function AdminPanel() {
     setFeedback('');
 
     if (!newUser.name || !newUser.email || !newUser.position) {
-      setFeedback('Preencha nome completo, e-mail e cargo para criar o usuário.');
+      setFeedback('Preencha nome completo, e-mail e cargo para criar o usuÃƒÂ¡rio.');
       return;
     }
 
     if (!isCompleteBrazilPhone(newUser.phone) || !isCompleteBrazilPhone(newUser.whatsapp)) {
-      setFeedback('Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.');
+      setFeedback('Informe telefone e WhatsApp completos no formato +55DDDNÃƒÅ¡MERO.');
       return;
     }
 
@@ -228,9 +232,13 @@ function AdminPanel() {
       }
       setCreateOpen(false);
       setNewUser(buildNewUserDraft());
-      setFeedback('Usuário criado com sucesso. O link de primeiro acesso e a senha 123456789 foram enviados.');
+      const emailSent = response.data?.notifications?.emailSent;
+      const whatsappSent = response.data?.notifications?.whatsappSent;
+      setFeedback(
+        `Usuario criado com sucesso. Senha temporaria gerada com envio ${emailSent ? 'por e-mail' : 'de e-mail pendente'} e ${whatsappSent ? 'por WhatsApp' : 'de WhatsApp pendente'}.`
+      );
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível criar o usuário.');
+      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel criar o usuÃƒÂ¡rio.');
     } finally {
       setCreating(false);
     }
@@ -247,12 +255,12 @@ function AdminPanel() {
       <header className="page-heading">
         <div>
           <p className="eyebrow">Painel Gerencial</p>
-          <h1>Gestão de Usuários</h1>
-          <p>Controle quem acessa cada tela e quais clínicas ficam sob responsabilidade do colaborador.</p>
+          <h1>GestÃƒÂ£o de UsuÃƒÂ¡rios</h1>
+          <p>Controle quem acessa cada tela e quais clÃƒÂ­nicas ficam sob responsabilidade do colaborador.</p>
         </div>
 
         <div className="heading-actions">
-          <button className="primary-action" onClick={() => setCreateOpen(true)}>Cadastrar novo usuário</button>
+          <button className="primary-action" onClick={() => setCreateOpen(true)}>Cadastrar novo usuÃƒÂ¡rio</button>
           <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
         </div>
       </header>
@@ -269,7 +277,7 @@ function AdminPanel() {
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Colaboradores</p>
-                <h2>Usuários cadastrados</h2>
+                <h2>UsuÃƒÂ¡rios cadastrados</h2>
               </div>
             </div>
 
@@ -285,7 +293,7 @@ function AdminPanel() {
                 {filteredUsers.length === 0 && <option value="">Nenhum colaborador encontrado</option>}
                 {filteredUsers.map((user) => (
                   <option key={user.id} value={user.id}>
-                    {user.name} · {user.email}
+                    {user.name} Ã‚Â· {user.email}
                   </option>
                 ))}
               </select>
@@ -295,7 +303,7 @@ function AdminPanel() {
               <article className="admin-user-button active">
                 <strong>{selectedUser.name}</strong>
                 <span>{selectedUser.email}</span>
-                <small>{selectedUser.active ? 'Ativo' : 'Desabilitado'} · {roleLabel(selectedUser.role)}</small>
+                <small>{selectedUser.active ? 'Ativo' : 'Desabilitado'} Ã‚Â· {roleLabel(selectedUser.role)}</small>
               </article>
             )}
           </aside>
@@ -304,14 +312,14 @@ function AdminPanel() {
             <section className="management-panel admin-detail-panel">
               <div className="panel-heading">
                 <div>
-                  <p className="eyebrow">Alçada</p>
+                  <p className="eyebrow">AlÃƒÂ§ada</p>
                   <h2>{selectedUser.name}</h2>
                 </div>
                 <div className="heading-actions">
                   {!isSelectedMaster && <button className="outline-action" onClick={disableUser}>Desabilitar</button>}
                   {!isSelectedMaster && <button className="outline-action" onClick={resetPassword}>Reiniciar senha</button>}
                   {!isSelectedMaster && <button className="outline-action danger-action" onClick={deleteUser}>Excluir</button>}
-                  <button className="primary-action" onClick={saveUser}>Salvar alterações</button>
+                  <button className="primary-action" onClick={saveUser}>Salvar alteraÃƒÂ§ÃƒÂµes</button>
                 </div>
               </div>
 
@@ -356,7 +364,7 @@ function AdminPanel() {
                   />
                 </label>
                 <label>
-                  Área ou unidade
+                  ÃƒÂrea ou unidade
                   <input className="field" value={draft.department} onChange={(event) => updateDraft('department', event.target.value)} />
                 </label>
               </div>
@@ -369,14 +377,14 @@ function AdminPanel() {
                     onChange={(event) => updateDraft('active', event.target.checked)}
                     disabled={isSelectedMaster}
                   />
-                  Usuário habilitado
+                  UsuÃƒÂ¡rio habilitado
                 </label>
               </div>
 
               <section className="admin-check-section">
                 <div>
                   <p className="eyebrow">Telas liberadas</p>
-                  <h3>Fluxo de alçada por tela</h3>
+                  <h3>Fluxo de alÃƒÂ§ada por tela</h3>
                   <div className="mini-actions">
                     <button type="button" className="outline-action" onClick={selectAllPermissions}>Selecionar todas</button>
                     <button type="button" className="ghost-action" onClick={clearPermissions}>Limpar</button>
@@ -398,7 +406,7 @@ function AdminPanel() {
 
               <section className="admin-check-section">
                 <div>
-                  <p className="eyebrow">Clínicas vinculadas</p>
+                  <p className="eyebrow">ClÃƒÂ­nicas vinculadas</p>
                   <h3>Responsabilidade por unidade</h3>
                   <div className="mini-actions">
                     <button type="button" className="outline-action" onClick={selectAllClinics}>Selecionar todas</button>
@@ -413,7 +421,7 @@ function AdminPanel() {
                         checked={draft.clinicIds.includes(clinic.id)}
                         onChange={() => toggleClinic(clinic.id)}
                       />
-                      {clinic.name} · {clinic.city || 'Cidade'} / {clinic.state || 'UF'}
+                      {clinic.name} Ã‚Â· {clinic.city || 'Cidade'} / {clinic.state || 'UF'}
                     </label>
                   ))}
                 </div>
@@ -427,9 +435,9 @@ function AdminPanel() {
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <section className="modal-panel create-user-modal">
             <div>
-              <p className="eyebrow">Novo usuário</p>
+              <p className="eyebrow">Novo usuÃƒÂ¡rio</p>
               <h2>Cadastrar colaborador</h2>
-              <p>O sistema enviará o link de acesso com a senha temporária 123456789 para o primeiro login.</p>
+              <p>O sistema gerara uma senha temporaria segura e enviara o acesso automaticamente para o colaborador.</p>
             </div>
 
             <div className="admin-form-grid">
@@ -462,7 +470,7 @@ function AdminPanel() {
                 <input className="field" value={newUser.whatsapp} onChange={(event) => updateNewUser('whatsapp', formatBrazilPhoneInput(event.target.value))} maxLength={14} />
               </label>
               <label className="admin-form-span">
-                Área ou unidade
+                ÃƒÂrea ou unidade
                 <input className="field" value={newUser.department} onChange={(event) => updateNewUser('department', event.target.value)} />
               </label>
             </div>
@@ -472,7 +480,7 @@ function AdminPanel() {
                 Cancelar
               </button>
               <button className="primary-action" onClick={createUser} disabled={creating}>
-                {creating ? 'Cadastrando...' : 'Salvar usuário'}
+                {creating ? 'Cadastrando...' : 'Salvar usuÃƒÂ¡rio'}
               </button>
             </div>
           </section>

@@ -273,6 +273,7 @@ function Dashboard() {
   const byRegion = useMemo(() => groupCount(filteredRows, (item) => item.region), [filteredRows]);
   const byPriority = useMemo(() => groupCount(filteredRows, (item) => priorityLabel(item.priority)), [filteredRows]);
   const byChannel = useMemo(() => groupCount(filteredRows, (item) => item.channel).slice(0, 10), [filteredRows]);
+  const baseRows = useMemo(() => filteredRows.slice(0, 100), [filteredRows]);
   const baseTableHighlights = useMemo(() => {
     const units = new Set(filteredRows.map((item) => item.clinic_name).filter(Boolean)).size;
     const coordinators = new Set(filteredRows.map((item) => item.coordinator_name).filter(Boolean)).size;
@@ -293,7 +294,7 @@ function Dashboard() {
   };
 
   return (
-    <main className="app-page">
+    <main className="app-page complaints-dashboard-page">
       <header className="page-heading">
         <div>
           <p className="eyebrow">Dashboard</p>
@@ -387,7 +388,7 @@ function Dashboard() {
 
       {feedback && <p className="form-feedback">{feedback}</p>}
 
-      <section className="kpi-grid" aria-label="Resumo filtrado">
+      <section className="kpi-grid dashboard-kpi-grid" aria-label="Resumo filtrado">
         <button className="kpi-card kpi-button" type="button" onClick={() => setFilters(initialFilters)}>
           <span>Total filtrado</span>
           <strong>{metrics.total}</strong>
@@ -508,51 +509,76 @@ function Dashboard() {
                 <thead>
                   <tr>
                     <th>Protocolo</th>
-                    <th>Paciente e unidade</th>
-                    <th>Tipo</th>
-                    <th>Status</th>
-                    <th>Prioridade</th>
-                    <th>Origem</th>
-                    <th>Localizacao</th>
-                    <th>Coordenador</th>
+                    <th>Paciente</th>
+                    <th>Unidade e localizacao</th>
+                    <th>Classificacao</th>
+                    <th>Status e prazo</th>
+                    <th>Responsavel</th>
                     <th>Ultima tratativa por</th>
                     <th>Cadastro</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRows.slice(0, 100).map((item) => (
+                  {baseRows.map((item) => {
+                    const deadline = buildDeadlineInfo(item);
+
+                    return (
                     <tr key={item.id}>
                       <td>
                         <div className="table-cell-stack">
                           <span className="cell-primary">{item.protocol || item.id}</span>
-                          <span className="cell-secondary">{formatShortDate(item.created_at)}</span>
+                          <span className="cell-secondary">{item.channel || 'Canal nao informado'}</span>
                         </div>
                       </td>
                       <td>
                         <div className="table-cell-stack">
                           <span className="cell-primary">{item.patient_name || 'Nao informado'}</span>
-                          <span className="cell-secondary">{item.clinic_name || 'Unidade nao informada'}</span>
+                          <span className="cell-secondary">{item.patient_phone || 'Telefone nao informado'}</span>
                         </div>
                       </td>
-                      <td>{item.complaint_type || 'Nao informado'}</td>
-                      <td>
-                        <span className={`status-pill ${item.status || 'aberta'}`}>
-                          {statusLabels[item.status] || item.status || 'Aberta'}
-                        </span>
-                      </td>
-                      <td>{priorityLabel(item.priority)}</td>
-                      <td>{item.created_origin || 'Interno'}</td>
                       <td>
                         <div className="table-cell-stack">
-                          <span className="cell-primary">{item.city || 'Cidade nao informada'} / {item.state || 'UF'}</span>
-                          <span className="cell-secondary">{item.region || 'Regiao nao informada'}</span>
+                          <span className="cell-primary">{item.clinic_name || 'Unidade nao informada'}</span>
+                          <span className="cell-secondary">{item.city || 'Cidade nao informada'} / {item.state || 'UF'} - {item.region || 'Regiao nao informada'}</span>
                         </div>
                       </td>
-                      <td>{item.coordinator_name || 'Nao vinculado'}</td>
-                      <td>{lastComplaintActor(item)}</td>
-                      <td>{formatShortDate(item.created_at)}</td>
+                      <td>
+                        <div className="table-cell-stack">
+                          <span className="cell-primary">{item.complaint_type || 'Nao informado'}</span>
+                          <span className="cell-secondary">{priorityLabel(item.priority)} - {item.created_origin || 'Interno'}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="table-cell-stack">
+                          <span className={`status-pill ${item.status || 'aberta'}`}>
+                            {statusLabels[item.status] || item.status || 'Aberta'}
+                          </span>
+                          <span className={`deadline-chip ${deadline}`}>
+                            {deadline === 'overdue' ? 'Vencida' : deadline === 'warning' ? 'Perto de vencer' : deadline === 'closed' ? 'Fechada' : 'No prazo'}
+                          </span>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="table-cell-stack">
+                          <span className="cell-primary">{item.coordinator_name || 'Nao vinculado'}</span>
+                          <span className="cell-secondary">{item.forwarded_to_label || 'Sem encaminhamento'}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="table-cell-stack">
+                          <span className="cell-primary">{lastComplaintActor(item)}</span>
+                          <span className="cell-secondary">{item.service_type || 'Sem especialidade informada'}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="table-cell-stack">
+                          <span className="cell-primary">{formatShortDate(item.created_at)}</span>
+                          <span className="cell-secondary">{item.created_origin || 'Interno'}</span>
+                        </div>
+                      </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

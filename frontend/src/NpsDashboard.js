@@ -48,7 +48,7 @@ function protocolLabel(item) {
 
 function profileLabel(profile) {
   const normalized = String(profile || '').trim();
-  return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'Não informado';
+  return normalized ? normalized.charAt(0).toUpperCase() + normalized.slice(1) : 'NÃƒÂ£o informado';
 }
 
 function uniqueList(values) {
@@ -60,7 +60,7 @@ function groupCount(items, key) {
   const map = new Map();
 
   items.forEach((item) => {
-    const value = key(item) || 'Não informado';
+    const value = key(item) || 'NÃƒÂ£o informado';
     map.set(value, (map.get(value) || 0) + 1);
   });
 
@@ -145,7 +145,7 @@ function NpsDashboard() {
         setRows(Array.isArray(npsRes.data) ? npsRes.data : []);
         setClinics(Array.isArray(clinicsRes.data) ? clinicsRes.data : []);
       } catch (error) {
-        setFeedback(error.response?.data?.error || 'Não foi possível carregar o dashboard NPS.');
+        setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel carregar o dashboard NPS.');
       } finally {
         setLoading(false);
       }
@@ -219,18 +219,19 @@ function NpsDashboard() {
   const byRegion = useMemo(() => groupCount(filteredRows, (item) => item.region), [filteredRows]);
   const byCoordinator = useMemo(() => groupCount(filteredRows, (item) => item.coordinator_name).slice(0, 10), [filteredRows]);
   const byTreatmentStatus = useMemo(() => groupCount(filteredRows, (item) => npsStatusLabels[getNpsStatus(item)]), [filteredRows]);
+  const baseRows = useMemo(() => filteredRows.slice(0, 100), [filteredRows]);
 
   const updateFilter = (field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value }));
   };
 
   return (
-    <main className="app-page">
+    <main className="app-page nps-dashboard-page">
       <header className="page-heading">
         <div>
           <p className="eyebrow">Dashboard NPS</p>
           <h1>Dashboard NPS</h1>
-          <p>Analise satisfação por unidade, região, coordenador, perfil e período.</p>
+          <p>Analise satisfaÃƒÂ§ÃƒÂ£o por unidade, regiÃƒÂ£o, coordenador, perfil e perÃƒÂ­odo.</p>
         </div>
 
         <div className="heading-actions">
@@ -261,14 +262,14 @@ function NpsDashboard() {
               onChange={(event) => updateFilter('search', event.target.value)}
               placeholder="Buscar paciente, unidade, telefone ou relato"
             />
-            <button type="button" aria-label="Buscar" onClick={() => updateFilter('search', filters.search.trim())}>⌕</button>
+            <button type="button" aria-label="Buscar" onClick={() => updateFilter('search', filters.search.trim())}>Ã¢Å’â€¢</button>
           </div>
           <select className="field" value={filters.clinic} onChange={(event) => updateFilter('clinic', event.target.value)}>
             <option value="">Todas as unidades</option>
             {options.clinics.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
           <select className="field" value={filters.region} onChange={(event) => updateFilter('region', event.target.value)}>
-            <option value="">Todas as regiões</option>
+            <option value="">Todas as regiÃƒÂµes</option>
             {options.regions.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
           <select className="field" value={filters.state} onChange={(event) => updateFilter('state', event.target.value)}>
@@ -298,11 +299,11 @@ function NpsDashboard() {
 
       {feedback && <p className="form-feedback">{feedback}</p>}
 
-      <section className="kpi-grid nps-kpi-grid" aria-label="Resumo NPS filtrado">
+      <section className="kpi-grid dashboard-kpi-grid nps-kpi-grid" aria-label="Resumo NPS filtrado">
         <button className="kpi-card kpi-button" type="button" onClick={() => setFilters(initialFilters)}>
           <span>Detratores x Promotores</span>
           <strong>{metrics.detractorVsPromoter}%</strong>
-          <p>COMPARATIVO DO CENÁRIO</p>
+          <p>COMPARATIVO DO CENÃƒÂRIO</p>
         </button>
         <button className="kpi-card kpi-button" type="button" onClick={() => updateFilter('profile', '')}>
           <span>Respostas</span>
@@ -312,17 +313,17 @@ function NpsDashboard() {
         <button className="kpi-card success kpi-button" type="button" onClick={() => updateFilter('profile', 'promotor')}>
           <span>Promotores</span>
           <strong>{metrics.promoters}</strong>
-          <p>{percentOf(metrics.total, metrics.promoters)} DO CENÁRIO</p>
+          <p>{percentOf(metrics.total, metrics.promoters)} DO CENÃƒÂRIO</p>
         </button>
         <button className="kpi-card danger kpi-button" type="button" onClick={() => updateFilter('profile', 'detrator')}>
           <span>Detratores</span>
           <strong>{metrics.detractors}</strong>
-          <p>{percentOf(metrics.total, metrics.detractors)} DO CENÁRIO</p>
+          <p>{percentOf(metrics.total, metrics.detractors)} DO CENÃƒÂRIO</p>
         </button>
         <button className="kpi-card progress kpi-button" type="button" onClick={() => updateFilter('profile', 'neutro')}>
           <span>NPS</span>
           <strong>{metrics.nps}</strong>
-          <p>ÍNDICE FILTRADO</p>
+          <p>ÃƒÂNDICE FILTRADO</p>
         </button>
         <button className="kpi-card warning kpi-button" type="button" onClick={() => updateFilter('status', 'tratado')}>
           <span>Tratados</span>
@@ -351,7 +352,7 @@ function NpsDashboard() {
               </div>
             </article>
             <article className="chart-card">
-              <h2>Distribuição por nota</h2>
+              <h2>DistribuiÃƒÂ§ÃƒÂ£o por nota</h2>
               <div className="chart-box">
                 <Bar data={buildBarData(byScore, 'Respostas', '#1f7a8c')} options={chartOptions} />
               </div>
@@ -363,7 +364,7 @@ function NpsDashboard() {
               </div>
             </article>
             <article className="chart-card">
-              <h2>Volume por região</h2>
+              <h2>Volume por regiÃƒÂ£o</h2>
               <div className="chart-box">
                 <Doughnut data={buildDoughnutData(byRegion)} options={chartOptions} />
               </div>
@@ -381,14 +382,29 @@ function NpsDashboard() {
               <div>
                 <p className="eyebrow">Base filtrada</p>
                 <h2 className="table-title-with-help">
-                  Respostas NPS do cenário selecionado
-                  <span className="tooltip-help inline-help" tabIndex="0" aria-label="Horário de Brasília">
+                  Respostas NPS do cenÃƒÂ¡rio selecionado
+                  <span className="tooltip-help inline-help" tabIndex="0" aria-label="HorÃƒÂ¡rio de BrasÃƒÂ­lia">
                     ?
-                    <span>O horário exibido segue o horário oficial de Brasília.</span>
+                    <span>O horÃƒÂ¡rio exibido segue o horÃƒÂ¡rio oficial de BrasÃƒÂ­lia.</span>
                   </span>
                 </h2>
-                <p className="base-subtitle">{filteredRows.length} respostas na seleção atual.</p>
+                <p className="base-subtitle">{filteredRows.length} respostas na seleÃƒÂ§ÃƒÂ£o atual.</p>
               </div>
+            </div>
+
+            <div className="dashboard-base-summary">
+              {[
+                { label: 'Respostas', value: filteredRows.length },
+                { label: 'Promotores', value: metrics.promoters },
+                { label: 'Detratores', value: metrics.detractors },
+                { label: 'Em tratamento', value: filteredRows.filter((item) => getNpsStatus(item) === 'em_tratativa').length },
+                { label: 'Tratados', value: metrics.treated }
+              ].map((item) => (
+                <article className="dashboard-summary-card" key={item.label}>
+                  <span>{item.label}</span>
+                  <strong>{item.value}</strong>
+                </article>
+              ))}
             </div>
 
             <div className="data-table-wrap dashboard-table-wrap">
@@ -396,32 +412,65 @@ function NpsDashboard() {
                 <thead>
                   <tr>
                     <th>Paciente</th>
-                    <th>Nota</th>
-                    <th>Perfil</th>
                     <th>Unidade</th>
-                    <th>Coordenador</th>
-                    <th>Protocolo NPS</th>
+                    <th>Nota e perfil</th>
                     <th>Status NPS</th>
-                    <th>Última tratativa por</th>
+                    <th>Protocolo</th>
+                    <th>Responsavel</th>
+                    <th>Ultima tratativa por</th>
                     <th>Cadastro</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredRows.slice(0, 100).map((item) => {
+                  {baseRows.map((item) => {
                     const profile = item.nps_profile || profileFromScore(item.score);
                     const status = getNpsStatus(item);
 
                     return (
                       <tr key={item.id}>
-                        <td>{item.patient_name || 'Não informado'}</td>
-                        <td><span className={`nps-score-pill small ${profile}`}>{item.score}</span></td>
-                        <td className="profile-cell">{profileLabel(profile)}</td>
-                        <td>{item.clinic_name || 'Não informado'}</td>
-                        <td>{item.coordinator_name || 'Não vinculado'}</td>
-                        <td>{protocolLabel(item)}</td>
+                        <td>
+                          <div className="table-cell-stack">
+                            <span className="cell-primary">{item.patient_name || 'Nao informado'}</span>
+                            <span className="cell-secondary">{item.patient_phone || 'Telefone nao informado'}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="table-cell-stack">
+                            <span className="cell-primary">{item.clinic_name || 'Nao informado'}</span>
+                            <span className="cell-secondary">{item.state || 'UF'} - {item.region || 'Regiao nao informada'}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="table-cell-stack">
+                            <span><span className={`nps-score-pill small ${profile}`}>{item.score}</span></span>
+                            <span className="cell-secondary">{profileLabel(profile)}</span>
+                          </div>
+                        </td>
                         <td><span className={`nps-status-chip ${status}`}>{npsStatusLabels[status] || status}</span></td>
-                        <td>{lastNpsActor(item)}</td>
-                        <td>{formatShortDate(item.created_at)}</td>
+                        <td>
+                          <div className="table-cell-stack">
+                            <span className="cell-primary">{protocolLabel(item)}</span>
+                            <span className="cell-secondary">{item.recommend_yes ? 'Indicou contato' : 'Sem indicacao'}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="table-cell-stack">
+                            <span className="cell-primary">{item.coordinator_name || 'Nao vinculado'}</span>
+                            <span className="cell-secondary">{item.converted_complaint_protocol || 'Fluxo NPS'}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="table-cell-stack">
+                            <span className="cell-primary">{lastNpsActor(item)}</span>
+                            <span className="cell-secondary">{item.nps_treatment_comment || item.improvement_comment || item.detractor_feedback || 'Sem relato complementar'}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="table-cell-stack">
+                            <span className="cell-primary">{formatShortDate(item.created_at)}</span>
+                            <span className="cell-secondary">{item.created_origin || 'Pesquisa publica'}</span>
+                          </div>
+                        </td>
                       </tr>
                     );
                   })}
@@ -436,3 +485,4 @@ function NpsDashboard() {
 }
 
 export default NpsDashboard;
+

@@ -19,17 +19,17 @@ const notificationTypeLabels = {
 
 const notificationPayloadLabels = {
   protocol: 'Protocolo',
-  complaintId: 'Código da reclamação',
-  npsId: 'Código da pesquisa NPS',
-  interactionId: 'Código do atendimento',
+  complaintId: 'CÃ³digo da reclamaÃ§Ã£o',
+  npsId: 'CÃ³digo da pesquisa NPS',
+  interactionId: 'CÃ³digo do atendimento',
   patientName: 'Paciente',
   patient_name: 'Paciente',
-  clinicName: 'Clínica',
-  clinic_name: 'Clínica',
+  clinicName: 'ClÃ­nica',
+  clinic_name: 'ClÃ­nica',
   coordinatorName: 'Coordenador',
   coordinator_name: 'Coordenador',
-  actorName: 'Usuário',
-  actor_name: 'Usuário',
+  actorName: 'UsuÃ¡rio',
+  actor_name: 'UsuÃ¡rio',
   score: 'Nota',
   source: 'Origem',
   phone: 'Telefone',
@@ -67,7 +67,7 @@ function formatNotificationDate(value) {
 }
 
 function notificationBadge(notification) {
-  return notificationTypeLabels[notification.type] || 'Notificação';
+  return notificationTypeLabels[notification.type] || 'NotificaÃ§Ã£o';
 }
 
 function notificationSummary(notification) {
@@ -82,9 +82,9 @@ function notificationSummary(notification) {
 }
 
 function formatNotificationPayloadValue(value) {
-  if (value === null || value === undefined || value === '') return 'Não informado';
+  if (value === null || value === undefined || value === '') return 'NÃ£o informado';
   if (Array.isArray(value)) return value.join(', ');
-  if (typeof value === 'boolean') return value ? 'Sim' : 'Não';
+  if (typeof value === 'boolean') return value ? 'Sim' : 'NÃ£o';
   return String(value);
 }
 
@@ -119,7 +119,7 @@ function buildNotificationDetails(notification) {
 }
 
 function formatDateTime(value) {
-  if (!value) return 'Não informado';
+  if (!value) return 'NÃ£o informado';
 
   return new Intl.DateTimeFormat('pt-BR', {
     dateStyle: 'short',
@@ -170,25 +170,25 @@ function HomeShellFixed() {
 
   const menuSections = useMemo(() => ([
     {
-      title: 'Reclamações',
+      title: 'ReclamaÃ§Ãµes',
       items: [
         { label: 'Novo Protocolo', path: '/cadastro', permission: 'complaints_register' },
-        { label: 'Painel de Gestão de Reclamações', path: '/gestao', permission: 'complaints_management' },
-        { label: 'Dashboard de Reclamações', path: '/dashboard', permission: 'complaints_dashboard' }
+        { label: 'Painel de GestÃ£o de ReclamaÃ§Ãµes', path: '/gestao', permission: 'complaints_management' },
+        { label: 'Dashboard de ReclamaÃ§Ãµes', path: '/dashboard', permission: 'complaints_dashboard' }
       ]
     },
     {
       title: 'NPS',
       items: [
-        { label: 'Painel de Gestão NPS', path: '/gestao-nps', permission: 'nps_management' },
+        { label: 'Painel de GestÃ£o NPS', path: '/gestao-nps', permission: 'nps_management' },
         { label: 'Dashboard NPS', path: '/dashboard-nps', permission: 'nps_dashboard' },
-        { label: 'Pesquisa NPS pública', path: '/pesquisa-nps', permission: 'nps_management' }
+        { label: 'Pesquisa NPS pÃºblica', path: '/pesquisa-nps', permission: 'nps_management' }
       ]
     },
     {
       title: 'Pacientes',
       items: [
-        { label: 'Gestão do Paciente', path: '/pacientes', permission: 'patient_management' },
+        { label: 'GestÃ£o do Paciente', path: '/pacientes', permission: 'patient_management' },
         { label: 'Dashboard do Paciente', path: '/pacientes/dashboard', permission: 'patient_management' }
       ]
     },
@@ -199,7 +199,7 @@ function HomeShellFixed() {
       ]
     },
     {
-      title: 'Administração',
+      title: 'AdministraÃ§Ã£o',
       items: [
         { label: 'Painel Gerencial', path: '/admin', permission: 'admin_panel', adminOnly: true },
         { label: 'Minha conta', path: '/perfil', permission: 'home' }
@@ -232,7 +232,7 @@ function HomeShellFixed() {
         setMustChangePassword(true);
       }
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível carregar as notificações.');
+      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel carregar as notificaÃ§Ãµes.');
     }
   }, [masterUser]);
 
@@ -280,13 +280,13 @@ function HomeShellFixed() {
 
           return {
             key: `complaint-${item.id}`,
-            type: 'Reclamação',
+            type: 'ReclamaÃ§Ã£o',
             title: item.protocol || `GRC-${item.id}`,
-            description: `${item.patient_name || 'Paciente'} · ${item.clinic_name || 'Unidade não informada'}`,
+            description: `${item.patient_name || 'Paciente'} Â· ${item.clinic_name || 'Unidade nÃ£o informada'}`,
             detail: tone === 'danger'
               ? `Prazo vencido desde ${formatDateTime(item.due_at)}`
               : tone === 'warning'
-                ? `Prazo próximo: ${formatDateTime(item.due_at)}`
+                ? `Prazo prÃ³ximo: ${formatDateTime(item.due_at)}`
                 : `Prazo em ${formatDateTime(item.due_at)}`,
             when: dueAt.getTime(),
             tone,
@@ -308,8 +308,8 @@ function HomeShellFixed() {
             key: `patient-${item.id}`,
             type: 'Paciente',
             title: item.protocol || `PAC-${item.id}`,
-            description: `${item.patient || 'Paciente'} · ${item.clinic || 'Unidade não informada'}`,
-            detail: `Agenda de hoje às ${formatDateTime(item.scheduledAt)}`,
+            description: `${item.patient || 'Paciente'} Â· ${item.clinic || 'Unidade nÃ£o informada'}`,
+            detail: `Agenda de hoje Ã s ${formatDateTime(item.scheduledAt)}`,
             when: scheduledAt.getTime(),
             tone: 'teal',
             urgent: false,
@@ -332,7 +332,7 @@ function HomeShellFixed() {
       setAgendaItems(nextAgenda);
       setAgendaAlerts(nextAlerts);
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível carregar a agenda operacional.');
+      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel carregar a agenda operacional.');
     } finally {
       setAgendaLoading(false);
     }
@@ -355,14 +355,39 @@ function HomeShellFixed() {
 
   const totalAlerts = notificationGroups.unread.length + registrationRequests.length;
   const visibleNotifications = notificationTab === 'read' ? notificationGroups.read : notificationGroups.unread;
-  const shareText = `Pesquisa de Satisfação Grupo Sorria: ${npsLink}`;
+  const shareText = `Pesquisa de SatisfaÃ§Ã£o Grupo Sorria: ${npsLink}`;
   const selectedNotificationDetails = useMemo(
     () => buildNotificationDetails(selectedNotification),
     [selectedNotification]
   );
 
+  const openNotificationsModal = () => {
+    setDrawerOpen(false);
+    setShareOpen(false);
+    setSelectedNotification(null);
+    setNotificationsOpen(true);
+  };
+
+  const closeNotificationsModal = () => {
+    setNotificationsOpen(false);
+  };
+
+  const openShareModal = () => {
+    setDrawerOpen(false);
+    setNotificationsOpen(false);
+    setSelectedNotification(null);
+    setShareOpen(true);
+  };
+
+  const closeShareModal = () => {
+    setShareOpen(false);
+  };
+
   const handleNavigate = (path) => {
     setDrawerOpen(false);
+    setShareOpen(false);
+    setNotificationsOpen(false);
+    setSelectedNotification(null);
     navigate(path);
   };
 
@@ -374,22 +399,40 @@ function HomeShellFixed() {
       await loadNotifications();
       setFeedback(decision === 'approve' ? 'Cadastro aprovado.' : 'Cadastro rejeitado.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível analisar o cadastro.');
+      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel analisar o cadastro.');
     }
   };
 
   const handleShareNps = async () => {
-    if (navigator.share) {
-      await navigator.share({
-        title: 'Pesquisa de Satisfação',
-        text: 'Responda nossa pesquisa de satisfação.',
-        url: npsLink
-      });
-      return;
-    }
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: 'Pesquisa de SatisfaÃ§Ã£o',
+          text: 'Responda nossa pesquisa de satisfaÃ§Ã£o.',
+          url: npsLink
+        });
+        closeShareModal();
+        return;
+      }
 
-    await navigator.clipboard.writeText(npsLink);
-    setFeedback('Link da pesquisa copiado para compartilhamento.');
+      await navigator.clipboard.writeText(npsLink);
+      setFeedback('Link da pesquisa copiado para compartilhamento.');
+      closeShareModal();
+    } catch (error) {
+      if (error?.name !== 'AbortError') {
+        setFeedback('NÃ£o foi possÃ­vel compartilhar a pesquisa agora.');
+      }
+    }
+  };
+
+  const handleCopyNpsLink = async () => {
+    try {
+      await navigator.clipboard.writeText(npsLink);
+      setFeedback('Link da pesquisa copiado.');
+      closeShareModal();
+    } catch (error) {
+      setFeedback('NÃƒÂ£o foi possÃƒÂ­vel copiar o link da pesquisa.');
+    }
   };
 
   const openNpsSurveyPopup = () => {
@@ -439,7 +482,7 @@ function HomeShellFixed() {
         }));
       }
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível abrir a notificação.');
+      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel abrir a notificaÃ§Ã£o.');
     }
 
     setNotificationsOpen(false);
@@ -467,9 +510,9 @@ function HomeShellFixed() {
         unread: prev.unread.filter((item) => item.id !== notificationId),
         read: prev.read.filter((item) => item.id !== notificationId)
       }));
-      setFeedback('Notificação removida do histórico.');
+      setFeedback('NotificaÃ§Ã£o removida do histÃ³rico.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível excluir a notificação.');
+      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel excluir a notificaÃ§Ã£o.');
     }
   };
 
@@ -482,7 +525,7 @@ function HomeShellFixed() {
     setFeedback('');
 
     if (passwordForm.new_password !== passwordForm.confirm_password) {
-      setFeedback('A confirmação da nova senha não confere.');
+      setFeedback('A confirmaÃ§Ã£o da nova senha nÃ£o confere.');
       return;
     }
 
@@ -508,7 +551,7 @@ function HomeShellFixed() {
       setPasswordForm({ current_password: '', new_password: '', confirm_password: '' });
       setFeedback('Senha alterada com sucesso.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível alterar a senha.');
+      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel alterar a senha.');
     }
   };
 
@@ -527,19 +570,20 @@ function HomeShellFixed() {
         <div className="home-command-actions">
           <div className="home-account-row">
             {adminUser && (
-              <button className="gear-action" onClick={() => navigate('/admin')} aria-label="Painel gerencial">
-                ⚙
+              <button type="button" className="gear-action" onClick={() => navigate('/admin')} aria-label="Painel gerencial">
+                âš™
               </button>
             )}
-            <button className="notification-button" onClick={() => setNotificationsOpen((prev) => !prev)}>
-              <span className="bell-icon" aria-hidden="true">🔔</span>
-              <span className="sr-only">Notificações</span>
+            <button type="button" className="notification-button" onClick={openNotificationsModal}>
+              <span className="bell-icon" aria-hidden="true">ðŸ””</span>
+              <span className="sr-only">NotificaÃ§Ãµes</span>
               <strong>{totalAlerts}</strong>
             </button>
-            <button className="ghost-action account-action" onClick={() => navigate('/perfil')}>
+            <button type="button" className="ghost-action account-action" onClick={() => navigate('/perfil')}>
               Minha conta
             </button>
             <button
+              type="button"
               className="outline-action"
               onClick={() => {
                 clearSession();
@@ -550,73 +594,14 @@ function HomeShellFixed() {
             </button>
           </div>
         </div>
-
-        {notificationsOpen && (
-          <section className="notification-popover">
-            <div className="notification-head">
-              <strong>Notificações</strong>
-              <button className="ghost-action" onClick={loadNotifications}>Atualizar</button>
-            </div>
-
-            <div className="notification-tabs">
-              <button type="button" className={notificationTab === 'unread' ? 'active' : ''} onClick={() => setNotificationTab('unread')}>
-                Não lidas ({totalAlerts})
-              </button>
-              <button type="button" className={notificationTab === 'read' ? 'active' : ''} onClick={() => setNotificationTab('read')}>
-                Lidas ({notificationGroups.read.length})
-              </button>
-            </div>
-
-            {feedback && <p className="form-feedback">{feedback}</p>}
-
-            {notificationTab === 'unread' && masterUser && registrationRequests.map((request) => (
-              <article className="notification-item" key={`request-${request.id}`}>
-                <div className="notification-item-top">
-                  <span>Cadastro pendente</span>
-                  <small>{formatNotificationDate(request.created_at)}</small>
-                </div>
-                <strong>{request.name}</strong>
-                <p>{truncateText(`${request.email} - ${request.position || request.role}`)}</p>
-                <div className="notification-actions">
-                  <button className="primary-action" onClick={() => handleRegistrationDecision(request.id, 'approve')}>Aceitar</button>
-                  <button className="outline-action" onClick={() => handleRegistrationDecision(request.id, 'reject')}>Rejeitar</button>
-                </div>
-              </article>
-            ))}
-
-            {visibleNotifications.map((notification) => (
-              <article className={`notification-item ${notification.status === 'read' ? 'read' : 'unread'}`} key={notification.id}>
-                <div className="notification-item-top">
-                  <span>{notificationBadge(notification)}</span>
-                  <small>{formatNotificationDate(notification.read_at || notification.created_at)}</small>
-                </div>
-                <strong>{notification.title || 'Atualização do sistema'}</strong>
-                <p>{notificationSummary(notification)}</p>
-                <div className="notification-actions">
-                  <button className="outline-action" onClick={() => openNotification(notification)}>
-                    {notification.status === 'read' ? 'Abrir novamente' : 'Abrir'}
-                  </button>
-                  {notification.status === 'read' && (
-                    <button className="outline-action subtle-action" onClick={() => handleDeleteNotification(notification.id)}>
-                      Excluir
-                    </button>
-                  )}
-                </div>
-              </article>
-            ))}
-
-            {notificationTab === 'unread' && totalAlerts === 0 && <p className="empty-mini">Nenhuma nova notificação.</p>}
-            {notificationTab === 'read' && notificationGroups.read.length === 0 && <p className="empty-mini">Nenhuma notificação lida no histórico.</p>}
-          </section>
-        )}
       </header>
 
       {mustChangePassword && (
         <div className="modal-backdrop forced-password-backdrop" role="dialog" aria-modal="true">
           <form className="modal-panel forced-password-modal" onSubmit={handleForcedPasswordChange}>
-            <p className="eyebrow">Segurança</p>
+            <p className="eyebrow">SeguranÃ§a</p>
             <h2>Altere sua senha para continuar</h2>
-            <p>Sua senha foi reiniciada. Por segurança, o acesso ao sistema só será liberado após cadastrar uma nova senha forte.</p>
+            <p>Sua senha foi reiniciada. Por seguranÃ§a, o acesso ao sistema sÃ³ serÃ¡ liberado apÃ³s cadastrar uma nova senha forte.</p>
 
             <label>
               Senha atual
@@ -649,7 +634,7 @@ function HomeShellFixed() {
             </div>
 
             <div className="notification-detail-copy">
-              <h2>{selectedNotification.title || 'Atualização do sistema'}</h2>
+              <h2>{selectedNotification.title || 'AtualizaÃ§Ã£o do sistema'}</h2>
               <p>{selectedNotification.message || notificationSummary(selectedNotification)}</p>
             </div>
 
@@ -676,6 +661,101 @@ function HomeShellFixed() {
         </div>
       )}
 
+      {notificationsOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <section className="modal-panel notification-center-modal">
+            <div className="notification-head">
+              <strong>NotificaÃ§Ãµes</strong>
+              <button type="button" className="ghost-action" onClick={loadNotifications}>Atualizar</button>
+            </div>
+
+            <div className="notification-tabs">
+              <button type="button" className={notificationTab === 'unread' ? 'active' : ''} onClick={() => setNotificationTab('unread')}>
+                NÃ£o lidas ({totalAlerts})
+              </button>
+              <button type="button" className={notificationTab === 'read' ? 'active' : ''} onClick={() => setNotificationTab('read')}>
+                Lidas ({notificationGroups.read.length})
+              </button>
+            </div>
+
+            {feedback && <p className="form-feedback">{feedback}</p>}
+
+            {notificationTab === 'unread' && masterUser && registrationRequests.map((request) => (
+              <article className="notification-item" key={`request-${request.id}`}>
+                <div className="notification-item-top">
+                  <span>Cadastro pendente</span>
+                  <small>{formatNotificationDate(request.created_at)}</small>
+                </div>
+                <strong>{request.name}</strong>
+                <p>{truncateText(`${request.email} - ${request.position || request.role}`)}</p>
+                <div className="notification-actions">
+                  <button type="button" className="primary-action" onClick={() => handleRegistrationDecision(request.id, 'approve')}>Aceitar</button>
+                  <button type="button" className="outline-action" onClick={() => handleRegistrationDecision(request.id, 'reject')}>Rejeitar</button>
+                </div>
+              </article>
+            ))}
+
+            {visibleNotifications.map((notification) => (
+              <article className={`notification-item ${notification.status === 'read' ? 'read' : 'unread'}`} key={notification.id}>
+                <div className="notification-item-top">
+                  <span>{notificationBadge(notification)}</span>
+                  <small>{formatNotificationDate(notification.read_at || notification.created_at)}</small>
+                </div>
+                <strong>{notification.title || 'AtualizaÃ§Ã£o do sistema'}</strong>
+                <p>{notificationSummary(notification)}</p>
+                <div className="notification-actions">
+                  <button type="button" className="outline-action" onClick={() => openNotification(notification)}>
+                    {notification.status === 'read' ? 'Abrir novamente' : 'Abrir'}
+                  </button>
+                  {notification.status === 'read' && (
+                    <button type="button" className="outline-action subtle-action" onClick={() => handleDeleteNotification(notification.id)}>
+                      Excluir
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+
+            {notificationTab === 'unread' && totalAlerts === 0 && <p className="empty-mini">Nenhuma nova notificaÃ§Ã£o.</p>}
+            {notificationTab === 'read' && notificationGroups.read.length === 0 && <p className="empty-mini">Nenhuma notificaÃ§Ã£o lida no histÃ³rico.</p>}
+
+            <div className="row-actions">
+              <button type="button" className="outline-action" onClick={closeNotificationsModal}>
+                Fechar
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {shareOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <section className="modal-panel share-modal">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Compartilhar</p>
+                <h2>Divulgar pesquisa de satisfaÃ§Ã£o</h2>
+                <p className="base-subtitle">Escolha como deseja enviar o link da pesquisa.</p>
+              </div>
+            </div>
+
+            <div className="share-modal-actions">
+              <button type="button" className="primary-action" onClick={handleShareNps}>Compartilhar</button>
+              <button type="button" className="outline-action" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, '_blank', 'noopener,noreferrer')}>WhatsApp</button>
+              <a className="outline-action share-link-action" href={`mailto:?subject=Pesquisa de SatisfaÃ§Ã£o&body=${encodeURIComponent(shareText)}`}>E-mail</a>
+              <button type="button" className="outline-action" onClick={handleCopyNpsLink}>
+                Copiar link
+              </button>
+            </div>
+
+            <div className="row-actions">
+              <button type="button" className="outline-action" onClick={closeShareModal}>
+                Fechar
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
       {drawerOpen && (
         <div className="drawer-backdrop" onClick={() => setDrawerOpen(false)}>
           <aside className="menu-drawer" onClick={(event) => event.stopPropagation()}>
@@ -703,10 +783,10 @@ function HomeShellFixed() {
       <section className="home-hero">
         <div className="home-copy">
           <p className="eyebrow">Sistema GRC</p>
-          <h1>Gestão profissional da voz do cliente.</h1>
+          <h1>GestÃ£o profissional da voz do cliente.</h1>
           <p>
-            Centralize reclamações, NPS, elogios, sugestões e rotinas do paciente com trilhas separadas,
-            permissões por perfil e rastreabilidade executiva.
+            Centralize reclamaÃ§Ãµes, NPS, elogios, sugestÃµes e rotinas do paciente com trilhas separadas,
+            permissÃµes por perfil e rastreabilidade executiva.
           </p>
         </div>
 
@@ -715,13 +795,13 @@ function HomeShellFixed() {
             <button className="primary-action" onClick={() => navigate('/cadastro')}>Novo Protocolo</button>
           )}
           {hasPermission(user, 'complaints_management') && (
-            <button className="secondary-action" onClick={() => navigate('/gestao')}>Painel de Gestão de Reclamações</button>
+            <button className="secondary-action" onClick={() => navigate('/gestao')}>Painel de GestÃ£o de ReclamaÃ§Ãµes</button>
           )}
           {hasPermission(user, 'complaints_dashboard') && (
-            <button className="secondary-action" onClick={() => navigate('/dashboard')}>Dashboard de Reclamações</button>
+            <button className="secondary-action" onClick={() => navigate('/dashboard')}>Dashboard de ReclamaÃ§Ãµes</button>
           )}
           {hasPermission(user, 'nps_management') && (
-            <button className="outline-action" onClick={() => navigate('/gestao-nps')}>Painel de Gestão NPS</button>
+            <button className="outline-action" onClick={() => navigate('/gestao-nps')}>Painel de GestÃ£o NPS</button>
           )}
           {hasPermission(user, 'nps_dashboard') && (
             <button className="outline-action" onClick={() => navigate('/dashboard-nps')}>Dashboard NPS</button>
@@ -734,26 +814,16 @@ function HomeShellFixed() {
 
       <section className="feedback-intake-panel home-qr-panel" aria-label="QR Code NPS">
         <div>
-          <p className="eyebrow">Pesquisa de Satisfação</p>
-          <h2>QR Code para pesquisa de Satisfação</h2>
-          <p>Abra a câmera do celular e leia o código para acessar diretamente a pesquisa.</p>
+          <p className="eyebrow">Pesquisa de SatisfaÃ§Ã£o</p>
+          <h2>QR Code para pesquisa de SatisfaÃ§Ã£o</h2>
+          <p>Abra a cÃ¢mera do celular e leia o cÃ³digo para acessar diretamente a pesquisa.</p>
           <strong className="quick-highlight">{npsLink}</strong>
         </div>
 
         <div className="qr-code-box">
           <img src={qrCodeUrl} alt="QR Code da pesquisa NPS" />
-          <button className="outline-action" onClick={openNpsSurveyPopup}>Abrir pesquisa NPS</button>
-          <div className="share-popover-wrap">
-            <button className="primary-action" onClick={() => setShareOpen((prev) => !prev)}>Compartilhar</button>
-            {shareOpen && (
-              <div className="share-popover">
-                <button type="button" onClick={handleShareNps}>Compartilhar</button>
-                <button type="button" onClick={() => window.open(`https://wa.me/?text=${encodeURIComponent(shareText)}`, '_blank')}>WhatsApp</button>
-                <a href={`mailto:?subject=Pesquisa de Satisfação&body=${encodeURIComponent(shareText)}`}>E-mail</a>
-                <button type="button" onClick={() => navigator.clipboard.writeText(npsLink).then(() => setFeedback('Link da pesquisa copiado.'))}>Copiar link</button>
-              </div>
-            )}
-          </div>
+          <button type="button" className="outline-action" onClick={openNpsSurveyPopup}>Abrir pesquisa NPS</button>
+          <button type="button" className="primary-action" onClick={openShareModal}>Compartilhar</button>
         </div>
       </section>
 
@@ -761,8 +831,8 @@ function HomeShellFixed() {
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Agenda</p>
-            <h2>Pendências do dia</h2>
-            <p className="base-subtitle">Prazos críticos e agenda operacional para acompanhamento imediato.</p>
+            <h2>PendÃªncias do dia</h2>
+            <p className="base-subtitle">Prazos crÃ­ticos e agenda operacional para acompanhamento imediato.</p>
           </div>
           <button className="outline-action" type="button" onClick={loadAgenda}>
             Atualizar agenda
@@ -770,9 +840,9 @@ function HomeShellFixed() {
         </div>
 
         {agendaLoading ? (
-          <p className="empty-state">Carregando pendências do dia...</p>
+          <p className="empty-state">Carregando pendÃªncias do dia...</p>
         ) : agendaItems.length === 0 ? (
-          <p className="empty-state">Nenhuma pendência crítica ou agenda do dia disponível.</p>
+          <p className="empty-state">Nenhuma pendÃªncia crÃ­tica ou agenda do dia disponÃ­vel.</p>
         ) : (
           <div className="home-agenda-list">
             {agendaItems.map((item) => (
@@ -797,22 +867,22 @@ function HomeShellFixed() {
       <section className="quick-grid" aria-label="Atalhos operacionais">
         <article className="quick-card accent-brand">
           <div className="quick-card-head">
-            <span className="quick-number">Reclamações</span>
-            <span className="quick-tag">Governança</span>
+            <span className="quick-number">ReclamaÃ§Ãµes</span>
+            <span className="quick-tag">GovernanÃ§a</span>
           </div>
-          <h2>Gestão de protocolos com alçada e evidências</h2>
-          <p>Cadastro, aceite, tratativa, anexos, prazos e histórico por usuário.</p>
-          <strong className="quick-highlight">Cada usuário visualiza apenas o que sua alçada permite.</strong>
+          <h2>GestÃ£o de protocolos com alÃ§ada e evidÃªncias</h2>
+          <p>Cadastro, aceite, tratativa, anexos, prazos e histÃ³rico por usuÃ¡rio.</p>
+          <strong className="quick-highlight">Cada usuÃ¡rio visualiza apenas o que sua alÃ§ada permite.</strong>
         </article>
 
         <article className="quick-card accent-teal">
           <div className="quick-card-head">
             <span className="quick-number">NPS</span>
-            <span className="quick-tag">Satisfação</span>
+            <span className="quick-tag">SatisfaÃ§Ã£o</span>
           </div>
-          <h2>Promotores, neutros e detratores em trilha própria</h2>
-          <p>O detrator pode virar reclamação quando a operação decidir tratar como protocolo SAC.</p>
-          <strong className="quick-highlight">A avaliação continua auditável no protocolo NPS.</strong>
+          <h2>Promotores, neutros e detratores em trilha prÃ³pria</h2>
+          <p>O detrator pode virar reclamaÃ§Ã£o quando a operaÃ§Ã£o decidir tratar como protocolo SAC.</p>
+          <strong className="quick-highlight">A avaliaÃ§Ã£o continua auditÃ¡vel no protocolo NPS.</strong>
         </article>
 
         <article className="quick-card accent-gold">
@@ -820,26 +890,26 @@ function HomeShellFixed() {
             <span className="quick-number">Pacientes</span>
             <span className="quick-tag">Agenda</span>
           </div>
-          <h2>Agendamento do Paciente com protocolo e histórico</h2>
-          <p>Cadastre confirmações, agendamentos e reagendamentos com data atual, protocolo próprio e trilha de cancelados.</p>
+          <h2>Agendamento do Paciente com protocolo e histÃ³rico</h2>
+          <p>Cadastre confirmaÃ§Ãµes, agendamentos e reagendamentos com data atual, protocolo prÃ³prio e trilha de cancelados.</p>
           {hasPermission(user, 'patient_management') ? (
             <div className="quick-card-actions">
               <button className="primary-action" onClick={() => navigate('/pacientes')}>Cadastrar paciente</button>
               <button className="outline-action" onClick={() => navigate('/pacientes/dashboard')}>Dashboard Pacientes</button>
             </div>
           ) : (
-            <strong className="quick-highlight">A rotina fica disponível conforme a alçada do usuário.</strong>
+            <strong className="quick-highlight">A rotina fica disponÃ­vel conforme a alÃ§ada do usuÃ¡rio.</strong>
           )}
         </article>
 
         <article className="quick-card accent-leaf">
           <div className="quick-card-head">
             <span className="quick-number">Admin</span>
-            <span className="quick-tag">Alçadas</span>
+            <span className="quick-tag">AlÃ§adas</span>
           </div>
-          <h2>Painel gerencial para usuários, telas e unidades</h2>
-          <p>Administrador e master ajustam acesso, vínculo com clínicas e status dos colaboradores.</p>
-          <strong className="quick-highlight">Links sem permissão deixam de aparecer para o usuário.</strong>
+          <h2>Painel gerencial para usuÃ¡rios, telas e unidades</h2>
+          <p>Administrador e master ajustam acesso, vÃ­nculo com clÃ­nicas e status dos colaboradores.</p>
+          <strong className="quick-highlight">Links sem permissÃ£o deixam de aparecer para o usuÃ¡rio.</strong>
         </article>
       </section>
 
@@ -847,7 +917,7 @@ function HomeShellFixed() {
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <section className="modal-panel agenda-alert-modal">
             <p className="eyebrow">Alertas do dia</p>
-            <h2>Existem protocolos com prazo vencido ou próximo do vencimento.</h2>
+            <h2>Existem protocolos com prazo vencido ou prÃ³ximo do vencimento.</h2>
 
             <div className="home-agenda-list compact">
               {agendaAlerts.map((item) => (
@@ -883,3 +953,5 @@ function HomeShellFixed() {
 }
 
 export default HomeShellFixed;
+
+

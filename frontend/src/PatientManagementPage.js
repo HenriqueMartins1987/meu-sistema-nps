@@ -22,7 +22,7 @@ const chartOptions = {
 };
 
 const typeLabels = {
-  confirmacao: 'Confirmação',
+  confirmacao: 'ConfirmaÃƒÂ§ÃƒÂ£o',
   agendamento: 'Agendamento',
   reagendamento: 'Reagendamento'
 };
@@ -71,7 +71,7 @@ function groupCount(items, key) {
   const map = new Map();
 
   items.forEach((item) => {
-    const value = key(item) || 'Não informado';
+    const value = key(item) || 'NÃƒÂ£o informado';
     map.set(value, (map.get(value) || 0) + 1);
   });
 
@@ -104,7 +104,7 @@ function buildDoughnutData(rows) {
 }
 
 function formatDateTime(value) {
-  if (!value) return 'Não informado';
+  if (!value) return 'NÃƒÂ£o informado';
 
   return new Intl.DateTimeFormat('pt-BR', {
     dateStyle: 'short',
@@ -150,7 +150,7 @@ function PatientManagementPage() {
       setClinics(Array.isArray(clinicsRes.data) ? clinicsRes.data : []);
       return data;
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível carregar a gestão do paciente.');
+      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel carregar a gestÃƒÂ£o do paciente.');
       return [];
     } finally {
       setLoading(false);
@@ -260,7 +260,7 @@ function PatientManagementPage() {
 
     try {
       if (!isCompleteBrazilPhone(form.phone)) {
-        setFeedback('Informe o telefone completo no formato +55DDDNÚMERO.');
+        setFeedback('Informe o telefone completo no formato +55DDDNÃƒÅ¡MERO.');
         setSaving(false);
         return;
       }
@@ -285,7 +285,7 @@ function PatientManagementPage() {
       setSavedProtocol(protocol);
       setFeedback(protocol ? `Agendamento salvo com sucesso. Protocolo ${protocol}` : 'Agendamento salvo com sucesso.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível salvar o agendamento.');
+      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel salvar o agendamento.');
     } finally {
       setSaving(false);
     }
@@ -310,9 +310,9 @@ function PatientManagementPage() {
     try {
       await api.patch(`/patient-interactions/${selectedRecord.id}`, { status, action });
       await refreshSelectedRecord(selectedRecord.id);
-      setFeedback('Agendamento atualizado com histórico.');
+      setFeedback('Agendamento atualizado com histÃƒÂ³rico.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível atualizar o agendamento.');
+      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel atualizar o agendamento.');
     } finally {
       setSaving(false);
     }
@@ -331,7 +331,7 @@ function PatientManagementPage() {
       setActiveTab('cancelados');
       setFeedback('Agendamento movido para a aba de cancelados.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível cancelar o agendamento.');
+      setFeedback(error.response?.data?.error || 'NÃƒÂ£o foi possÃƒÂ­vel cancelar o agendamento.');
     } finally {
       setSaving(false);
     }
@@ -348,7 +348,7 @@ function PatientManagementPage() {
           </div>
 
           <div className="heading-actions">
-            <button className="outline-action" onClick={() => navigate('/pacientes')}>Gestão do Paciente</button>
+            <button className="outline-action" onClick={() => navigate('/pacientes')}>GestÃƒÂ£o do Paciente</button>
             <button className="outline-action" onClick={() => navigate('/pacientes/dashboard')}>Dashboard Pacientes</button>
             <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
           </div>
@@ -423,7 +423,7 @@ function PatientManagementPage() {
             <label>
               Tipo
               <select className="field" value={form.type} onChange={(event) => updateForm('type', event.target.value)}>
-                <option value="confirmacao">Confirmação</option>
+                <option value="confirmacao">ConfirmaÃƒÂ§ÃƒÂ£o</option>
                 <option value="agendamento">Agendamento</option>
                 <option value="reagendamento">Reagendamento</option>
               </select>
@@ -435,13 +435,13 @@ function PatientManagementPage() {
             </label>
 
             <label>
-              Observações
+              ObservaÃƒÂ§ÃƒÂµes
               <textarea className="field textarea" value={form.note} onChange={(event) => updateForm('note', event.target.value)} />
             </label>
 
             <div className="row-actions">
               <button className="outline-action" type="button" onClick={() => navigate('/pacientes')}>
-                Voltar para gestão
+                Voltar para gestÃƒÂ£o
               </button>
               <button className="primary-action" type="submit" disabled={saving}>
                 {saving ? 'Salvando...' : 'Salvar agendamento'}
@@ -455,16 +455,16 @@ function PatientManagementPage() {
 
   if (isDashboard) {
     return (
-      <main className="app-page">
+      <main className="app-page patient-dashboard-page">
         <header className="page-heading">
           <div>
             <p className="eyebrow">Dashboard do Paciente</p>
             <h1>Dashboard de Pacientes</h1>
-            <p>Acompanhe confirmações, agendamentos, reagendamentos, cancelamentos e o responsável pela última tratativa.</p>
+            <p>Acompanhe confirmaÃƒÂ§ÃƒÂµes, agendamentos, reagendamentos, cancelamentos e o responsÃƒÂ¡vel pela ÃƒÂºltima tratativa.</p>
           </div>
 
           <div className="heading-actions patient-dashboard-actions">
-            <button className="outline-action" onClick={() => navigate('/pacientes')}>Gestão do Paciente</button>
+            <button className="outline-action" onClick={() => navigate('/pacientes')}>GestÃƒÂ£o do Paciente</button>
             <button className="outline-action" onClick={() => navigate('/pacientes/cadastro')}>Cadastrar Paciente</button>
             <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
           </div>
@@ -475,7 +475,7 @@ function PatientManagementPage() {
             <div>
               <p className="eyebrow">Filtros</p>
               <h2>Base de acompanhamento</h2>
-              <p className="base-subtitle">Refine a visão operacional por unidade, canal, tipo, status e período.</p>
+              <p className="base-subtitle">Refine a visÃƒÂ£o operacional por unidade, canal, tipo, status e perÃƒÂ­odo.</p>
             </div>
             <button className="outline-action" onClick={() => setFilters(initialFilters)}>
               Limpar filtros
@@ -487,7 +487,7 @@ function PatientManagementPage() {
               className="field"
               value={filters.search}
               onChange={(event) => updateFilter('search', event.target.value)}
-              placeholder="Buscar protocolo, paciente, unidade ou observação"
+              placeholder="Buscar protocolo, paciente, unidade ou observaÃƒÂ§ÃƒÂ£o"
             />
             <select className="field" value={filters.clinic} onChange={(event) => updateFilter('clinic', event.target.value)}>
               <option value="">Todas as unidades</option>
@@ -509,7 +509,7 @@ function PatientManagementPage() {
             </select>
             <select className="field" value={filters.type} onChange={(event) => updateFilter('type', event.target.value)}>
               <option value="">Todos os tipos</option>
-              <option value="confirmacao">Confirmação</option>
+              <option value="confirmacao">ConfirmaÃƒÂ§ÃƒÂ£o</option>
               <option value="agendamento">Agendamento</option>
               <option value="reagendamento">Reagendamento</option>
             </select>
@@ -526,26 +526,26 @@ function PatientManagementPage() {
 
         {feedback && <p className="form-feedback">{feedback}</p>}
 
-        <section className="kpi-grid management-kpi-grid patient-dashboard-kpis" aria-label="Resumo do paciente">
+        <section className="kpi-grid dashboard-kpi-grid patient-dashboard-kpis" aria-label="Resumo do paciente">
           <article className="kpi-card">
             <span>Total</span>
             <strong>{records.length}</strong>
             <p>REGISTROS</p>
           </article>
           <article className="kpi-card success">
-            <span>Confirmações</span>
+            <span>ConfirmaÃƒÂ§ÃƒÂµes</span>
             <strong>{grouped.confirmacao || 0}</strong>
             <p>CONTATOS</p>
           </article>
           <article className="kpi-card progress">
             <span>Agendamentos</span>
             <strong>{grouped.agendamento || 0}</strong>
-            <p>NOVOS HORÁRIOS</p>
+            <p>NOVOS HORÃƒÂRIOS</p>
           </article>
           <article className="kpi-card warning">
             <span>Reagendamentos</span>
             <strong>{grouped.reagendamento || 0}</strong>
-            <p>ALTERAÇÕES</p>
+            <p>ALTERAÃƒâ€¡Ãƒâ€¢ES</p>
           </article>
           <article className="kpi-card danger">
             <span>Cancelados</span>
@@ -593,13 +593,28 @@ function PatientManagementPage() {
                   <p className="eyebrow">Base filtrada</p>
                   <h2 className="table-title-with-help">
                     Agenda operacional de pacientes
-                    <span className="tooltip-help inline-help" tabIndex="0" aria-label="Horário de Brasília">
+                    <span className="tooltip-help inline-help" tabIndex="0" aria-label="HorÃƒÂ¡rio de BrasÃƒÂ­lia">
                       ?
-                      <span>O horário exibido segue o horário oficial de Brasília.</span>
+                      <span>O horÃƒÂ¡rio exibido segue o horÃƒÂ¡rio oficial de BrasÃƒÂ­lia.</span>
                     </span>
                   </h2>
                   <p className="base-subtitle">Exibindo {upcomingRecords.length} pacientes da agenda operacional.</p>
                 </div>
+              </div>
+
+              <div className="dashboard-base-summary patient-dashboard-summary">
+                {[
+                  { label: 'Agenda filtrada', value: upcomingRecords.length },
+                  { label: 'Ativos', value: activeRecords.length },
+                  { label: 'Cancelados', value: cancelledRecords.length },
+                  { label: 'ConfirmaÃ§Ãµes', value: grouped.confirmacao || 0 },
+                  { label: 'Agendamentos', value: grouped.agendamento || 0 }
+                ].map((item) => (
+                  <article className="dashboard-summary-card" key={item.label}>
+                    <span>{item.label}</span>
+                    <strong>{item.value}</strong>
+                  </article>
+                ))}
               </div>
 
               <div className="data-table-wrap dashboard-table-wrap">
@@ -608,23 +623,46 @@ function PatientManagementPage() {
                     <tr>
                       <th>Protocolo</th>
                       <th>Paciente</th>
-                      <th>Unidade</th>
-                      <th>Tipo</th>
-                      <th>Status</th>
-                      <th>Data e horário</th>
-                      <th>Última tratativa por</th>
+                      <th>Unidade e canal</th>
+                      <th>Tipo e status</th>
+                      <th>Data e horario</th>
+                      <th>Ultima tratativa por</th>
                     </tr>
                   </thead>
                   <tbody>
                     {upcomingRecords.map((record) => (
                       <tr key={record.id}>
-                        <td>{record.protocol}</td>
-                        <td>{record.patient}</td>
-                        <td>{record.clinic}</td>
-                        <td>{typeLabels[record.type] || record.type}</td>
-                        <td>{record.status}</td>
+                        <td>
+                          <div className="table-cell-stack">
+                            <span className="cell-primary">{record.protocol}</span>
+                            <span className="cell-secondary">{record.createdByName || 'Sistema'}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="table-cell-stack">
+                            <span className="cell-primary">{record.patient}</span>
+                            <span className="cell-secondary">{record.phone || 'Telefone nao informado'}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="table-cell-stack">
+                            <span className="cell-primary">{record.clinic}</span>
+                            <span className="cell-secondary">{channelLabels[record.channel] || record.channel || 'Canal nao informado'}</span>
+                          </div>
+                        </td>
+                        <td>
+                          <div className="table-cell-stack">
+                            <span className="cell-primary">{typeLabels[record.type] || record.type}</span>
+                            <span className="cell-secondary">{record.status}</span>
+                          </div>
+                        </td>
                         <td>{formatDateTime(record.scheduledAt)}</td>
-                        <td>{record.lastActorName || 'Sem tratativa'}</td>
+                        <td>
+                          <div className="table-cell-stack">
+                            <span className="cell-primary">{record.lastActorName || 'Sem tratativa'}</span>
+                            <span className="cell-secondary">{record.lastActorRole || 'Perfil nao informado'}</span>
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -641,9 +679,9 @@ function PatientManagementPage() {
     <main className="app-page">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">Gestão do Paciente</p>
-          <h1>Gestão do Paciente</h1>
-          <p>Consulte protocolos ativos e cancelados, acompanhe o histórico e acesse o cadastro em uma tela dedicada.</p>
+          <p className="eyebrow">GestÃƒÂ£o do Paciente</p>
+          <h1>GestÃƒÂ£o do Paciente</h1>
+          <p>Consulte protocolos ativos e cancelados, acompanhe o histÃƒÂ³rico e acesse o cadastro em uma tela dedicada.</p>
         </div>
 
         <div className="heading-actions">
@@ -665,27 +703,27 @@ function PatientManagementPage() {
         <article className="kpi-card">
           <span>Total</span>
           <strong>{records.length}</strong>
-          <p>REGISTROS NA OPERAÇÃO</p>
+          <p>REGISTROS NA OPERAÃƒâ€¡ÃƒÆ’O</p>
         </article>
         <article className="kpi-card success">
-          <span>Confirmações</span>
+          <span>ConfirmaÃƒÂ§ÃƒÂµes</span>
           <strong>{grouped.confirmacao || 0}</strong>
           <p>CONTATOS</p>
         </article>
         <article className="kpi-card progress">
           <span>Agendamentos</span>
           <strong>{grouped.agendamento || 0}</strong>
-          <p>NOVOS HORÁRIOS</p>
+          <p>NOVOS HORÃƒÂRIOS</p>
         </article>
         <article className="kpi-card warning">
           <span>Reagendamentos</span>
           <strong>{grouped.reagendamento || 0}</strong>
-          <p>ALTERAÇÕES</p>
+          <p>ALTERAÃƒâ€¡Ãƒâ€¢ES</p>
         </article>
         <article className="kpi-card danger">
           <span>Cancelados</span>
           <strong>{cancelledRecords.length}</strong>
-          <p>LASTRO DISPONÍVEL</p>
+          <p>LASTRO DISPONÃƒÂVEL</p>
         </article>
       </section>
 
@@ -715,10 +753,10 @@ function PatientManagementPage() {
                   <th>Paciente</th>
                   <th>Tipo</th>
                   <th>Unidade</th>
-                  <th>Data e horário</th>
-                  <th>{activeTab === 'cancelados' ? 'Cancelado por' : 'Última tratativa por'}</th>
-                  <th>Leitura rápida</th>
-                  <th>Ação</th>
+                  <th>Data e horÃƒÂ¡rio</th>
+                  <th>{activeTab === 'cancelados' ? 'Cancelado por' : 'ÃƒÅ¡ltima tratativa por'}</th>
+                  <th>Leitura rÃƒÂ¡pida</th>
+                  <th>AÃƒÂ§ÃƒÂ£o</th>
                 </tr>
               </thead>
               <tbody>
@@ -792,14 +830,14 @@ function PatientManagementPage() {
                 <dd>{typeLabels[selectedRecord.type] || selectedRecord.type}</dd>
               </div>
               <div>
-                <dt>Data e horário</dt>
+                <dt>Data e horÃƒÂ¡rio</dt>
                 <dd>{formatDateTime(selectedRecord.scheduledAt)}</dd>
               </div>
             </dl>
 
             <div className="nps-treatment-relato">
-              <strong>Observações do usuário</strong>
-              <p>{selectedRecord.note || 'Sem observação registrada.'}</p>
+              <strong>ObservaÃƒÂ§ÃƒÂµes do usuÃƒÂ¡rio</strong>
+              <p>{selectedRecord.note || 'Sem observaÃƒÂ§ÃƒÂ£o registrada.'}</p>
             </div>
 
             <div className="row-actions">
@@ -831,7 +869,7 @@ function PatientManagementPage() {
                     <strong>{item.action}</strong>
                     <span>{formatDateTime(item.at)}</span>
                   </div>
-                  <small>{item.actor_name || 'Usuário do sistema'} · {item.actor_role || 'Perfil não informado'}</small>
+                  <small>{item.actor_name || 'UsuÃƒÂ¡rio do sistema'} Ã‚Â· {item.actor_role || 'Perfil nÃƒÂ£o informado'}</small>
                   <p>{item.note}</p>
                 </article>
               ))}
@@ -854,7 +892,7 @@ function PatientManagementPage() {
                 Voltar
               </button>
               <button className="outline-action danger-action" type="button" onClick={cancelSelectedRecord} disabled={saving}>
-                {saving ? 'Cancelando...' : 'Confirmar exclusão'}
+                {saving ? 'Cancelando...' : 'Confirmar exclusÃƒÂ£o'}
               </button>
             </div>
           </section>
@@ -865,3 +903,4 @@ function PatientManagementPage() {
 }
 
 export default PatientManagementPage;
+

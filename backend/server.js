@@ -1,5 +1,5 @@
-// ============================================
-// IMPORTAÇÕES
+﻿// ============================================
+// IMPORTAÃ‡Ã•ES
 // ============================================
 require('dotenv').config({ quiet: true });
 
@@ -12,9 +12,25 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
-const nodemailer = require('nodemailer');
-const axios = require('axios');
 const { clinicSeed, legacyDefaultClinicNames } = require('./clinicSeed');
+const {
+  sendEmail: dispatchEmail,
+  renderPasswordResetEmail,
+  renderRegistrationApprovedEmail,
+  renderUserAccessEmail
+} = require('./services/emailService');
+const {
+  buildAppointmentReminderMessage,
+  buildNoShowAlertMessage,
+  getWhatsAppProvider,
+  normalizeWhatsAppPhone,
+  sendApprovalWhatsApp,
+  sendAppointmentReminder,
+  sendNoShowAlert,
+  sendWelcomeWhatsApp,
+  sendWhatsAppMessage
+} = require('./services/whatsappService');
+const { generateTemporaryPassword } = require('./utils/password');
 
 const app = express();
 
@@ -25,12 +41,16 @@ const PORT = process.env.PORT || 3001;
 const SECRET = process.env.JWT_SECRET || 'segredo_super_forte';
 const publicBaseUrl = process.env.PUBLIC_API_URL || `http://localhost:${PORT}`;
 const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
+const appBaseUrl = process.env.APP_BASE_URL || frontendUrl;
 const approvalEmail = process.env.APPROVAL_EMAIL || 'henrique.martins@grcconsultoria.net.br';
 const masterAdminEmail = (process.env.MASTER_ADMIN_EMAIL || 'henrique.martins@grcconsultoria.net.br').toLowerCase();
 const defaultAdminEmail = masterAdminEmail;
 const defaultAdminPassword = process.env.MASTER_ADMIN_PASSWORD || process.env.DEFAULT_ADMIN_PASSWORD || 'Zyck1987#';
 const whatsappWebhookUrl = process.env.WHATSAPP_WEBHOOK_URL || '';
 const whatsappGroupId = process.env.WHATSAPP_GROUP_ID || '';
+const requirePasswordChangeOnFirstLogin = String(process.env.REQUIRE_PASSWORD_CHANGE_ON_FIRST_LOGIN || 'true').toLowerCase() !== 'false';
+const appointmentReminderLeadHours = Math.max(1, Number(process.env.APPOINTMENT_REMINDER_LEAD_HOURS || 24));
+const appointmentReminderIntervalMinutes = Math.max(5, Number(process.env.APPOINTMENT_REMINDER_INTERVAL_MINUTES || 30));
 const uploadDir = path.join(__dirname, 'uploads');
 const reportsDir = path.join(uploadDir, 'reports');
 const maxUploadSizeBytes = 10 * 1024 * 1024;
@@ -82,7 +102,7 @@ app.use(express.json());
 app.use('/uploads', express.static(uploadDir));
 
 // ============================================
-// CONFIGURAÇÃO DE UPLOAD (CORRETA)
+// CONFIGURAÃ‡ÃƒO DE UPLOAD (CORRETA)
 // ============================================
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
@@ -116,14 +136,14 @@ const pool = mysql.createPool({
 const complaintTypeSuggestions = [
   'Atendimento e acolhimento',
   'Agendamento, atraso ou tempo de espera',
-  'Comunicação e explicação do tratamento',
-  'Orçamento, cobrança ou contrato',
+  'ComunicaÃ§Ã£o e explicaÃ§Ã£o do tratamento',
+  'OrÃ§amento, cobranÃ§a ou contrato',
   'Qualidade do tratamento realizado',
-  'Dor, complicação ou pós-atendimento',
-  'Resultado estético ou expectativa',
-  'Higiene, biossegurança ou estrutura',
-  'Documentação, laudos ou prontuário',
-  'Conduta da equipe clínica',
+  'Dor, complicaÃ§Ã£o ou pÃ³s-atendimento',
+  'Resultado estÃ©tico ou expectativa',
+  'Higiene, biosseguranÃ§a ou estrutura',
+  'DocumentaÃ§Ã£o, laudos ou prontuÃ¡rio',
+  'Conduta da equipe clÃ­nica',
   'Outros'
 ];
 
@@ -134,7 +154,7 @@ const collaboratorPositions = [
   'Gerente de unidade',
   'Gerente regional',
   'Analista de Qualidade / NPS',
-  'Recepção / Atendimento',
+  'RecepÃ§Ã£o / Atendimento',
   'Administrativo',
   'Diretoria',
   'Outros'
@@ -152,11 +172,11 @@ const accessProfiles = {
 const screenPermissions = {
   home: 'Home',
   complaints_register: 'Cadastro de protocolos',
-  complaints_management: 'Painel de gestão de reclamações',
-  complaints_dashboard: 'Dashboard de reclamações',
-  nps_management: 'Painel de gestão NPS',
+  complaints_management: 'Painel de gestÃ£o de reclamaÃ§Ãµes',
+  complaints_dashboard: 'Dashboard de reclamaÃ§Ãµes',
+  nps_management: 'Painel de gestÃ£o NPS',
   nps_dashboard: 'Dashboard NPS',
-  patient_management: 'Gestão do paciente',
+  patient_management: 'GestÃ£o do paciente',
   admin_panel: 'Painel gerencial'
 };
 
@@ -166,6 +186,19 @@ const deadlineHoursByPriority = {
   alta: 24
 };
 const resolutionSlaDays = 15;
+const patientInteractionTypeLabels = {
+  confirmacao: 'ConfirmaÃ§Ã£o',
+  agendamento: 'Agendamento',
+  reagendamento: 'Reagendamento'
+};
+
+function isNoShowStatus(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/gi, '')
+    .toLowerCase() === 'naocompareceu';
+}
 
 const treatmentRoles = new Set(['coordinator', 'manager', 'supervisor_crc']);
 const evidenceRoles = new Set(['coordinator', 'manager', 'supervisor_crc', 'sac_operator', 'admin']);
@@ -225,7 +258,7 @@ function normalizeNpsStatus(value) {
 }
 
 function getActorName(user) {
-  return user?.name || user?.email || 'Usuário autenticado';
+  return user?.name || user?.email || 'UsuÃ¡rio autenticado';
 }
 
 function isAdminUser(user) {
@@ -294,18 +327,18 @@ function classifyNpsFeedback(score, feedbackType) {
   const normalized = String(feedbackType || '').toLowerCase();
 
   if (normalized.includes('elog')) return 'Elogio';
-  if (normalized.includes('sug')) return 'Sugestão';
-  if (normalized.includes('reclam')) return 'Reclamação';
+  if (normalized.includes('sug')) return 'SugestÃ£o';
+  if (normalized.includes('reclam')) return 'ReclamaÃ§Ã£o';
 
   const numericScore = Number(score);
 
   if (numericScore >= 9) return 'Elogio';
-  if (numericScore >= 7) return 'Sugestão';
-  return 'Reclamação';
+  if (numericScore >= 7) return 'SugestÃ£o';
+  return 'ReclamaÃ§Ã£o';
 }
 
 function priorityForNpsFeedback(score, classification) {
-  if (classification === 'Reclamação' && Number(score) <= 6) return 'alta';
+  if (classification === 'ReclamaÃ§Ã£o' && Number(score) <= 6) return 'alta';
   return 'baixa';
 }
 
@@ -357,6 +390,15 @@ function buildNotificationHtml(message, link) {
   return actionLink
     ? `<p>${messageHtml}</p><p><a href="${actionLink}">Abrir no sistema</a></p>`
     : `<p>${messageHtml}</p>`;
+}
+
+function formatMessageDateTime(value) {
+  if (!value) return 'NÃ£o informado';
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short'
+  }).format(new Date(value));
 }
 
 function sanitizeActivityValue(value, key = '') {
@@ -507,7 +549,7 @@ function decodePossiblyLatin1Text(value) {
   const text = String(value || '');
 
   if (!text) return '';
-  if (!/[ÃÂ]/.test(text)) return text;
+  if (!/[ÃƒÃ‚]/.test(text)) return text;
 
   try {
     return Buffer.from(text, 'latin1').toString('utf8');
@@ -639,7 +681,7 @@ function inferNpsProfile(score) {
 }
 
 function buildNpsNarrative(payload, classification, profile) {
-  const notes = [`Registro originado da pesquisa NPS com classificação ${classification}.`];
+  const notes = [`Registro originado da pesquisa NPS com classificaÃ§Ã£o ${classification}.`];
   const comment = String(payload.comment || '').trim();
   const improvement = String(payload.improvement_comment || '').trim();
   const detractorFeedback = String(payload.detractor_feedback || '').trim();
@@ -659,7 +701,7 @@ function buildNpsNarrative(payload, classification, profile) {
     notes.push(
       referralParts.length
         ? `Cliente informou que indicaria ${referralParts.join(' - ')}.`
-        : 'Cliente informou que indicaria a experiência para um familiar ou amigo.'
+        : 'Cliente informou que indicaria a experiÃªncia para um familiar ou amigo.'
     );
   }
 
@@ -669,7 +711,7 @@ function buildNpsNarrative(payload, classification, profile) {
 
   if (profile === 'detrator') {
     if (reasons.length) {
-      notes.push(`Pontos críticos sinalizados: ${reasons.join(', ')}.`);
+      notes.push(`Pontos crÃ­ticos sinalizados: ${reasons.join(', ')}.`);
     }
 
     if (detractorFeedback) {
@@ -845,6 +887,8 @@ async function ensureDatabaseSchema() {
   await ensureColumn('patient_interactions', 'cancelled_at', 'TIMESTAMP NULL');
   await ensureColumn('patient_interactions', 'cancelled_by_name', 'VARCHAR(160) NULL');
   await ensureColumn('patient_interactions', 'cancelled_by_role', 'VARCHAR(80) NULL');
+  await ensureColumn('patient_interactions', 'reminder_sent_at', 'TIMESTAMP NULL');
+  await ensureColumn('patient_interactions', 'no_show_alert_sent_at', 'TIMESTAMP NULL');
   await ensureColumn('patient_interactions', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
   await ensureColumn('patient_interactions', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
 
@@ -1026,6 +1070,32 @@ async function ensureDatabaseSchema() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS whatsapp_message_logs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      event_key VARCHAR(120) NULL,
+      recipient_phone VARCHAR(32) NULL,
+      related_user_id INT NULL,
+      related_appointment_id INT NULL,
+      related_entity_type VARCHAR(60) NULL,
+      related_entity_id INT NULL,
+      message_body LONGTEXT NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'pending',
+      provider_message_id VARCHAR(255) NULL,
+      provider_response LONGTEXT NULL,
+      error_message TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      sent_at TIMESTAMP NULL,
+      delivered_at TIMESTAMP NULL,
+      read_at TIMESTAMP NULL,
+      failed_at TIMESTAMP NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_whatsapp_message_logs_provider_message_id (provider_message_id),
+      INDEX idx_whatsapp_message_logs_recipient_phone (recipient_phone),
+      INDEX idx_whatsapp_message_logs_status (status)
+    )
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS complaint_evidences (
       id INT AUTO_INCREMENT PRIMARY KEY,
       complaint_id INT NOT NULL,
@@ -1072,13 +1142,13 @@ async function ensureDefaultClinics() {
      (?, ?, ?, ?, ?, 1),
      (?, ?, ?, ?, ?, 1)`,
     [
-      'Clínica Centro', 'Goiânia', 'GO', 'Centro-Oeste', 'Coordenação Centro',
-      'Clínica Trindade', 'Trindade', 'GO', 'Centro-Oeste', 'Coordenação Trindade',
-      'Clínica Aparecida', 'Aparecida de Goiânia', 'GO', 'Centro-Oeste', 'Coordenação Aparecida'
+      'ClÃ­nica Centro', 'GoiÃ¢nia', 'GO', 'Centro-Oeste', 'CoordenaÃ§Ã£o Centro',
+      'ClÃ­nica Trindade', 'Trindade', 'GO', 'Centro-Oeste', 'CoordenaÃ§Ã£o Trindade',
+      'ClÃ­nica Aparecida', 'Aparecida de GoiÃ¢nia', 'GO', 'Centro-Oeste', 'CoordenaÃ§Ã£o Aparecida'
     ]
   );
 
-  console.log('Clínicas padrão inseridas com sucesso.');
+  console.log('ClÃ­nicas padrÃ£o inseridas com sucesso.');
 }
 
 async function syncClinicCatalog() {
@@ -1224,7 +1294,7 @@ async function syncClinicCatalog() {
     );
   }
 
-  console.log(`Clínicas sincronizadas: ${inserted} novas e ${updated} atualizadas.`);
+  console.log(`ClÃ­nicas sincronizadas: ${inserted} novas e ${updated} atualizadas.`);
 }
 
 async function ensureDefaultAdminUser() {
@@ -1233,7 +1303,7 @@ async function ensureDefaultAdminUser() {
   await pool.query(
     `INSERT INTO users
      (name, email, password, role, position, phone, whatsapp, department, permissions, active)
-     VALUES (?, ?, ?, 'master_admin', 'Administrador Master', '+5562999999999', '+5562999999999', 'Administração', ?, 1)
+     VALUES (?, ?, ?, 'master_admin', 'Administrador Master', '+5562999999999', '+5562999999999', 'AdministraÃ§Ã£o', ?, 1)
      ON DUPLICATE KEY UPDATE
        name = VALUES(name),
        password = VALUES(password),
@@ -1526,7 +1596,7 @@ async function getComplaintRows(query = {}, user = null) {
 
 function groupRows(rows, field) {
   return rows.reduce((acc, row) => {
-    const label = row[field] || 'Não informado';
+    const label = row[field] || 'NÃ£o informado';
     acc[label] = (acc[label] || 0) + 1;
     return acc;
   }, {});
@@ -1648,58 +1718,136 @@ function slugify(value) {
     .replace(/^-+|-+$/g, '') || 'sem-coordenador';
 }
 
-function createEmailTransporter() {
-  if (!process.env.SMTP_HOST || !process.env.SMTP_USER || !process.env.SMTP_PASS) {
-    return null;
-  }
-
-  return nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT || 587),
-    secure: process.env.SMTP_SECURE === 'true',
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS
-    }
-  });
-}
-
 async function sendEmail(to, subject, html, attachments = []) {
-  const transporter = createEmailTransporter();
-
-  if (!transporter) {
-    console.log(`[email pendente] Para: ${to} | Assunto: ${subject}`);
-    console.log(html);
-    return;
-  }
-
-  await transporter.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+  return dispatchEmail({
     to,
     subject,
     html,
+    text: String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
     attachments
   });
 }
 
-async function sendWhatsappNotification(payload) {
+async function createWhatsAppLog({
+  eventKey,
+  recipientPhone,
+  messageBody,
+  relatedUserId = null,
+  relatedAppointmentId = null,
+  relatedEntityType = null,
+  relatedEntityId = null,
+  status = 'pending'
+}) {
+  const [result] = await pool.query(
+    `INSERT INTO whatsapp_message_logs
+     (event_key, recipient_phone, related_user_id, related_appointment_id, related_entity_type, related_entity_id, message_body, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      eventKey || null,
+      recipientPhone || null,
+      relatedUserId || null,
+      relatedAppointmentId || null,
+      relatedEntityType || null,
+      relatedEntityId || null,
+      messageBody || null,
+      status
+    ]
+  );
+
+  return result.insertId;
+}
+
+async function updateWhatsAppLog(logId, result) {
+  if (!logId) return;
+
+  const nextStatus = result?.skipped ? 'skipped' : result?.success ? 'sent' : 'failed';
+  const updateChunks = [
+    'status = ?',
+    'provider_message_id = ?',
+    'provider_response = ?',
+    'error_message = ?',
+    'updated_at = NOW()'
+  ];
+  const values = [
+    nextStatus,
+    result?.providerMessageId || null,
+    result?.raw ? JSON.stringify(result.raw) : null,
+    result?.error || null
+  ];
+
+  if (nextStatus === 'sent') {
+    updateChunks.splice(4, 0, 'sent_at = NOW()');
+  }
+
+  if (nextStatus === 'failed') {
+    updateChunks.splice(4, 0, 'failed_at = NOW()');
+  }
+
+  await pool.query(
+    `UPDATE whatsapp_message_logs
+        SET ${updateChunks.join(', ')}
+      WHERE id = ?`,
+    [...values, logId]
+  );
+}
+
+async function updateWhatsAppLogByProviderMessageId(providerMessageId, status, payload = {}) {
+  if (!providerMessageId) return;
+
+  const normalizedStatus = String(status || '').trim().toLowerCase();
+  const updateChunks = [
+    'status = ?',
+    'provider_response = ?',
+    'updated_at = NOW()'
+  ];
+  const values = [
+    normalizedStatus || 'updated',
+    payload ? JSON.stringify(payload) : null
+  ];
+
+  if (normalizedStatus === 'delivered') {
+    updateChunks.splice(2, 0, 'delivered_at = NOW()');
+  } else if (normalizedStatus === 'read') {
+    updateChunks.splice(2, 0, 'read_at = NOW()');
+  } else if (normalizedStatus === 'failed') {
+    updateChunks.splice(2, 0, 'failed_at = NOW()');
+    updateChunks.splice(2, 0, 'error_message = ?');
+    values.splice(2, 0, payload?.errors?.[0]?.title || payload?.status || 'Falha reportada pelo provedor');
+  }
+
+  await pool.query(
+    `UPDATE whatsapp_message_logs
+        SET ${updateChunks.join(', ')}
+      WHERE provider_message_id = ?`,
+    [...values, providerMessageId]
+  );
+}
+
+async function sendWhatsappNotification(payload = {}) {
   const message = payload?.message || '';
+  const provider = getWhatsAppProvider();
+  const normalizedPhone = payload?.to ? normalizeWhatsAppPhone(payload.to) : '';
+  const canUseDirectSend = provider === 'meta' || provider === 'webhook';
+  const logId = await createWhatsAppLog({
+    eventKey: payload?.event || 'generic_notification',
+    recipientPhone: normalizedPhone || payload?.to || null,
+    messageBody: message,
+    relatedUserId: payload?.userId || null,
+    relatedAppointmentId: payload?.appointmentId || null,
+    relatedEntityType: payload?.relatedEntityType || null,
+    relatedEntityId: payload?.relatedEntityId || payload?.complaintId || payload?.npsId || null
+  });
 
-  if (!whatsappWebhookUrl) {
-    console.log(`[whatsapp pendente] ${message}`);
-    return;
-  }
+  const result = canUseDirectSend
+    ? await sendWhatsAppMessage(normalizedPhone || payload?.to, message, payload)
+    : {
+      success: false,
+      skipped: true,
+      error: 'Nenhum provedor de WhatsApp configurado para envio direto.'
+    };
 
-  try {
-    await axios.post(whatsappWebhookUrl, {
-      groupId: whatsappGroupId || undefined,
-      ...payload
-    }, {
-      timeout: 8000
-    });
-  } catch (error) {
-    console.warn('Não foi possível enviar notificação por WhatsApp:', error.message);
-  }
+  await updateWhatsAppLog(logId, result);
+  return { ...result, logId };
 }
 
 async function createNotification(userId, type, title, message, link = null, payload = null) {
@@ -1746,6 +1894,25 @@ async function createNotificationForRoles(roles, type, title, message, link = nu
   return users.map((user) => user.id);
 }
 
+async function notifyRolesThroughChannels(roles, type, title, message, link = null, payload = null) {
+  const normalizedRoles = Array.from(new Set((roles || []).filter(Boolean)));
+
+  if (!normalizedRoles.length) return [];
+
+  const placeholders = normalizedRoles.map(() => '?').join(',');
+  const [users] = await pool.query(
+    `SELECT id, name, email, whatsapp, phone, role
+       FROM users
+      WHERE active = 1
+        AND deleted_at IS NULL
+        AND role IN (${placeholders})`,
+    normalizedRoles
+  );
+
+  await Promise.all(users.map((user) => notifyUserThroughChannels(user, type, title, message, link, payload, { role: user.role })));
+  return users.map((user) => user.id);
+}
+
 async function notifyUserThroughChannels(user, type, title, message, link = null, payload = null, extraWhatsappPayload = null) {
   if (!user?.id) return;
 
@@ -1779,6 +1946,116 @@ async function notifyUserThroughChannels(user, type, title, message, link = null
       console.warn('Nao foi possivel enviar WhatsApp da notificacao:', error.message);
     }
   }
+}
+
+async function sendUserAccessNotifications(user, temporaryPassword) {
+  const emailTemplate = renderUserAccessEmail({
+    name: user.name,
+    email: user.email,
+    temporaryPassword,
+    appUrl: appBaseUrl
+  });
+  let emailSent = false;
+  let whatsappSent = false;
+  let emailError = null;
+  let whatsappError = null;
+
+  try {
+    await sendEmail(user.email, emailTemplate.subject, emailTemplate.html);
+    emailSent = true;
+  } catch (error) {
+    emailError = error.message;
+    console.warn('Nao foi possivel enviar o e-mail de primeiro acesso:', error.message);
+  }
+
+  try {
+    const whatsappResult = await sendWelcomeWhatsApp({
+      ...user,
+      temporaryPassword,
+      whatsapp: user.whatsapp || user.phone
+    });
+    whatsappSent = Boolean(whatsappResult?.success);
+    whatsappError = whatsappResult?.success ? null : whatsappResult?.error || null;
+  } catch (error) {
+    whatsappError = error.message;
+    console.warn('Nao foi possivel enviar o WhatsApp de primeiro acesso:', error.message);
+  }
+
+  await createNotification(
+    user.id,
+    'password_reset',
+    'Primeiro acesso liberado',
+    'Seu acesso foi criado. Use a senha temporÃ¡ria recebida e altere a senha no primeiro login.',
+    '/perfil',
+    { temporaryPassword: true, firstAccess: true }
+  );
+
+  return { emailSent, whatsappSent, emailError, whatsappError };
+}
+
+async function sendRegistrationApprovedNotifications(user) {
+  const emailTemplate = renderRegistrationApprovedEmail({
+    name: user.name,
+    appUrl: appBaseUrl
+  });
+  let emailSent = false;
+  let whatsappSent = false;
+  let emailError = null;
+  let whatsappError = null;
+
+  try {
+    await sendEmail(user.email, emailTemplate.subject, emailTemplate.html);
+    emailSent = true;
+  } catch (error) {
+    emailError = error.message;
+    console.warn('Nao foi possivel enviar o e-mail de aprovacao do cadastro:', error.message);
+  }
+
+  try {
+    const whatsappResult = await sendApprovalWhatsApp(user);
+    whatsappSent = Boolean(whatsappResult?.success);
+    whatsappError = whatsappResult?.success ? null : whatsappResult?.error || null;
+  } catch (error) {
+    whatsappError = error.message;
+    console.warn('Nao foi possivel enviar o WhatsApp de aprovacao do cadastro:', error.message);
+  }
+
+  return { emailSent, whatsappSent, emailError, whatsappError };
+}
+
+async function sendPasswordResetNotifications(user, temporaryPassword) {
+  const emailTemplate = renderPasswordResetEmail({
+    name: user.name,
+    temporaryPassword,
+    appUrl: appBaseUrl
+  });
+  let emailSent = false;
+  let whatsappSent = false;
+  let emailError = null;
+  let whatsappError = null;
+
+  try {
+    await sendEmail(user.email, emailTemplate.subject, emailTemplate.html);
+    emailSent = true;
+  } catch (error) {
+    emailError = error.message;
+    console.warn('Nao foi possivel enviar e-mail de reset de senha:', error.message);
+  }
+
+  try {
+    const whatsappResult = await sendWelcomeWhatsApp({
+      ...user,
+      temporaryPassword,
+      whatsapp: user.whatsapp || user.phone
+    });
+    whatsappSent = Boolean(whatsappResult?.success);
+    whatsappError = whatsappResult?.success ? null : whatsappResult?.error || null;
+  } catch (error) {
+    whatsappError = error.message;
+    console.warn('Nao foi possivel enviar WhatsApp de reset de senha:', error.message);
+  }
+
+  return { emailSent, whatsappSent, emailError, whatsappError };
 }
 
 async function notifyClinicResponsibles(clinicId, type, title, message, link, payload = null) {
@@ -1849,6 +2126,108 @@ async function notifyOperationalComplaintTeam(title, message, link, payload = nu
       { role: user.role }
     );
   }));
+}
+
+async function resolveClinicIdByName(clinicName) {
+  if (!clinicName) return null;
+
+  const [rows] = await pool.query(
+    'SELECT id FROM clinics WHERE LOWER(name) = LOWER(?) LIMIT 1',
+    [String(clinicName).trim()]
+  );
+
+  return rows[0]?.id || null;
+}
+
+async function notifyOperationalUsersForPatientEvent(record, type, title, message, payload = null) {
+  const link = `${frontendUrl}/pacientes?abrir=${record.id}`;
+  const clinicId = await resolveClinicIdByName(record.clinic_name);
+  const notifiedUserIds = clinicId
+    ? await notifyClinicResponsibles(clinicId, type, title, message, link, payload)
+    : [];
+
+  await notifyRolesThroughChannels(
+    ['sac_operator', 'supervisor_crc'],
+    type,
+    title,
+    message,
+    link,
+    payload
+  );
+
+  return notifiedUserIds;
+}
+
+async function dispatchAppointmentReminderForRecord(record) {
+  const scheduledLabel = formatMessageDateTime(record.scheduled_at);
+  const whatsappResult = await sendAppointmentReminder({
+    id: record.id,
+    protocol: record.protocol,
+    patient: record.patient_name,
+    phone: record.patient_phone,
+    clinic: record.clinic_name,
+    type: record.interaction_type,
+    typeLabel: patientInteractionTypeLabels[record.interaction_type] || record.interaction_type,
+    scheduledAt: record.scheduled_at,
+    scheduledLabel
+  });
+
+  if (whatsappResult?.success) {
+    await pool.query('UPDATE patient_interactions SET reminder_sent_at = NOW() WHERE id = ?', [record.id]);
+  }
+
+  return whatsappResult;
+}
+
+async function dispatchUpcomingAppointmentReminders() {
+  const [rows] = await pool.query(
+    `SELECT id, protocol, patient_name, patient_phone, clinic_name, interaction_type, scheduled_at
+       FROM patient_interactions
+      WHERE reminder_sent_at IS NULL
+        AND status <> 'Cancelado'
+        AND scheduled_at IS NOT NULL
+        AND scheduled_at > NOW()
+        AND scheduled_at <= DATE_ADD(NOW(), INTERVAL ? HOUR)`,
+    [appointmentReminderLeadHours]
+  );
+
+  const results = [];
+
+  for (const record of rows) {
+    const result = await dispatchAppointmentReminderForRecord(record);
+    results.push({
+      id: record.id,
+      protocol: record.protocol,
+      success: Boolean(result?.success),
+      error: result?.success ? null : result?.error || null
+    });
+  }
+
+  return results;
+}
+
+async function dispatchNoShowNotifications(record, actor) {
+  const scheduledLabel = formatMessageDateTime(record.scheduled_at);
+  const payload = {
+    interactionId: record.id,
+    protocol: record.protocol,
+    patientName: record.patient_name,
+    clinicName: record.clinic_name,
+    scheduledAt: record.scheduled_at,
+    actorName: actor?.name || getActorName(actor)
+  };
+  const title = `Paciente nÃ£o compareceu - ${record.protocol || `PAC-${record.id}`}`;
+  const message = buildNoShowAlertMessage({
+    id: record.id,
+    protocol: record.protocol,
+    patient: record.patient_name,
+    clinic: record.clinic_name,
+    scheduledAt: record.scheduled_at,
+    scheduledLabel
+  });
+
+  await notifyOperationalUsersForPatientEvent(record, 'patient_no_show', title, message, payload);
+  await pool.query('UPDATE patient_interactions SET no_show_alert_sent_at = NOW() WHERE id = ?', [record.id]);
 }
 
 async function getUserClinicIds(userId) {
@@ -1990,7 +2369,7 @@ async function getMonthlyDuplicateNpsPhones(monthRef) {
 async function alertDuplicateNpsPhone(phone, protocol, npsId) {
   const monthRef = new Date().toISOString().slice(0, 7);
   const title = `Alerta NPS: telefone repetido ${phone}`;
-  const message = `O telefone ${phone} apareceu mais de uma vez nas pesquisas NPS deste mês. Último protocolo: ${protocol}.`;
+  const message = `O telefone ${phone} apareceu mais de uma vez nas pesquisas NPS deste mÃªs. Ãšltimo protocolo: ${protocol}.`;
   const payload = { phone, protocol, npsId, month: monthRef };
   await createNotificationForRoles(
     ['supervisor_crc', 'admin', 'master_admin'],
@@ -2004,7 +2383,7 @@ async function alertDuplicateNpsPhone(phone, protocol, npsId) {
 
 async function createPromoterAgendaRecord({ npsId, patientName, patientPhone, clinicName }) {
   const scheduledAt = new Date();
-  const note = 'Contato compartilhado pelo paciente promotor na pesquisa de satisfação.';
+  const note = 'Contato compartilhado pelo paciente promotor na pesquisa de satisfaÃ§Ã£o.';
   const [result] = await pool.query(
     `INSERT INTO patient_interactions
      (patient_name, patient_phone, channel, clinic_name, interaction_type, scheduled_at, note, status, created_by_name, created_by_role)
@@ -2012,7 +2391,7 @@ async function createPromoterAgendaRecord({ npsId, patientName, patientPhone, cl
     [
       patientName || 'Paciente promotor',
       patientPhone,
-      clinicName || 'Unidade não informada',
+      clinicName || 'Unidade nÃ£o informada',
       toMysqlDateTime(scheduledAt),
       note
     ]
@@ -2091,7 +2470,7 @@ async function dispatchCoordinatorDelayNotifications() {
   await Promise.all(coordinators.map(async (coordinatorName) => {
     const coordinatorRows = grouped[coordinatorName];
     const message = [
-      `Atenção: demandas em atraso do coordenador ${coordinatorName}.`,
+      `AtenÃ§Ã£o: demandas em atraso do coordenador ${coordinatorName}.`,
       ...coordinatorRows.slice(0, 10).map((row) => `- ${row.protocol || `GRC-${row.id}`} | ${row.clinic_name || 'Unidade'} | SLA ${row.resolution_due_at ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(new Date(row.resolution_due_at)) : 'Nao informado'}`)
     ].join('\n');
 
@@ -2126,13 +2505,13 @@ async function dispatchWeeklyCoordinatorReports() {
       coordinator: coordinatorName,
       attachmentUrl: report.url,
       link: report.url,
-      message: `Relatório semanal do coordenador ${coordinatorName}. Total de protocolos: ${coordinatorRows.length}. Atrasadas: ${coordinatorRows.filter((row) => row.delayed).length}.`
+      message: `RelatÃ³rio semanal do coordenador ${coordinatorName}. Total de protocolos: ${coordinatorRows.length}. Atrasadas: ${coordinatorRows.filter((row) => row.delayed).length}.`
     });
 
     await sendEmail(
       approvalEmail,
-      `Relatório semanal - ${coordinatorName}`,
-      `<p>Segue o relatório semanal do coordenador <strong>${coordinatorName}</strong>.</p><p>Total de protocolos: ${coordinatorRows.length}</p><p>Atrasadas: ${coordinatorRows.filter((row) => row.delayed).length}</p>`,
+      `RelatÃ³rio semanal - ${coordinatorName}`,
+      `<p>Segue o relatÃ³rio semanal do coordenador <strong>${coordinatorName}</strong>.</p><p>Total de protocolos: ${coordinatorRows.length}</p><p>Atrasadas: ${coordinatorRows.filter((row) => row.delayed).length}</p>`,
       [{ filename: report.fileName, path: report.filePath }]
     );
   }
@@ -2198,19 +2577,19 @@ async function notifyComplaintCreated(complaintId, protocol) {
   const complaint = rows[0] || {};
   const clinic = complaint.clinic_name
     ? `${complaint.clinic_name}${complaint.city ? ` - ${complaint.city}/${complaint.state || 'UF'}` : ''}`
-    : 'Unidade não informada';
+    : 'Unidade nÃ£o informada';
   const title = `Novo protocolo ${protocol || complaint.protocol || complaintId}`;
   const link = `${frontendUrl}/gestao/${complaintId}`;
   const message = [
     title,
-    `Paciente: ${complaint.patient_name || 'Não informado'}`,
+    `Paciente: ${complaint.patient_name || 'NÃ£o informado'}`,
     `Unidade: ${clinic}`,
-    `Tipo: ${complaint.complaint_type || 'Não informado'}`,
-    `Prioridade: ${complaint.priority || 'Não informada'}`,
+    `Tipo: ${complaint.complaint_type || 'NÃ£o informado'}`,
+    `Prioridade: ${complaint.priority || 'NÃ£o informada'}`,
     `Origem: ${complaint.created_origin || 'Interno'}`
   ].join('\n');
   const payload = { complaintId, protocol: protocol || complaint.protocol || complaintId };
-  const detailedMessage = `${message}\n\nAcesse o protocolo para dar ciência e iniciar a tratativa.`;
+  const detailedMessage = `${message}\n\nAcesse o protocolo para dar ciÃªncia e iniciar a tratativa.`;
   const operationalMessage = `${message}\n\nSupervisor do CRC e Operador de SAC devem acompanhar o protocolo ate a conclusao.`;
 
   try {
@@ -2254,7 +2633,7 @@ async function notifyComplaintCreated(complaintId, protocol) {
 
 function buildNpsComplaintDescription(nps) {
   const notes = [
-    `Reclassificação de cliente detrator da pesquisa de satisfação. Nota NPS: ${nps.score}.`
+    `ReclassificaÃ§Ã£o de cliente detrator da pesquisa de satisfaÃ§Ã£o. Nota NPS: ${nps.score}.`
   ];
 
   if (nps.detractor_feedback) {
@@ -2273,7 +2652,7 @@ function buildNpsComplaintDescription(nps) {
   }
 
   if (nps.comment) {
-    notes.push(`Observação adicional: ${nps.comment}`);
+    notes.push(`ObservaÃ§Ã£o adicional: ${nps.comment}`);
   }
 
   return notes.join('\n\n');
@@ -2419,7 +2798,7 @@ async function convertNpsToComplaint(npsId, user) {
   const [rows] = await pool.query('SELECT * FROM nps_responses WHERE id = ?', [npsId]);
 
   if (!rows.length) {
-    const error = new Error('Pesquisa NPS não encontrada.');
+    const error = new Error('Pesquisa NPS nÃ£o encontrada.');
     error.statusCode = 404;
     throw error;
   }
@@ -2428,7 +2807,7 @@ async function convertNpsToComplaint(npsId, user) {
   const profile = nps.nps_profile || inferNpsProfile(nps.score);
 
   if (profile !== 'detrator') {
-    const error = new Error('Apenas clientes detratores podem ser reclassificados como reclamação.');
+    const error = new Error('Apenas clientes detratores podem ser reclassificados como reclamaÃ§Ã£o.');
     error.statusCode = 409;
     throw error;
   }
@@ -2440,7 +2819,7 @@ async function convertNpsToComplaint(npsId, user) {
     };
   }
 
-  const priority = priorityForNpsFeedback(nps.score, 'Reclamação');
+  const priority = priorityForNpsFeedback(nps.score, 'ReclamaÃ§Ã£o');
   const dueAt = calculateDueAt(priority);
   const resolutionDueAt = calculateResolutionDueAt();
   const description = buildNpsComplaintDescription(nps);
@@ -2448,7 +2827,7 @@ async function convertNpsToComplaint(npsId, user) {
   const [result] = await pool.query(
     `INSERT INTO complaints
      (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, resolution_due_at, created_origin)
-     VALUES (?, ?, ?, 'NPS', 'Reclamação NPS', ?, 'Pesquisa de satisfação', 'aberta', ?, ?, ?, 'Externo')`,
+     VALUES (?, ?, ?, 'NPS', 'ReclamaÃ§Ã£o NPS', ?, 'Pesquisa de satisfaÃ§Ã£o', 'aberta', ?, ?, ?, 'Externo')`,
     [
       nps.clinic_id || null,
       nps.patient_name || 'Paciente NPS',
@@ -2479,12 +2858,12 @@ async function convertNpsToComplaint(npsId, user) {
     'UPDATE nps_responses SET converted_complaint_id = ?, converted_at = NOW(), converted_by = ? WHERE id = ?',
     [result.insertId, getActorName(user), npsId]
   );
-  await insertComplaintLog(result.insertId, 'nps_reclassified', `Pesquisa NPS ${npsId} reclassificada como reclamação para tratativa.`, user);
-  await insertComplaintLog(result.insertId, 'assigned_to_coordinator', `Protocolo vinculado ao responsável ${coordinatorLabel}.`, {
+  await insertComplaintLog(result.insertId, 'nps_reclassified', `Pesquisa NPS ${npsId} reclassificada como reclamaÃ§Ã£o para tratativa.`, user);
+  await insertComplaintLog(result.insertId, 'assigned_to_coordinator', `Protocolo vinculado ao responsÃ¡vel ${coordinatorLabel}.`, {
     name: 'Sistema GRC',
     role: 'sistema'
   });
-  await insertNpsLog(npsId, 'migrado_para_reclamacao', `Detrator migrado para reclamação ${protocol}.`, user);
+  await insertNpsLog(npsId, 'migrado_para_reclamacao', `Detrator migrado para reclamaÃ§Ã£o ${protocol}.`, user);
   await notifyComplaintCreated(result.insertId, protocol);
 
   return {
@@ -2498,7 +2877,7 @@ async function saveNpsTreatment(npsId, user, payload = {}, options = {}) {
   const [rows] = await pool.query('SELECT * FROM nps_responses WHERE id = ?', [npsId]);
 
   if (!rows.length) {
-    const error = new Error('Pesquisa NPS não encontrada.');
+    const error = new Error('Pesquisa NPS nÃ£o encontrada.');
     error.statusCode = 404;
     throw error;
   }
@@ -2507,7 +2886,7 @@ async function saveNpsTreatment(npsId, user, payload = {}, options = {}) {
   const profile = nps.nps_profile || inferNpsProfile(nps.score);
 
   if (profile !== 'detrator') {
-    const error = new Error('A tratativa de NPS está disponível para clientes detratores.');
+    const error = new Error('A tratativa de NPS estÃ¡ disponÃ­vel para clientes detratores.');
     error.statusCode = 409;
     throw error;
   }
@@ -2561,7 +2940,7 @@ function authenticate(req, res, next) {
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
 
   if (!token) {
-    return res.status(401).json({ error: 'Token não informado' });
+    return res.status(401).json({ error: 'Token nÃ£o informado' });
   }
 
   try {
@@ -2569,7 +2948,7 @@ function authenticate(req, res, next) {
     return next();
 
   } catch (error) {
-    return res.status(401).json({ error: 'Token inválido' });
+    return res.status(401).json({ error: 'Token invÃ¡lido' });
   }
 }
 
@@ -2585,7 +2964,7 @@ function optionalAuthenticate(req, res, next) {
     req.user = jwt.verify(token, SECRET);
     return next();
   } catch (error) {
-    return res.status(401).json({ error: 'Sessão inválida. Faça login novamente.' });
+    return res.status(401).json({ error: 'SessÃ£o invÃ¡lida. FaÃ§a login novamente.' });
   }
 }
 
@@ -2609,7 +2988,89 @@ function requireMasterAdmin(req, res, next) {
 // TESTE
 // ============================================
 app.get('/', (req, res) => {
-  res.send('API funcionando 🚀');
+  res.send('API funcionando ðŸš€');
+});
+
+app.post('/api/test-whatsapp', authenticate, requireAdmin, async (req, res) => {
+  try {
+    const phone = normalizeWhatsAppPhone(req.body?.phone);
+    const message = String(req.body?.message || '').trim();
+
+    if (!phone || !message) {
+      return res.status(400).json({ error: 'Informe telefone em padrão E.164 e uma mensagem.' });
+    }
+
+    const result = await sendWhatsappNotification({
+      event: 'manual_test',
+      to: phone,
+      message,
+      userId: req.user?.id
+    });
+
+    return res.json({
+      success: Boolean(result?.success),
+      providerMessageId: result?.providerMessageId || null,
+      error: result?.success ? null : result?.error || null
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ success: false, error: 'Erro ao enviar WhatsApp de teste.' });
+  }
+});
+
+app.get('/webhook/whatsapp', (req, res) => {
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if (mode === 'subscribe' && token === process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN) {
+    return res.status(200).send(challenge);
+  }
+
+  return res.status(403).send('Webhook do WhatsApp não autorizado.');
+});
+
+app.post('/webhook/whatsapp', async (req, res) => {
+  try {
+    const statuses = Array.isArray(req.body?.entry)
+      ? req.body.entry.flatMap((entry) => (
+        Array.isArray(entry?.changes)
+          ? entry.changes.flatMap((change) => change?.value?.statuses || [])
+          : []
+      ))
+      : [];
+    const incomingMessages = Array.isArray(req.body?.entry)
+      ? req.body.entry.flatMap((entry) => (
+        Array.isArray(entry?.changes)
+          ? entry.changes.flatMap((change) => change?.value?.messages || [])
+          : []
+      ))
+      : [];
+
+    await Promise.all(statuses.map((statusPayload) => (
+      updateWhatsAppLogByProviderMessageId(statusPayload?.id, statusPayload?.status, statusPayload)
+    )));
+
+    await Promise.all(incomingMessages.map((messagePayload) => (
+      createWhatsAppLog({
+        eventKey: 'incoming_message',
+        recipientPhone: messagePayload?.from || null,
+        messageBody: messagePayload?.text?.body || null,
+        relatedEntityType: 'incoming_whatsapp',
+        relatedEntityId: null,
+        status: 'received'
+      })
+    )));
+
+    return res.status(200).json({
+      success: true,
+      processedStatuses: statuses.length,
+      processedMessages: incomingMessages.length
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ success: false, error: 'Webhook do WhatsApp inválido.' });
+  }
 });
 
 // ============================================
@@ -2625,7 +3086,7 @@ app.get('/clinics', authenticate, async (req, res) => {
     const rows = await getClinicsForUser(req.user);
 
     if (!rows.length) {
-      console.warn('[GET /clinics] Nenhuma clínica encontrada.', {
+      console.warn('[GET /clinics] Nenhuma clÃ­nica encontrada.', {
         userId: req.user?.id,
         email: req.user?.email,
         role: req.user?.role
@@ -2634,8 +3095,8 @@ app.get('/clinics', authenticate, async (req, res) => {
 
     return res.status(200).json(rows);
   } catch (error) {
-    console.error('[GET /clinics] Erro ao buscar clínicas:', error);
-    return res.status(500).json({ error: 'Erro ao buscar clínicas' });
+    console.error('[GET /clinics] Erro ao buscar clÃ­nicas:', error);
+    return res.status(500).json({ error: 'Erro ao buscar clÃ­nicas' });
   }
 });
 
@@ -2662,8 +3123,8 @@ app.get('/public/clinics', async (req, res) => {
 
     res.json(rows);
   } catch (error) {
-    console.error('[GET /public/clinics] Erro ao buscar clínicas públicas:', error);
-    res.status(500).json({ error: 'Erro ao buscar clínicas públicas.' });
+    console.error('[GET /public/clinics] Erro ao buscar clÃ­nicas pÃºblicas:', error);
+    res.status(500).json({ error: 'Erro ao buscar clÃ­nicas pÃºblicas.' });
   }
 });
 
@@ -2700,12 +3161,12 @@ app.post('/registration-requests', async (req, res) => {
 
     if (!isStrongPassword(password)) {
       return res.status(400).json({
-        error: 'A senha deve ter no mínimo 8 caracteres, letra maiúscula, letra minúscula, número e caractere especial.'
+        error: 'A senha deve ter no mÃ­nimo 8 caracteres, letra maiÃºscula, letra minÃºscula, nÃºmero e caractere especial.'
       });
     }
 
     if (!accessProfiles[role]) {
-      return res.status(400).json({ error: 'Perfil de acesso inválido.' });
+      return res.status(400).json({ error: 'Perfil de acesso invÃ¡lido.' });
     }
 
     const normalizedEmail = String(email).trim().toLowerCase();
@@ -2713,7 +3174,7 @@ app.post('/registration-requests', async (req, res) => {
     const normalizedWhatsapp = normalizeBrazilPhone(whatsapp);
 
     if (!isCompleteBrazilPhone(normalizedPhone) || !isCompleteBrazilPhone(normalizedWhatsapp)) {
-      return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.' });
+      return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÃšMERO.' });
     }
 
     const [users] = await pool.query('SELECT id FROM users WHERE email = ?', [normalizedEmail]);
@@ -2723,7 +3184,7 @@ app.post('/registration-requests', async (req, res) => {
     );
 
     if (users.length || pending.length) {
-      return res.status(409).json({ error: 'Já existe usuário ou cadastro pendente para este e-mail.' });
+      return res.status(409).json({ error: 'JÃ¡ existe usuÃ¡rio ou cadastro pendente para este e-mail.' });
     }
 
     const token = crypto.randomBytes(32).toString('hex');
@@ -2750,29 +3211,29 @@ app.post('/registration-requests', async (req, res) => {
 
     await sendEmail(
       approvalEmail,
-      'Novo cadastro aguardando aprovação - Sistema GRC',
+      'Novo cadastro aguardando aprovaÃ§Ã£o - Sistema GRC',
       `
-        <h2>Novo cadastro aguardando aprovação</h2>
+        <h2>Novo cadastro aguardando aprovaÃ§Ã£o</h2>
         <p><strong>Nome:</strong> ${name}</p>
         <p><strong>E-mail:</strong> ${normalizedEmail}</p>
         <p><strong>Cargo:</strong> ${position}</p>
         <p><strong>Perfil solicitado:</strong> ${accessProfiles[role]}</p>
         <p><strong>Telefone:</strong> ${normalizedPhone}</p>
         <p><strong>WhatsApp:</strong> ${normalizedWhatsapp}</p>
-        <p><strong>Área/unidade:</strong> ${department || 'Não informado'}</p>
+        <p><strong>Ãrea/unidade:</strong> ${department || 'NÃ£o informado'}</p>
         <p><a href="${approvalLink}">Aprovar cadastro</a></p>
       `
     );
     await createNotificationForAdmins(
       'registration_request',
-      'Novo cadastro aguardando aprovação',
+      'Novo cadastro aguardando aprovaÃ§Ã£o',
       `${name} solicitou acesso como ${accessProfiles[role]}.`,
       '/home',
       { requestEmail: normalizedEmail }
     );
 
     res.status(201).json({
-      message: 'Cadastro enviado para aprovação. O administrador será notificado por e-mail.'
+      message: 'Cadastro enviado para aprovaÃ§Ã£o. O administrador serÃ¡ notificado por e-mail.'
     });
   } catch (error) {
     console.error(error);
@@ -2795,8 +3256,8 @@ app.get('/registration-requests/:token/approve', async (req, res) => {
     const request = rows[0];
     await pool.query(
       `INSERT INTO users
-       (name, email, password, role, position, phone, whatsapp, department, permissions, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+       (name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
        ON DUPLICATE KEY UPDATE
          name = VALUES(name),
          role = VALUES(role),
@@ -2805,6 +3266,7 @@ app.get('/registration-requests/:token/approve', async (req, res) => {
          whatsapp = VALUES(whatsapp),
          department = VALUES(department),
          permissions = VALUES(permissions),
+         must_change_password = 0,
          active = 1,
          deleted_at = NULL,
          deleted_by = NULL`,
@@ -2825,17 +3287,22 @@ app.get('/registration-requests/:token/approve', async (req, res) => {
       ['aprovado', request.id]
     );
 
-    await sendEmail(
-      request.email,
-      'Cadastro aprovado - Sistema GRC',
-      `<p>Seu cadastro foi aprovado.</p><p>Acesse o sistema: <a href="${frontendUrl}">${frontendUrl}</a></p>`
+    const [[approvedUser]] = await pool.query(
+      'SELECT id, name, email, phone, whatsapp FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1',
+      [request.email]
     );
+    const notificationResult = approvedUser
+      ? await sendRegistrationApprovedNotifications(approvedUser)
+      : null;
 
     res.send(`
       <html>
         <body style="font-family: Arial, sans-serif; padding: 40px; color: #102033;">
           <h1>Cadastro aprovado</h1>
           <p>O acesso de <strong>${request.name}</strong> foi liberado.</p>
+          ${notificationResult && (!notificationResult.emailSent || !notificationResult.whatsappSent)
+            ? '<p style="color:#8a6d3b;">O acesso foi aprovado, mas houve falha em uma das notificações automáticas.</p>'
+            : ''}
           <a href="${frontendUrl}">Abrir Sistema GRC</a>
         </body>
       </html>
@@ -2845,7 +3312,6 @@ app.get('/registration-requests/:token/approve', async (req, res) => {
     res.status(500).send('<h1>Erro ao aprovar cadastro.</h1>');
   }
 });
-
 app.get('/admin/options', authenticate, requireAdmin, (req, res) => {
   res.json({
     accessProfiles: {
@@ -2887,8 +3353,8 @@ app.post('/admin/registration-requests/:id/approve', authenticate, requireMaster
     const request = rows[0];
     await pool.query(
       `INSERT INTO users
-       (name, email, password, role, position, phone, whatsapp, department, permissions, active)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+       (name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
        ON DUPLICATE KEY UPDATE
          name = VALUES(name),
          role = VALUES(role),
@@ -2897,6 +3363,7 @@ app.post('/admin/registration-requests/:id/approve', authenticate, requireMaster
          whatsapp = VALUES(whatsapp),
          department = VALUES(department),
          permissions = VALUES(permissions),
+         must_change_password = 0,
          active = 1,
          deleted_at = NULL,
          deleted_by = NULL`,
@@ -2916,11 +3383,13 @@ app.post('/admin/registration-requests/:id/approve', authenticate, requireMaster
       'UPDATE registration_requests SET status = ?, approved_at = NOW() WHERE id = ?',
       ['aprovado', request.id]
     );
-    await sendEmail(
-      request.email,
-      'Cadastro aprovado - Sistema GRC',
-      `<p>Seu cadastro foi aprovado.</p><p>Acesse o sistema: <a href="${frontendUrl}">${frontendUrl}</a></p>`
+    const [[approvedUser]] = await pool.query(
+      'SELECT id, name, email, phone, whatsapp FROM users WHERE LOWER(email) = LOWER(?) LIMIT 1',
+      [request.email]
     );
+    const notificationResult = approvedUser
+      ? await sendRegistrationApprovedNotifications(approvedUser)
+      : null;
     await createNotificationForAdmins(
       'registration_approved',
       'Cadastro aprovado',
@@ -2929,13 +3398,15 @@ app.post('/admin/registration-requests/:id/approve', authenticate, requireMaster
       { requestId: request.id }
     );
 
-    res.json({ message: 'Cadastro aprovado com sucesso.' });
+    res.json({
+      message: 'Cadastro aprovado com sucesso.',
+      notifications: notificationResult
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao aprovar cadastro.' });
   }
 });
-
 app.post('/admin/registration-requests/:id/reject', authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -2944,7 +3415,7 @@ app.post('/admin/registration-requests/:id/reject', authenticate, requireMasterA
     );
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'Cadastro não encontrado ou já analisado.' });
+      return res.status(404).json({ error: 'Cadastro nÃ£o encontrado ou jÃ¡ analisado.' });
     }
 
     const request = rows[0];
@@ -2954,8 +3425,8 @@ app.post('/admin/registration-requests/:id/reject', authenticate, requireMasterA
     );
     await sendEmail(
       request.email,
-      'Cadastro não aprovado - Sistema GRC',
-      '<p>Seu cadastro foi analisado e não foi aprovado neste momento.</p>'
+      'Cadastro nÃ£o aprovado - Sistema GRC',
+      '<p>Seu cadastro foi analisado e nÃ£o foi aprovado neste momento.</p>'
     );
     await createNotificationForAdmins(
       'registration_rejected',
@@ -3004,7 +3475,7 @@ app.get('/admin/users', authenticate, requireAdmin, async (req, res) => {
     }));
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao buscar usuários.' });
+    res.status(500).json({ error: 'Erro ao buscar usuÃ¡rios.' });
   }
 });
 
@@ -3056,11 +3527,12 @@ app.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
     const allowedPermissions = Array.isArray(permissions)
       ? permissions.filter((permission) => screenPermissions[permission])
       : defaultPermissionsForRole(role);
-    const passwordHash = await bcrypt.hash('123456789', 10);
+    const temporaryPassword = generateTemporaryPassword();
+    const passwordHash = await bcrypt.hash(temporaryPassword, 10);
     const [result] = await pool.query(
       `INSERT INTO users
        (name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
       [
         String(name).trim(),
         normalizedEmail,
@@ -3070,7 +3542,8 @@ app.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
         normalizedPhone,
         normalizedWhatsapp,
         String(department || '').trim() || null,
-        JSON.stringify(allowedPermissions)
+        JSON.stringify(allowedPermissions),
+        requirePasswordChangeOnFirstLogin ? 1 : 0
       ]
     );
 
@@ -3083,47 +3556,34 @@ app.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
       )));
     }
 
-    try {
-      await sendEmail(
-        normalizedEmail,
-        'Primeiro acesso liberado - Sistema GRC',
-        `
-          <h2>Seu acesso foi criado no Sistema GRC</h2>
-          <p><strong>Link do sistema:</strong> <a href="${frontendUrl}">${frontendUrl}</a></p>
-          <p><strong>E-mail de acesso:</strong> ${normalizedEmail}</p>
-          <p><strong>Senha temporária:</strong> 123456789</p>
-          <p>Por segurança, a alteração da senha será obrigatória no primeiro acesso.</p>
-        `
-      );
-    } catch (error) {
-      console.warn('Nao foi possivel enviar o e-mail de primeiro acesso:', error.message);
-    }
-
-    await createNotification(
-      result.insertId,
-      'password_reset',
-      'Primeiro acesso liberado',
-      'Seu acesso foi criado. Use a senha temporária 123456789 e altere a senha no primeiro login.',
-      '/perfil',
-      { temporaryPassword: true, firstAccess: true }
+    const notificationResult = await sendUserAccessNotifications(
+      {
+        id: result.insertId,
+        name: String(name).trim(),
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        whatsapp: normalizedWhatsapp,
+        role
+      },
+      temporaryPassword
     );
 
     res.status(201).json({
       message: 'Usuário criado com sucesso. O link de acesso foi enviado com a senha temporária.',
-      id: result.insertId
+      id: result.insertId,
+      notifications: notificationResult
     });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao criar usuário.' });
   }
 });
-
 app.patch('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'Usuário não encontrado.' });
+      return res.status(404).json({ error: 'UsuÃ¡rio nÃ£o encontrado.' });
     }
 
     const current = rows[0];
@@ -3131,15 +3591,15 @@ app.patch('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
     const currentEmail = String(current.email || '').toLowerCase();
 
     if (requestedRole === 'master_admin' && currentEmail !== masterAdminEmail) {
-      return res.status(403).json({ error: 'Administrador Master é exclusivo para henrique.martins@grcconsultoria.net.br.' });
+      return res.status(403).json({ error: 'Administrador Master Ã© exclusivo para henrique.martins@grcconsultoria.net.br.' });
     }
 
     if (currentEmail === masterAdminEmail && requestedRole !== 'master_admin') {
-      return res.status(403).json({ error: 'O usuário master não pode ser rebaixado para outro perfil.' });
+      return res.status(403).json({ error: 'O usuÃ¡rio master nÃ£o pode ser rebaixado para outro perfil.' });
     }
 
     if (currentEmail === masterAdminEmail && req.body.active === false) {
-      return res.status(403).json({ error: 'O Administrador Master não pode ser desabilitado.' });
+      return res.status(403).json({ error: 'O Administrador Master nÃ£o pode ser desabilitado.' });
     }
 
     if ((current.role === 'master_admin' || requestedRole === 'master_admin') && !isMasterAdminUser(req.user)) {
@@ -3150,7 +3610,7 @@ app.patch('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
     const normalizedWhatsapp = req.body.whatsapp ? normalizeBrazilPhone(req.body.whatsapp) : current.whatsapp;
 
     if (!isCompleteBrazilPhone(normalizedPhone) || !isCompleteBrazilPhone(normalizedWhatsapp)) {
-      return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.' });
+      return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÃšMERO.' });
     }
 
     const nextRole = currentEmail === masterAdminEmail ? 'master_admin' : requestedRole;
@@ -3192,16 +3652,16 @@ app.patch('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
       )));
     }
 
-    res.json({ message: 'Usuário atualizado com sucesso.' });
+    res.json({ message: 'UsuÃ¡rio atualizado com sucesso.' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao atualizar usuário.' });
+    res.status(500).json({ error: 'Erro ao atualizar usuÃ¡rio.' });
   }
 });
 
 app.post('/admin/users/:id/reset-password', authenticate, requireAdmin, async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT id, role, email, name FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
+    const [rows] = await pool.query('SELECT id, role, email, name, phone, whatsapp FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
 
     if (!rows.length) {
       return res.status(404).json({ error: 'Usuário não encontrado.' });
@@ -3217,56 +3677,48 @@ app.post('/admin/users/:id/reset-password', authenticate, requireAdmin, async (r
       return res.status(403).json({ error: 'Apenas o Administrador Master pode reiniciar a senha deste usuário.' });
     }
 
-    const passwordHash = await bcrypt.hash('123456789', 10);
-    await pool.query('UPDATE users SET password = ?, must_change_password = 1 WHERE id = ?', [passwordHash, user.id]);
+    const temporaryPassword = generateTemporaryPassword();
+    const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+    await pool.query(
+      'UPDATE users SET password = ?, must_change_password = ? WHERE id = ?',
+      [passwordHash, requirePasswordChangeOnFirstLogin ? 1 : 0, user.id]
+    );
     await createNotification(
       user.id,
       'password_reset',
       'Senha reiniciada',
-      'Sua senha foi reiniciada pelo administrador. Use a senha temporária 123456789 e altere no primeiro acesso.',
+      'Sua senha foi reiniciada pelo administrador. Use a senha temporária recebida e altere no primeiro acesso.',
       '/perfil',
       { temporaryPassword: true }
     );
 
-    try {
-      await sendEmail(
-        user.email,
-        'Senha reiniciada - Sistema GRC',
-        `
-          <p>Olá, ${user.name || 'colaborador'}.</p>
-          <p>Sua senha foi reiniciada pelo administrador.</p>
-          <p><strong>Senha temporária:</strong> 123456789</p>
-          <p>Na próxima entrada, a alteração da senha será obrigatória.</p>
-          <p><a href="${frontendUrl}">Acessar o sistema</a></p>
-        `
-      );
-    } catch (error) {
-      console.warn('Nao foi possivel enviar e-mail de reset de senha:', error.message);
-    }
+    const notificationResult = await sendPasswordResetNotifications(user, temporaryPassword);
 
-    res.json({ message: 'Senha reiniciada para 123456789.' });
+    res.json({
+      message: 'Senha reiniciada com sucesso.',
+      notifications: notificationResult
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao reiniciar senha.' });
   }
 });
-
 app.delete('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT id, role, email FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'Usuário não encontrado.' });
+      return res.status(404).json({ error: 'UsuÃ¡rio nÃ£o encontrado.' });
     }
 
     const user = rows[0];
 
     if (String(user.email).toLowerCase() === masterAdminEmail) {
-      return res.status(403).json({ error: 'O Administrador Master não pode ser excluído ou desabilitado.' });
+      return res.status(403).json({ error: 'O Administrador Master nÃ£o pode ser excluÃ­do ou desabilitado.' });
     }
 
     if ((user.role === 'master_admin' || String(user.email).toLowerCase() === masterAdminEmail) && !isMasterAdminUser(req.user)) {
-      return res.status(403).json({ error: 'Apenas o Administrador Master pode excluir esse usuário.' });
+      return res.status(403).json({ error: 'Apenas o Administrador Master pode excluir esse usuÃ¡rio.' });
     }
 
     await pool.query(
@@ -3275,10 +3727,10 @@ app.delete('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
     );
     await pool.query('DELETE FROM user_clinics WHERE user_id = ?', [user.id]);
 
-    res.json({ message: 'Usuário excluído com lastro de auditoria.' });
+    res.json({ message: 'UsuÃ¡rio excluÃ­do com lastro de auditoria.' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao excluir usuário.' });
+    res.status(500).json({ error: 'Erro ao excluir usuÃ¡rio.' });
   }
 });
 
@@ -3315,7 +3767,7 @@ app.get('/notifications', authenticate, async (req, res) => {
     res.json(rows);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao buscar notificações.' });
+    res.status(500).json({ error: 'Erro ao buscar notificaÃ§Ãµes.' });
   }
 });
 
@@ -3327,10 +3779,10 @@ app.post('/notifications/:id/read', authenticate, async (req, res) => {
         WHERE id = ? AND (user_id = ? OR ? = 1)`,
       [req.params.id, req.user.id, isAdminUser(req.user) ? 1 : 0]
     );
-    res.json({ message: 'Notificação marcada como lida.' });
+    res.json({ message: 'NotificaÃ§Ã£o marcada como lida.' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao atualizar notificação.' });
+    res.status(500).json({ error: 'Erro ao atualizar notificaÃ§Ã£o.' });
   }
 });
 
@@ -3345,7 +3797,7 @@ app.delete('/notifications/:id', authenticate, async (req, res) => {
     );
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'Notificação não encontrada.' });
+      return res.status(404).json({ error: 'NotificaÃ§Ã£o nÃ£o encontrada.' });
     }
 
     await pool.query(
@@ -3355,10 +3807,10 @@ app.delete('/notifications/:id', authenticate, async (req, res) => {
       [req.params.id, req.user.id]
     );
 
-    res.json({ message: 'Notificação removida do histórico.' });
+    res.json({ message: 'NotificaÃ§Ã£o removida do histÃ³rico.' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao excluir notificação.' });
+    res.status(500).json({ error: 'Erro ao excluir notificaÃ§Ã£o.' });
   }
 });
 
@@ -3367,13 +3819,13 @@ app.delete('/patient-interactions/:id', authenticate, async (req, res) => {
     const [rows] = await pool.query('SELECT id, status, protocol, created_at FROM patient_interactions WHERE id = ?', [req.params.id]);
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'Agendamento não encontrado.' });
+      return res.status(404).json({ error: 'Agendamento nÃ£o encontrado.' });
     }
 
     const record = rows[0];
 
     if (record.status === 'Cancelado') {
-      return res.json({ message: 'Agendamento já está na aba de cancelados.' });
+      return res.json({ message: 'Agendamento jÃ¡ estÃ¡ na aba de cancelados.' });
     }
 
     await pool.query(
@@ -3417,13 +3869,13 @@ app.post('/login', async (req, res) => {
     );
 
     if (rows.length === 0) {
-      return res.status(401).json({ message: 'Usuário não encontrado' });
+      return res.status(401).json({ message: 'UsuÃ¡rio nÃ£o encontrado' });
     }
 
     const user = rows[0];
 
     if (!user.active || user.deleted_at) {
-      return res.status(403).json({ message: 'Usuário desabilitado. Procure o administrador.' });
+      return res.status(403).json({ message: 'UsuÃ¡rio desabilitado. Procure o administrador.' });
     }
 
     let validPassword = false;
@@ -3438,7 +3890,7 @@ app.post('/login', async (req, res) => {
     }
 
     if (!validPassword) {
-      return res.status(401).json({ message: 'Senha inválida' });
+      return res.status(401).json({ message: 'Senha invÃ¡lida' });
     }
 
     const { password: _password, ...safeUser } = user;
@@ -3479,7 +3931,7 @@ app.patch('/profile', authenticate, async (req, res) => {
     const [rows] = await pool.query('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [req.user.id]);
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'Usuário não encontrado.' });
+      return res.status(404).json({ error: 'UsuÃ¡rio nÃ£o encontrado.' });
     }
 
     const current = rows[0];
@@ -3487,14 +3939,14 @@ app.patch('/profile', authenticate, async (req, res) => {
     const requestedEmail = String(req.body.email || current.email).trim().toLowerCase();
 
     if (currentEmail === masterAdminEmail && requestedEmail !== masterAdminEmail) {
-      return res.status(403).json({ error: 'O e-mail do Administrador Master não pode ser alterado.' });
+      return res.status(403).json({ error: 'O e-mail do Administrador Master nÃ£o pode ser alterado.' });
     }
 
     if (requestedEmail !== currentEmail) {
       const [duplicates] = await pool.query('SELECT id FROM users WHERE email = ? AND id <> ? AND deleted_at IS NULL', [requestedEmail, current.id]);
 
       if (duplicates.length) {
-        return res.status(409).json({ error: 'Já existe outro usuário com este e-mail.' });
+        return res.status(409).json({ error: 'JÃ¡ existe outro usuÃ¡rio com este e-mail.' });
       }
     }
 
@@ -3502,7 +3954,7 @@ app.patch('/profile', authenticate, async (req, res) => {
     const normalizedWhatsapp = normalizeBrazilPhone(req.body.whatsapp || current.whatsapp);
 
     if (!isCompleteBrazilPhone(normalizedPhone) || !isCompleteBrazilPhone(normalizedWhatsapp)) {
-      return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.' });
+      return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÃšMERO.' });
     }
 
     await pool.query(
@@ -3562,20 +4014,20 @@ app.post('/profile/change-password', authenticate, async (req, res) => {
     }
 
     if (!isStrongPassword(new_password)) {
-      return res.status(400).json({ error: 'A nova senha deve ter no mínimo 8 caracteres, letra maiúscula, letra minúscula, número e caractere especial.' });
+      return res.status(400).json({ error: 'A nova senha deve ter no mÃ­nimo 8 caracteres, letra maiÃºscula, letra minÃºscula, nÃºmero e caractere especial.' });
     }
 
     const [rows] = await pool.query('SELECT id, password, email, name FROM users WHERE id = ? AND deleted_at IS NULL', [req.user.id]);
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'Usuário não encontrado.' });
+      return res.status(404).json({ error: 'UsuÃ¡rio nÃ£o encontrado.' });
     }
 
     const user = rows[0];
     const validPassword = user.password === current_password || await bcrypt.compare(current_password, user.password);
 
     if (!validPassword) {
-      return res.status(401).json({ error: 'Senha atual inválida.' });
+      return res.status(401).json({ error: 'Senha atual invÃ¡lida.' });
     }
 
     const passwordHash = await bcrypt.hash(new_password, 10);
@@ -3585,10 +4037,10 @@ app.post('/profile/change-password', authenticate, async (req, res) => {
         user.email,
         'Senha alterada - Sistema GRC',
         `
-          <p>Olá, ${user.name || 'colaborador'}.</p>
-          <p>Registramos uma alteração de senha no seu acesso ao Sistema GRC.</p>
-          <p>Se foi você quem realizou a mudança, nenhuma ação adicional é necessária.</p>
-          <p>Se não reconhece esta alteração, procure imediatamente o administrador.</p>
+          <p>OlÃ¡, ${user.name || 'colaborador'}.</p>
+          <p>Registramos uma alteraÃ§Ã£o de senha no seu acesso ao Sistema GRC.</p>
+          <p>Se foi vocÃª quem realizou a mudanÃ§a, nenhuma aÃ§Ã£o adicional Ã© necessÃ¡ria.</p>
+          <p>Se nÃ£o reconhece esta alteraÃ§Ã£o, procure imediatamente o administrador.</p>
         `
       );
     } catch (error) {
@@ -3663,7 +4115,7 @@ app.post('/nps/public', async (req, res) => {
     }
 
     if (!clinic_id || !patient_name || !isCompleteBrazilPhone(patient_phone)) {
-      return res.status(400).json({ error: 'Informe clínica, nome e telefone completo no formato +55DDDNÚMERO.' });
+      return res.status(400).json({ error: 'Informe clÃ­nica, nome e telefone completo no formato +55DDDNÃšMERO.' });
     }
 
     const normalizedPatientPhone = normalizeBrazilPhone(patient_phone);
@@ -3683,7 +4135,7 @@ app.post('/nps/public', async (req, res) => {
 
     if (sameDayPhoneRows.length) {
       return res.status(409).json({
-        error: 'Já existe uma avaliação registrada hoje para este telefone.'
+        error: 'JÃ¡ existe uma avaliaÃ§Ã£o registrada hoje para este telefone.'
       });
     }
 
@@ -3700,17 +4152,17 @@ app.post('/nps/public', async (req, res) => {
 
       if (sameDayIpRows.length) {
         return res.status(409).json({
-          error: 'Já recebemos uma avaliação deste dispositivo hoje. Tente novamente amanhã.'
+          error: 'JÃ¡ recebemos uma avaliaÃ§Ã£o deste dispositivo hoje. Tente novamente amanhÃ£.'
         });
       }
     }
 
     if (npsProfile === 'promotor' && recommend_yes && (!referral_name || !isCompleteBrazilPhone(referral_phone))) {
-      return res.status(400).json({ error: 'Informe nome e telefone completo da indicação.' });
+      return res.status(400).json({ error: 'Informe nome e telefone completo da indicaÃ§Ã£o.' });
     }
 
     if (npsProfile === 'detrator' && !String(detractor_feedback || '').trim()) {
-      return res.status(400).json({ error: 'Informe a reclamação detalhada para concluir a pesquisa.' });
+      return res.status(400).json({ error: 'Informe a reclamaÃ§Ã£o detalhada para concluir a pesquisa.' });
     }
 
     const normalizedReasons = Array.isArray(detractor_reasons)
@@ -3737,7 +4189,7 @@ app.post('/nps/public', async (req, res) => {
       'SELECT name FROM clinics WHERE id = ? LIMIT 1',
       [clinic_id]
     );
-    const clinicName = clinicRows[0]?.name || 'Unidade não informada';
+    const clinicName = clinicRows[0]?.name || 'Unidade nÃ£o informada';
 
     const [npsInsert] = await pool.query(
       `INSERT INTO nps_responses
@@ -3771,7 +4223,7 @@ app.post('/nps/public', async (req, res) => {
       const [result] = await pool.query(
         `INSERT INTO complaints
          (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, resolution_due_at, created_origin)
-         VALUES (?, ?, ?, 'NPS', ?, ?, 'Pesquisa de satisfaÃ§Ã£o', 'aberta', ?, ?, ?, 'Externo')`,
+         VALUES (?, ?, ?, 'NPS', ?, ?, 'Pesquisa de satisfaÃƒÂ§ÃƒÂ£o', 'aberta', ?, ?, ?, 'Externo')`,
         [
           clinic_id || null,
           patient_name || 'Paciente NPS',
@@ -3787,10 +4239,10 @@ app.post('/nps/public', async (req, res) => {
       await pool.query('UPDATE complaints SET protocol = ? WHERE id = ?', [protocol, result.insertId]);
       await pool.query(
         'UPDATE nps_responses SET converted_complaint_id = ?, converted_at = NOW(), converted_by = ? WHERE id = ?',
-        [result.insertId, 'Link público NPS', npsInsert.insertId]
+        [result.insertId, 'Link pÃºblico NPS', npsInsert.insertId]
       );
-      await insertComplaintLog(result.insertId, 'created', `Protocolo ${protocol} criado pelo link público de NPS.`, {
-        name: 'Link público NPS',
+      await insertComplaintLog(result.insertId, 'created', `Protocolo ${protocol} criado pelo link pÃºblico de NPS.`, {
+        name: 'Link pÃºblico NPS',
         role: 'externo'
       });
       await notifyComplaintCreated(result.insertId, protocol);
@@ -3798,8 +4250,8 @@ app.post('/nps/public', async (req, res) => {
 
     const protocol = formatNpsProtocol(npsInsert.insertId);
     await pool.query('UPDATE nps_responses SET nps_protocol = ? WHERE id = ?', [protocol, npsInsert.insertId]);
-    await insertNpsLog(npsInsert.insertId, 'created', `Pesquisa de satisfação registrada no protocolo ${protocol}.`, {
-      name: 'Link público NPS',
+    await insertNpsLog(npsInsert.insertId, 'created', `Pesquisa de satisfaÃ§Ã£o registrada no protocolo ${protocol}.`, {
+      name: 'Link pÃºblico NPS',
       role: 'externo'
     });
 
@@ -3817,7 +4269,7 @@ app.post('/nps/public', async (req, res) => {
         'agenda_compartilhada',
         `Paciente autorizou compartilhar o contato com a agenda. Protocolo vinculado: ${linkedPatientRecord.protocol}.`,
         {
-          name: 'Link público NPS',
+          name: 'Link pÃºblico NPS',
           role: 'externo'
         }
       );
@@ -3902,14 +4354,14 @@ app.get('/nps/responses', authenticate, async (req, res) => {
 app.get('/nps/duplicate-report', authenticate, async (req, res) => {
   try {
     if (!isAdminUser(req.user) && req.user?.role !== 'supervisor_crc') {
-      return res.status(403).json({ error: 'Apenas Supervisor do CRC, Administrador e Administrador Master podem visualizar este relatório.' });
+      return res.status(403).json({ error: 'Apenas Supervisor do CRC, Administrador e Administrador Master podem visualizar este relatÃ³rio.' });
     }
 
     const rows = await getMonthlyDuplicateNpsPhones(req.query?.month);
     res.json(rows);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao gerar o relatório de telefones duplicados do NPS.' });
+    res.status(500).json({ error: 'Erro ao gerar o relatÃ³rio de telefones duplicados do NPS.' });
   }
 });
 
@@ -3968,7 +4420,7 @@ app.post('/nps/bulk-dispatch', authenticate, upload.single('file'), async (req, 
       return res.status(400).json({ error: 'Nenhum telefone valido foi encontrado na planilha.' });
     }
 
-    const baseMessage = 'Sua opinião é fundamental para melhorarmos nossos processos. Poderia dedicar 1 minuto para avaliar sua experiência conosco?';
+    const baseMessage = 'Sua opiniÃ£o Ã© fundamental para melhorarmos nossos processos. Poderia dedicar 1 minuto para avaliar sua experiÃªncia conosco?';
 
     await Promise.all(validRecipients.map((recipient) => (
       sendWhatsappNotification({
@@ -4014,18 +4466,18 @@ app.post('/reports/coordinator-delays/dispatch', authenticate, async (req, res) 
 app.post('/reports/coordinator-weekly/dispatch', authenticate, async (req, res) => {
   try {
     if (!isAdminUser(req.user) && req.user?.role !== 'supervisor_crc') {
-      return res.status(403).json({ error: 'Acesso restrito para o disparo do relatório semanal por coordenador.' });
+      return res.status(403).json({ error: 'Acesso restrito para o disparo do relatÃ³rio semanal por coordenador.' });
     }
 
     const reports = await dispatchWeeklyCoordinatorReports();
     res.json({
-      message: 'Relatórios semanais por coordenador enviados com sucesso.',
+      message: 'RelatÃ³rios semanais por coordenador enviados com sucesso.',
       total: reports.length,
       reports
     });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao enviar o relatório semanal por coordenador.' });
+    res.status(500).json({ error: 'Erro ao enviar o relatÃ³rio semanal por coordenador.' });
   }
 });
 
@@ -4053,13 +4505,13 @@ app.post('/nps/responses/:id/convert-complaint', authenticate, async (req, res) 
     const result = await convertNpsToComplaint(req.params.id, req.user);
     res.status(result.alreadyConverted ? 200 : 201).json({
       message: result.alreadyConverted
-        ? 'Pesquisa NPS já estava vinculada a uma reclamação.'
-        : 'Detrator migrado para reclamação.',
+        ? 'Pesquisa NPS jÃ¡ estava vinculada a uma reclamaÃ§Ã£o.'
+        : 'Detrator migrado para reclamaÃ§Ã£o.',
       ...result
     });
   } catch (error) {
     console.error(error);
-    res.status(error.statusCode || 500).json({ error: error.message || 'Erro ao migrar NPS para reclamação.' });
+    res.status(error.statusCode || 500).json({ error: error.message || 'Erro ao migrar NPS para reclamaÃ§Ã£o.' });
   }
 });
 
@@ -4083,13 +4535,13 @@ app.delete('/nps/responses/:id', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Apenas o Administrador Master ou Supervisor do CRC pode excluir NPS.' });
     }
 
-    const reason = String(req.body?.reason || 'Exclusão administrativa').slice(0, 500);
+    const reason = String(req.body?.reason || 'ExclusÃ£o administrativa').slice(0, 500);
     await pool.query(
       'UPDATE nps_responses SET deleted_at = NOW(), deleted_by = ?, deletion_reason = ? WHERE id = ?',
       [getActorName(req.user), reason, req.params.id]
     );
-    await insertNpsLog(req.params.id, 'excluido', `NPS excluído por ${getActorName(req.user)}. Motivo: ${reason}`, req.user);
-    res.json({ message: 'NPS excluído com lastro de auditoria.' });
+    await insertNpsLog(req.params.id, 'excluido', `NPS excluÃ­do por ${getActorName(req.user)}. Motivo: ${reason}`, req.user);
+    res.json({ message: 'NPS excluÃ­do com lastro de auditoria.' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao excluir NPS.' });
@@ -4170,7 +4622,7 @@ app.get('/patient-interactions', authenticate, async (req, res) => {
     })));
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao buscar gestão do paciente.' });
+    res.status(500).json({ error: 'Erro ao buscar gestÃ£o do paciente.' });
   }
 });
 
@@ -4201,7 +4653,7 @@ app.post('/patient-interactions', authenticate, async (req, res) => {
     }
 
     if (Number.isNaN(scheduledDate.getTime())) {
-      return res.status(400).json({ error: 'Informe uma data válida.' });
+      return res.status(400).json({ error: 'Informe uma data vÃ¡lida.' });
     }
 
     const [result] = await pool.query(
@@ -4227,18 +4679,29 @@ app.post('/patient-interactions', authenticate, async (req, res) => {
     res.status(201).json({ message: 'Agendamento do paciente registrado.', id: result.insertId, protocol });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao salvar gestão do paciente.' });
+    res.status(500).json({ error: 'Erro ao salvar gestÃ£o do paciente.' });
   }
 });
 
 app.patch('/patient-interactions/:id', authenticate, async (req, res) => {
   try {
     const status = String(req.body.status || '').trim();
-    const action = String(req.body.action || status || 'Atualização').trim();
+    const action = String(req.body.action || status || 'AtualizaÃ§Ã£o').trim();
 
     if (!status) {
       return res.status(400).json({ error: 'Informe o novo status.' });
     }
+
+    const [rows] = await pool.query(
+      'SELECT id, protocol, patient_name, patient_phone, clinic_name, interaction_type, scheduled_at, no_show_alert_sent_at FROM patient_interactions WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Agendamento nÃ£o encontrado.' });
+    }
+
+    const currentRecord = rows[0];
 
     await pool.query(
       'UPDATE patient_interactions SET status = ?, cancelled_at = NULL, cancelled_by_name = NULL, cancelled_by_role = NULL WHERE id = ?',
@@ -4246,15 +4709,22 @@ app.patch('/patient-interactions/:id', authenticate, async (req, res) => {
     );
     await insertPatientInteractionLog(req.params.id, action, `Status atualizado para ${status}.`, req.user);
 
+    if (isNoShowStatus(status) && !currentRecord.no_show_alert_sent_at) {
+      await dispatchNoShowNotifications({
+        ...currentRecord,
+        status
+      }, req.user);
+    }
+
     res.json({ message: 'Agendamento atualizado.' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao atualizar gestão do paciente.' });
+    res.status(500).json({ error: 'Erro ao atualizar gestÃ£o do paciente.' });
   }
 });
 
 // ============================================
-// LISTAR RECLAMAÇÕES
+// LISTAR RECLAMAÃ‡Ã•ES
 // ============================================
 app.get('/complaints', authenticate, async (req, res) => {
   try {
@@ -4262,12 +4732,12 @@ app.get('/complaints', authenticate, async (req, res) => {
     res.json(rows);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao buscar reclamações' });
+    res.status(500).json({ error: 'Erro ao buscar reclamaÃ§Ãµes' });
   }
 });
 
 // ============================================
-// CRIAR RECLAMAÇÃO (COM UPLOAD)
+// CRIAR RECLAMAÃ‡ÃƒO (COM UPLOAD)
 // ============================================
 app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req, res) => {
   try {
@@ -4292,19 +4762,19 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
     const resolutionDueAt = calculateResolutionDueAt();
 
     if (!req.user && normalizedOrigin !== 'Marketing') {
-      return res.status(401).json({ error: 'Faça login para registrar protocolos internos.' });
+      return res.status(401).json({ error: 'FaÃ§a login para registrar protocolos internos.' });
     }
 
     if (!clinic_id || !patient_name || !channel || !complaint_type || !description) {
-      return res.status(400).json({ error: 'Preencha clínica, paciente, canal, classificação e descrição.' });
+      return res.status(400).json({ error: 'Preencha clÃ­nica, paciente, canal, classificaÃ§Ã£o e descriÃ§Ã£o.' });
     }
 
     if (!isCompleteBrazilPhone(patient_phone)) {
-      return res.status(400).json({ error: 'Informe o telefone completo no formato +55DDDNÚMERO.' });
+      return res.status(400).json({ error: 'Informe o telefone completo no formato +55DDDNÃšMERO.' });
     }
 
     if (hasFinancialValue && (!String(financial_description || '').trim() || Number(financial_amount || 0) <= 0)) {
-      return res.status(400).json({ error: 'Informe a descrição e o valor envolvido no registro financeiro.' });
+      return res.status(400).json({ error: 'Informe a descriÃ§Ã£o e o valor envolvido no registro financeiro.' });
     }
 
     const normalizedPatientPhone = normalizeBrazilPhone(patient_phone);
@@ -4354,10 +4824,10 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
       [coordinatorLabel, normalizedOrigin === 'Interno' ? 'Cadastro interno' : normalizedOrigin, result.insertId]
     );
     await insertComplaintLog(result.insertId, 'created', `Protocolo ${protocol} cadastrado com origem ${normalizedOrigin}.`, {
-      name: normalizedOrigin === 'Interno' ? 'Usuário interno' : normalizedOrigin,
+      name: normalizedOrigin === 'Interno' ? 'UsuÃ¡rio interno' : normalizedOrigin,
       role: normalizedOrigin.toLowerCase()
     });
-    await insertComplaintLog(result.insertId, 'assigned_to_coordinator', `Protocolo vinculado ao responsável ${coordinatorLabel}.`, {
+    await insertComplaintLog(result.insertId, 'assigned_to_coordinator', `Protocolo vinculado ao responsÃ¡vel ${coordinatorLabel}.`, {
       name: 'Sistema GRC',
       role: 'sistema'
     });
@@ -4403,14 +4873,14 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
     }
 
     res.json({
-      message: 'Reclamação salva com sucesso',
+      message: 'ReclamaÃ§Ã£o salva com sucesso',
       id: result.insertId,
       protocol
     });
 
   } catch (error) {
     console.error("ERRO:", error);
-    res.status(500).json({ error: 'Erro ao salvar reclamação' });
+    res.status(500).json({ error: 'Erro ao salvar reclamaÃ§Ã£o' });
   }
 });
 
@@ -4422,38 +4892,38 @@ app.get('/complaints/:id', authenticate, async (req, res) => {
     }, req.user);
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'Reclamação não encontrada' });
+      return res.status(404).json({ error: 'ReclamaÃ§Ã£o nÃ£o encontrada' });
     }
 
     res.json(rows[0]);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao buscar reclamação' });
+    res.status(500).json({ error: 'Erro ao buscar reclamaÃ§Ã£o' });
   }
 });
 
 app.delete('/complaints/:id', authenticate, async (req, res) => {
   try {
     if (!canDeleteRecords(req.user)) {
-      return res.status(403).json({ error: 'Apenas o Administrador Master ou Supervisor do CRC pode excluir reclamações.' });
+      return res.status(403).json({ error: 'Apenas o Administrador Master ou Supervisor do CRC pode excluir reclamaÃ§Ãµes.' });
     }
 
-    const reason = String(req.body?.reason || 'Exclusão administrativa').slice(0, 500);
+    const reason = String(req.body?.reason || 'ExclusÃ£o administrativa').slice(0, 500);
     await pool.query(
       'UPDATE complaints SET deleted_at = NOW(), deleted_by = ?, deletion_reason = ? WHERE id = ?',
       [getActorName(req.user), reason, req.params.id]
     );
-    await insertComplaintLog(req.params.id, 'excluido', `Reclamação excluída por ${getActorName(req.user)}. Motivo: ${reason}`, req.user);
+    await insertComplaintLog(req.params.id, 'excluido', `ReclamaÃ§Ã£o excluÃ­da por ${getActorName(req.user)}. Motivo: ${reason}`, req.user);
 
-    res.json({ message: 'Reclamação excluída com lastro de auditoria.' });
+    res.json({ message: 'ReclamaÃ§Ã£o excluÃ­da com lastro de auditoria.' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao excluir reclamação.' });
+    res.status(500).json({ error: 'Erro ao excluir reclamaÃ§Ã£o.' });
   }
 });
 
 // ============================================
-// ATUALIZAR RECLAMAÇÃO
+// ATUALIZAR RECLAMAÃ‡ÃƒO
 // ============================================
 app.post('/complaints/:id/evidences', authenticate, upload.single('file'), async (req, res) => {
   try {
@@ -4461,17 +4931,17 @@ app.post('/complaints/:id/evidences', authenticate, upload.single('file'), async
     const { description } = req.body;
 
     if (!canAttachEvidence(req.user)) {
-      return res.status(403).json({ error: 'Seu perfil nÃ£o pode anexar evidÃªncias nesta reclamaÃ§Ã£o.' });
+      return res.status(403).json({ error: 'Seu perfil nÃƒÂ£o pode anexar evidÃƒÂªncias nesta reclamaÃƒÂ§ÃƒÂ£o.' });
     }
 
     if (!req.file) {
-      return res.status(400).json({ error: 'Selecione um arquivo de evidÃªncia.' });
+      return res.status(400).json({ error: 'Selecione um arquivo de evidÃƒÂªncia.' });
     }
 
     const complaints = await getComplaintRows({ id }, req.user);
 
     if (!complaints.length) {
-      return res.status(404).json({ error: 'ReclamaÃ§Ã£o nÃ£o encontrada' });
+      return res.status(404).json({ error: 'ReclamaÃƒÂ§ÃƒÂ£o nÃƒÂ£o encontrada' });
     }
 
     const fileUrl = `${publicBaseUrl}/uploads/${req.file.filename}`;
@@ -4497,10 +4967,10 @@ app.post('/complaints/:id/evidences', authenticate, upload.single('file'), async
       req.user
     );
 
-    res.status(201).json({ message: 'EvidÃªncia anexada com sucesso' });
+    res.status(201).json({ message: 'EvidÃƒÂªncia anexada com sucesso' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao anexar evidÃªncia' });
+    res.status(500).json({ error: 'Erro ao anexar evidÃƒÂªncia' });
   }
 });
 
@@ -4618,7 +5088,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       };
 
       if (!allowedForwardRoles[forward_to_role]) {
-        return res.status(400).json({ error: 'Selecione o responsável para a tratativa.' });
+        return res.status(400).json({ error: 'Selecione o responsÃ¡vel para a tratativa.' });
       }
 
       let assignment = null;
@@ -4713,10 +5183,10 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       insertComplaintLog(id, entry.action, entry.message, req.user)
     )));
 
-    res.json({ message: 'Reclamação atualizada com sucesso' });
+    res.json({ message: 'ReclamaÃ§Ã£o atualizada com sucesso' });
   } catch (error) {
     console.error(error);
-    res.status(500).json({ error: 'Erro ao atualizar reclamação' });
+    res.status(500).json({ error: 'Erro ao atualizar reclamaÃ§Ã£o' });
   }
 });
 
@@ -4778,16 +5248,16 @@ app.use((error, req, res, next) => {
 async function startServer() {
   try {
     await ensureDatabaseSchema();
-    console.log('Schema validado para gestão GRC');
+    console.log('Schema validado para gestÃ£o GRC');
   } catch (error) {
-    console.warn('Não foi possível validar o schema do banco:', error.message);
+    console.warn('NÃ£o foi possÃ­vel validar o schema do banco:', error.message);
   }
 
   try {
     await ensureDefaultAdminUser();
     console.log('Administrador Master validado');
   } catch (error) {
-    console.warn('Não foi possível validar o Administrador Master:', error.message);
+    console.warn('NÃ£o foi possÃ­vel validar o Administrador Master:', error.message);
   }
 
   try {
@@ -4800,25 +5270,36 @@ async function startServer() {
     await backfillComplaintAssignments();
     console.log('Backfills operacionais validados');
   } catch (error) {
-    console.warn('Não foi possível executar os backfills:', error.message);
+    console.warn('NÃ£o foi possÃ­vel executar os backfills:', error.message);
   }
 
   app.listen(PORT, () => {
-  console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
+  console.log(`ðŸš€ Servidor rodando em http://localhost:${PORT}`);
 });
 
   setTimeout(() => {
     runScheduledCoordinatorReports().catch((jobError) => {
-      console.warn('NÃ£o foi possÃ­vel executar a rotina inicial de relatÃ³rios:', jobError.message);
+      console.warn('NÃƒÂ£o foi possÃƒÂ­vel executar a rotina inicial de relatÃƒÂ³rios:', jobError.message);
+    });
+    dispatchUpcomingAppointmentReminders().catch((jobError) => {
+      console.warn('Nao foi possivel executar a rotina inicial de lembretes de agendamento:', jobError.message);
     });
   }, 3000);
 
   setInterval(() => {
     runScheduledCoordinatorReports().catch((jobError) => {
-      console.warn('NÃ£o foi possÃ­vel executar a rotina programada de relatÃ³rios:', jobError.message);
+      console.warn('NÃƒÂ£o foi possÃƒÂ­vel executar a rotina programada de relatÃƒÂ³rios:', jobError.message);
     });
   }, 15 * 60 * 1000);
+
+  setInterval(() => {
+    dispatchUpcomingAppointmentReminders().catch((jobError) => {
+      console.warn('Nao foi possivel executar a rotina programada de lembretes de agendamento:', jobError.message);
+    });
+  }, appointmentReminderIntervalMinutes * 60 * 1000);
 
 }
 
 startServer();
+
+
