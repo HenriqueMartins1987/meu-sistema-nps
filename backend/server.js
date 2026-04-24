@@ -21,6 +21,7 @@ const {
   buildAppointmentReminderMessage,
   buildNoShowAlertMessage,
   getWhatsAppProvider,
+  isWhatsAppEnabled,
   normalizeWhatsAppPhone,
   sendApprovalWhatsApp,
   sendAppointmentReminder,
@@ -42,6 +43,7 @@ const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
 const appBaseUrl = process.env.APP_BASE_URL || frontendUrl;
 const approvalEmail = process.env.APPROVAL_EMAIL || 'henrique.martins@grcconsultoria.net.br';
 const masterAdminEmail = (process.env.MASTER_ADMIN_EMAIL || 'henrique.martins@grcconsultoria.net.br').toLowerCase();
+const masterAdminWhatsapp = normalizeBrazilPhone(process.env.MASTER_ADMIN_WHATSAPP || '');
 const defaultAdminEmail = masterAdminEmail;
 const defaultAdminPassword = process.env.MASTER_ADMIN_PASSWORD || process.env.DEFAULT_ADMIN_PASSWORD || 'Zyck1987#';
 const whatsappWebhookUrl = process.env.WHATSAPP_WEBHOOK_URL || '';
@@ -491,6 +493,90 @@ function buildActivityEmailSubject(req, responseBody) {
   return `Sistema GRC | ${req.method} ${route} | ${summary}`.slice(0, 190);
 }
 
+function buildActivityWhatsAppMessage(req, responseBody) {
+  const createdAt = new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short',
+    timeZone: 'America/Sao_Paulo'
+  }).format(new Date());
+  const summary = sanitizeActivityValue(responseBody?.message || responseBody?.error || 'Movimentação concluída.');
+
+  return [
+    'Nova movimentação registrada no Sistema GRC',
+    `Data/Hora: ${createdAt} (Brasília)`,
+    `Usuário: ${buildActivityActorLabel(req)}`,
+    `Método: ${req.method}`,
+    `Rota: ${req.originalUrl}`,
+    `Status HTTP: ${req.res?.statusCode || 0}`,
+    `Resumo: ${summary}`
+  ].join('\n');
+}
+
+async function getMasterAdminNotificationTarget() {
+  let email = masterAdminEmail;
+  let whatsapp = masterAdminWhatsapp;
+
+  if (process.env.NODE_ENV === 'test') {
+    return { email, whatsapp };
+  }
+
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, name, email, whatsapp, phone
+         FROM users
+        WHERE deleted_at IS NULL
+          AND LOWER(email) = ?
+        ORDER BY active DESC, id ASC
+        LIMIT 1`,
+      [masterAdminEmail]
+    );
+    const masterUser = rows[0];
+
+    if (masterUser) {
+      email = getUserEmailTarget(masterUser) || email;
+      whatsapp = getUserWhatsappTarget(masterUser) || whatsapp;
+    }
+  } catch (error) {
+    console.warn('Não foi possível carregar o destinatário do Administrador Master:', error.message);
+  }
+
+  return { email, whatsapp };
+}
+
+async function sendMasterActivityNotifications(req, responseBody) {
+  const recipient = await getMasterAdminNotificationTarget();
+  const subject = buildActivityEmailSubject(req, responseBody);
+  const html = buildActivityEmailHtml(req, responseBody);
+  const whatsappMessage = buildActivityWhatsAppMessage(req, responseBody);
+  const link = frontendUrl;
+  const tasks = [];
+
+  if (recipient.email) {
+    tasks.push(
+      sendEmail(recipient.email, subject, html).catch((error) => {
+        console.warn('Não foi possível enviar a auditoria por e-mail ao Administrador Master:', error.message);
+      })
+    );
+  }
+
+  if (recipient.whatsapp && isWhatsAppEnabled()) {
+    tasks.push(
+      sendWhatsappNotification({
+        event: 'master_activity_audit',
+        to: recipient.whatsapp,
+        link,
+        route: req.originalUrl,
+        method: req.method,
+        message: `${whatsappMessage}\n\nAcesse: ${link}`
+      }).catch((error) => {
+        console.warn('Não foi possível enviar a auditoria por WhatsApp ao Administrador Master:', error.message);
+      })
+    );
+  }
+
+  await Promise.all(tasks);
+}
+
 function normalizeActivityResponseBody(body) {
   if (body === undefined || body === null) return null;
 
@@ -540,14 +626,12 @@ function installMasterActivityEmailNotifier() {
       if (res.statusCode < 200 || res.statusCode >= 400) return;
 
       const normalizedResponse = normalizeActivityResponseBody(responseBody);
-      const subject = buildActivityEmailSubject(req, normalizedResponse);
-      const html = buildActivityEmailHtml(req, normalizedResponse);
 
       setImmediate(async () => {
         try {
-          await sendEmail(masterAdminEmail, subject, html);
+          await sendMasterActivityNotifications(req, normalizedResponse);
         } catch (error) {
-          console.warn('Nao foi possivel enviar a auditoria por e-mail ao Administrador Master:', error.message);
+          console.warn('Não foi possível enviar a auditoria ao Administrador Master:', error.message);
         }
       });
     });
@@ -2080,7 +2164,7 @@ async function notifyUserThroughChannels(user, type, title, message, link = null
   }
 
   const whatsapp = getUserWhatsappTarget(user);
-  if (whatsapp) {
+  if (whatsapp && isWhatsAppEnabled()) {
     try {
       await sendWhatsappNotification({
         event: type,
@@ -2201,6 +2285,58 @@ async function sendPasswordResetNotifications(user, temporaryPassword) {
   } catch (error) {
     whatsappError = error.message;
     console.warn('Nao foi possivel enviar WhatsApp de reset de senha:', error.message);
+  }
+
+  return { emailSent, whatsappSent, emailError, whatsappError };
+}
+
+async function sendPasswordChangedNotifications(user) {
+  let emailSent = false;
+  let whatsappSent = false;
+  let emailError = null;
+  let whatsappError = null;
+
+  const email = getUserEmailTarget(user);
+  if (email) {
+    try {
+      const emailResult = await sendEmail(
+        email,
+        'Senha alterada - Sistema GRC',
+        `
+          <p>Olá, ${user.name || 'colaborador'}.</p>
+          <p>Registramos uma alteração de senha no seu acesso ao Sistema GRC.</p>
+          <p>Se foi você quem realizou a mudança, nenhuma ação adicional é necessária.</p>
+          <p>Se não reconhece esta alteração, procure imediatamente o administrador.</p>
+        `
+      );
+      emailSent = !emailResult?.skipped;
+    } catch (error) {
+      emailError = error.message;
+      console.warn('Não foi possível enviar e-mail de alteração de senha:', error.message);
+    }
+  }
+
+  const whatsapp = getUserWhatsappTarget(user);
+  if (whatsapp && isWhatsAppEnabled()) {
+    try {
+      const whatsappResult = await sendWhatsappNotification({
+        event: 'password_changed',
+        to: whatsapp,
+        userId: user.id,
+        message: [
+          `Olá, ${user.name || 'colaborador'}.`,
+          '',
+          'Registramos uma alteração de senha no seu acesso ao Sistema GRC.',
+          'Se foi você quem realizou a mudança, nenhuma ação adicional é necessária.',
+          'Se não reconhece esta alteração, procure imediatamente o administrador.'
+        ].join('\n')
+      });
+      whatsappSent = Boolean(whatsappResult?.success);
+      whatsappError = whatsappResult?.success ? null : whatsappResult?.error || null;
+    } catch (error) {
+      whatsappError = error.message;
+      console.warn('Não foi possível enviar WhatsApp de alteração de senha:', error.message);
+    }
   }
 
   return { emailSent, whatsappSent, emailError, whatsappError };
@@ -4245,20 +4381,7 @@ async function changeUserPassword({ userId, currentPassword, newPassword }) {
   const passwordHash = await bcrypt.hash(newPassword, 10);
   await pool.query('UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?', [passwordHash, user.id]);
 
-  try {
-    await sendEmail(
-      user.email,
-      'Senha alterada - Sistema GRC',
-      `
-        <p>Olá, ${user.name || 'colaborador'}.</p>
-        <p>Registramos uma alteração de senha no seu acesso ao Sistema GRC.</p>
-        <p>Se foi você quem realizou a mudança, nenhuma ação adicional é necessária.</p>
-        <p>Se não reconhece esta alteração, procure imediatamente o administrador.</p>
-      `
-    );
-  } catch (error) {
-    console.warn('Nao foi possivel enviar e-mail de alteracao de senha:', error.message);
-  }
+  await sendPasswordChangedNotifications(user);
 
   const [updatedRows] = await pool.query(
     `SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, created_at, updated_at
@@ -5587,6 +5710,7 @@ module.exports = {
     changeUserPassword,
     isPasswordChangeRouteAllowed,
     parseBodyWithSchema,
+    sendPasswordChangedNotifications,
     sendUserAccessNotifications,
     signUserToken
   }

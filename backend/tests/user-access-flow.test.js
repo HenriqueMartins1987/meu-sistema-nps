@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken');
 const request = require('supertest');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
+process.env.NODE_ENV = 'test';
 process.env.WHATSAPP_ENABLED = 'false';
 process.env.EMAIL_PROVIDER = process.env.EMAIL_PROVIDER || 'log';
 
