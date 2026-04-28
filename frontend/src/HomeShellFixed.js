@@ -88,6 +88,10 @@ function formatNotificationPayloadValue(value) {
   return String(value);
 }
 
+function isComplaintNotification(notification) {
+  return ['complaint_created', 'complaint_assigned', 'complaint_operational_alert'].includes(String(notification?.type || ''));
+}
+
 function formatNotificationPayloadKey(key) {
   if (notificationPayloadLabels[key]) {
     return notificationPayloadLabels[key];
@@ -249,6 +253,24 @@ function HomeShellFixed() {
     setNotificationTab('unread');
   }, [notificationGroups.unread]);
 
+  useEffect(() => {
+    const unreadComplaint = notificationGroups.unread.find((item) => isComplaintNotification(item));
+
+    if (!unreadComplaint || mustChangePassword) {
+      return;
+    }
+
+    const popupKey = `home-complaint-popup-${unreadComplaint.id}`;
+    if (sessionStorage.getItem('home-notification-popup') === popupKey) {
+      return;
+    }
+
+    sessionStorage.setItem('home-notification-popup', popupKey);
+    setNotificationsOpen(false);
+    setNotificationTab('unread');
+    setSelectedNotification(unreadComplaint);
+  }, [mustChangePassword, notificationGroups.unread]);
+
   const loadAgenda = useCallback(async () => {
     if (!canManageComplaints && !canManagePatients) {
       setAgendaItems([]);
@@ -365,7 +387,9 @@ function HomeShellFixed() {
     setDrawerOpen(false);
     setShareOpen(false);
     setSelectedNotification(null);
+    setNotificationTab('unread');
     setNotificationsOpen(true);
+    loadNotifications();
   };
 
   const closeNotificationsModal = () => {

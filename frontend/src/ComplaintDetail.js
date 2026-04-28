@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import api from './api';
+import api, { apiBaseUrl } from './api';
 import { isAdmin as isAdminUser, isMasterAdmin, priorityOptions, readUser, statusLabels } from './constants';
 
 const maxUploadSizeBytes = 10 * 1024 * 1024;
 const treatmentRoles = ['coordinator', 'manager', 'supervisor_crc'];
 const evidenceRoles = ['coordinator', 'manager', 'supervisor_crc', 'sac_operator', 'admin'];
+const previewableImagePattern = /\.(avif|bmp|gif|jpe?g|png|svg|webp)(\?.*)?$/i;
 
 const roleLabels = {
   master_admin: 'Administrador Master',
@@ -64,6 +65,27 @@ function buildWhatsappUrl(phone) {
   return `https://wa.me/${normalized}`;
 }
 
+function resolveUploadedFileUrl(value) {
+  const rawValue = String(value || '').trim();
+
+  if (!rawValue) return '';
+  if (/^data:/i.test(rawValue)) return rawValue;
+  if (/^https?:\/\//i.test(rawValue)) return rawValue;
+
+  const normalizedPath = rawValue.startsWith('/') ? rawValue : `/${rawValue}`;
+  const absoluteApiBase = String(apiBaseUrl || '').trim();
+
+  if (/^https?:\/\//i.test(absoluteApiBase)) {
+    return new URL(normalizedPath, absoluteApiBase.replace(/\/api\/?$/i, '/')).toString();
+  }
+
+  return normalizedPath;
+}
+
+function isPreviewableImage(value) {
+  return previewableImagePattern.test(String(value || ''));
+}
+
 function buildDeadlineInfo(complaint) {
   const dueAt = complaint?.due_at ? new Date(complaint.due_at) : null;
 
@@ -97,7 +119,7 @@ function buildDeadlineInfo(complaint) {
   if (diffMs <= 12 * 60 * 60 * 1000) {
     return {
       state: 'warning',
-      label: 'Prazo critico',
+      label: 'Prazo crítico',
       detail: `Restam ${Math.max(absHours, 1)}h`
     };
   }
@@ -192,6 +214,10 @@ function ComplaintDetail() {
     const params = new URLSearchParams(location.search);
     return params.get('include_deleted') === '1';
   }, [location.search]);
+  const initialAttachmentUrl = useMemo(
+    () => resolveUploadedFileUrl(complaint?.attachment_url),
+    [complaint?.attachment_url]
+  );
 
   const isAdmin = isAdminUser(user);
   const canFormalTreatment = treatmentRoles.includes(user?.role) || isAdmin;
@@ -555,10 +581,20 @@ function ComplaintDetail() {
           )}
 
           <div className="attachment-stack">
-            {complaint.attachment_url ? (
-              <a className="attachment-link" href={complaint.attachment_url} target="_blank" rel="noreferrer">
-                Ver anexo inicial do protocolo
-              </a>
+            {initialAttachmentUrl ? (
+              <>
+                {isPreviewableImage(initialAttachmentUrl) && (
+                  <img
+                    className="attachment-preview"
+                    src={initialAttachmentUrl}
+                    alt="Anexo inicial do protocolo"
+                    loading="lazy"
+                  />
+                )}
+                <a className="attachment-link" href={initialAttachmentUrl} target="_blank" rel="noreferrer">
+                  Ver anexo inicial do protocolo
+                </a>
+              </>
             ) : (
               <p className="empty-mini">Sem anexo inicial.</p>
             )}
@@ -602,15 +638,27 @@ function ComplaintDetail() {
           )}
 
           <div className="evidence-list">
-            {complaint.evidences?.length ? complaint.evidences.map((evidence) => (
-              <a className="evidence-item" href={evidence.file_url} target="_blank" rel="noreferrer" key={evidence.id}>
-                <span>{evidence.description || evidence.original_name || 'Evidência anexada'}</span>
-                <small>
-                  {formatDate(evidence.created_at)}
-                  {evidence.uploaded_by_name ? ` · ${evidence.uploaded_by_name}` : ''}
-                </small>
-              </a>
-            )) : (
+            {complaint.evidences?.length ? complaint.evidences.map((evidence) => {
+              const evidenceUrl = resolveUploadedFileUrl(evidence.file_url);
+
+              return (
+                <a className="evidence-item" href={evidenceUrl} target="_blank" rel="noreferrer" key={evidence.id}>
+                  {isPreviewableImage(evidenceUrl) && (
+                    <img
+                      className="evidence-preview"
+                      src={evidenceUrl}
+                      alt={evidence.description || evidence.original_name || 'Evidência anexada'}
+                      loading="lazy"
+                    />
+                  )}
+                  <span>{evidence.description || evidence.original_name || 'Evidência anexada'}</span>
+                  <small>
+                    {formatDate(evidence.created_at)}
+                    {evidence.uploaded_by_name ? ` · ${evidence.uploaded_by_name}` : ''}
+                  </small>
+                </a>
+              );
+            }) : (
               <p className="empty-mini">Nenhuma evidência complementar anexada.</p>
             )}
           </div>
@@ -644,7 +692,7 @@ function ComplaintDetail() {
 
         <article className="detail-card detail-actions-card command-center-card">
           <p className="eyebrow">Tratativa e fechamento</p>
-          <h2>Centro de decisao</h2>
+          <h2>Centro de decisão</h2>
 
           <div className="approval-grid">
             <div className={`approval-card ${hasTreatment ? 'done' : 'pending'}`}>

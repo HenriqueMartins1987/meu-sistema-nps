@@ -2887,6 +2887,18 @@ async function notifyComplaintCreated(complaintId, protocol) {
     console.warn('Nao foi possivel enviar notificacao geral da reclamacao:', error.message);
   }
 
+  try {
+    await createNotificationForAdmins(
+      'complaint_created',
+      title,
+      detailedMessage,
+      link,
+      payload
+    );
+  } catch (error) {
+    console.warn('Nao foi possivel registrar notificacao administrativa da reclamacao:', error.message);
+  }
+
   let notifiedUserIds = [];
 
   try {
