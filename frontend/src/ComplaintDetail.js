@@ -79,6 +79,11 @@ function resolveUploadedFileUrl(value) {
     return new URL(normalizedPath, absoluteApiBase.replace(/\/api\/?$/i, '/')).toString();
   }
 
+   if (absoluteApiBase.startsWith('/api') && typeof window !== 'undefined') {
+    const apiPrefix = absoluteApiBase.replace(/\/$/, '');
+    return new URL(`${apiPrefix}${normalizedPath}`, window.location.origin).toString();
+  }
+
   return normalizedPath;
 }
 

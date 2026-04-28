@@ -263,23 +263,23 @@ function normalizeStoredUploadUrl(value) {
     return rawValue;
   }
 
-  const baseUrl = String(publicBaseUrl || '').trim() || `http://localhost:${PORT}`;
-  const toAbsoluteUrl = (pathname) => {
-    try {
-      return new URL(pathname, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).toString();
-    } catch (error) {
-      return pathname;
-    }
-  };
-
   const normalizedValue = rawValue.replace(/\\/g, '/');
   const uploadIndex = normalizedValue.toLowerCase().indexOf('/uploads/');
+  const normalizeUploadPath = (pathname) => {
+    const normalizedPath = String(pathname || '').replace(/\\/g, '/').trim();
+
+    if (!normalizedPath) {
+      return '';
+    }
+
+    return normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`;
+  };
 
   if (/^https?:\/\//i.test(normalizedValue)) {
     try {
       const parsed = new URL(normalizedValue);
       if (parsed.pathname.toLowerCase().startsWith('/uploads/')) {
-        return toAbsoluteUrl(`${parsed.pathname}${parsed.search}${parsed.hash}`);
+        return normalizeUploadPath(`${parsed.pathname}${parsed.search}${parsed.hash}`);
       }
       return normalizedValue;
     } catch (error) {
@@ -288,11 +288,11 @@ function normalizeStoredUploadUrl(value) {
   }
 
   if (uploadIndex >= 0) {
-    return toAbsoluteUrl(normalizedValue.slice(uploadIndex));
+    return normalizeUploadPath(normalizedValue.slice(uploadIndex));
   }
 
   if (normalizedValue.toLowerCase().startsWith('uploads/')) {
-    return toAbsoluteUrl(`/${normalizedValue}`);
+    return normalizeUploadPath(normalizedValue);
   }
 
   return normalizedValue;
