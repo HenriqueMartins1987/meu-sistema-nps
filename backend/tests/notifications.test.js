@@ -1,6 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 
+process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
+process.env.NODE_ENV = 'test';
+process.env.WHATSAPP_ENABLED = process.env.WHATSAPP_ENABLED || 'false';
+process.env.EMAIL_PROVIDER = process.env.EMAIL_PROVIDER || 'log';
+
 const { generateTemporaryPassword } = require('../utils/password');
 const {
   DEFAULT_EMAIL_FROM,
@@ -14,6 +19,7 @@ const {
   buildWelcomeMessage,
   normalizeWhatsAppPhone
 } = require('../services/whatsappService');
+const { __testables } = require('../server');
 
 test('generateTemporaryPassword creates a strong temporary password', () => {
   const password = generateTemporaryPassword(10);
@@ -122,4 +128,32 @@ test('buildAppointmentReminderMessage includes patient and appointment details',
   assert.match(message, /Ana/);
   assert.match(message, /Clinica Centro/);
   assert.match(message, /23\/04\/2026 14:00/);
+});
+
+test('canReceiveComplaintNotification respects complaint permissions and hierarchy', () => {
+  assert.equal(__testables.canReceiveComplaintNotification({
+    role: 'admin',
+    email: 'admin@example.com',
+    permissions: '[]'
+  }), true);
+
+  assert.equal(__testables.canReceiveComplaintNotification({
+    role: 'viewer',
+    email: 'viewer@example.com',
+    permissions: JSON.stringify(['home', 'complaints_dashboard'])
+  }), true);
+
+  assert.equal(__testables.canReceiveComplaintNotification({
+    role: 'viewer',
+    email: 'viewer@example.com',
+    permissions: JSON.stringify(['home', 'nps_management'])
+  }), false);
+});
+
+test('normalizeStoredUploadUrl rewrites localhost upload links to the current public API host', () => {
+  const normalized = __testables.normalizeStoredUploadUrl('http://localhost:3001/uploads/teste-anexo.png');
+  const normalizedRelative = __testables.normalizeStoredUploadUrl('uploads/teste-anexo.png');
+
+  assert.match(normalized, /\/uploads\/teste-anexo\.png$/);
+  assert.match(normalizedRelative, /\/uploads\/teste-anexo\.png$/);
 });

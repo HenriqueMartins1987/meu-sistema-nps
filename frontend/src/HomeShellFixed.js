@@ -491,32 +491,38 @@ function HomeShellFixed() {
     return '/home';
   };
 
-  const openNotification = async (notification) => {
-    let nextNotification = notification;
-
-    try {
-      if (notification.status !== 'read') {
-        await api.post(`/notifications/${notification.id}/read`);
-        nextNotification = { ...notification, status: 'read', read_at: new Date().toISOString() };
-        setNotificationGroups((prev) => ({
-          unread: prev.unread.filter((item) => item.id !== notification.id),
-          read: [nextNotification, ...prev.read]
-            .filter((item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index)
-            .slice(0, 500)
-        }));
-      }
-    } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível abrir a notificação.');
+  const moveNotificationToRead = useCallback(async (notification) => {
+    if (!notification || notification.status === 'read') {
+      return notification;
     }
 
+    try {
+      await api.post(`/notifications/${notification.id}/read`);
+      const nextNotification = { ...notification, status: 'read', read_at: new Date().toISOString() };
+      setNotificationGroups((prev) => ({
+        unread: prev.unread.filter((item) => item.id !== notification.id),
+        read: [nextNotification, ...prev.read]
+          .filter((item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index)
+          .slice(0, 500)
+      }));
+      return nextNotification;
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Nao foi possivel atualizar a notificacao.');
+      return notification;
+    }
+  }, []);
+
+  const openNotification = async (notification) => {
+    const nextNotification = await moveNotificationToRead(notification);
     setNotificationsOpen(false);
     setSelectedNotification(nextNotification);
   };
 
-  const handleNotificationTarget = () => {
+  const handleNotificationTarget = async () => {
     if (!selectedNotification) return;
 
-    const target = resolveNotificationLink(selectedNotification);
+    const nextNotification = await moveNotificationToRead(selectedNotification);
+    const target = resolveNotificationLink(nextNotification);
     setSelectedNotification(null);
 
     if (/^https?:\/\//i.test(target)) {
@@ -977,5 +983,6 @@ function HomeShellFixed() {
 }
 
 export default HomeShellFixed;
+
 
 

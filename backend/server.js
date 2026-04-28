@@ -256,6 +256,48 @@ function toMysqlDateTime(date) {
   ].join(':');
 }
 
+function normalizeStoredUploadUrl(value) {
+  const rawValue = String(value || '').trim();
+
+  if (!rawValue || /^data:/i.test(rawValue)) {
+    return rawValue;
+  }
+
+  const baseUrl = String(publicBaseUrl || '').trim() || `http://localhost:${PORT}`;
+  const toAbsoluteUrl = (pathname) => {
+    try {
+      return new URL(pathname, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`).toString();
+    } catch (error) {
+      return pathname;
+    }
+  };
+
+  const normalizedValue = rawValue.replace(/\\/g, '/');
+  const uploadIndex = normalizedValue.toLowerCase().indexOf('/uploads/');
+
+  if (/^https?:\/\//i.test(normalizedValue)) {
+    try {
+      const parsed = new URL(normalizedValue);
+      if (parsed.pathname.toLowerCase().startsWith('/uploads/')) {
+        return toAbsoluteUrl(`${parsed.pathname}${parsed.search}${parsed.hash}`);
+      }
+      return normalizedValue;
+    } catch (error) {
+      return normalizedValue;
+    }
+  }
+
+  if (uploadIndex >= 0) {
+    return toAbsoluteUrl(normalizedValue.slice(uploadIndex));
+  }
+
+  if (normalizedValue.toLowerCase().startsWith('uploads/')) {
+    return toAbsoluteUrl(`/${normalizedValue}`);
+  }
+
+  return normalizedValue;
+}
+
 function formatNpsProtocol(id, createdAt) {
   const year = createdAt ? new Date(createdAt).getFullYear() : new Date().getFullYear();
   return `NPS-${year}-${String(id).padStart(6, '0')}`;
@@ -1777,7 +1819,11 @@ async function getComplaintRows(query = {}, user = null) {
 
     return rows.map((row) => ({
       ...row,
-      evidences: evidencesByComplaint[row.id] || [],
+      attachment_url: normalizeStoredUploadUrl(row.attachment_url),
+      evidences: (evidencesByComplaint[row.id] || []).map((evidence) => ({
+        ...evidence,
+        file_url: normalizeStoredUploadUrl(evidence.file_url)
+      })),
       logs: logsByComplaint[row.id] || []
     }));
   }
@@ -1930,6 +1976,19 @@ function parsePermissionsFromUser(user) {
   }
 
   return permissions;
+}
+
+function canReceiveComplaintNotification(user) {
+  if (isAdminUser(user)) {
+    return true;
+  }
+
+  const permissions = parsePermissionsFromUser(user);
+  return permissions.some((permission) => (
+    permission === 'complaints_management'
+    || permission === 'complaints_dashboard'
+    || permission === 'complaints_register'
+  ));
 }
 
 async function buildAuthenticatedUser(user) {
@@ -2105,6 +2164,7 @@ async function createNotificationForAdmins(type, title, message, link = null, pa
   );
 
   await Promise.all(admins.map((admin) => createNotification(admin.id, type, title, message, link, payload)));
+  return admins.map((admin) => admin.id).filter(Boolean);
 }
 
 async function createNotificationForRoles(roles, type, title, message, link = null, payload = null) {
@@ -2410,6 +2470,39 @@ async function notifyOperationalComplaintTeam(title, message, link, payload = nu
       { role: user.role }
     );
   }));
+
+  return recipients.map((user) => user.id).filter(Boolean);
+}
+
+async function notifyComplaintAudienceByScope(clinicId, assignedCoordinatorUserId, title, message, link, payload = null, excludedUserIds = []) {
+  const excluded = new Set((excludedUserIds || []).map((id) => Number(id)).filter(Boolean));
+  const [users] = await pool.query(
+    `SELECT DISTINCT u.id, u.role, u.permissions
+       FROM users u
+       LEFT JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = ?
+      WHERE u.active = 1
+        AND u.deleted_at IS NULL
+        AND (
+          u.role IN ('admin', 'master_admin')
+          OR uc.clinic_id IS NOT NULL
+          OR (? IS NOT NULL AND u.id = ?)
+        )`,
+    [clinicId || null, assignedCoordinatorUserId || null, assignedCoordinatorUserId || null]
+  );
+
+  const recipients = users.filter((user) => {
+    if (!user?.id || excluded.has(Number(user.id))) {
+      return false;
+    }
+
+    return canReceiveComplaintNotification(user);
+  });
+
+  await Promise.all(recipients.map((user) => (
+    createNotification(user.id, 'complaint_created', title, message, link, payload)
+  )));
+
+  return recipients.map((user) => user.id).filter(Boolean);
 }
 
 async function resolveClinicIdByName(clinicName) {
@@ -2846,6 +2939,7 @@ async function notifyComplaintCreated(complaintId, protocol) {
        c.id,
        c.protocol,
        c.clinic_id,
+       c.assigned_coordinator_user_id,
        c.patient_name,
        c.complaint_type,
        c.priority,
@@ -2875,6 +2969,7 @@ async function notifyComplaintCreated(complaintId, protocol) {
   const payload = { complaintId, protocol: protocol || complaint.protocol || complaintId };
   const detailedMessage = `${message}\n\nAcesse o protocolo para dar ciência e iniciar a tratativa.`;
   const operationalMessage = `${message}\n\nSupervisor do CRC e Operador de SAC devem acompanhar o protocolo ate a conclusao.`;
+  let notifiedUserIds = [];
 
   try {
     await sendWhatsappNotification({
@@ -2888,21 +2983,20 @@ async function notifyComplaintCreated(complaintId, protocol) {
   }
 
   try {
-    await createNotificationForAdmins(
+    const adminIds = await createNotificationForAdmins(
       'complaint_created',
       title,
       detailedMessage,
       link,
       payload
     );
+    notifiedUserIds = [...notifiedUserIds, ...adminIds];
   } catch (error) {
     console.warn('Nao foi possivel registrar notificacao administrativa da reclamacao:', error.message);
   }
 
-  let notifiedUserIds = [];
-
   try {
-    notifiedUserIds = await notifyClinicResponsibles(
+    const scopedIds = await notifyClinicResponsibles(
       complaint.clinic_id,
       'complaint_assigned',
       title,
@@ -2910,20 +3004,36 @@ async function notifyComplaintCreated(complaintId, protocol) {
       link,
       payload
     );
+    notifiedUserIds = [...notifiedUserIds, ...scopedIds];
   } catch (error) {
     console.warn('Nao foi possivel notificar responsaveis da unidade:', error.message);
   }
 
   try {
-    await notifyOperationalComplaintTeam(
+    const operationalIds = await notifyOperationalComplaintTeam(
       title,
       operationalMessage,
       link,
       payload,
       notifiedUserIds
     );
+    notifiedUserIds = [...notifiedUserIds, ...operationalIds];
   } catch (error) {
     console.warn('Nao foi possivel notificar Supervisor CRC e Operador SAC:', error.message);
+  }
+
+  try {
+    await notifyComplaintAudienceByScope(
+      complaint.clinic_id,
+      complaint.assigned_coordinator_user_id,
+      title,
+      detailedMessage,
+      link,
+      payload,
+      notifiedUserIds
+    );
+  } catch (error) {
+    console.warn('Nao foi possivel registrar notificacoes da reclamacao para a audiencia da unidade:', error.message);
   }
 }
 
@@ -5189,7 +5299,7 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
     const normalizedPatientPhone = normalizeBrazilPhone(patient_phone);
 
     const file_url = req.file
-      ? `${publicBaseUrl}/uploads/${req.file.filename}`
+      ? `/uploads/${req.file.filename}`
       : null;
     const assignment = await resolveCoordinatorAssignment(clinic_id);
 
@@ -5353,7 +5463,7 @@ app.post('/complaints/:id/evidences', authenticate, upload.single('file'), async
       return res.status(404).json({ error: 'Reclamação não encontrada' });
     }
 
-    const fileUrl = `${publicBaseUrl}/uploads/${req.file.filename}`;
+    const fileUrl = `/uploads/${req.file.filename}`;
 
     await pool.query(
       `INSERT INTO complaint_evidences
@@ -5719,8 +5829,10 @@ module.exports = {
   startServer,
   __testables: {
     buildAuthenticatedUser,
+    canReceiveComplaintNotification,
     changeUserPassword,
     isPasswordChangeRouteAllowed,
+    normalizeStoredUploadUrl,
     parseBodyWithSchema,
     sendPasswordChangedNotifications,
     sendUserAccessNotifications,
