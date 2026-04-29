@@ -16,10 +16,10 @@
   --shadow-sm: 0 8px 20px rgba(12, 12, 16, 0.08);
   --shadow-md: 0 18px 45px rgba(12, 12, 16, 0.14);
   --shadow-lg: 0 28px 70px rgba(12, 12, 16, 0.22);
-  --system-status-height: 88px;
+  --system-status-height: 68px;
   --system-status-gap: 8px;
   --sticky-primary-top: calc(var(--system-status-height) + var(--system-status-gap));
-  --sticky-secondary-top: calc(var(--system-status-height) + 96px);
+  --sticky-secondary-top: calc(var(--system-status-height) + 88px);
 }
 
 * {
@@ -511,7 +511,7 @@ a {
   background-position: top center, center, center 180px;
   background-size: auto, cover, 680px auto;
   background-repeat: no-repeat;
-  padding: calc(10px + var(--system-status-height) + 10px) 30px 30px;
+  padding: calc(8px + var(--system-status-height) + 8px) 30px 30px;
   position: relative;
   isolation: isolate;
 }
@@ -3335,35 +3335,29 @@ a {
 
 .system-status-bar {
   position: fixed;
-  top: 8px;
-  left: 8px;
+  top: 6px;
+  left: 6px;
   right: auto;
-  z-index: 48;
+  z-index: 60;
   padding: 0;
   pointer-events: none;
 }
 
 .system-status-inner {
-  width: min(248px, calc(100vw - 16px)) !important;
+  width: min(198px, calc(100vw - 12px)) !important;
   margin: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-start;
-  gap: 6px;
+  gap: 5px;
   padding: 7px 8px;
-  border: 1px solid rgba(200, 154, 87, 0.18);
+  border: 1px solid rgba(212, 167, 100, 0.18);
   border-radius: 6px;
-  background: rgba(255, 252, 247, 0.96);
-  box-shadow: 0 8px 18px rgba(10, 10, 14, 0.12);
+  background: rgba(21, 24, 29, 0.96);
+  box-shadow: 0 10px 24px rgba(10, 10, 14, 0.18);
   backdrop-filter: blur(14px);
   pointer-events: auto;
-}
-
-.system-status-divider {
-  width: 100%;
-  height: 1px;
-  background: rgba(200, 154, 87, 0.18);
 }
 
 .session-countdown {
@@ -3374,13 +3368,13 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
-  border: 1px solid rgba(199, 154, 90, 0.28);
+  padding: 4px 0 0;
+  border: 0;
   border-radius: 6px;
-  background: rgba(21, 24, 29, 0.94);
+  background: transparent;
   color: #fff;
-  box-shadow: 0 6px 14px rgba(10, 10, 14, 0.18);
-  backdrop-filter: blur(14px);
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .logged-user-badge {
@@ -3399,7 +3393,7 @@ a {
 }
 
 .logged-user-badge span {
-  color: var(--brand-strong);
+  color: rgba(212, 167, 100, 0.92);
   font-size: 9px;
   font-weight: 900;
   letter-spacing: 0;
@@ -3407,37 +3401,31 @@ a {
 }
 
 .logged-user-badge strong {
-  color: var(--ink);
-  font-size: 13px;
-  line-height: 1.15;
-}
-
-.logged-user-badge__identity {
-  display: grid;
-  gap: 2px;
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.1;
 }
 
 .logged-user-badge small {
-  color: var(--muted);
+  color: rgba(255, 255, 255, 0.72);
   display: block;
   max-width: 100%;
-  font-size: 10px;
+  font-size: 9px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .session-countdown.warning {
-  border-color: rgba(196, 69, 54, 0.36);
-  background: rgba(76, 21, 18, 0.95);
+  color: #ffd4cf;
 }
 
 .session-countdown-clock {
   position: relative;
-  width: 14px;
-  height: 14px;
-  flex: 0 0 14px;
-  border: 2px solid rgba(255, 255, 255, 0.9);
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  border: 2px solid rgba(255, 255, 255, 0.82);
   border-radius: 50%;
 }
 
@@ -3469,7 +3457,7 @@ a {
 }
 
 .session-countdown-copy strong {
-  font-size: 13px;
+  font-size: 11px;
   line-height: 1;
 }
 
@@ -4183,8 +4171,8 @@ a {
 
 @media (max-width: 1020px) {
   :root {
-    --system-status-height: 88px;
-    --sticky-secondary-top: calc(var(--system-status-height) + 96px);
+    --system-status-height: 68px;
+    --sticky-secondary-top: calc(var(--system-status-height) + 88px);
   }
 
   .app-page,
@@ -4228,7 +4216,7 @@ a {
   }
 
   .app-page {
-    padding: calc(10px + var(--system-status-height) + 10px) 20px 20px;
+    padding: calc(8px + var(--system-status-height) + 8px) 20px 20px;
   }
 
   .page-heading,
@@ -4432,8 +4420,8 @@ a {
 
 @media (max-width: 620px) {
   :root {
-    --system-status-height: 84px;
-    --sticky-secondary-top: calc(var(--system-status-height) + 96px);
+    --system-status-height: 66px;
+    --sticky-secondary-top: calc(var(--system-status-height) + 88px);
   }
 
   .login-brand h1,
@@ -4538,7 +4526,7 @@ a {
   }
 
   .system-status-inner {
-    width: min(220px, calc(100vw - 12px)) !important;
+    width: min(182px, calc(100vw - 12px)) !important;
     padding: 6px 7px;
   }
 
@@ -4546,16 +4534,6 @@ a {
     min-width: 0;
     width: 100%;
     justify-content: flex-start;
-  }
-
-  .logged-user-badge {
-    max-width: none;
-    width: 100%;
-  }
-
-  .logged-user-badge__identity {
-    display: grid;
-    gap: 2px;
   }
 }
 

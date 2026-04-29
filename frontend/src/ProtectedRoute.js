@@ -106,12 +106,9 @@ export function ProtectedRoute() {
         <div className="system-status-inner">
           <aside className="logged-user-badge" aria-label="Usuário logado">
             <span>Usuário logado</span>
-            <div className="logged-user-badge__identity">
-              <strong>{userLabel}</strong>
-              <small>{userEmail || 'E-mail não informado'}</small>
-            </div>
+            <strong>{userLabel}</strong>
+            <small>{userEmail || 'E-mail não informado'}</small>
           </aside>
-          <div className="system-status-divider" aria-hidden="true" />
           <aside
             className={`session-countdown ${remainingMs <= 5 * 60 * 1000 ? 'warning' : ''}`}
             aria-live="polite"
@@ -120,7 +117,7 @@ export function ProtectedRoute() {
             <span className="session-countdown-clock" aria-hidden="true" />
             <div className="session-countdown-copy">
               <strong>{formatRemainingTime(remainingMs)}</strong>
-              <span>para logout automático</span>
+              <span>logout automático</span>
             </div>
           </aside>
         </div>
