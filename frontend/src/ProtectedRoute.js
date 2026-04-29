@@ -111,6 +111,7 @@ export function ProtectedRoute() {
               <small>{userEmail || 'E-mail não informado'}</small>
             </div>
           </aside>
+          <div className="system-status-divider" aria-hidden="true" />
           <aside
             className={`session-countdown ${remainingMs <= 5 * 60 * 1000 ? 'warning' : ''}`}
             aria-live="polite"
