@@ -102,23 +102,27 @@ export function ProtectedRoute() {
 
   return (
     <>
-      <Outlet />
-      <aside className="logged-user-badge" aria-label="Usuário logado">
-        <span>Usuário logado</span>
-        <strong>{userLabel}</strong>
-        <small>{userEmail || 'E-mail não informado'}</small>
-      </aside>
-      <aside
-        className={`session-countdown ${remainingMs <= 5 * 60 * 1000 ? 'warning' : ''}`}
-        aria-live="polite"
-        aria-label={`Tempo restante da sessão: ${formatRemainingTime(remainingMs)}`}
-      >
-        <span className="session-countdown-clock" aria-hidden="true" />
-        <div className="session-countdown-copy">
-          <strong>{formatRemainingTime(remainingMs)}</strong>
-          <span>para logout automático</span>
+      <div className="system-status-bar" aria-label="Informações da sessão">
+        <div className="system-status-inner">
+          <aside className="logged-user-badge" aria-label="Usuário logado">
+            <span>Usuário logado</span>
+            <strong>{userLabel}</strong>
+            <small>{userEmail || 'E-mail não informado'}</small>
+          </aside>
+          <aside
+            className={`session-countdown ${remainingMs <= 5 * 60 * 1000 ? 'warning' : ''}`}
+            aria-live="polite"
+            aria-label={`Tempo restante da sessão: ${formatRemainingTime(remainingMs)}`}
+          >
+            <span className="session-countdown-clock" aria-hidden="true" />
+            <div className="session-countdown-copy">
+              <strong>{formatRemainingTime(remainingMs)}</strong>
+              <span>para logout automático</span>
+            </div>
+          </aside>
         </div>
-      </aside>
+      </div>
+      <Outlet />
     </>
   );
 }

@@ -16,6 +16,10 @@
   --shadow-sm: 0 8px 20px rgba(12, 12, 16, 0.08);
   --shadow-md: 0 18px 45px rgba(12, 12, 16, 0.14);
   --shadow-lg: 0 28px 70px rgba(12, 12, 16, 0.22);
+  --system-status-height: 74px;
+  --system-status-gap: 16px;
+  --sticky-primary-top: calc(var(--system-status-height) + var(--system-status-gap));
+  --sticky-secondary-top: calc(var(--system-status-height) + 126px);
 }
 
 * {
@@ -97,8 +101,10 @@ a {
 .login-brand-logo {
   width: 260px;
   max-width: 82%;
-  justify-self: start;
+  justify-self: center;
   align-self: start;
+  display: block;
+  margin: 0 auto;
   background: linear-gradient(180deg, rgba(34, 37, 42, 0.98), rgba(14, 16, 19, 0.98));
   border: 1px solid rgba(199, 154, 90, 0.3);
   border-radius: 8px;
@@ -489,8 +495,21 @@ a {
   background: var(--line);
 }
 
-.register-page,
 .app-page {
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at top, rgba(212, 167, 100, 0.12), transparent 24%),
+    linear-gradient(180deg, rgba(255, 252, 247, 0.98), rgba(244, 236, 224, 0.96)),
+    url('./assets/logo3.png');
+  background-position: top center, center, center 180px;
+  background-size: auto, cover, 680px auto;
+  background-repeat: no-repeat;
+  padding: calc(30px + var(--system-status-height) + 14px) 30px 30px;
+  position: relative;
+  isolation: isolate;
+}
+
+.register-page {
   min-height: 100vh;
   background:
     radial-gradient(circle at top, rgba(212, 167, 100, 0.12), transparent 24%),
@@ -620,7 +639,7 @@ a {
   box-shadow: var(--shadow-sm);
   padding: 14px 16px;
   position: sticky;
-  top: 16px;
+  top: var(--sticky-primary-top);
   z-index: 22;
   backdrop-filter: blur(14px);
 }
@@ -1275,7 +1294,7 @@ a {
   padding: 26px;
   box-shadow: var(--shadow-sm);
   position: sticky;
-  top: 16px;
+  top: var(--sticky-primary-top);
   z-index: 18;
   backdrop-filter: blur(14px);
 }
@@ -1494,7 +1513,7 @@ a {
   padding: 24px;
   box-shadow: var(--shadow-md);
   position: sticky;
-  top: 126px;
+  top: var(--sticky-secondary-top);
   z-index: 16;
   backdrop-filter: blur(12px);
 }
@@ -3252,12 +3271,37 @@ a {
   overflow: auto;
 }
 
-.session-countdown {
+.system-status-bar {
   position: fixed;
-  right: 24px;
-  bottom: 24px;
-  z-index: 40;
-  min-width: 198px;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 48;
+  padding: 12px 30px 0;
+  pointer-events: none;
+}
+
+.system-status-inner {
+  width: min(1220px, 100%);
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 14px;
+  padding: 12px 16px;
+  border: 1px solid rgba(200, 154, 87, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 252, 247, 0.96);
+  box-shadow: 0 16px 34px rgba(10, 10, 14, 0.12);
+  backdrop-filter: blur(14px);
+  pointer-events: auto;
+}
+
+.session-countdown {
+  position: static;
+  flex: 0 0 auto;
+  min-width: 214px;
   display: inline-flex;
   align-items: center;
   gap: 12px;
@@ -3271,20 +3315,17 @@ a {
 }
 
 .logged-user-badge {
-  position: fixed;
-  right: 24px;
-  bottom: 104px;
-  z-index: 24;
   display: grid;
   gap: 4px;
-  min-width: 260px;
-  max-width: min(320px, calc(100vw - 48px));
-  padding: 14px 16px;
-  border: 1px solid rgba(200, 154, 87, 0.24);
+  min-width: 0;
+  flex: 1 1 auto;
+  max-width: min(700px, 100%);
+  padding: 4px 0;
+  border: 0;
   border-radius: 8px;
-  background: rgba(255, 253, 250, 0.94);
-  box-shadow: 0 14px 28px rgba(10, 10, 14, 0.16);
-  backdrop-filter: blur(12px);
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
 }
 
 .logged-user-badge span {
@@ -3297,7 +3338,7 @@ a {
 
 .logged-user-badge strong {
   color: var(--ink);
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.25;
 }
 
@@ -4061,6 +4102,11 @@ a {
 }
 
 @media (max-width: 1020px) {
+  :root {
+    --system-status-height: 92px;
+    --sticky-secondary-top: calc(var(--system-status-height) + 126px);
+  }
+
   .app-page,
   .register-page,
   .public-page {
@@ -4097,9 +4143,12 @@ a {
     right: 30px;
   }
 
-  .register-page,
-  .app-page {
+  .register-page {
     padding: 20px;
+  }
+
+  .app-page {
+    padding: calc(20px + var(--system-status-height) + 14px) 20px 20px;
   }
 
   .page-heading,
@@ -4292,6 +4341,11 @@ a {
 }
 
 @media (max-width: 620px) {
+  :root {
+    --system-status-height: 126px;
+    --sticky-secondary-top: calc(var(--system-status-height) + 126px);
+  }
+
   .login-brand h1,
   .home-copy h1,
   .page-heading h1,
@@ -4388,20 +4442,25 @@ a {
     padding: 16px;
   }
 
+  .system-status-bar {
+    padding: 10px 14px 0;
+  }
+
+  .system-status-inner {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 12px 14px;
+  }
+
   .session-countdown {
-    left: 20px;
-    right: 20px;
-    bottom: 20px;
     min-width: 0;
+    width: 100%;
     justify-content: center;
   }
 
   .logged-user-badge {
-    left: 20px;
-    right: 20px;
-    bottom: 98px;
-    min-width: 0;
     max-width: none;
+    width: 100%;
   }
 }
 
@@ -4751,7 +4810,7 @@ a {
 }
 
 .topbar {
-  top: 16px;
+  top: var(--sticky-primary-top);
   z-index: 22;
 }
 
