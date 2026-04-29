@@ -106,8 +106,10 @@ export function ProtectedRoute() {
         <div className="system-status-inner">
           <aside className="logged-user-badge" aria-label="Usuário logado">
             <span>Usuário logado</span>
-            <strong>{userLabel}</strong>
-            <small>{userEmail || 'E-mail não informado'}</small>
+            <div className="logged-user-badge__identity">
+              <strong>{userLabel}</strong>
+              <small>{userEmail || 'E-mail não informado'}</small>
+            </div>
           </aside>
           <aside
             className={`session-countdown ${remainingMs <= 5 * 60 * 1000 ? 'warning' : ''}`}

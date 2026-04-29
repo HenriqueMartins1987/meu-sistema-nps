@@ -5,8 +5,8 @@ import {
   accessProfiles,
   defaultBrazilPhone,
   formatBrazilPhoneInput,
-  isMasterAdmin,
   isCompleteBrazilPhone,
+  isMasterAdmin,
   readUser,
   screenPermissions
 } from './constants';
@@ -44,6 +44,7 @@ function AdminPanel() {
   const [creating, setCreating] = useState(false);
   const [newUser, setNewUser] = useState(buildNewUserDraft);
   const [testingChannels, setTestingChannels] = useState(false);
+  const [testMenuOpen, setTestMenuOpen] = useState(false);
 
   const selectedUser = useMemo(() => (
     users.find((user) => String(user.id) === String(selectedUserId)) || null
@@ -112,6 +113,10 @@ function AdminPanel() {
       clinicIds: Array.isArray(selectedUser.clinics) ? selectedUser.clinics.map((clinic) => clinic.clinic_id) : []
     });
   }, [selectedUser]);
+
+  useEffect(() => {
+    setTestMenuOpen(false);
+  }, [selectedUserId]);
 
   const updateDraft = (field, value) => {
     setDraft((prev) => ({ ...prev, [field]: value }));
@@ -218,6 +223,7 @@ function AdminPanel() {
 
     setTestingChannels(true);
     setFeedback('');
+    setTestMenuOpen(false);
 
     try {
       const response = await api.post('/api/test-email', {
@@ -248,6 +254,7 @@ function AdminPanel() {
 
     setTestingChannels(true);
     setFeedback('');
+    setTestMenuOpen(false);
 
     try {
       const response = await api.post('/api/whatsapp/enviar', {
@@ -307,7 +314,6 @@ function AdminPanel() {
   }
 
   const isSelectedMaster = String(selectedUser?.email || '').toLowerCase() === masterAdminEmail;
-  const currentUserIsMaster = isMasterAdmin(currentUser);
 
   return (
     <main className="app-page">
@@ -320,16 +326,6 @@ function AdminPanel() {
 
         <div className="heading-actions">
           <button className="primary-action" onClick={() => setCreateOpen(true)}>Cadastrar novo usuário</button>
-          {currentUserIsMaster && selectedUser && (
-            <>
-              <button className="outline-action" onClick={sendRecurringEmailTest} disabled={testingChannels}>
-                {testingChannels ? 'Enviando...' : 'Testar e-mail'}
-              </button>
-              <button className="outline-action" onClick={sendRecurringWhatsAppTest} disabled={testingChannels}>
-                {testingChannels ? 'Enviando...' : 'Testar WhatsApp'}
-              </button>
-            </>
-          )}
           <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
         </div>
       </header>
@@ -379,74 +375,98 @@ function AdminPanel() {
 
           {draft && selectedUser && (
             <section className="management-panel admin-detail-panel">
-              <div className="panel-heading">
+              <div className="panel-heading admin-detail-heading">
                 <div>
                   <p className="eyebrow">Alçada</p>
                   <h2>{selectedUser.name}</h2>
+                  <p className="base-subtitle">Defina dados cadastrais, acessos, clínicas vinculadas e testes operacionais.</p>
                 </div>
-                <div className="heading-actions">
-                  {currentUserIsMaster && (
-                    <>
-                      <button className="outline-action" onClick={sendRecurringEmailTest} disabled={testingChannels}>
-                        {testingChannels ? 'Enviando...' : 'Testar e-mail'}
-                      </button>
-                      <button className="outline-action" onClick={sendRecurringWhatsAppTest} disabled={testingChannels}>
-                        {testingChannels ? 'Enviando...' : 'Testar WhatsApp'}
-                      </button>
-                    </>
-                  )}
+
+                <div className="heading-actions admin-heading-actions">
+                  <div className="admin-test-menu">
+                    <button
+                      className="outline-action"
+                      type="button"
+                      onClick={() => setTestMenuOpen((prev) => !prev)}
+                      disabled={testingChannels}
+                      aria-expanded={testMenuOpen}
+                    >
+                      {testingChannels ? 'Enviando...' : 'Teste'}
+                    </button>
+
+                    {testMenuOpen && (
+                      <div className="admin-test-menu-panel">
+                        <button className="ghost-action" type="button" onClick={sendRecurringEmailTest} disabled={testingChannels}>
+                          E-mail
+                        </button>
+                        <button className="ghost-action" type="button" onClick={sendRecurringWhatsAppTest} disabled={testingChannels}>
+                          WhatsApp
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
                   {!isSelectedMaster && <button className="outline-action" onClick={disableUser}>Desabilitar</button>}
                   {!isSelectedMaster && <button className="outline-action" onClick={resetPassword}>Reiniciar senha</button>}
                   {!isSelectedMaster && <button className="outline-action danger-action" onClick={deleteUser}>Excluir</button>}
-                  <button className="primary-action" onClick={saveUser}>Salvar alteraç?es</button>
+                  <button className="primary-action" onClick={saveUser}>Salvar alterações</button>
                 </div>
               </div>
 
-              <div className="admin-form-grid">
-                <label>
-                  Nome completo
-                  <input className="field" value={draft.name} onChange={(event) => updateDraft('name', event.target.value)} />
-                </label>
-                <label>
-                  Perfil
-                  <select className="field" value={draft.role} onChange={(event) => updateDraft('role', event.target.value)} disabled={isSelectedMaster}>
-                    {isSelectedMaster && <option value="master_admin">Administrador Master</option>}
-                    {accessProfiles.map((profile) => (
-                      <option key={profile.value} value={profile.value}>{profile.label}</option>
-                    ))}
-                  </select>
-                </label>
-                <label>
-                  Cargo
-                  <input className="field" value={draft.position} onChange={(event) => updateDraft('position', event.target.value)} />
-                </label>
-                <label>
-                  Telefone
-                  <input
-                    className="field"
-                    value={draft.phone || defaultBrazilPhone}
-                    onChange={(event) => updateDraft('phone', formatBrazilPhoneInput(event.target.value))}
-                    minLength={14}
-                    maxLength={14}
-                    required
-                  />
-                </label>
-                <label>
-                  WhatsApp
-                  <input
-                    className="field"
-                    value={draft.whatsapp || defaultBrazilPhone}
-                    onChange={(event) => updateDraft('whatsapp', formatBrazilPhoneInput(event.target.value))}
-                    minLength={14}
-                    maxLength={14}
-                    required
-                  />
-                </label>
-                <label>
-                  Área ou unidade
-                  <input className="field" value={draft.department} onChange={(event) => updateDraft('department', event.target.value)} />
-                </label>
-              </div>
+              <section className="admin-identity-section">
+                <div className="admin-section-heading">
+                  <div>
+                    <p className="eyebrow">Cadastro</p>
+                    <h3>Dados do colaborador</h3>
+                  </div>
+                </div>
+
+                <div className="admin-form-grid">
+                  <label>
+                    Nome completo
+                    <input className="field" value={draft.name} onChange={(event) => updateDraft('name', event.target.value)} />
+                  </label>
+                  <label>
+                    Perfil
+                    <select className="field" value={draft.role} onChange={(event) => updateDraft('role', event.target.value)} disabled={isSelectedMaster}>
+                      {isSelectedMaster && <option value="master_admin">Administrador Master</option>}
+                      {accessProfiles.map((profile) => (
+                        <option key={profile.value} value={profile.value}>{profile.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Cargo
+                    <input className="field" value={draft.position} onChange={(event) => updateDraft('position', event.target.value)} />
+                  </label>
+                  <label>
+                    Telefone
+                    <input
+                      className="field"
+                      value={draft.phone || defaultBrazilPhone}
+                      onChange={(event) => updateDraft('phone', formatBrazilPhoneInput(event.target.value))}
+                      minLength={14}
+                      maxLength={14}
+                      required
+                    />
+                  </label>
+                  <label>
+                    WhatsApp
+                    <input
+                      className="field"
+                      value={draft.whatsapp || defaultBrazilPhone}
+                      onChange={(event) => updateDraft('whatsapp', formatBrazilPhoneInput(event.target.value))}
+                      minLength={14}
+                      maxLength={14}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Área ou unidade
+                    <input className="field" value={draft.department} onChange={(event) => updateDraft('department', event.target.value)} />
+                  </label>
+                </div>
+              </section>
 
               <div className="admin-switch-row">
                 <label>
@@ -461,9 +481,11 @@ function AdminPanel() {
               </div>
 
               <section className="admin-check-section">
-                <div>
-                  <p className="eyebrow">Telas liberadas</p>
-                  <h3>Fluxo de alçada por tela</h3>
+                <div className="admin-section-heading">
+                  <div>
+                    <p className="eyebrow">Telas liberadas</p>
+                    <h3>Fluxo de alçada por tela</h3>
+                  </div>
                   <div className="mini-actions">
                     <button type="button" className="outline-action" onClick={selectAllPermissions}>Selecionar todas</button>
                     <button type="button" className="ghost-action" onClick={clearPermissions}>Limpar</button>
@@ -484,9 +506,11 @@ function AdminPanel() {
               </section>
 
               <section className="admin-check-section">
-                <div>
-                  <p className="eyebrow">Clínicas vinculadas</p>
-                  <h3>Responsabilidade por unidade</h3>
+                <div className="admin-section-heading">
+                  <div>
+                    <p className="eyebrow">Clínicas vinculadas</p>
+                    <h3>Responsabilidade por unidade</h3>
+                  </div>
                   <div className="mini-actions">
                     <button type="button" className="outline-action" onClick={selectAllClinics}>Selecionar todas</button>
                     <button type="button" className="ghost-action" onClick={clearClinics}>Limpar</button>
@@ -570,5 +594,3 @@ function AdminPanel() {
 }
 
 export default AdminPanel;
-
-

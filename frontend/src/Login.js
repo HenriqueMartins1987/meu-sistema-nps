@@ -165,7 +165,9 @@ function Login() {
     <main className="login-page clean-login-page">
       <section className="login-brand">
         <div className="login-brand-shell">
-          <img className="login-brand-logo" src={logo} alt="GRC Consultoria" />
+          <div className="login-brand-logo-frame">
+            <img className="login-brand-logo" src={logo} alt="GRC Consultoria" />
+          </div>
           <p className="eyebrow">Portal de relacionamento e experiência</p>
           <h1>Gestão profissional da voz do cliente.</h1>
           <p>
