@@ -4,6 +4,9 @@ const nodemailer = require('nodemailer');
 const { Resend } = require('resend');
 
 const DEFAULT_EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>';
+const BRAND_LOGO_PATH = path.resolve(__dirname, '../../frontend/src/assets/logo3.png');
+
+let cachedBrandLogoDataUrl = null;
 
 function getEmailProvider() {
   const configuredProvider = String(process.env.EMAIL_PROVIDER || '').trim().toLowerCase();
@@ -16,6 +19,21 @@ function getEmailProvider() {
 
 function getEmailFrom() {
   return process.env.EMAIL_FROM || process.env.SMTP_FROM || process.env.SMTP_USER || DEFAULT_EMAIL_FROM;
+}
+
+function getBrandLogoDataUrl() {
+  if (cachedBrandLogoDataUrl !== null) {
+    return cachedBrandLogoDataUrl;
+  }
+
+  try {
+    const fileBuffer = fs.readFileSync(BRAND_LOGO_PATH);
+    cachedBrandLogoDataUrl = `data:image/png;base64,${fileBuffer.toString('base64')}`;
+  } catch (error) {
+    cachedBrandLogoDataUrl = '';
+  }
+
+  return cachedBrandLogoDataUrl;
 }
 
 function isResendConfigured() {
@@ -45,30 +63,34 @@ function createSmtpTransporter() {
 async function normalizeAttachments(attachments = []) {
   const safeAttachments = Array.isArray(attachments) ? attachments.filter(Boolean) : [];
 
-  return Promise.all(safeAttachments.map(async (attachment) => {
-    if (attachment.path) {
-      const filePath = path.resolve(attachment.path);
-      const content = await fs.promises.readFile(filePath);
+  const resolved = await Promise.all(
+    safeAttachments.map(async (attachment) => {
+      if (attachment.path) {
+        const filePath = path.resolve(attachment.path);
+        const content = await fs.promises.readFile(filePath);
 
-      return {
-        filename: attachment.filename || path.basename(filePath),
-        content,
-        contentType: attachment.contentType
-      };
-    }
+        return {
+          filename: attachment.filename || path.basename(filePath),
+          content,
+          contentType: attachment.contentType
+        };
+      }
 
-    if (attachment.content) {
-      return {
-        filename: attachment.filename,
-        content: Buffer.isBuffer(attachment.content)
-          ? attachment.content
-          : Buffer.from(String(attachment.content), attachment.encoding || 'utf8'),
-        contentType: attachment.contentType
-      };
-    }
+      if (attachment.content) {
+        return {
+          filename: attachment.filename,
+          content: Buffer.isBuffer(attachment.content)
+            ? attachment.content
+            : Buffer.from(String(attachment.content), attachment.encoding || 'utf8'),
+          contentType: attachment.contentType
+        };
+      }
 
-    return null;
-  })).then((results) => results.filter(Boolean));
+      return null;
+    })
+  );
+
+  return resolved.filter(Boolean);
 }
 
 async function sendWithResend({ to, subject, html, text, attachments = [] }) {
@@ -160,73 +182,108 @@ function normalizeAppUrl(appUrl) {
   return String(appUrl || '').trim() || process.env.APP_BASE_URL || process.env.FRONTEND_URL || 'https://meu-sistema-nps.vercel.app/';
 }
 
-function renderUserAccessEmail({ name, email, temporaryPassword, appUrl }) {
-  return {
-    subject: 'Seu acesso ao portal foi criado',
-    html: `
-      <div style="margin:0;padding:24px;background:#f4efe6;font-family:Arial,Helvetica,sans-serif;color:#231f20;line-height:1.6;">
-        <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e7dcc8;border-radius:18px;overflow:hidden;box-shadow:0 18px 36px rgba(35,31,32,0.08);">
-          <div style="padding:28px 32px;background:linear-gradient(135deg,#1f2329 0%,#2b3038 100%);color:#ffffff;">
-            <p style="margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#d5a24c;">GRC Consultoria</p>
-            <h1 style="margin:0;font-size:28px;line-height:1.2;">Seu acesso ao portal foi criado</h1>
-          </div>
-          <div style="padding:32px;">
-            <p style="margin:0 0 16px;">Olá, <strong>${name || 'colaborador'}</strong>.</p>
-            <p style="margin:0 0 20px;">Seu acesso ao portal foi criado com sucesso. Abaixo estão os dados iniciais para o primeiro acesso.</p>
-            <div style="margin:24px 0;padding:20px;border-radius:14px;background:#fbf8f2;border:1px solid #eadfc8;">
-              <p style="margin:0 0 10px;"><strong>Login:</strong> ${email}</p>
-              <p style="margin:0 0 10px;"><strong>Senha temporária:</strong> ${temporaryPassword}</p>
-              <p style="margin:0;"><strong>Acesse:</strong> <a href="${normalizeAppUrl(appUrl)}" style="color:#a56a09;text-decoration:none;">${normalizeAppUrl(appUrl)}</a></p>
-            </div>
-            <p style="margin:0 0 14px;">No primeiro acesso, a troca de senha será obrigatória por segurança.</p>
-            <p style="margin:0;color:#6a6360;">Se você não reconhece este cadastro, responda este e-mail ou procure a administração imediatamente.</p>
-          </div>
+function renderBrandedEmail({
+  eyebrow = 'GRC Consultoria',
+  title,
+  intro = '',
+  bodyHtml = '',
+  actionLabel = '',
+  actionUrl = '',
+  footerText = 'Este é um e-mail transacional do sistema. Se você não reconhece esta comunicação, procure o Administrador Master.'
+}) {
+  const logoDataUrl = getBrandLogoDataUrl();
+  const actionBlock = actionLabel && actionUrl
+    ? `
+      <div style="margin:28px 0 0;">
+        <a href="${actionUrl}" style="display:inline-block;padding:14px 22px;border-radius:10px;background:#c89a57;color:#ffffff;text-decoration:none;font-weight:700;">
+          ${actionLabel}
+        </a>
+      </div>
+    `
+    : '';
+
+  return `
+    <div style="margin:0;padding:24px;background:#f4efe6;font-family:Arial,Helvetica,sans-serif;color:#231f20;line-height:1.65;">
+      <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #e7dcc8;border-radius:18px;overflow:hidden;box-shadow:0 18px 36px rgba(35,31,32,0.08);">
+        <div style="padding:28px 32px;background:linear-gradient(135deg,#1f2329 0%,#2b3038 100%);color:#ffffff;">
+          ${logoDataUrl ? `<img src="${logoDataUrl}" alt="GRC Consultoria" style="display:block;max-width:170px;height:auto;margin:0 0 18px;" />` : ''}
+          <p style="margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#d5a24c;">${eyebrow}</p>
+          <h1 style="margin:0;font-size:28px;line-height:1.2;">${title}</h1>
+        </div>
+        <div style="padding:32px;">
+          ${intro ? `<p style="margin:0 0 18px;">${intro}</p>` : ''}
+          ${bodyHtml}
+          ${actionBlock}
+          <p style="margin:28px 0 0;color:#6a6360;">${footerText}</p>
         </div>
       </div>
-    `.trim()
+    </div>
+  `.trim();
+}
+
+function renderUserAccessEmail({ name, email, temporaryPassword, appUrl }) {
+  const portalUrl = normalizeAppUrl(appUrl);
+  const html = renderBrandedEmail({
+    title: 'Seu acesso ao portal foi criado',
+    intro: `Olá, <strong>${name || 'colaborador'}</strong>.`,
+    bodyHtml: `
+      <p style="margin:0 0 20px;">Seu acesso ao portal foi criado com sucesso. Abaixo estão os dados iniciais para o primeiro acesso.</p>
+      <div style="margin:24px 0;padding:20px;border-radius:14px;background:#fbf8f2;border:1px solid #eadfc8;">
+        <p style="margin:0 0 10px;"><strong>Login:</strong> ${email}</p>
+        <p style="margin:0 0 10px;"><strong>Senha temporária:</strong> ${temporaryPassword}</p>
+        <p style="margin:0;"><strong>Acesse:</strong> <a href="${portalUrl}" style="color:#a56a09;text-decoration:none;">${portalUrl}</a></p>
+      </div>
+      <p style="margin:0;">No primeiro acesso, a troca de senha será obrigatória por segurança.</p>
+    `,
+    actionLabel: 'Acessar o sistema',
+    actionUrl: portalUrl
+  });
+
+  return {
+    subject: 'Seu acesso ao portal foi criado',
+    html
   };
 }
 
 function renderRegistrationApprovedEmail({ name, appUrl }) {
   const approvedUrl = normalizeAppUrl(appUrl);
+  const html = renderBrandedEmail({
+    title: 'Seu cadastro foi aprovado',
+    intro: `Olá, <strong>${name || 'colaborador'}</strong>.`,
+    bodyHtml: `
+      <p style="margin:0 0 18px;">Seu cadastro foi aprovado e seu acesso já está liberado.</p>
+      <p style="margin:0;"><strong>Acesse:</strong> <a href="${approvedUrl}" style="color:#a56a09;text-decoration:none;">${approvedUrl}</a></p>
+    `,
+    actionLabel: 'Entrar no portal',
+    actionUrl: approvedUrl
+  });
 
   return {
     subject: 'Seu cadastro foi aprovado',
-    html: `
-      <div style="font-family: Arial, Helvetica, sans-serif; color: #1b1b1f; line-height: 1.6;">
-        <h2 style="margin-bottom: 16px;">Olá, ${name || 'colaborador'}.</h2>
-        <p>Seu cadastro foi aprovado e seu acesso já está liberado.</p>
-        <p><strong>Acesse:</strong> <a href="${approvedUrl}">${approvedUrl}</a></p>
-      </div>
-    `.trim()
+    html
   };
 }
 
 function renderPasswordResetEmail({ name, temporaryPassword, appUrl }) {
   const changePasswordUrl = normalizeAppUrl(appUrl);
+  const html = renderBrandedEmail({
+    title: 'Sua senha foi reiniciada',
+    intro: `Olá, <strong>${name || 'colaborador'}</strong>.`,
+    bodyHtml: `
+      <p style="margin:0 0 20px;">Seu acesso recebeu uma nova senha temporária. Entre no sistema e conclua a alteração da senha no primeiro acesso.</p>
+      <div style="margin:24px 0;padding:20px;border-radius:14px;background:#fbf8f2;border:1px solid #eadfc8;">
+        <p style="margin:0 0 10px;"><strong>Senha temporária:</strong> ${temporaryPassword}</p>
+        <p style="margin:0 0 12px;"><strong>Link para alteração da senha:</strong> <a href="${changePasswordUrl}" style="color:#a56a09;text-decoration:none;">${changePasswordUrl}</a></p>
+        <p style="margin:0;color:#6a6360;">Ao acessar o link, entre com a senha temporária. O sistema abrirá a troca obrigatória automaticamente.</p>
+      </div>
+    `,
+    actionLabel: 'Acessar e alterar senha',
+    actionUrl: changePasswordUrl
+  });
 
   return {
     subject: 'Senha reiniciada - Sistema GRC',
-    html: `
-      <div style="margin:0;padding:24px;background:#f4efe6;font-family:Arial,Helvetica,sans-serif;color:#231f20;line-height:1.6;">
-        <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e7dcc8;border-radius:18px;overflow:hidden;box-shadow:0 18px 36px rgba(35,31,32,0.08);">
-          <div style="padding:28px 32px;background:linear-gradient(135deg,#1f2329 0%,#2b3038 100%);color:#ffffff;">
-            <p style="margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#d5a24c;">GRC Consultoria</p>
-            <h1 style="margin:0;font-size:28px;line-height:1.2;">Sua senha foi reiniciada</h1>
-          </div>
-          <div style="padding:32px;">
-            <p style="margin:0 0 16px;">Olá, <strong>${name || 'colaborador'}</strong>.</p>
-            <p style="margin:0 0 20px;">Seu acesso recebeu uma nova senha temporária. Entre no sistema e conclua a alteração da senha no primeiro acesso.</p>
-            <div style="margin:24px 0;padding:20px;border-radius:14px;background:#fbf8f2;border:1px solid #eadfc8;">
-              <p style="margin:0 0 10px;"><strong>Senha temporária:</strong> ${temporaryPassword}</p>
-              <p style="margin:0 0 12px;"><strong>Link para alteração da senha:</strong> <a href="${changePasswordUrl}" style="color:#a56a09;text-decoration:none;">${changePasswordUrl}</a></p>
-              <p style="margin:0;color:#6a6360;">Ao acessar o link, entre com a senha temporária. O sistema abrirá a troca obrigatória automaticamente.</p>
-            </div>
-            <p style="margin:0;color:#6a6360;">Se você não reconhece esta alteração, procure imediatamente o Administrador Master.</p>
-          </div>
-        </div>
-      </div>
-    `.trim()
+    html
   };
 }
 
@@ -259,12 +316,14 @@ async function sendWelcomeEmail({
 
 module.exports = {
   DEFAULT_EMAIL_FROM,
+  getBrandLogoDataUrl,
   getEmailFrom,
   getEmailProvider,
   htmlToText,
-  sendEmail,
-  sendWelcomeEmail,
-  renderUserAccessEmail,
+  renderBrandedEmail,
+  renderPasswordResetEmail,
   renderRegistrationApprovedEmail,
-  renderPasswordResetEmail
+  renderUserAccessEmail,
+  sendEmail,
+  sendWelcomeEmail
 };

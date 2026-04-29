@@ -9,7 +9,7 @@ import {
   isCompleteBrazilPhone,
   readUser
 } from './constants';
-import { updateStoredUser } from './session';
+import { saveSession, updateStoredUser } from './session';
 
 function Profile() {
   const navigate = useNavigate();
@@ -37,20 +37,19 @@ function Profile() {
 
   const handleSave = async (event) => {
     event.preventDefault();
+
     if (!isCompleteBrazilPhone(form.phone) || !isCompleteBrazilPhone(form.whatsapp)) {
       setFeedback('Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.');
       return;
     }
 
     try {
-      const res = await api.patch('/profile', form);
-      const updatedUser = { ...user, ...(res.data?.user || form) };
+      const response = await api.patch('/profile', form);
+      const updatedUser = { ...user, ...(response.data?.user || form) };
       updateStoredUser(updatedUser);
       setFeedback('Dados atualizados com sucesso.');
-      return;
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível atualizar os dados.');
-      return;
     }
   };
 
@@ -63,12 +62,12 @@ function Profile() {
     }
 
     try {
-      await api.post('/profile/change-password', {
+      const response = await api.post('/profile/change-password', {
         current_password: passwordForm.current_password,
         new_password: passwordForm.new_password
       });
-      const updatedUser = { ...user, mustChangePassword: false };
-      updateStoredUser(updatedUser);
+
+      saveSession(response.data?.token || '', response.data?.user || { ...user, mustChangePassword: false });
       setPasswordForm({ current_password: '', new_password: '', confirm_password: '' });
       setFeedback('Senha alterada com sucesso.');
     } catch (error) {

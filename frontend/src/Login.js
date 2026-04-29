@@ -1,7 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from './api';
-import logo from './assets/logo3.png';
 import { saveSession } from './session';
 
 const experienceModules = [
@@ -31,14 +30,26 @@ const experienceModules = [
   }
 ];
 
+const initialRecoveryForm = {
+  email: '',
+  code: '',
+  new_password: '',
+  confirm_password: ''
+};
+
 function Login() {
   const navigate = useNavigate();
   const location = useLocation();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
   const [activeModule, setActiveModule] = useState(experienceModules[0].id);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
+  const [recoveryStep, setRecoveryStep] = useState('request');
+  const [recoveryForm, setRecoveryForm] = useState(initialRecoveryForm);
+  const [recoveryLoading, setRecoveryLoading] = useState(false);
 
   const selectedModule = useMemo(
     () => experienceModules.find((item) => item.id === activeModule) || experienceModules[0],
@@ -47,25 +58,46 @@ function Login() {
   const redirectPath = location.state?.from || '/home';
   const timedOut = location.state?.reason === 'idle_timeout';
 
+  const updateRecoveryField = (field, value) => {
+    setRecoveryForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const openRecovery = () => {
+    setRecoveryOpen(true);
+    setRecoveryStep('request');
+    setRecoveryForm((prev) => ({ ...prev, email }));
+    setError('');
+    setInfo('');
+  };
+
+  const closeRecovery = () => {
+    setRecoveryOpen(false);
+    setRecoveryStep('request');
+    setRecoveryForm(initialRecoveryForm);
+    setError('');
+    setInfo('');
+  };
+
   const handleLogin = async (event) => {
     event.preventDefault();
     setError('');
+    setInfo('');
     setLoading(true);
 
     try {
-      const res = await api.post('/login', {
+      const response = await api.post('/login', {
         email,
         username: email,
         password
       });
 
-      if (res.data.token || res.data.success) {
-        saveSession(res.data.token || '', res.data.user || { email, role: 'viewer', permissions: [] });
+      if (response.data.token || response.data.success) {
+        saveSession(response.data.token || '', response.data.user || { email, role: 'viewer', permissions: [] });
         navigate(redirectPath, { replace: true });
         return;
       }
 
-      setError('Login inválido');
+      setError('Login inválido.');
     } catch (err) {
       const message = err.response?.data?.message
         || err.response?.data?.error
@@ -78,16 +110,63 @@ function Login() {
     }
   };
 
+  const handleRequestRecovery = async (event) => {
+    event.preventDefault();
+    setRecoveryLoading(true);
+    setError('');
+    setInfo('');
+
+    try {
+      const response = await api.post('/auth/request-password-reset', {
+        email: recoveryForm.email
+      });
+      setRecoveryStep('confirm');
+      setInfo(response.data?.message || 'Enviamos um código de confirmação para o seu e-mail.');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Não foi possível solicitar a recuperação de senha.');
+    } finally {
+      setRecoveryLoading(false);
+    }
+  };
+
+  const handleConfirmRecovery = async (event) => {
+    event.preventDefault();
+    setRecoveryLoading(true);
+    setError('');
+    setInfo('');
+
+    if (recoveryForm.new_password !== recoveryForm.confirm_password) {
+      setError('A confirmação da nova senha não confere.');
+      setRecoveryLoading(false);
+      return;
+    }
+
+    try {
+      const response = await api.post('/auth/reset-password-with-code', {
+        email: recoveryForm.email,
+        code: recoveryForm.code,
+        new_password: recoveryForm.new_password
+      });
+      setInfo(response.data?.message || 'Senha redefinida com sucesso. Faça login com a nova senha.');
+      setEmail(recoveryForm.email);
+      setPassword('');
+      closeRecovery();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Não foi possível redefinir a senha.');
+    } finally {
+      setRecoveryLoading(false);
+    }
+  };
+
   return (
-    <main className="login-page">
+    <main className="login-page clean-login-page">
       <section className="login-brand">
         <div className="login-brand-shell">
-          <img src={logo} alt="GRC Consultoria Empresarial" className="login-brand-logo" />
-          <p className="eyebrow">Voz do cliente e experiência do paciente</p>
-          <h1>Gestão completa de sugestões, elogios, reclamações e satisfação.</h1>
+          <p className="eyebrow">Portal de relacionamento e experiência</p>
+          <h1>Gestão profissional da voz do cliente.</h1>
           <p>
-            Centralize todos os sinais da jornada do cliente, acompanhe tratativas por prazo
-            e transforme cada registro em indicador para decisão.
+            Centralize reclamações, sugestões, elogios, pesquisas NPS e agendas do paciente
+            com rastreabilidade, prioridade e visão executiva.
           </p>
 
           <div className="login-module-grid" aria-label="Módulos de experiência">
@@ -120,9 +199,8 @@ function Login() {
       </section>
 
       <section className="login-panel" aria-label="Acesso ao sistema">
-        <form className="login-card" onSubmit={handleLogin}>
-          <div className="login-card-header">
-            <img src={logo} alt="GRC Consultoria Empresarial" className="form-logo" />
+        <form className="login-card clean-login-card" onSubmit={handleLogin}>
+          <div className="login-card-header clean-login-header">
             <span className="system-chip">Portal seguro</span>
           </div>
 
@@ -132,6 +210,8 @@ function Login() {
           {timedOut && !error && (
             <p className="form-feedback">Sua sessão expirou após 20 minutos sem atividade. Faça login novamente.</p>
           )}
+
+          {info && <p className="form-feedback">{info}</p>}
 
           <label className="login-field">
             E-mail corporativo
@@ -165,6 +245,14 @@ function Login() {
             {loading ? 'Entrando...' : 'Login'}
           </button>
 
+          <button
+            className="ghost-action full-width login-link-button"
+            type="button"
+            onClick={openRecovery}
+          >
+            Esqueceu sua senha?
+          </button>
+
           <div className="login-divider">
             <span>Primeiro acesso</span>
           </div>
@@ -178,6 +266,97 @@ function Login() {
           </button>
         </form>
       </section>
+
+      {recoveryOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true">
+          <form
+            className="modal-panel password-recovery-modal"
+            onSubmit={recoveryStep === 'request' ? handleRequestRecovery : handleConfirmRecovery}
+          >
+            <p className="eyebrow">Recuperação de senha</p>
+            <h2>{recoveryStep === 'request' ? 'Solicitar código por e-mail' : 'Definir nova senha'}</h2>
+            <p>
+              {recoveryStep === 'request'
+                ? 'Informe seu e-mail corporativo para receber um código de confirmação.'
+                : 'Digite o código recebido por e-mail e cadastre sua nova senha.'}
+            </p>
+
+            <label>
+              E-mail corporativo
+              <input
+                className="field"
+                type="email"
+                value={recoveryForm.email}
+                onChange={(event) => updateRecoveryField('email', event.target.value)}
+                placeholder="nome@empresa.com.br"
+                required
+              />
+            </label>
+
+            {recoveryStep === 'confirm' && (
+              <>
+                <label>
+                  Código de confirmação
+                  <input
+                    className="field"
+                    type="text"
+                    value={recoveryForm.code}
+                    onChange={(event) => updateRecoveryField('code', event.target.value)}
+                    placeholder="Digite o código recebido"
+                    maxLength={6}
+                    required
+                  />
+                </label>
+
+                <label>
+                  Nova senha
+                  <input
+                    className="field"
+                    type="password"
+                    value={recoveryForm.new_password}
+                    onChange={(event) => updateRecoveryField('new_password', event.target.value)}
+                    autoComplete="new-password"
+                    required
+                  />
+                </label>
+
+                <label>
+                  Confirmar nova senha
+                  <input
+                    className="field"
+                    type="password"
+                    value={recoveryForm.confirm_password}
+                    onChange={(event) => updateRecoveryField('confirm_password', event.target.value)}
+                    autoComplete="new-password"
+                    required
+                  />
+                </label>
+              </>
+            )}
+
+            {error && <p className="form-error">{error}</p>}
+            {info && <p className="form-feedback">{info}</p>}
+
+            <div className="row-actions">
+              <button type="button" className="outline-action" onClick={closeRecovery}>
+                Cancelar
+              </button>
+              {recoveryStep === 'confirm' && (
+                <button type="button" className="ghost-action" onClick={() => setRecoveryStep('request')}>
+                  Solicitar novo código
+                </button>
+              )}
+              <button className="primary-action" type="submit" disabled={recoveryLoading}>
+                {recoveryLoading
+                  ? 'Processando...'
+                  : recoveryStep === 'request'
+                    ? 'Enviar código'
+                    : 'Salvar nova senha'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </main>
   );
 }

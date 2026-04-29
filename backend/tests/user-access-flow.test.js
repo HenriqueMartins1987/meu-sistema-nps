@@ -1,4 +1,4 @@
-const test = require('node:test');
+﻿const test = require('node:test');
 const assert = require('node:assert/strict');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
@@ -44,10 +44,14 @@ test('admin user creation keeps the user when welcome e-mail fails', async () =>
   let insertedUserParams = null;
 
   emailService.sendWelcomeEmail = async () => {
-    throw new Error('Resend indisponível');
+    throw new Error('Resend indisponÃ­vel');
   };
 
   pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
     {
       match: (sql) => sql.includes('SELECT id FROM users WHERE LOWER(email) = ?'),
       reply: async () => [[]]
@@ -119,8 +123,8 @@ test('login reports first access requirement and blocks protected routes', async
       reply: async () => [[]]
     },
     {
-      match: (sql) => sql.includes('SELECT must_change_password FROM users WHERE id = ?'),
-      reply: async () => [[{ must_change_password: 1 }]]
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 1, token_version: 1, active: 1 }]]
     }
   ]);
 
@@ -152,11 +156,11 @@ test('change-initial-password clears must_change_password and returns refreshed 
 
   pool.query = buildQueryStub([
     {
-      match: (sql) => sql.includes('SELECT must_change_password FROM users WHERE id = ?'),
-      reply: async () => [[{ must_change_password: 1 }]]
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 1, token_version: 1, active: 1 }]]
     },
     {
-      match: (sql) => sql.includes('SELECT id, name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password, created_at, updated_at'),
+      match: (sql) => sql.includes('SELECT id, name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password, token_version, created_at, updated_at'),
       reply: async () => [[{
         id: 9,
         name: 'Ana Teste',
@@ -170,19 +174,20 @@ test('change-initial-password clears must_change_password and returns refreshed 
         permissions: '[]',
         active: 1,
         must_change_password: 1,
+        token_version: 1,
         created_at: new Date(),
         updated_at: new Date()
       }]]
     },
     {
-      match: (sql) => sql.includes('UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?'),
+      match: (sql) => sql.includes('UPDATE users SET password = ?, must_change_password = 0, token_version = COALESCE(token_version, 1) + 1 WHERE id = ?'),
       reply: async (_sql, params) => {
         updateParams = params;
         return [{ affectedRows: 1 }];
       }
     },
     {
-      match: (sql) => sql.includes('SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, created_at, updated_at'),
+      match: (sql) => sql.includes('SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, token_version, created_at, updated_at'),
       reply: async () => [[{
         id: 9,
         name: 'Ana Teste',
@@ -195,6 +200,7 @@ test('change-initial-password clears must_change_password and returns refreshed 
         permissions: '[]',
         active: 1,
         must_change_password: 0,
+        token_version: 2,
         created_at: new Date(),
         updated_at: new Date()
       }]]
@@ -240,20 +246,35 @@ test('test-email route sends a validation message through the welcome template',
     password
   });
 
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO whatsapp_message_logs'),
+      reply: async () => [{ insertId: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_message_logs'),
+      reply: async () => [{ affectedRows: 1 }]
+    }
+  ]);
+
   const response = await request(app)
     .post('/api/test-email')
     .set('Authorization', `Bearer ${signToken({
       id: 1,
-      email: 'admin@example.com',
-      role: 'admin',
-      name: 'Administrador',
+      email: 'henrique.martins@grcconsultoria.net.br',
+      role: 'master_admin',
+      name: 'Administrador Master',
       permissions: ['admin_panel'],
       clinicIds: [],
       mustChangePassword: false
     })}`)
     .send({
       to: 'teste@example.com',
-      name: 'Usuário Teste',
+      name: 'UsuÃ¡rio Teste',
       loginEmail: 'teste@example.com',
       password: 'Tmp@12345'
     });
@@ -263,3 +284,42 @@ test('test-email route sends a validation message through the welcome template',
   assert.equal(response.body.to, 'teste@example.com');
   assert.equal(response.body.messageId, 'email-123');
 });
+
+test('manual WhatsApp route accepts telefone and mensagem payload', async () => {
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO whatsapp_message_logs'),
+      reply: async () => [{ insertId: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_message_logs'),
+      reply: async () => [{ affectedRows: 1 }]
+    }
+  ]);
+
+  const response = await request(app)
+    .post('/api/whatsapp/enviar')
+    .set('Authorization', `Bearer ${signToken({
+      id: 1,
+      email: 'henrique.martins@grcconsultoria.net.br',
+      role: 'master_admin',
+      name: 'Administrador Master',
+      permissions: ['admin_panel'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({
+      telefone: '+55 (62) 99966-9966',
+      mensagem: 'Teste manual de WhatsApp'
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.success, false);
+  assert.equal(response.body.to, '5562999669966');
+  assert.match(response.body.warning, /provedor|configur/i);
+});
+

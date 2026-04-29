@@ -6,6 +6,7 @@ import {
   defaultBrazilPhone,
   formatBrazilPhoneInput,
   isAdmin,
+  isMasterAdmin,
   isCompleteBrazilPhone,
   readUser,
   screenPermissions
@@ -43,6 +44,7 @@ function AdminPanel() {
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [newUser, setNewUser] = useState(buildNewUserDraft);
+  const [testingChannels, setTestingChannels] = useState(false);
 
   const selectedUser = useMemo(() => (
     users.find((user) => String(user.id) === String(selectedUserId)) || null
@@ -78,7 +80,7 @@ function AdminPanel() {
         setSelectedUserId(String(userRows[0].id));
       }
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível carregar o painel gerencial.');
+      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel carregar o painel gerencial.');
     } finally {
       setLoading(false);
     }
@@ -165,7 +167,7 @@ function AdminPanel() {
       await loadData();
       setFeedback('Usuário atualizado com sucesso.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível atualizar o usuário.');
+      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel atualizar o usuário.');
     }
   };
 
@@ -177,7 +179,7 @@ function AdminPanel() {
       await loadData();
       setFeedback('Usuário desabilitado.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível desabilitar o usuário.');
+      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel desabilitar o usuário.');
     }
   };
 
@@ -188,9 +190,9 @@ function AdminPanel() {
       await api.delete(`/admin/users/${selectedUser.id}`);
       setSelectedUserId('');
       await loadData();
-      setFeedback('Usuário excluído com lastro de auditoria.');
+      setFeedback('Usuário excluÃ­do com lastro de auditoria.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível excluir o usuário.');
+      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel excluir o usuário.');
     }
   };
 
@@ -205,7 +207,64 @@ function AdminPanel() {
         `Senha reiniciada com sucesso. ${emailSent ? 'E-mail enviado.' : 'E-mail pendente.'} ${whatsappSent ? 'WhatsApp enviado.' : 'WhatsApp pendente.'}`
       );
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível reiniciar a senha.');
+      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel reiniciar a senha.');
+    }
+  };
+
+  const sendRecurringEmailTest = async () => {
+    if (!selectedUser?.email) {
+      setFeedback('Selecione um colaborador com e-mail válido para enviar o teste.');
+      return;
+    }
+
+    setTestingChannels(true);
+    setFeedback('');
+
+    try {
+      const response = await api.post('/api/test-email', {
+        to: selectedUser.email,
+        name: selectedUser.name,
+        loginEmail: selectedUser.email
+      });
+
+      if (response.data?.success) {
+        setFeedback(`E-mail de teste enviado para ${selectedUser.email}.`);
+      } else {
+        setFeedback(response.data?.warning || 'O teste de e-mail foi processado, mas o provedor não concluiu o envio.');
+      }
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel enviar o e-mail de teste.');
+    } finally {
+      setTestingChannels(false);
+    }
+  };
+
+  const sendRecurringWhatsAppTest = async () => {
+    const phoneTarget = selectedUser?.whatsapp || selectedUser?.phone;
+
+    if (!phoneTarget || !isCompleteBrazilPhone(phoneTarget)) {
+      setFeedback('Selecione um colaborador com WhatsApp válido para enviar o teste.');
+      return;
+    }
+
+    setTestingChannels(true);
+    setFeedback('');
+
+    try {
+      const response = await api.post('/api/whatsapp/enviar', {
+        telefone: phoneTarget,
+        mensagem: `Teste recorrente do sistema GRC enviado para ${selectedUser.name || 'colaborador'} em ${new Date().toLocaleString('pt-BR')}.`
+      });
+
+      if (response.data?.success) {
+        setFeedback(`WhatsApp de teste enviado para ${selectedUser.name || 'colaborador'}.`);
+      } else {
+        setFeedback(response.data?.warning || 'O teste de WhatsApp foi processado, mas o provedor não concluiu o envio.');
+      }
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel enviar o WhatsApp de teste.');
+    } finally {
+      setTestingChannels(false);
     }
   };
 
@@ -238,7 +297,7 @@ function AdminPanel() {
         `Usuário criado com sucesso. Senha temporária gerada com envio ${emailSent ? 'por e-mail' : 'de e-mail pendente'} e ${whatsappSent ? 'por WhatsApp' : 'de WhatsApp pendente'}.`
       );
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível criar o usuário.');
+      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel criar o usuário.');
     } finally {
       setCreating(false);
     }
@@ -249,6 +308,7 @@ function AdminPanel() {
   }
 
   const isSelectedMaster = String(selectedUser?.email || '').toLowerCase() === masterAdminEmail;
+  const currentUserIsMaster = isMasterAdmin(currentUser);
 
   return (
     <main className="app-page">
@@ -261,6 +321,16 @@ function AdminPanel() {
 
         <div className="heading-actions">
           <button className="primary-action" onClick={() => setCreateOpen(true)}>Cadastrar novo usuário</button>
+          {currentUserIsMaster && selectedUser && (
+            <>
+              <button className="outline-action" onClick={sendRecurringEmailTest} disabled={testingChannels}>
+                {testingChannels ? 'Enviando...' : 'Testar e-mail'}
+              </button>
+              <button className="outline-action" onClick={sendRecurringWhatsAppTest} disabled={testingChannels}>
+                {testingChannels ? 'Enviando...' : 'Testar WhatsApp'}
+              </button>
+            </>
+          )}
           <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
         </div>
       </header>
@@ -316,10 +386,20 @@ function AdminPanel() {
                   <h2>{selectedUser.name}</h2>
                 </div>
                 <div className="heading-actions">
+                  {currentUserIsMaster && (
+                    <>
+                      <button className="outline-action" onClick={sendRecurringEmailTest} disabled={testingChannels}>
+                        {testingChannels ? 'Enviando...' : 'Testar e-mail'}
+                      </button>
+                      <button className="outline-action" onClick={sendRecurringWhatsAppTest} disabled={testingChannels}>
+                        {testingChannels ? 'Enviando...' : 'Testar WhatsApp'}
+                      </button>
+                    </>
+                  )}
                   {!isSelectedMaster && <button className="outline-action" onClick={disableUser}>Desabilitar</button>}
                   {!isSelectedMaster && <button className="outline-action" onClick={resetPassword}>Reiniciar senha</button>}
                   {!isSelectedMaster && <button className="outline-action danger-action" onClick={deleteUser}>Excluir</button>}
-                  <button className="primary-action" onClick={saveUser}>Salvar alterações</button>
+                  <button className="primary-action" onClick={saveUser}>Salvar alteraçÃµes</button>
                 </div>
               </div>
 
@@ -491,3 +571,5 @@ function AdminPanel() {
 }
 
 export default AdminPanel;
+
+

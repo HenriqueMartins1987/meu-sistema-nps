@@ -60,6 +60,10 @@ a {
   color: #fff;
 }
 
+.clean-login-page {
+  grid-template-columns: minmax(0, 1.08fr) minmax(420px, 0.92fr);
+}
+
 .login-brand {
   padding: 56px 70px;
   display: flex;
@@ -256,6 +260,11 @@ a {
   padding: 10px 12px;
   box-shadow: var(--shadow-sm);
   filter: brightness(1.16) contrast(1.06);
+}
+
+.clean-login-header {
+  justify-content: center;
+  margin-bottom: 10px;
 }
 
 .system-chip {
@@ -491,6 +500,18 @@ a {
   padding: 30px;
   position: relative;
   isolation: isolate;
+}
+
+.login-link-button {
+  width: 100%;
+  min-height: 34px;
+  justify-content: center;
+  color: var(--brand-strong);
+  font-weight: 800;
+}
+
+.password-recovery-modal {
+  max-width: 560px;
 }
 
 .register-page::before,
@@ -2042,10 +2063,24 @@ a {
 }
 
 .attachment-link {
+  border: none;
+  background: transparent;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
   color: var(--brand);
   font-weight: 900;
   display: inline-flex;
   margin-bottom: 12px;
+}
+
+.attachment-preview-button {
+  display: block;
+  width: 100%;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: pointer;
 }
 
 .attachment-preview,
@@ -2652,11 +2687,15 @@ a {
 .evidence-item {
   display: grid;
   gap: 4px;
+  width: 100%;
   text-decoration: none;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 13px;
   background: #fff;
+  text-align: left;
+  cursor: pointer;
+  appearance: none;
 }
 
 .evidence-item:hover {
@@ -2973,9 +3012,10 @@ a {
 
 .crm-heading-actions,
 .crm-filter-actions {
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: flex-end;
+  gap: 10px;
 }
 
 .crm-kpi-grid {
@@ -3049,12 +3089,34 @@ a {
 
 .crm-base-panel {
   margin-bottom: 18px;
+  padding-bottom: 18px;
 }
 
 .crm-table td,
 .crm-table th {
   text-align: left;
   vertical-align: top;
+}
+
+.attachment-preview-modal {
+  max-width: min(92vw, 1120px);
+}
+
+.attachment-preview-modal-body {
+  border-radius: 8px;
+  overflow: hidden;
+  background: #111;
+  min-height: min(72vh, 760px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 18px 0 22px;
+}
+
+.attachment-preview-fullscreen {
+  max-width: 100%;
+  max-height: min(70vh, 740px);
+  object-fit: contain;
 }
 
 .crm-person-cell {

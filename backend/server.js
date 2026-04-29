@@ -39,7 +39,7 @@ const app = express();
 // CONFIG
 // ============================================
 const PORT = process.env.PORT || 3001;
-const SECRET = process.env.JWT_SECRET || 'segredo_super_forte';
+const SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
 const publicBaseUrl = process.env.PUBLIC_API_URL || `http://localhost:${PORT}`;
 const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
 const appBaseUrl = process.env.APP_BASE_URL || frontendUrl;
@@ -53,6 +53,8 @@ const whatsappGroupId = process.env.WHATSAPP_GROUP_ID || '';
 const requirePasswordChangeOnFirstLogin = String(process.env.REQUIRE_PASSWORD_CHANGE_ON_FIRST_LOGIN || 'true').toLowerCase() !== 'false';
 const appointmentReminderLeadHours = Math.max(1, Number(process.env.APPOINTMENT_REMINDER_LEAD_HOURS || 24));
 const appointmentReminderIntervalMinutes = Math.max(5, Number(process.env.APPOINTMENT_REMINDER_INTERVAL_MINUTES || 30));
+const complaintDueReminderIntervalMinutes = Math.max(5, Number(process.env.COMPLAINT_REMINDER_INTERVAL_MINUTES || 30));
+const passwordRecoveryCodeExpiresMinutes = Math.max(5, Number(process.env.PASSWORD_RECOVERY_CODE_EXPIRES_MINUTES || 15));
 const uploadDir = path.join(__dirname, 'uploads');
 const reportsDir = path.join(uploadDir, 'reports');
 const maxUploadSizeBytes = 10 * 1024 * 1024;
@@ -115,6 +117,16 @@ const initialPasswordChangeLimiter = rateLimit({
   legacyHeaders: false,
   message: {
     error: 'Muitas tentativas de troca de senha. Aguarde alguns minutos e tente novamente.'
+  }
+});
+
+const passwordRecoveryRequestLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Muitas solicitações de recuperação de senha. Aguarde alguns minutos e tente novamente.'
   }
 });
 
@@ -256,6 +268,10 @@ function toMysqlDateTime(date) {
     pad(date.getMinutes()),
     pad(date.getSeconds())
   ].join(':');
+}
+
+function generateVerificationCode(length = 6) {
+  return Array.from({ length }, () => String(crypto.randomInt(0, 10))).join('');
 }
 
 function normalizeStoredUploadUrl(value) {
@@ -446,9 +462,17 @@ function getUserWhatsappTarget(user) {
 function buildNotificationHtml(message, link) {
   const messageHtml = String(message || '').replace(/\n/g, '<br />');
   const actionLink = link || frontendUrl;
-  return actionLink
-    ? `<p>${messageHtml}</p><p><a href="${actionLink}">Abrir no sistema</a></p>`
-    : `<p>${messageHtml}</p>`;
+  return emailService.renderBrandedEmail({
+    title: 'Atualização do sistema',
+    intro: 'Olá,',
+    bodyHtml: `
+      <p style="margin:0 0 18px;">${messageHtml}</p>
+      ${actionLink ? `<p style="margin:0;"><strong>Link direto:</strong> <a href="${actionLink}" style="color:#a56a09;text-decoration:none;">${actionLink}</a></p>` : ''}
+    `,
+    actionLabel: actionLink ? 'Abrir no sistema' : '',
+    actionUrl: actionLink || '',
+    footerText: 'O acesso ao conteúdo continua protegido por login e senha. Se você não reconhece esta mensagem, procure o Administrador Master.'
+  });
 }
 
 function formatMessageDateTime(value) {
@@ -476,9 +500,6 @@ function sanitizeActivityValue(value, key = '') {
 }
 
 function shouldEmailMasterForActivity(req) {
-  if (req.method === 'OPTIONS') return false;
-  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) return true;
-  if (req.method === 'GET' && /^\/registration-requests\/[^/]+\/approve$/i.test(req.path || '')) return true;
   return false;
 }
 
@@ -883,6 +904,42 @@ const testEmailSchema = z.object({
   password: z.string().trim().min(8, 'A senha temporária precisa ter no mínimo 8 caracteres.').max(120).optional()
 });
 
+const manualWhatsAppSchema = z.object({
+  telefone: z.string().trim().optional(),
+  mensagem: z.string().trim().optional(),
+  phone: z.string().trim().optional(),
+  message: z.string().trim().optional()
+}).superRefine((payload, ctx) => {
+  const phone = String(payload.telefone || payload.phone || '').trim();
+  const message = String(payload.mensagem || payload.message || '').trim();
+
+  if (!phone) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['telefone'],
+      message: 'Informe o telefone em padrão E.164.'
+    });
+  }
+
+  if (!message) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['mensagem'],
+      message: 'Informe a mensagem que será enviada.'
+    });
+  }
+});
+
+const passwordResetRequestSchema = z.object({
+  email: z.string().trim().email('Informe um e-mail válido.')
+});
+
+const passwordResetConfirmSchema = z.object({
+  email: z.string().trim().email('Informe um e-mail válido.'),
+  code: z.string().trim().regex(/^\d{6}$/, 'Informe o código de 6 dígitos enviado por e-mail.'),
+  new_password: z.string().trim().min(8, 'A nova senha deve ter no mínimo 8 caracteres.').max(160)
+});
+
 function parseBodyWithSchema(schema, payload) {
   const result = schema.safeParse(payload || {});
 
@@ -1051,6 +1108,7 @@ async function ensureDatabaseSchema() {
   await ensureColumn('users', 'deleted_at', 'TIMESTAMP NULL');
   await ensureColumn('users', 'deleted_by', 'VARCHAR(160) NULL');
   await ensureColumn('users', 'must_change_password', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn('users', 'token_version', 'INT NOT NULL DEFAULT 1');
   await ensureColumn('users', 'active', 'TINYINT(1) NOT NULL DEFAULT 1');
   await ensureColumn('users', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
   await ensureColumn('users', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
@@ -1084,6 +1142,22 @@ async function ensureDatabaseSchema() {
       read_at TIMESTAMP NULL,
       INDEX idx_notification_events_user_id (user_id),
       INDEX idx_notification_events_status (status)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS password_reset_requests (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      email VARCHAR(180) NOT NULL,
+      code_hash VARCHAR(255) NOT NULL,
+      expires_at DATETIME NOT NULL,
+      used_at TIMESTAMP NULL,
+      requested_ip VARCHAR(120) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_password_reset_requests_user_id (user_id),
+      INDEX idx_password_reset_requests_email (email),
+      INDEX idx_password_reset_requests_expires_at (expires_at)
     )
   `);
 
@@ -1280,6 +1354,7 @@ async function ensureDatabaseSchema() {
   await ensureColumn('complaints', 'financial_description', 'TEXT NULL');
   await ensureColumn('complaints', 'financial_amount', 'DECIMAL(12,2) NULL');
   await ensureColumn('complaints', 'resolution_due_at', 'DATETIME NULL');
+  await ensureColumn('complaints', 'due_warning_sent_at', 'TIMESTAMP NULL');
   await ensureColumn('complaints', 'deleted_at', 'TIMESTAMP NULL');
   await ensureColumn('complaints', 'deleted_by', 'VARCHAR(160) NULL');
   await ensureColumn('complaints', 'deletion_reason', 'TEXT NULL');
@@ -1999,13 +2074,15 @@ async function buildAuthenticatedUser(user) {
   const permissions = parsePermissionsFromUser(safeUser);
   const clinicIds = await getUserClinicIds(user.id);
   const mustChangePassword = Boolean(user.must_change_password);
+  const tokenVersion = Number(user.token_version || 1);
 
   return {
     ...safeUser,
     role,
     permissions,
     clinicIds,
-    mustChangePassword
+    mustChangePassword,
+    tokenVersion
   };
 }
 
@@ -2017,7 +2094,8 @@ function signUserToken(user) {
     name: user.name,
     permissions: user.permissions,
     clinicIds: user.clinicIds,
-    mustChangePassword: Boolean(user.mustChangePassword)
+    mustChangePassword: Boolean(user.mustChangePassword),
+    tokenVersion: Number(user.tokenVersion || user.token_version || 1)
   }, SECRET);
 }
 
@@ -2143,6 +2221,57 @@ async function sendWhatsappNotification(payload = {}) {
   return { ...result, logId };
 }
 
+async function sendWhatsappGroupNotification({ event, message, payload = null, link = null }) {
+  if (!whatsappWebhookUrl || !whatsappGroupId) {
+    return {
+      success: false,
+      skipped: true,
+      error: 'Grupo de WhatsApp não configurado para notificações.'
+    };
+  }
+
+  try {
+    const response = await fetch(whatsappWebhookUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        event: event || 'group_notification',
+        groupId: whatsappGroupId,
+        message: link ? `${message}\n${link}` : message,
+        metadata: payload || {}
+      })
+    });
+    const text = await response.text();
+    let raw = text;
+
+    try {
+      raw = JSON.parse(text);
+    } catch (error) {
+      raw = text;
+    }
+
+    if (!response.ok) {
+      return {
+        success: false,
+        error: (raw && raw.error) || text || 'Falha ao enviar notificação para o grupo.'
+      };
+    }
+
+    return {
+      success: true,
+      provider: 'group_webhook',
+      raw
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error.message || 'Falha ao acionar o grupo de WhatsApp.'
+    };
+  }
+}
+
 async function createNotification(userId, type, title, message, link = null, payload = null) {
   await pool.query(
     `INSERT INTO notification_events
@@ -2205,6 +2334,20 @@ async function notifyRolesThroughChannels(roles, type, title, message, link = nu
 
   await Promise.all(users.map((user) => notifyUserThroughChannels(user, type, title, message, link, payload, { role: user.role })));
   return users.map((user) => user.id);
+}
+
+async function notifyAdminsThroughChannels(type, title, message, link = null, payload = null) {
+  const [users] = await pool.query(
+    `SELECT DISTINCT id, name, email, whatsapp, phone, role
+       FROM users
+      WHERE active = 1
+        AND deleted_at IS NULL
+        AND (role IN ('admin', 'master_admin') OR LOWER(email) IN (?, ?))`,
+    [masterAdminEmail, defaultAdminEmail]
+  );
+
+  await Promise.all(users.map((user) => notifyUserThroughChannels(user, type, title, message, link, payload, { role: user.role })));
+  return users.map((user) => user.id).filter(Boolean);
 }
 
 async function notifyUserThroughChannels(user, type, title, message, link = null, payload = null, extraWhatsappPayload = null) {
@@ -2350,7 +2493,40 @@ async function sendPasswordResetNotifications(user, temporaryPassword) {
     console.warn('Nao foi possivel enviar WhatsApp de reset de senha:', error.message);
   }
 
+  await notifyMasterPasswordSecurityEvent(
+    'password_reset_by_admin',
+    'Senha reiniciada pelo painel',
+    `${user.name || 'Colaborador'} (${user.email || 'sem e-mail'}) teve a senha reiniciada pelo painel administrativo.`,
+    {
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role
+    }
+  );
+
   return { emailSent, whatsappSent, emailError, whatsappError };
+}
+
+async function sendPasswordRecoveryCodeEmail(user, code) {
+  const appUrl = `${frontendUrl}/`;
+  const html = emailService.renderBrandedEmail({
+    title: 'Recuperação de senha',
+    intro: `Olá, <strong>${user.name || 'colaborador'}</strong>.`,
+    bodyHtml: `
+      <p style="margin:0 0 20px;">Recebemos uma solicitação para redefinir a senha do seu acesso.</p>
+      <div style="margin:24px 0;padding:20px;border-radius:14px;background:#fbf8f2;border:1px solid #eadfc8;text-align:center;">
+        <p style="margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6a6360;">Código de confirmação</p>
+        <strong style="display:block;font-size:36px;letter-spacing:0.16em;color:#231f20;">${code}</strong>
+      </div>
+      <p style="margin:0 0 12px;">Use esse código na tela de login para cadastrar uma nova senha forte. O código expira em ${passwordRecoveryCodeExpiresMinutes} minutos.</p>
+      <p style="margin:0;"><strong>Acesse:</strong> <a href="${appUrl}" style="color:#a56a09;text-decoration:none;">${appUrl}</a></p>
+    `,
+    actionLabel: 'Abrir tela de login',
+    actionUrl: appUrl
+  });
+
+  return sendEmail(user.email, 'Código para redefinição de senha - Sistema GRC', html);
 }
 
 async function sendPasswordChangedNotifications(user) {
@@ -2365,12 +2541,16 @@ async function sendPasswordChangedNotifications(user) {
       const emailResult = await sendEmail(
         email,
         'Senha alterada - Sistema GRC',
-        `
-          <p>Olá, ${user.name || 'colaborador'}.</p>
-          <p>Registramos uma alteração de senha no seu acesso ao Sistema GRC.</p>
-          <p>Se foi você quem realizou a mudança, nenhuma ação adicional é necessária.</p>
-          <p>Se não reconhece esta alteração, procure imediatamente o administrador.</p>
-        `
+        emailService.renderBrandedEmail({
+          title: 'Senha alterada com sucesso',
+          intro: `Olá, <strong>${user.name || 'colaborador'}</strong>.`,
+          bodyHtml: `
+            <p style="margin:0 0 18px;">Registramos uma alteração de senha no seu acesso ao Sistema GRC.</p>
+            <p style="margin:0;">Se foi você quem realizou a mudança, nenhuma ação adicional é necessária. Se não reconhece esta alteração, procure imediatamente o administrador.</p>
+          `,
+          actionLabel: 'Acessar o sistema',
+          actionUrl: appBaseUrl
+        })
       );
       emailSent = !emailResult?.skipped;
     } catch (error) {
@@ -2402,7 +2582,49 @@ async function sendPasswordChangedNotifications(user) {
     }
   }
 
+  await notifyMasterPasswordSecurityEvent(
+    'password_changed',
+    'Alteração de senha registrada',
+    `${user.name || 'Colaborador'} (${user.email || 'sem e-mail'}) alterou a própria senha no sistema.`,
+    {
+      userId: user.id,
+      email: user.email,
+      name: user.name,
+      role: user.role
+    }
+  );
+
   return { emailSent, whatsappSent, emailError, whatsappError };
+}
+
+async function notifyMasterPasswordSecurityEvent(type, title, message, payload = null) {
+  const recipient = await getMasterAdminNotificationTarget();
+  const link = `${frontendUrl}/admin`;
+  const html = buildNotificationHtml(message, link);
+  const whatsappMessage = `${message}\n\nAcesse: ${link}`;
+
+  if (recipient.email) {
+    try {
+      await sendEmail(recipient.email, title, html);
+    } catch (error) {
+      console.warn('Não foi possível enviar e-mail de segurança ao Administrador Master:', error.message);
+    }
+  }
+
+  if (recipient.whatsapp && isWhatsAppEnabled()) {
+    try {
+      await sendWhatsappNotification({
+        event: type,
+        to: recipient.whatsapp,
+        userId: payload?.userId || null,
+        message: whatsappMessage,
+        link,
+        ...(payload || {})
+      });
+    } catch (error) {
+      console.warn('Não foi possível enviar WhatsApp de segurança ao Administrador Master:', error.message);
+    }
+  }
 }
 
 async function notifyClinicResponsibles(clinicId, type, title, message, link, payload = null) {
@@ -2584,6 +2806,85 @@ async function dispatchUpcomingAppointmentReminders() {
   }
 
   return results;
+}
+
+async function dispatchUpcomingComplaintDeadlineReminders() {
+  const [rows] = await pool.query(
+    `SELECT
+       c.id,
+       c.protocol,
+       c.clinic_id,
+       c.assigned_coordinator_user_id,
+       c.patient_name,
+       c.complaint_type,
+       c.priority,
+       c.created_origin,
+       c.due_at,
+       cl.name AS clinic_name,
+       cl.city,
+       cl.state
+     FROM complaints c
+     LEFT JOIN clinics cl ON cl.id = c.clinic_id
+     WHERE c.deleted_at IS NULL
+       AND c.status <> 'resolvida'
+       AND c.due_at IS NOT NULL
+       AND c.due_warning_sent_at IS NULL
+       AND c.due_at > NOW()
+       AND c.due_at <= DATE_ADD(NOW(), INTERVAL 24 HOUR)`,
+    []
+  );
+
+  for (const complaint of rows) {
+    const protocol = complaint.protocol || `GRC-${complaint.id}`;
+    const clinic = complaint.clinic_name
+      ? `${complaint.clinic_name}${complaint.city ? ` - ${complaint.city}/${complaint.state || 'UF'}` : ''}`
+      : 'Unidade não informada';
+    const title = `Prazo próximo de vencimento - ${protocol}`;
+    const link = `${frontendUrl}/gestao/${complaint.id}`;
+    const message = [
+      `${title}`,
+      `Paciente: ${complaint.patient_name || 'Não informado'}`,
+      `Unidade: ${clinic}`,
+      `Tipo: ${complaint.complaint_type || 'Não informado'}`,
+      `Prioridade: ${complaint.priority || 'Não informada'}`,
+      `Vencimento: ${formatMessageDateTime(complaint.due_at)}`
+    ].join('\n');
+    const payload = { complaintId: complaint.id, protocol, dueAt: complaint.due_at };
+    const notifiedUserIds = [];
+
+    await notifyAdminsThroughChannels('complaint_deadline_warning', title, message, link, payload).catch((error) => {
+      console.warn('Não foi possível avisar administradores sobre prazo próximo:', error.message);
+    });
+    await notifyClinicResponsibles(complaint.clinic_id, 'complaint_deadline_warning', title, message, link, payload).catch((error) => {
+      console.warn('Não foi possível avisar responsáveis da unidade sobre prazo próximo:', error.message);
+    });
+    await notifyOperationalComplaintTeam(title, message, link, payload, notifiedUserIds).catch((error) => {
+      console.warn('Não foi possível avisar operação sobre prazo próximo:', error.message);
+    });
+    await notifyComplaintAudienceByScope(
+      complaint.clinic_id,
+      complaint.assigned_coordinator_user_id,
+      title,
+      message,
+      link,
+      payload,
+      notifiedUserIds
+    ).catch((error) => {
+      console.warn('Não foi possível avisar audiência da reclamação sobre prazo próximo:', error.message);
+    });
+    await sendWhatsappGroupNotification({
+      event: 'complaint_deadline_warning_group',
+      message,
+      payload,
+      link
+    }).catch((error) => {
+      console.warn('Não foi possível avisar o grupo de WhatsApp sobre prazo próximo:', error.message);
+    });
+
+    await pool.query('UPDATE complaints SET due_warning_sent_at = NOW() WHERE id = ?', [complaint.id]);
+  }
+
+  return rows.length;
 }
 
 async function dispatchNoShowNotifications(record, actor) {
@@ -2986,7 +3287,18 @@ async function notifyComplaintCreated(complaintId, protocol) {
   }
 
   try {
-    const adminIds = await createNotificationForAdmins(
+    await sendWhatsappGroupNotification({
+      event: 'complaint_created_group',
+      message,
+      payload,
+      link
+    });
+  } catch (error) {
+    console.warn('Nao foi possivel enviar notificacao para o grupo de WhatsApp da reclamacao:', error.message);
+  }
+
+  try {
+    const adminIds = await notifyAdminsThroughChannels(
       'complaint_created',
       title,
       detailedMessage,
@@ -3355,12 +3667,24 @@ async function authenticate(req, res, next) {
   try {
     req.user = jwt.verify(token, SECRET);
 
-    if (req.user?.id && req.user.mustChangePassword) {
+    if (req.user?.id) {
       const [rows] = await pool.query(
-        'SELECT must_change_password FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+        'SELECT must_change_password, token_version, active FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
         [req.user.id]
       );
+
+      if (!rows.length || !rows[0]?.active) {
+        return res.status(401).json({ error: 'Sessão inválida. Faça login novamente.' });
+      }
+
+      const tokenVersion = Number(rows[0]?.token_version || 1);
+
+      if (Number(req.user?.tokenVersion || 1) !== tokenVersion) {
+        return res.status(401).json({ error: 'Sessão expirada por atualização de segurança. Faça login novamente.' });
+      }
+
       const mustChangePassword = Boolean(rows[0]?.must_change_password);
+      req.user.tokenVersion = tokenVersion;
       req.user.mustChangePassword = mustChangePassword;
 
       if (mustChangePassword && !isPasswordChangeRouteAllowed(req)) {
@@ -3388,7 +3712,31 @@ function optionalAuthenticate(req, res, next) {
 
   try {
     req.user = jwt.verify(token, SECRET);
-    return next();
+
+    if (!req.user?.id) {
+      return next();
+    }
+
+    return pool.query(
+      'SELECT token_version, active FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+      [req.user.id]
+    ).then(([rows]) => {
+      if (!rows.length || !rows[0]?.active) {
+        return res.status(401).json({ error: 'Sessão inválida. Faça login novamente.' });
+      }
+
+      const tokenVersion = Number(rows[0]?.token_version || 1);
+
+      if (Number(req.user?.tokenVersion || 1) !== tokenVersion) {
+        return res.status(401).json({ error: 'Sessão expirada por atualização de segurança. Faça login novamente.' });
+      }
+
+      req.user.tokenVersion = tokenVersion;
+      return next();
+    }).catch((error) => {
+      console.error(error);
+      return res.status(500).json({ error: 'Não foi possível validar a sessão.' });
+    });
   } catch (error) {
     return res.status(401).json({ error: 'Sessão inválida. Faça login novamente.' });
   }
@@ -3417,34 +3765,61 @@ app.get('/', (req, res) => {
   res.send('API funcionando 🚀');
 });
 
-app.post('/api/test-whatsapp', authenticate, requireAdmin, async (req, res) => {
+async function handleManualWhatsAppSend(req, res, eventKey = 'manual_test') {
   try {
-    const phone = normalizeWhatsAppPhone(req.body?.phone);
-    const message = String(req.body?.message || '').trim();
+    const parsed = parseBodyWithSchema(manualWhatsAppSchema, req.body);
 
-    if (!phone || !message) {
-      return res.status(400).json({ error: 'Informe telefone em padrão E.164 e uma mensagem.' });
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
+
+    const rawPhone = parsed.data.telefone || parsed.data.phone;
+    const rawMessage = parsed.data.mensagem || parsed.data.message;
+    const phone = normalizeWhatsAppPhone(rawPhone);
+    const message = String(rawMessage || '').trim();
+
+    if (!phone) {
+      return res.status(400).json({ error: 'Informe o telefone em padrão E.164.' });
     }
 
     const result = await sendWhatsappNotification({
-      event: 'manual_test',
+      event: eventKey,
       to: phone,
       message,
       userId: req.user?.id
     });
 
+    if (!result?.success && !result?.skipped) {
+      return res.status(502).json({
+        success: false,
+        provider: result?.provider || getWhatsAppProvider(),
+        error: result?.error || 'Falha ao enviar a mensagem de WhatsApp.'
+      });
+    }
+
     return res.json({
       success: Boolean(result?.success),
+      provider: result?.provider || getWhatsAppProvider(),
+      to: phone,
       providerMessageId: result?.providerMessageId || null,
-      error: result?.success ? null : result?.error || null
+      error: result?.success ? null : result?.error || null,
+      warning: result?.skipped ? result?.error || 'O envio foi ignorado por configuração do provedor.' : null
     });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ success: false, error: 'Erro ao enviar WhatsApp de teste.' });
   }
+}
+
+app.post('/api/test-whatsapp', authenticate, requireAdmin, async (req, res) => {
+  return handleManualWhatsAppSend(req, res, 'manual_test');
 });
 
-app.post('/api/test-email', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/whatsapp/enviar', authenticate, requireMasterAdmin, async (req, res) => {
+  return handleManualWhatsAppSend(req, res, 'manual_send');
+});
+
+app.post('/api/test-email', authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const parsed = parseBodyWithSchema(testEmailSchema, req.body);
 
@@ -3478,6 +3853,146 @@ app.post('/api/test-email', authenticate, requireAdmin, async (req, res) => {
       success: false,
       error: error.message || 'Erro ao enviar o e-mail de teste.'
     });
+  }
+});
+
+app.post('/auth/request-password-reset', passwordRecoveryRequestLimiter, async (req, res) => {
+  try {
+    const parsed = parseBodyWithSchema(passwordResetRequestSchema, req.body);
+
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
+
+    const normalizedEmail = String(parsed.data.email || '').trim().toLowerCase();
+    const [rows] = await pool.query(
+      `SELECT id, name, email, role
+         FROM users
+        WHERE LOWER(email) = ?
+          AND active = 1
+          AND deleted_at IS NULL
+        LIMIT 1`,
+      [normalizedEmail]
+    );
+
+    if (!rows.length) {
+      return res.json({
+        success: true,
+        message: 'Se o e-mail estiver cadastrado, o código de recuperação será enviado.'
+      });
+    }
+
+    const user = rows[0];
+    const code = generateVerificationCode(6);
+    const codeHash = await bcrypt.hash(code, 10);
+    const expiresAt = new Date(Date.now() + passwordRecoveryCodeExpiresMinutes * 60 * 1000);
+
+    await pool.query(
+      'UPDATE password_reset_requests SET used_at = NOW() WHERE user_id = ? AND used_at IS NULL',
+      [user.id]
+    );
+    await pool.query(
+      `INSERT INTO password_reset_requests
+       (user_id, email, code_hash, expires_at, requested_ip)
+       VALUES (?, ?, ?, ?, ?)`,
+      [user.id, user.email, codeHash, toMysqlDateTime(expiresAt), getRequestIp(req)]
+    );
+
+    await sendPasswordRecoveryCodeEmail(user, code);
+    await notifyMasterPasswordSecurityEvent(
+      'password_recovery_requested',
+      'Solicitação de recuperação de senha',
+      `${user.name || 'Colaborador'} (${user.email}) solicitou a recuperação de senha no portal.`,
+      {
+        userId: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role
+      }
+    );
+
+    return res.json({
+      success: true,
+      message: 'Código de recuperação enviado por e-mail.'
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Não foi possível iniciar a recuperação de senha.' });
+  }
+});
+
+app.post('/auth/reset-password-with-code', passwordRecoveryRequestLimiter, async (req, res) => {
+  try {
+    const parsed = parseBodyWithSchema(passwordResetConfirmSchema, req.body);
+
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
+
+    if (!isStrongPassword(parsed.data.new_password)) {
+      return res.status(400).json({
+        error: 'A nova senha deve ter no mínimo 8 caracteres, letra maiúscula, letra minúscula, número e caractere especial.'
+      });
+    }
+
+    const normalizedEmail = String(parsed.data.email || '').trim().toLowerCase();
+    const [userRows] = await pool.query(
+      `SELECT id, name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password, token_version, created_at, updated_at
+         FROM users
+        WHERE LOWER(email) = ?
+          AND active = 1
+          AND deleted_at IS NULL
+        LIMIT 1`,
+      [normalizedEmail]
+    );
+
+    if (!userRows.length) {
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+
+    const user = userRows[0];
+    const [requestRows] = await pool.query(
+      `SELECT id, code_hash, expires_at
+         FROM password_reset_requests
+        WHERE user_id = ?
+          AND used_at IS NULL
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [user.id]
+    );
+
+    if (!requestRows.length) {
+      return res.status(400).json({ error: 'Solicitação de recuperação não encontrada ou já utilizada.' });
+    }
+
+    const requestRow = requestRows[0];
+    if (new Date(requestRow.expires_at).getTime() < Date.now()) {
+      return res.status(400).json({ error: 'O código de recuperação expirou. Solicite um novo código.' });
+    }
+
+    const validCode = await bcrypt.compare(parsed.data.code, requestRow.code_hash);
+
+    if (!validCode) {
+      return res.status(401).json({ error: 'Código de recuperação inválido.' });
+    }
+
+    const passwordHash = await bcrypt.hash(parsed.data.new_password, 10);
+
+    await pool.query(
+      'UPDATE users SET password = ?, must_change_password = 0, token_version = COALESCE(token_version, 1) + 1 WHERE id = ?',
+      [passwordHash, user.id]
+    );
+    await pool.query('UPDATE password_reset_requests SET used_at = NOW() WHERE id = ?', [requestRow.id]);
+
+    await sendPasswordChangedNotifications(user);
+
+    return res.json({
+      success: true,
+      message: 'Senha alterada com sucesso. Faça login com a nova senha.'
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Não foi possível concluir a redefinição de senha.' });
   }
 });
 
@@ -4153,7 +4668,7 @@ app.post('/admin/users/:id/reset-password', authenticate, requireAdmin, async (r
     const temporaryPassword = generateTemporaryPassword();
     const passwordHash = await bcrypt.hash(temporaryPassword, 10);
     await pool.query(
-      'UPDATE users SET password = ?, must_change_password = ? WHERE id = ?',
+      'UPDATE users SET password = ?, must_change_password = ?, token_version = COALESCE(token_version, 1) + 1 WHERE id = ?',
       [passwordHash, requirePasswordChangeOnFirstLogin ? 1 : 0, user.id]
     );
     await createNotification(
@@ -4482,7 +4997,7 @@ async function changeUserPassword({ userId, currentPassword, newPassword }) {
   }
 
   const [rows] = await pool.query(
-    `SELECT id, name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password, created_at, updated_at
+    `SELECT id, name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password, token_version, created_at, updated_at
        FROM users
       WHERE id = ? AND deleted_at IS NULL`,
     [userId]
@@ -4504,12 +5019,15 @@ async function changeUserPassword({ userId, currentPassword, newPassword }) {
   }
 
   const passwordHash = await bcrypt.hash(newPassword, 10);
-  await pool.query('UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?', [passwordHash, user.id]);
+  await pool.query(
+    'UPDATE users SET password = ?, must_change_password = 0, token_version = COALESCE(token_version, 1) + 1 WHERE id = ?',
+    [passwordHash, user.id]
+  );
 
   await sendPasswordChangedNotifications(user);
 
   const [updatedRows] = await pool.query(
-    `SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, created_at, updated_at
+    `SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, token_version, created_at, updated_at
        FROM users
       WHERE id = ?`,
     [user.id]
@@ -4807,6 +5325,21 @@ app.post('/nps/public', async (req, res) => {
 
     const duplicatePhones = await getMonthlyDuplicateNpsPhones(new Date());
     const duplicatePhoneEntry = duplicatePhones.find((item) => item.patient_phone === normalizedPatientPhone);
+
+    await notifyAdminsThroughChannels(
+      'nps_created',
+      `Nova pesquisa NPS ${protocol}`,
+      `Nova pesquisa de satisfação registrada.\nPaciente: ${patient_name}\nUnidade: ${clinic_id ? `Clínica #${clinic_id}` : 'Não informada'}\nPerfil: ${npsProfile}`,
+      `${frontendUrl}/gestao-nps`,
+      { npsId: npsInsert.insertId, protocol, profile: npsProfile }
+    );
+
+    await sendWhatsappGroupNotification({
+      event: 'nps_created_group',
+      message: `Nova pesquisa NPS ${protocol}\nPaciente: ${patient_name}\nPerfil: ${npsProfile}`,
+      link: `${frontendUrl}/gestao-nps`,
+      payload: { npsId: npsInsert.insertId, protocol, profile: npsProfile }
+    });
 
     if (duplicatePhoneEntry && Number(duplicatePhoneEntry.total) > 1) {
       await alertDuplicateNpsPhone(normalizedPatientPhone, protocol, npsInsert.insertId);
@@ -5424,6 +5957,29 @@ app.get('/complaints/:id', authenticate, async (req, res) => {
   }
 });
 
+app.post('/complaints/:id/renotify', authenticate, async (req, res) => {
+  try {
+    const rows = await getComplaintRows({
+      id: req.params.id,
+      user: req.user,
+      includeDeleted: false
+    });
+    const complaint = rows[0];
+
+    if (!complaint) {
+      return res.status(404).json({ error: 'Protocolo não encontrado.' });
+    }
+
+    await notifyComplaintCreated(complaint.id, complaint.protocol);
+    await insertComplaintLog(complaint.id, 'renotificado', `Notificações reenviadas por ${getActorName(req.user)}.`, req.user);
+
+    return res.json({ message: 'Notificações reenviadas aos responsáveis.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Não foi possível reenviar as notificações do protocolo.' });
+  }
+});
+
 app.delete('/complaints/:id', authenticate, async (req, res) => {
   try {
     if (!canDeleteRecords(req.user)) {
@@ -5806,6 +6362,9 @@ async function startServer() {
     dispatchUpcomingAppointmentReminders().catch((jobError) => {
       console.warn('Nao foi possivel executar a rotina inicial de lembretes de agendamento:', jobError.message);
     });
+    dispatchUpcomingComplaintDeadlineReminders().catch((jobError) => {
+      console.warn('Não foi possível executar a rotina inicial de alertas de prazo das reclamações:', jobError.message);
+    });
   }, 3000);
 
   setInterval(() => {
@@ -5819,6 +6378,12 @@ async function startServer() {
       console.warn('Nao foi possivel executar a rotina programada de lembretes de agendamento:', jobError.message);
     });
   }, appointmentReminderIntervalMinutes * 60 * 1000);
+
+  setInterval(() => {
+    dispatchUpcomingComplaintDeadlineReminders().catch((jobError) => {
+      console.warn('Não foi possível executar a rotina programada de alertas de prazo das reclamações:', jobError.message);
+    });
+  }, complaintDueReminderIntervalMinutes * 60 * 1000);
 
 }
 

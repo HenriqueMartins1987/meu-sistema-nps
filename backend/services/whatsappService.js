@@ -4,7 +4,7 @@ const axios = require('axios');
 
 const logsDir = path.join(__dirname, '..', 'logs');
 const logFilePath = path.join(logsDir, 'whatsapp.log');
-const metaApiVersion = process.env.WHATSAPP_META_VERSION || 'v20.0';
+const metaApiVersion = process.env.WHATSAPP_API_VERSION || process.env.WHATSAPP_META_VERSION || 'v20.0';
 
 fs.mkdirSync(logsDir, { recursive: true });
 

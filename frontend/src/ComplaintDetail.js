@@ -124,7 +124,7 @@ function buildDeadlineInfo(complaint) {
   if (diffMs <= 12 * 60 * 60 * 1000) {
     return {
       state: 'warning',
-      label: 'Prazo crítico',
+      label: 'Prazo crÃ­tico',
       detail: `Restam ${Math.max(absHours, 1)}h`
     };
   }
@@ -209,6 +209,7 @@ function ComplaintDetail() {
   const [showForwardModal, setShowForwardModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [forwardToRole, setForwardToRole] = useState('');
+  const [assetPreview, setAssetPreview] = useState(null);
 
   const protocol = useMemo(() => formatProtocol(complaint), [complaint]);
   const deadline = useMemo(() => buildDeadlineInfo(complaint), [complaint]);
@@ -260,11 +261,22 @@ function ComplaintDetail() {
       setComplaint(res.data);
       setComment('');
     } catch (error) {
-      setFeedback('Não foi possível carregar este protocolo.');
+      setFeedback('Não foi possÃ­vel carregar este protocolo.');
     } finally {
       setLoading(false);
     }
   }, [id, includeDeleted]);
+
+  const openUploadedItem = useCallback((url, label = 'Arquivo do protocolo') => {
+    if (!url) return;
+
+    if (isPreviewableImage(url)) {
+      setAssetPreview({ url, label, type: 'image' });
+      return;
+    }
+
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }, []);
 
   useEffect(() => {
     loadComplaint();
@@ -372,12 +384,27 @@ function ComplaintDetail() {
       await api.post(`/complaints/${id}/evidences`, formData);
       setEvidenceFile(null);
       setEvidenceDescription('');
-      setFeedback('Evidência anexada com sucesso.');
+      setFeedback('EvidÃªncia anexada com sucesso.');
       await loadComplaint();
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Erro ao anexar evidência.');
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleRenotify = async () => {
+    setSaving(true);
+    setFeedback('');
+
+    try {
+      const response = await api.post(`/complaints/${id}/renotify`);
+      setFeedback(response.data?.message || 'NotificaçÃµes reenviadas aos responsáveis.');
+      await loadComplaint();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel reenviar as notificaçÃµes do protocolo.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -412,7 +439,7 @@ function ComplaintDetail() {
       setShowDeleteModal(false);
       navigate('/gestao');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível excluir este protocolo.');
+      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel excluir este protocolo.');
     } finally {
       setSaving(false);
     }
@@ -453,9 +480,17 @@ function ComplaintDetail() {
         </div>
 
         <div className="heading-actions">
+          <button className="outline-action" onClick={() => navigate('/home')}>
+            Home
+          </button>
           <button className="outline-action" onClick={() => navigate('/gestao')}>
             Voltar para gestão
           </button>
+          {!isDeletedRecord && (
+            <button className="outline-action" onClick={handleRenotify} disabled={saving}>
+              Notificar responsáveis
+            </button>
+          )}
           {whatsappUrl && (
             <a className="primary-action whatsapp-action" href={whatsappUrl} target="_blank" rel="noreferrer">
               Chamar no WhatsApp
@@ -477,7 +512,7 @@ function ComplaintDetail() {
         <section className="management-panel">
           <div className="history-item">
             <div className="history-item-head">
-              <strong>Protocolo excluído da operação</strong>
+              <strong>Protocolo excluÃ­do da operação</strong>
               <span>{formatDate(complaint.deleted_at)}</span>
             </div>
             <small>{complaint.deleted_by || 'Usuário não informado'}</small>
@@ -589,16 +624,26 @@ function ComplaintDetail() {
             {initialAttachmentUrl ? (
               <>
                 {isPreviewableImage(initialAttachmentUrl) && (
-                  <img
-                    className="attachment-preview"
-                    src={initialAttachmentUrl}
-                    alt="Anexo inicial do protocolo"
-                    loading="lazy"
-                  />
+                  <button
+                    type="button"
+                    className="attachment-preview-button"
+                    onClick={() => openUploadedItem(initialAttachmentUrl, 'Anexo inicial do protocolo')}
+                  >
+                    <img
+                      className="attachment-preview"
+                      src={initialAttachmentUrl}
+                      alt="Anexo inicial do protocolo"
+                      loading="lazy"
+                    />
+                  </button>
                 )}
-                <a className="attachment-link" href={initialAttachmentUrl} target="_blank" rel="noreferrer">
+                <button
+                  type="button"
+                  className="attachment-link"
+                  onClick={() => openUploadedItem(initialAttachmentUrl, 'Anexo inicial do protocolo')}
+                >
                   Ver anexo inicial do protocolo
-                </a>
+                </button>
               </>
             ) : (
               <p className="empty-mini">Sem anexo inicial.</p>
@@ -647,21 +692,26 @@ function ComplaintDetail() {
               const evidenceUrl = resolveUploadedFileUrl(evidence.file_url);
 
               return (
-                <a className="evidence-item" href={evidenceUrl} target="_blank" rel="noreferrer" key={evidence.id}>
+                <button
+                  type="button"
+                  className="evidence-item"
+                  onClick={() => openUploadedItem(evidenceUrl, evidence.description || evidence.original_name || 'EvidÃªncia anexada')}
+                  key={evidence.id}
+                >
                   {isPreviewableImage(evidenceUrl) && (
                     <img
                       className="evidence-preview"
                       src={evidenceUrl}
-                      alt={evidence.description || evidence.original_name || 'Evidência anexada'}
+                      alt={evidence.description || evidence.original_name || 'EvidÃªncia anexada'}
                       loading="lazy"
                     />
                   )}
-                  <span>{evidence.description || evidence.original_name || 'Evidência anexada'}</span>
+                  <span>{evidence.description || evidence.original_name || 'EvidÃªncia anexada'}</span>
                   <small>
                     {formatDate(evidence.created_at)}
                     {evidence.uploaded_by_name ? ` · ${evidence.uploaded_by_name}` : ''}
                   </small>
-                </a>
+                </button>
               );
             }) : (
               <p className="empty-mini">Nenhuma evidência complementar anexada.</p>
@@ -673,7 +723,7 @@ function ComplaintDetail() {
           <div className="detail-title-row">
             <div>
               <p className="eyebrow">Histórico imutável</p>
-              <h2>Tratativas e atualizações do protocolo</h2>
+              <h2>Tratativas e atualizaçÃµes do protocolo</h2>
               <p className="history-note">Cada descrição salva permanece vinculada ao usuário, data e perfil. Não há exclusão de relatos pela tela.</p>
             </div>
             <span className="mini-badge">{complaint.logs?.length || 0} registros</span>
@@ -726,7 +776,7 @@ function ComplaintDetail() {
             </div>
             <div className={`approval-card ${hasSacApproval ? 'done' : 'pending'}`}>
               <span>Aceite SAC</span>
-              <strong>{hasSacApproval ? 'Concluído' : 'Pendente'}</strong>
+              <strong>{hasSacApproval ? 'ConcluÃ­do' : 'Pendente'}</strong>
               <p>{hasSacApproval ? `${complaint.sac_approval_by || 'SAC'} · ${formatDate(complaint.sac_approval_at)}` : 'Gerado no fechamento pelo Operador de SAC.'}</p>
             </div>
           </div>
@@ -814,6 +864,35 @@ function ComplaintDetail() {
         </div>
       )}
 
+      {assetPreview && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Visualizar arquivo do protocolo">
+          <div className="modal-panel attachment-preview-modal">
+            <div className="detail-title-row">
+              <div>
+                <p className="eyebrow">Arquivo do protocolo</p>
+                <h2>{assetPreview.label}</h2>
+              </div>
+              <button type="button" className="outline-action" onClick={() => setAssetPreview(null)}>
+                Fechar
+              </button>
+            </div>
+
+            <div className="attachment-preview-modal-body">
+              <img src={assetPreview.url} alt={assetPreview.label} className="attachment-preview-fullscreen" />
+            </div>
+
+            <div className="row-actions">
+              <button type="button" className="outline-action" onClick={() => setAssetPreview(null)}>
+                Voltar
+              </button>
+              <button type="button" className="primary-action" onClick={() => window.open(assetPreview.url, '_blank', 'noopener,noreferrer')}>
+                Abrir em nova janela
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showDeleteModal && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirmar exclusão do protocolo">
           <div className="modal-panel modal-confirm-panel">
@@ -845,3 +924,5 @@ function ComplaintDetail() {
 }
 
 export default ComplaintDetail;
+
+
