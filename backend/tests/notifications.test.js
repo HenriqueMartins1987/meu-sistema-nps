@@ -11,11 +11,14 @@ const {
   DEFAULT_EMAIL_FROM,
   getEmailFrom,
   getEmailProvider,
+  renderPasswordResetEmail,
   renderUserAccessEmail,
   sendWelcomeEmail
 } = require('../services/emailService');
 const {
   buildAppointmentReminderMessage,
+  buildPasswordChangeUrl,
+  buildPasswordResetMessage,
   buildWelcomeMessage,
   normalizeWhatsAppPhone
 } = require('../services/whatsappService');
@@ -115,6 +118,38 @@ test('buildWelcomeMessage includes login and temporary password', () => {
   assert.match(message, /Carlos/);
   assert.match(message, /carlos@example.com/);
   assert.match(message, /Senha@123/);
+});
+
+test('renderPasswordResetEmail includes the direct password change link', () => {
+  const template = renderPasswordResetEmail({
+    name: 'Carlos',
+    temporaryPassword: 'Senha@123',
+    appUrl: 'https://meu-sistema-nps.vercel.app/perfil'
+  });
+
+  assert.equal(template.subject, 'Senha reiniciada - Sistema GRC');
+  assert.match(template.html, /Carlos/);
+  assert.match(template.html, /Senha@123/);
+  assert.match(template.html, /https:\/\/meu-sistema-nps\.vercel\.app\/perfil/);
+  assert.match(template.html, /troca obrigat/iu);
+});
+
+test('buildPasswordResetMessage includes temporary password and profile link', () => {
+  const previousAppBaseUrl = process.env.APP_BASE_URL;
+  process.env.APP_BASE_URL = 'https://meu-sistema-nps.vercel.app/';
+
+  const message = buildPasswordResetMessage({
+    name: 'Carlos',
+    temporaryPassword: 'Senha@123'
+  });
+
+  assert.equal(buildPasswordChangeUrl(), 'https://meu-sistema-nps.vercel.app/perfil');
+  assert.match(message, /Carlos/);
+  assert.match(message, /Senha@123/);
+  assert.match(message, /https:\/\/meu-sistema-nps\.vercel\.app\/perfil/);
+  assert.match(message, /troca obrigat/iu);
+
+  process.env.APP_BASE_URL = previousAppBaseUrl;
 });
 
 test('buildAppointmentReminderMessage includes patient and appointment details', () => {

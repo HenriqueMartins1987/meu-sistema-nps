@@ -156,6 +156,10 @@ function htmlToText(html) {
     .trim();
 }
 
+function normalizeAppUrl(appUrl) {
+  return String(appUrl || '').trim() || process.env.APP_BASE_URL || process.env.FRONTEND_URL || 'https://meu-sistema-nps.vercel.app/';
+}
+
 function renderUserAccessEmail({ name, email, temporaryPassword, appUrl }) {
   return {
     subject: 'Seu acesso ao portal foi criado',
@@ -172,7 +176,7 @@ function renderUserAccessEmail({ name, email, temporaryPassword, appUrl }) {
             <div style="margin:24px 0;padding:20px;border-radius:14px;background:#fbf8f2;border:1px solid #eadfc8;">
               <p style="margin:0 0 10px;"><strong>Login:</strong> ${email}</p>
               <p style="margin:0 0 10px;"><strong>Senha temporária:</strong> ${temporaryPassword}</p>
-              <p style="margin:0;"><strong>Acesse:</strong> <a href="${appUrl}" style="color:#a56a09;text-decoration:none;">${appUrl}</a></p>
+              <p style="margin:0;"><strong>Acesse:</strong> <a href="${normalizeAppUrl(appUrl)}" style="color:#a56a09;text-decoration:none;">${normalizeAppUrl(appUrl)}</a></p>
             </div>
             <p style="margin:0 0 14px;">No primeiro acesso, a troca de senha será obrigatória por segurança.</p>
             <p style="margin:0;color:#6a6360;">Se você não reconhece este cadastro, responda este e-mail ou procure a administração imediatamente.</p>
@@ -184,28 +188,43 @@ function renderUserAccessEmail({ name, email, temporaryPassword, appUrl }) {
 }
 
 function renderRegistrationApprovedEmail({ name, appUrl }) {
+  const approvedUrl = normalizeAppUrl(appUrl);
+
   return {
     subject: 'Seu cadastro foi aprovado',
     html: `
       <div style="font-family: Arial, Helvetica, sans-serif; color: #1b1b1f; line-height: 1.6;">
         <h2 style="margin-bottom: 16px;">Olá, ${name || 'colaborador'}.</h2>
         <p>Seu cadastro foi aprovado e seu acesso já está liberado.</p>
-        <p><strong>Acesse:</strong> <a href="${appUrl}">${appUrl}</a></p>
+        <p><strong>Acesse:</strong> <a href="${approvedUrl}">${approvedUrl}</a></p>
       </div>
     `.trim()
   };
 }
 
 function renderPasswordResetEmail({ name, temporaryPassword, appUrl }) {
+  const changePasswordUrl = normalizeAppUrl(appUrl);
+
   return {
     subject: 'Senha reiniciada - Sistema GRC',
     html: `
-      <div style="font-family: Arial, Helvetica, sans-serif; color: #1b1b1f; line-height: 1.6;">
-        <h2 style="margin-bottom: 16px;">Olá, ${name || 'colaborador'}.</h2>
-        <p>Sua senha foi reiniciada pelo administrador.</p>
-        <p><strong>Senha temporária:</strong> ${temporaryPassword}</p>
-        <p><strong>Acesse:</strong> <a href="${appUrl}">${appUrl}</a></p>
-        <p>No próximo acesso, a alteração da senha será obrigatória.</p>
+      <div style="margin:0;padding:24px;background:#f4efe6;font-family:Arial,Helvetica,sans-serif;color:#231f20;line-height:1.6;">
+        <div style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #e7dcc8;border-radius:18px;overflow:hidden;box-shadow:0 18px 36px rgba(35,31,32,0.08);">
+          <div style="padding:28px 32px;background:linear-gradient(135deg,#1f2329 0%,#2b3038 100%);color:#ffffff;">
+            <p style="margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#d5a24c;">GRC Consultoria</p>
+            <h1 style="margin:0;font-size:28px;line-height:1.2;">Sua senha foi reiniciada</h1>
+          </div>
+          <div style="padding:32px;">
+            <p style="margin:0 0 16px;">Olá, <strong>${name || 'colaborador'}</strong>.</p>
+            <p style="margin:0 0 20px;">Seu acesso recebeu uma nova senha temporária. Entre no sistema e conclua a alteração da senha no primeiro acesso.</p>
+            <div style="margin:24px 0;padding:20px;border-radius:14px;background:#fbf8f2;border:1px solid #eadfc8;">
+              <p style="margin:0 0 10px;"><strong>Senha temporária:</strong> ${temporaryPassword}</p>
+              <p style="margin:0 0 12px;"><strong>Link para alteração da senha:</strong> <a href="${changePasswordUrl}" style="color:#a56a09;text-decoration:none;">${changePasswordUrl}</a></p>
+              <p style="margin:0;color:#6a6360;">Ao acessar o link, entre com a senha temporária. O sistema abrirá a troca obrigatória automaticamente.</p>
+            </div>
+            <p style="margin:0;color:#6a6360;">Se você não reconhece esta alteração, procure imediatamente o Administrador Master.</p>
+          </div>
+        </div>
       </div>
     `.trim()
   };

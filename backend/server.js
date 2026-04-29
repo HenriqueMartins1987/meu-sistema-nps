@@ -20,12 +20,14 @@ const emailService = require('./services/emailService');
 const {
   buildAppointmentReminderMessage,
   buildNoShowAlertMessage,
+  buildPasswordChangeUrl,
   getWhatsAppProvider,
   isWhatsAppEnabled,
   normalizeWhatsAppPhone,
   sendApprovalWhatsApp,
   sendAppointmentReminder,
   sendNoShowAlert,
+  sendPasswordResetWhatsApp,
   sendWelcomeWhatsApp,
   sendWhatsAppMessage
 } = require('./services/whatsappService');
@@ -2320,12 +2322,13 @@ async function sendPasswordResetNotifications(user, temporaryPassword) {
   let whatsappSent = false;
   let emailError = null;
   let whatsappError = null;
+  const changePasswordUrl = buildPasswordChangeUrl();
 
   try {
     const emailTemplate = emailService.renderPasswordResetEmail({
       name: user.name,
       temporaryPassword,
-      appUrl: appBaseUrl
+      appUrl: changePasswordUrl
     });
     const emailResult = await sendEmail(user.email, emailTemplate.subject, emailTemplate.html);
     emailSent = !emailResult?.skipped;
@@ -2335,7 +2338,7 @@ async function sendPasswordResetNotifications(user, temporaryPassword) {
   }
 
   try {
-    const whatsappResult = await sendWelcomeWhatsApp({
+    const whatsappResult = await sendPasswordResetWhatsApp({
       ...user,
       temporaryPassword,
       whatsapp: user.whatsapp || user.phone

@@ -255,6 +255,11 @@ function buildSystemUrl() {
   return process.env.APP_BASE_URL || process.env.FRONTEND_URL || 'https://meu-sistema-nps.vercel.app/';
 }
 
+function buildPasswordChangeUrl() {
+  const baseUrl = buildSystemUrl().replace(/\/+$/, '');
+  return `${baseUrl}/perfil`;
+}
+
 function buildWelcomeMessage(user) {
   return [
     `Olá ${user.name || 'colaborador'}, seu acesso foi criado com sucesso.`,
@@ -265,6 +270,18 @@ function buildWelcomeMessage(user) {
     'Acesse:',
     buildSystemUrl(),
     'No primeiro acesso altere sua senha.'
+  ].join('\n');
+}
+
+function buildPasswordResetMessage(user) {
+  return [
+    `Olá ${user.name || 'colaborador'}, sua senha foi reiniciada.`,
+    '',
+    `Senha temporária: ${user.temporaryPassword || 'Não informada'}`,
+    '',
+    'Link para alterar a senha:',
+    buildPasswordChangeUrl(),
+    'Entre com a senha temporária. O sistema abrirá a troca obrigatória automaticamente.'
   ].join('\n');
 }
 
@@ -306,6 +323,15 @@ async function sendWelcomeWhatsApp(user) {
   });
 }
 
+async function sendPasswordResetWhatsApp(user) {
+  return sendWhatsAppMessage(user.whatsapp || user.phone, buildPasswordResetMessage(user), {
+    event: 'password_reset',
+    userId: user.id,
+    email: user.email,
+    link: buildPasswordChangeUrl()
+  });
+}
+
 async function sendApprovalWhatsApp(user) {
   return sendWhatsAppMessage(user.whatsapp || user.phone, buildApprovalMessage(user), {
     event: 'registration_approved',
@@ -333,6 +359,8 @@ async function sendNoShowAlert(patient) {
 module.exports = {
   buildAppointmentReminderMessage,
   buildNoShowAlertMessage,
+  buildPasswordChangeUrl,
+  buildPasswordResetMessage,
   buildWelcomeMessage,
   getWhatsAppProvider,
   isWhatsAppEnabled,
@@ -341,6 +369,7 @@ module.exports = {
   sendApprovalWhatsApp,
   sendAppointmentReminder,
   sendNoShowAlert,
+  sendPasswordResetWhatsApp,
   sendWelcomeWhatsApp,
   sendWhatsAppMessage
 };
