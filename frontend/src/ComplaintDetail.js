@@ -124,7 +124,7 @@ function buildDeadlineInfo(complaint) {
   if (diffMs <= 12 * 60 * 60 * 1000) {
     return {
       state: 'warning',
-      label: 'Prazo crÃ­tico',
+      label: 'Prazo crítico',
       detail: `Restam ${Math.max(absHours, 1)}h`
     };
   }
@@ -261,7 +261,7 @@ function ComplaintDetail() {
       setComplaint(res.data);
       setComment('');
     } catch (error) {
-      setFeedback('Não foi possÃ­vel carregar este protocolo.');
+      setFeedback('Não foi possível carregar este protocolo.');
     } finally {
       setLoading(false);
     }
@@ -384,7 +384,7 @@ function ComplaintDetail() {
       await api.post(`/complaints/${id}/evidences`, formData);
       setEvidenceFile(null);
       setEvidenceDescription('');
-      setFeedback('EvidÃªncia anexada com sucesso.');
+      setFeedback('Evidência anexada com sucesso.');
       await loadComplaint();
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Erro ao anexar evidência.');
@@ -399,10 +399,10 @@ function ComplaintDetail() {
 
     try {
       const response = await api.post(`/complaints/${id}/renotify`);
-      setFeedback(response.data?.message || 'NotificaçÃµes reenviadas aos responsáveis.');
+      setFeedback(response.data?.message || 'Notificaç?es reenviadas aos responsáveis.');
       await loadComplaint();
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel reenviar as notificaçÃµes do protocolo.');
+      setFeedback(error.response?.data?.error || 'Não foi possível reenviar as notificações do protocolo.');
     } finally {
       setSaving(false);
     }
@@ -439,7 +439,7 @@ function ComplaintDetail() {
       setShowDeleteModal(false);
       navigate('/gestao');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel excluir este protocolo.');
+      setFeedback(error.response?.data?.error || 'Não foi possível excluir este protocolo.');
     } finally {
       setSaving(false);
     }
@@ -512,7 +512,7 @@ function ComplaintDetail() {
         <section className="management-panel">
           <div className="history-item">
             <div className="history-item-head">
-              <strong>Protocolo excluÃ­do da operação</strong>
+              <strong>Protocolo excluído da operação</strong>
               <span>{formatDate(complaint.deleted_at)}</span>
             </div>
             <small>{complaint.deleted_by || 'Usuário não informado'}</small>
@@ -695,18 +695,18 @@ function ComplaintDetail() {
                 <button
                   type="button"
                   className="evidence-item"
-                  onClick={() => openUploadedItem(evidenceUrl, evidence.description || evidence.original_name || 'EvidÃªncia anexada')}
+                  onClick={() => openUploadedItem(evidenceUrl, evidence.description || evidence.original_name || 'Evidência anexada')}
                   key={evidence.id}
                 >
                   {isPreviewableImage(evidenceUrl) && (
                     <img
                       className="evidence-preview"
                       src={evidenceUrl}
-                      alt={evidence.description || evidence.original_name || 'EvidÃªncia anexada'}
+                      alt={evidence.description || evidence.original_name || 'Evidência anexada'}
                       loading="lazy"
                     />
                   )}
-                  <span>{evidence.description || evidence.original_name || 'EvidÃªncia anexada'}</span>
+                  <span>{evidence.description || evidence.original_name || 'Evidência anexada'}</span>
                   <small>
                     {formatDate(evidence.created_at)}
                     {evidence.uploaded_by_name ? ` · ${evidence.uploaded_by_name}` : ''}
@@ -723,7 +723,7 @@ function ComplaintDetail() {
           <div className="detail-title-row">
             <div>
               <p className="eyebrow">Histórico imutável</p>
-              <h2>Tratativas e atualizaçÃµes do protocolo</h2>
+              <h2>Tratativas e atualizaç?es do protocolo</h2>
               <p className="history-note">Cada descrição salva permanece vinculada ao usuário, data e perfil. Não há exclusão de relatos pela tela.</p>
             </div>
             <span className="mini-badge">{complaint.logs?.length || 0} registros</span>
@@ -776,7 +776,7 @@ function ComplaintDetail() {
             </div>
             <div className={`approval-card ${hasSacApproval ? 'done' : 'pending'}`}>
               <span>Aceite SAC</span>
-              <strong>{hasSacApproval ? 'ConcluÃ­do' : 'Pendente'}</strong>
+              <strong>{hasSacApproval ? 'Concluído' : 'Pendente'}</strong>
               <p>{hasSacApproval ? `${complaint.sac_approval_by || 'SAC'} · ${formatDate(complaint.sac_approval_at)}` : 'Gerado no fechamento pelo Operador de SAC.'}</p>
             </div>
           </div>

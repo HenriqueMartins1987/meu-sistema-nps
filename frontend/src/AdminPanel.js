@@ -5,7 +5,6 @@ import {
   accessProfiles,
   defaultBrazilPhone,
   formatBrazilPhoneInput,
-  isAdmin,
   isMasterAdmin,
   isCompleteBrazilPhone,
   readUser,
@@ -80,14 +79,14 @@ function AdminPanel() {
         setSelectedUserId(String(userRows[0].id));
       }
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel carregar o painel gerencial.');
+      setFeedback(error.response?.data?.error || 'Não foi possível carregar o painel gerencial.');
     } finally {
       setLoading(false);
     }
   }, [selectedUserId]);
 
   useEffect(() => {
-    if (!isAdmin(currentUser)) {
+    if (!isMasterAdmin(currentUser)) {
       navigate('/home');
       return;
     }
@@ -167,7 +166,7 @@ function AdminPanel() {
       await loadData();
       setFeedback('Usuário atualizado com sucesso.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel atualizar o usuário.');
+      setFeedback(error.response?.data?.error || 'Não foi possível atualizar o usuário.');
     }
   };
 
@@ -179,7 +178,7 @@ function AdminPanel() {
       await loadData();
       setFeedback('Usuário desabilitado.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel desabilitar o usuário.');
+      setFeedback(error.response?.data?.error || 'Não foi possível desabilitar o usuário.');
     }
   };
 
@@ -190,9 +189,9 @@ function AdminPanel() {
       await api.delete(`/admin/users/${selectedUser.id}`);
       setSelectedUserId('');
       await loadData();
-      setFeedback('Usuário excluÃ­do com lastro de auditoria.');
+      setFeedback('Usuário excluído com lastro de auditoria.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel excluir o usuário.');
+      setFeedback(error.response?.data?.error || 'Não foi possível excluir o usuário.');
     }
   };
 
@@ -207,7 +206,7 @@ function AdminPanel() {
         `Senha reiniciada com sucesso. ${emailSent ? 'E-mail enviado.' : 'E-mail pendente.'} ${whatsappSent ? 'WhatsApp enviado.' : 'WhatsApp pendente.'}`
       );
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel reiniciar a senha.');
+      setFeedback(error.response?.data?.error || 'Não foi possível reiniciar a senha.');
     }
   };
 
@@ -233,7 +232,7 @@ function AdminPanel() {
         setFeedback(response.data?.warning || 'O teste de e-mail foi processado, mas o provedor não concluiu o envio.');
       }
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel enviar o e-mail de teste.');
+      setFeedback(error.response?.data?.error || 'Não foi possível enviar o e-mail de teste.');
     } finally {
       setTestingChannels(false);
     }
@@ -262,7 +261,7 @@ function AdminPanel() {
         setFeedback(response.data?.warning || 'O teste de WhatsApp foi processado, mas o provedor não concluiu o envio.');
       }
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel enviar o WhatsApp de teste.');
+      setFeedback(error.response?.data?.error || 'Não foi possível enviar o WhatsApp de teste.');
     } finally {
       setTestingChannels(false);
     }
@@ -297,13 +296,13 @@ function AdminPanel() {
         `Usuário criado com sucesso. Senha temporária gerada com envio ${emailSent ? 'por e-mail' : 'de e-mail pendente'} e ${whatsappSent ? 'por WhatsApp' : 'de WhatsApp pendente'}.`
       );
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel criar o usuário.');
+      setFeedback(error.response?.data?.error || 'Não foi possível criar o usuário.');
     } finally {
       setCreating(false);
     }
   };
 
-  if (!isAdmin(currentUser)) {
+  if (!isMasterAdmin(currentUser)) {
     return null;
   }
 
@@ -399,7 +398,7 @@ function AdminPanel() {
                   {!isSelectedMaster && <button className="outline-action" onClick={disableUser}>Desabilitar</button>}
                   {!isSelectedMaster && <button className="outline-action" onClick={resetPassword}>Reiniciar senha</button>}
                   {!isSelectedMaster && <button className="outline-action danger-action" onClick={deleteUser}>Excluir</button>}
-                  <button className="primary-action" onClick={saveUser}>Salvar alteraçÃµes</button>
+                  <button className="primary-action" onClick={saveUser}>Salvar alteraç?es</button>
                 </div>
               </div>
 

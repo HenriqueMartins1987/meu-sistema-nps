@@ -17,7 +17,7 @@ import NpsDashboard from './NpsDashboard';
 import AdminPanel from './AdminPanel';
 import PatientManagement from './PatientManagementPage';
 import CrmWorkspace from './CrmWorkspace';
-import { ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
+import { PermissionRoute, ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
 import './App.css';
 
 function App() {
@@ -40,11 +40,15 @@ function App() {
         <Route path="/perfil" element={<Profile />} />
         <Route path="/gestao-nps" element={<NpsManagement />} />
         <Route path="/dashboard-nps" element={<NpsDashboard />} />
-        <Route path="/admin" element={<AdminPanel />} />
-        <Route path="/pacientes" element={<PatientManagement />} />
-        <Route path="/pacientes/cadastro" element={<PatientManagement />} />
-        <Route path="/pacientes/dashboard" element={<PatientManagement />} />
         <Route path="/crm" element={<CrmWorkspace />} />
+        <Route element={<PermissionRoute masterOnly />}>
+          <Route path="/admin" element={<AdminPanel />} />
+        </Route>
+        <Route element={<PermissionRoute permission="patient_management" />}>
+          <Route path="/pacientes" element={<PatientManagement />} />
+          <Route path="/pacientes/cadastro" element={<PatientManagement />} />
+          <Route path="/pacientes/dashboard" element={<PatientManagement />} />
+        </Route>
       </Route>
     </Routes>
   );

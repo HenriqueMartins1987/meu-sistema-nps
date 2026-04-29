@@ -73,9 +73,9 @@ test('admin user creation keeps the user when welcome e-mail fails', async () =>
     .post('/admin/users')
     .set('Authorization', `Bearer ${signToken({
       id: 1,
-      email: 'admin@example.com',
-      role: 'admin',
-      name: 'Administrador',
+      email: 'henrique.martins@grcconsultoria.net.br',
+      role: 'master_admin',
+      name: 'Administrador Master',
       permissions: ['admin_panel'],
       clinicIds: [],
       mustChangePassword: false

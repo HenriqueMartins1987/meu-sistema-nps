@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Bar, Doughnut } from 'react-chartjs-2';
 import 'chart.js/auto';
 import api from './api';
+import { hasPermission, readUser } from './constants';
 
 const chartColors = ['#0b6f5f', '#d08c31', '#c44536', '#1f7a8c', '#4c956c', '#8a4f7d', '#7d6847'];
 
@@ -268,6 +269,8 @@ function buildRecords(complaints, npsRows, patientRows, clinics) {
 
 function CrmWorkspace() {
   const navigate = useNavigate();
+  const currentUser = useMemo(() => readUser(), []);
+  const canManagePatients = hasPermission(currentUser, 'patient_management');
   const [records, setRecords] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [filters, setFilters] = useState(initialFilters);
@@ -394,7 +397,9 @@ function CrmWorkspace() {
 
         <div className="heading-actions crm-heading-actions">
           <button className="outline-action" onClick={() => navigate('/gestao')}>Painel de Gestão</button>
-          <button className="outline-action" onClick={() => navigate('/pacientes')}>Gestão do Paciente</button>
+          {canManagePatients && (
+            <button className="outline-action" onClick={() => navigate('/pacientes')}>Gestão do Paciente</button>
+          )}
           <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
         </div>
       </header>

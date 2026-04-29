@@ -96,6 +96,8 @@ export const defaultBrazilPhone = '+55';
 export const brazilPhonePattern = '\\+55\\d{11}';
 export const brazilPhoneTitle = 'Informe o número completo no formato +55DDDNÚMERO, com 13 dígitos numéricos.';
 
+const masterAdminEmail = 'henrique.martins@grcconsultoria.net.br';
+
 export function formatBrazilPhoneInput(value) {
   let digits = String(value || '').replace(/\D/g, '');
 
@@ -128,20 +130,40 @@ export function readUser() {
   }
 }
 
+export function getUserDisplayName(user) {
+  return String(user?.name || '').trim() || String(user?.email || '').trim() || 'Usuário';
+}
+
+export function isMasterAdmin(user) {
+  const email = String(user?.email || '').toLowerCase();
+  return email === masterAdminEmail;
+}
+
 export function isAdmin(user) {
   const email = String(user?.email || '').toLowerCase();
   return user?.role === 'admin'
     || user?.role === 'master_admin'
     || email === 'admin@sorria.com'
-    || email === 'henrique.martins@grcconsultoria.net.br';
-}
-
-export function isMasterAdmin(user) {
-  const email = String(user?.email || '').toLowerCase();
-  return email === 'henrique.martins@grcconsultoria.net.br';
+    || email === masterAdminEmail;
 }
 
 export function hasPermission(user, permission) {
-  if (isAdmin(user)) return true;
-  return Array.isArray(user?.permissions) && user.permissions.includes(permission);
+  if (!user || !permission) return false;
+  if (isMasterAdmin(user)) return true;
+
+  const permissions = Array.isArray(user.permissions) ? user.permissions : [];
+
+  if (permission === 'admin_panel') {
+    return false;
+  }
+
+  if (permission === 'patient_management') {
+    return permissions.includes(permission);
+  }
+
+  if (user.role === 'admin') {
+    return true;
+  }
+
+  return permissions.includes(permission);
 }

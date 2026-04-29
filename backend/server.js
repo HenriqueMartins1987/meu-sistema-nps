@@ -4290,7 +4290,7 @@ app.get('/registration-requests/:token/approve', async (req, res) => {
     res.status(500).send('<h1>Erro ao aprovar cadastro.</h1>');
   }
 });
-app.get('/admin/options', authenticate, requireAdmin, (req, res) => {
+app.get('/admin/options', authenticate, requireMasterAdmin, (req, res) => {
   res.json({
     accessProfiles: {
       master_admin: 'Administrador Master',
@@ -4421,7 +4421,7 @@ app.post('/admin/registration-requests/:id/reject', authenticate, requireMasterA
   }
 });
 
-app.get('/admin/users', authenticate, requireAdmin, async (req, res) => {
+app.get('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const [users] = await pool.query(
       `SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, created_at, updated_at
@@ -4457,7 +4457,7 @@ app.get('/admin/users', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
+app.post('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const parsed = parseBodyWithSchema(adminUserCreateSchema, req.body);
 
@@ -4566,7 +4566,7 @@ app.post('/admin/users', authenticate, requireAdmin, async (req, res) => {
     res.status(500).json({ error: 'Erro ao criar usuário.' });
   }
 });
-app.patch('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
+app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
 
@@ -4647,7 +4647,7 @@ app.patch('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-app.post('/admin/users/:id/reset-password', authenticate, requireAdmin, async (req, res) => {
+app.post('/admin/users/:id/reset-password', authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT id, role, email, name, phone, whatsapp FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
 
@@ -4691,7 +4691,7 @@ app.post('/admin/users/:id/reset-password', authenticate, requireAdmin, async (r
     res.status(500).json({ error: 'Erro ao reiniciar senha.' });
   }
 });
-app.delete('/admin/users/:id', authenticate, requireAdmin, async (req, res) => {
+app.delete('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT id, role, email FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
 

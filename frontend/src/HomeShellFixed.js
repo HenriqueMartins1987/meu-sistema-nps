@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from './api';
 import logo from './assets/logo3.png';
-import { hasPermission, isAdmin, isMasterAdmin, readUser } from './constants';
+import { hasPermission, isMasterAdmin, readUser } from './constants';
 import { clearSession, saveSession } from './session';
 
 const notificationTypeLabels = {
@@ -24,8 +24,8 @@ const notificationPayloadLabels = {
   interactionId: 'Código do atendimento',
   patientName: 'Paciente',
   patient_name: 'Paciente',
-  clinicName: 'ClÃ­nica',
-  clinic_name: 'ClÃ­nica',
+  clinicName: 'Clínica',
+  clinic_name: 'Clínica',
   coordinatorName: 'Coordenador',
   coordinator_name: 'Coordenador',
   actorName: 'Usuário',
@@ -146,7 +146,6 @@ function complaintAgendaTone(item) {
 function HomeShellFixed() {
   const navigate = useNavigate();
   const user = useMemo(() => readUser(), []);
-  const adminUser = isAdmin(user);
   const masterUser = isMasterAdmin(user);
   const canManageComplaints = hasPermission(user, 'complaints_management');
   const canManagePatients = hasPermission(user, 'patient_management');
@@ -174,11 +173,11 @@ function HomeShellFixed() {
 
   const menuSections = useMemo(() => ([
     {
-      title: 'ReclamaçÃµes',
+      title: 'Reclamações',
       items: [
         { label: 'Novo Protocolo', path: '/cadastro', permission: 'complaints_register' },
-        { label: 'Painel de Gestão de ReclamaçÃµes', path: '/gestao', permission: 'complaints_management' },
-        { label: 'Dashboard de ReclamaçÃµes', path: '/dashboard', permission: 'complaints_dashboard' }
+        { label: 'Painel de Gestão de Reclamações', path: '/gestao', permission: 'complaints_management' },
+        { label: 'Dashboard de Reclamações', path: '/dashboard', permission: 'complaints_dashboard' }
       ]
     },
     {
@@ -214,7 +213,7 @@ function HomeShellFixed() {
   const visibleSections = menuSections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => (!item.adminOnly || adminUser) && hasPermission(user, item.permission))
+      items: section.items.filter((item) => (!item.adminOnly || masterUser) && hasPermission(user, item.permission))
     }))
     .filter((section) => section.items.length);
 
@@ -236,7 +235,7 @@ function HomeShellFixed() {
         setMustChangePassword(true);
       }
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel carregar as notificaçÃµes.');
+      setFeedback(error.response?.data?.error || 'Não foi possível carregar as notificações.');
     }
   }, [masterUser]);
 
@@ -331,7 +330,7 @@ function HomeShellFixed() {
             type: 'Paciente',
             title: item.protocol || `PAC-${item.id}`,
             description: `${item.patient || 'Paciente'} · ${item.clinic || 'Unidade não informada'}`,
-            detail: `Agenda de hoje Ã s ${formatDateTime(item.scheduledAt)}`,
+            detail: `Agenda de hoje às ${formatDateTime(item.scheduledAt)}`,
             when: scheduledAt.getTime(),
             tone: 'teal',
             urgent: false,
@@ -354,7 +353,7 @@ function HomeShellFixed() {
       setAgendaItems(nextAgenda);
       setAgendaAlerts(nextAlerts);
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel carregar a agenda operacional.');
+      setFeedback(error.response?.data?.error || 'Não foi possível carregar a agenda operacional.');
     } finally {
       setAgendaLoading(false);
     }
@@ -423,7 +422,7 @@ function HomeShellFixed() {
       await loadNotifications();
       setFeedback(decision === 'approve' ? 'Cadastro aprovado.' : 'Cadastro rejeitado.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possÃ­vel analisar o cadastro.');
+      setFeedback(error.response?.data?.error || 'Não foi possível analisar o cadastro.');
     }
   };
 
@@ -444,7 +443,7 @@ function HomeShellFixed() {
       closeShareModal();
     } catch (error) {
       if (error?.name !== 'AbortError') {
-        setFeedback('Não foi possÃ­vel compartilhar a pesquisa agora.');
+        setFeedback('Não foi possível compartilhar a pesquisa agora.');
       }
     }
   };
@@ -455,7 +454,7 @@ function HomeShellFixed() {
       setFeedback('Link da pesquisa copiado.');
       closeShareModal();
     } catch (error) {
-      setFeedback('Não foi possÃ­vel copiar o link da pesquisa.');
+      setFeedback('Não foi possível copiar o link da pesquisa.');
     }
   };
 
@@ -598,14 +597,14 @@ function HomeShellFixed() {
 
         <div className="home-command-actions">
           <div className="home-account-row">
-            {adminUser && (
+            {masterUser && (
               <button type="button" className="gear-action" onClick={() => navigate('/admin')} aria-label="Painel gerencial">
                 ⚙
               </button>
             )}
             <button type="button" className="notification-button" onClick={openNotificationsModal}>
               <span className="bell-icon" aria-hidden="true">🔔</span>
-              <span className="sr-only">NotificaçÃµes</span>
+              <span className="sr-only">Notificações</span>
               <strong>{totalAlerts}</strong>
             </button>
             <button type="button" className="ghost-action account-action" onClick={() => navigate('/perfil')}>
@@ -694,7 +693,7 @@ function HomeShellFixed() {
         <div className="modal-backdrop" role="dialog" aria-modal="true">
           <section className="modal-panel notification-center-modal">
             <div className="notification-head">
-              <strong>NotificaçÃµes</strong>
+              <strong>Notificações</strong>
               <button type="button" className="ghost-action" onClick={loadNotifications}>Atualizar</button>
             </div>
 
@@ -814,8 +813,8 @@ function HomeShellFixed() {
           <p className="eyebrow">Sistema GRC</p>
           <h1>Gestão profissional da voz do cliente.</h1>
           <p>
-            Centralize reclamaçÃµes, NPS, elogios, sugestÃµes e rotinas do paciente com trilhas separadas,
-            permissÃµes por perfil e rastreabilidade executiva.
+            Centralize reclamações, NPS, elogios, sugestões e rotinas do paciente com trilhas separadas,
+            permissões por perfil e rastreabilidade executiva.
           </p>
         </div>
 
@@ -824,10 +823,10 @@ function HomeShellFixed() {
             <button className="primary-action" onClick={() => navigate('/cadastro')}>Novo Protocolo</button>
           )}
           {hasPermission(user, 'complaints_management') && (
-            <button className="secondary-action" onClick={() => navigate('/gestao')}>Painel de Gestão de ReclamaçÃµes</button>
+            <button className="secondary-action" onClick={() => navigate('/gestao')}>Painel de Gestão de Reclamações</button>
           )}
           {hasPermission(user, 'complaints_dashboard') && (
-            <button className="secondary-action" onClick={() => navigate('/dashboard')}>Dashboard de ReclamaçÃµes</button>
+            <button className="secondary-action" onClick={() => navigate('/dashboard')}>Dashboard de Reclamações</button>
           )}
           {hasPermission(user, 'nps_management') && (
             <button className="outline-action" onClick={() => navigate('/gestao-nps')}>Painel de Gestão NPS</button>
@@ -860,8 +859,8 @@ function HomeShellFixed() {
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Agenda</p>
-            <h2>PendÃªncias do dia</h2>
-            <p className="base-subtitle">Prazos crÃ­ticos e agenda operacional para acompanhamento imediato.</p>
+            <h2>Pendências do dia</h2>
+            <p className="base-subtitle">Prazos críticos e agenda operacional para acompanhamento imediato.</p>
           </div>
           <button className="outline-action" type="button" onClick={loadAgenda}>
             Atualizar agenda
@@ -869,9 +868,9 @@ function HomeShellFixed() {
         </div>
 
         {agendaLoading ? (
-          <p className="empty-state">Carregando pendÃªncias do dia...</p>
+          <p className="empty-state">Carregando pendências do dia...</p>
         ) : agendaItems.length === 0 ? (
-          <p className="empty-state">Nenhuma pendÃªncia crÃ­tica ou agenda do dia disponÃ­vel.</p>
+          <p className="empty-state">Nenhuma pendência crítica ou agenda do dia disponível.</p>
         ) : (
           <div className="home-agenda-list">
             {agendaItems.map((item) => (
@@ -896,10 +895,10 @@ function HomeShellFixed() {
       <section className="quick-grid" aria-label="Atalhos operacionais">
         <article className="quick-card accent-brand">
           <div className="quick-card-head">
-            <span className="quick-number">ReclamaçÃµes</span>
+            <span className="quick-number">Reclamações</span>
             <span className="quick-tag">Governança</span>
           </div>
-          <h2>Gestão de protocolos com alçada e evidÃªncias</h2>
+          <h2>Gestão de protocolos com alçada e evidências</h2>
           <p>Cadastro, aceite, tratativa, anexos, prazos e histórico por usuário.</p>
           <strong className="quick-highlight">Cada usuário visualiza apenas o que sua alçada permite.</strong>
         </article>
@@ -920,14 +919,14 @@ function HomeShellFixed() {
             <span className="quick-tag">Agenda</span>
           </div>
           <h2>Agendamento do Paciente com protocolo e histórico</h2>
-          <p>Cadastre confirmaçÃµes, agendamentos e reagendamentos com data atual, protocolo próprio e trilha de cancelados.</p>
+          <p>Cadastre confirmações, agendamentos e reagendamentos com data atual, protocolo próprio e trilha de cancelados.</p>
           {hasPermission(user, 'patient_management') ? (
             <div className="quick-card-actions">
               <button className="primary-action" onClick={() => navigate('/pacientes')}>Cadastrar paciente</button>
               <button className="outline-action" onClick={() => navigate('/pacientes/dashboard')}>Dashboard Pacientes</button>
             </div>
           ) : (
-            <strong className="quick-highlight">A rotina fica disponÃ­vel conforme a alçada do usuário.</strong>
+            <strong className="quick-highlight">A rotina fica disponível conforme a alçada do usuário.</strong>
           )}
         </article>
 
@@ -937,7 +936,7 @@ function HomeShellFixed() {
             <span className="quick-tag">Alçadas</span>
           </div>
           <h2>Painel gerencial para usuários, telas e unidades</h2>
-          <p>Administrador e master ajustam acesso, vÃ­nculo com clÃ­nicas e status dos colaboradores.</p>
+          <p>Administrador e master ajustam acesso, vínculo com clínicas e status dos colaboradores.</p>
           <strong className="quick-highlight">Links sem permissão deixam de aparecer para o usuário.</strong>
         </article>
       </section>

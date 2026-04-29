@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import logo from './assets/logo3.png';
 import api from './api';
 import { saveSession } from './session';
 
@@ -55,6 +56,7 @@ function Login() {
     () => experienceModules.find((item) => item.id === activeModule) || experienceModules[0],
     [activeModule]
   );
+
   const redirectPath = location.state?.from || '/home';
   const timedOut = location.state?.reason === 'idle_timeout';
 
@@ -147,10 +149,11 @@ function Login() {
         code: recoveryForm.code,
         new_password: recoveryForm.new_password
       });
+
+      closeRecovery();
       setInfo(response.data?.message || 'Senha redefinida com sucesso. Faça login com a nova senha.');
       setEmail(recoveryForm.email);
       setPassword('');
-      closeRecovery();
     } catch (err) {
       setError(err.response?.data?.error || 'Não foi possível redefinir a senha.');
     } finally {
@@ -162,6 +165,7 @@ function Login() {
     <main className="login-page clean-login-page">
       <section className="login-brand">
         <div className="login-brand-shell">
+          <img className="login-brand-logo" src={logo} alt="GRC Consultoria" />
           <p className="eyebrow">Portal de relacionamento e experiência</p>
           <h1>Gestão profissional da voz do cliente.</h1>
           <p>

@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
+import { getUserDisplayName, hasPermission, isMasterAdmin, readUser } from './constants';
 import {
   clearSession,
   getRemainingSessionMs,
@@ -21,6 +22,10 @@ export function ProtectedRoute() {
   const [sessionActive, setSessionActive] = useState(() => hasActiveSession());
   const [timedOut, setTimedOut] = useState(false);
   const [remainingMs, setRemainingMs] = useState(() => getRemainingSessionMs());
+  const [currentUser, setCurrentUser] = useState(() => readUser());
+
+  const userLabel = useMemo(() => getUserDisplayName(currentUser), [currentUser]);
+  const userEmail = useMemo(() => String(currentUser?.email || '').trim(), [currentUser]);
 
   useEffect(() => {
     if (!sessionActive) {
@@ -48,6 +53,7 @@ export function ProtectedRoute() {
       const stillActive = hasActiveSession();
       setSessionActive(stillActive);
       setRemainingMs(getRemainingSessionMs());
+      setCurrentUser(readUser());
     };
 
     const activityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
@@ -74,6 +80,8 @@ export function ProtectedRoute() {
     const stillActive = hasActiveSession();
     setSessionActive(stillActive);
     setRemainingMs(getRemainingSessionMs());
+    setCurrentUser(readUser());
+
     if (stillActive) {
       setTimedOut(false);
     }
@@ -95,6 +103,11 @@ export function ProtectedRoute() {
   return (
     <>
       <Outlet />
+      <aside className="logged-user-badge" aria-label="Usuário logado">
+        <span>Usuário logado</span>
+        <strong>{userLabel}</strong>
+        <small>{userEmail || 'E-mail não informado'}</small>
+      </aside>
       <aside
         className={`session-countdown ${remainingMs <= 5 * 60 * 1000 ? 'warning' : ''}`}
         aria-live="polite"
@@ -108,6 +121,18 @@ export function ProtectedRoute() {
       </aside>
     </>
   );
+}
+
+export function PermissionRoute({ permission = '', masterOnly = false }) {
+  const location = useLocation();
+  const user = readUser();
+  const allowed = masterOnly ? isMasterAdmin(user) : hasPermission(user, permission);
+
+  if (!allowed) {
+    return <Navigate to="/home" replace state={{ from: location.pathname + location.search, reason: 'forbidden' }} />;
+  }
+
+  return <Outlet />;
 }
 
 export function PublicOnlyRoute() {

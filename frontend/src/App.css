@@ -97,6 +97,8 @@ a {
 .login-brand-logo {
   width: 260px;
   max-width: 82%;
+  justify-self: start;
+  align-self: start;
   background: linear-gradient(180deg, rgba(34, 37, 42, 0.98), rgba(14, 16, 19, 0.98));
   border: 1px solid rgba(199, 154, 90, 0.3);
   border-radius: 8px;
@@ -3268,6 +3270,42 @@ a {
   backdrop-filter: blur(14px);
 }
 
+.logged-user-badge {
+  position: fixed;
+  right: 24px;
+  bottom: 104px;
+  z-index: 24;
+  display: grid;
+  gap: 4px;
+  min-width: 260px;
+  max-width: min(320px, calc(100vw - 48px));
+  padding: 14px 16px;
+  border: 1px solid rgba(200, 154, 87, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 253, 250, 0.94);
+  box-shadow: 0 14px 28px rgba(10, 10, 14, 0.16);
+  backdrop-filter: blur(12px);
+}
+
+.logged-user-badge span {
+  color: var(--brand-strong);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.logged-user-badge strong {
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.25;
+}
+
+.logged-user-badge small {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+
 .session-countdown.warning {
   border-color: rgba(196, 69, 54, 0.36);
   background: rgba(76, 21, 18, 0.95);
@@ -4356,6 +4394,14 @@ a {
     bottom: 20px;
     min-width: 0;
     justify-content: center;
+  }
+
+  .logged-user-badge {
+    left: 20px;
+    right: 20px;
+    bottom: 98px;
+    min-width: 0;
+    max-width: none;
   }
 }
 
