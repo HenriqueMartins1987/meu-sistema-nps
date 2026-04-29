@@ -16,10 +16,10 @@
   --shadow-sm: 0 8px 20px rgba(12, 12, 16, 0.08);
   --shadow-md: 0 18px 45px rgba(12, 12, 16, 0.14);
   --shadow-lg: 0 28px 70px rgba(12, 12, 16, 0.22);
-  --system-status-height: 74px;
-  --system-status-gap: 16px;
+  --system-status-height: 58px;
+  --system-status-gap: 14px;
   --sticky-primary-top: calc(var(--system-status-height) + var(--system-status-gap));
-  --sticky-secondary-top: calc(var(--system-status-height) + 126px);
+  --sticky-secondary-top: calc(var(--system-status-height) + 112px);
 }
 
 * {
@@ -511,7 +511,7 @@ a {
   background-position: top center, center, center 180px;
   background-size: auto, cover, 680px auto;
   background-repeat: no-repeat;
-  padding: calc(30px + var(--system-status-height) + 14px) 30px 30px;
+  padding: calc(26px + var(--system-status-height) + 10px) 30px 30px;
   position: relative;
   isolation: isolate;
 }
@@ -3335,27 +3335,26 @@ a {
 
 .system-status-bar {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
+  top: 12px;
+  left: 18px;
+  right: auto;
   z-index: 48;
-  padding: 12px 30px 0;
+  padding: 0;
   pointer-events: none;
 }
 
 .system-status-inner {
-  width: min(1220px, 100%);
-  margin: 0 auto;
+  width: min(460px, calc(100vw - 36px));
+  margin: 0;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 14px;
-  padding: 12px 16px;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 8px 12px;
   border: 1px solid rgba(200, 154, 87, 0.18);
   border-radius: 8px;
   background: rgba(255, 252, 247, 0.96);
-  box-shadow: 0 16px 34px rgba(10, 10, 14, 0.12);
+  box-shadow: 0 12px 28px rgba(10, 10, 14, 0.12);
   backdrop-filter: blur(14px);
   pointer-events: auto;
 }
@@ -3363,26 +3362,26 @@ a {
 .session-countdown {
   position: static;
   flex: 0 0 auto;
-  min-width: 214px;
+  min-width: 168px;
   display: inline-flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
+  gap: 8px;
+  padding: 8px 10px;
   border: 1px solid rgba(199, 154, 90, 0.28);
   border-radius: 8px;
   background: rgba(21, 24, 29, 0.94);
   color: #fff;
-  box-shadow: var(--shadow-lg);
+  box-shadow: 0 10px 22px rgba(10, 10, 14, 0.18);
   backdrop-filter: blur(14px);
 }
 
 .logged-user-badge {
   display: grid;
-  gap: 6px;
+  gap: 3px;
   min-width: 0;
   flex: 1 1 auto;
-  max-width: min(700px, 100%);
-  padding: 4px 0;
+  max-width: none;
+  padding: 2px 0;
   border: 0;
   border-radius: 8px;
   background: transparent;
@@ -3392,7 +3391,7 @@ a {
 
 .logged-user-badge span {
   color: var(--brand-strong);
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 900;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -3400,7 +3399,7 @@ a {
 
 .logged-user-badge strong {
   color: var(--ink);
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1.25;
 }
 
@@ -3413,7 +3412,7 @@ a {
 
 .logged-user-badge small {
   color: var(--muted);
-  font-size: 13px;
+  font-size: 12px;
   overflow-wrap: anywhere;
 }
 
@@ -3424,9 +3423,9 @@ a {
 
 .session-countdown-clock {
   position: relative;
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
   border: 2px solid rgba(255, 255, 255, 0.9);
   border-radius: 50%;
 }
@@ -3459,12 +3458,12 @@ a {
 }
 
 .session-countdown-copy strong {
-  font-size: 18px;
+  font-size: 16px;
   line-height: 1;
 }
 
 .session-countdown-copy span {
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.78);
@@ -4173,8 +4172,8 @@ a {
 
 @media (max-width: 1020px) {
   :root {
-    --system-status-height: 92px;
-    --sticky-secondary-top: calc(var(--system-status-height) + 126px);
+    --system-status-height: 56px;
+    --sticky-secondary-top: calc(var(--system-status-height) + 112px);
   }
 
   .app-page,
@@ -4218,7 +4217,7 @@ a {
   }
 
   .app-page {
-    padding: calc(20px + var(--system-status-height) + 14px) 20px 20px;
+    padding: calc(18px + var(--system-status-height) + 10px) 20px 20px;
   }
 
   .page-heading,
@@ -4422,8 +4421,8 @@ a {
 
 @media (max-width: 620px) {
   :root {
-    --system-status-height: 126px;
-    --sticky-secondary-top: calc(var(--system-status-height) + 126px);
+    --system-status-height: 96px;
+    --sticky-secondary-top: calc(var(--system-status-height) + 112px);
   }
 
   .login-brand h1,
@@ -4523,13 +4522,15 @@ a {
   }
 
   .system-status-bar {
-    padding: 10px 14px 0;
+    top: 10px;
+    left: 14px;
   }
 
   .system-status-inner {
+    width: min(340px, calc(100vw - 28px));
     align-items: flex-start;
     flex-direction: column;
-    padding: 12px 14px;
+    padding: 10px 12px;
   }
 
   .session-countdown {
