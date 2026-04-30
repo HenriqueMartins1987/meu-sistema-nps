@@ -64,7 +64,10 @@ test('getEmailFrom uses configured sender and falls back to default', () => {
   assert.equal(getEmailFrom(), DEFAULT_EMAIL_FROM);
 
   process.env.EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>';
-  assert.equal(getEmailFrom(), 'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>');
+  assert.equal(getEmailFrom(), DEFAULT_EMAIL_FROM);
+
+  process.env.EMAIL_FROM = 'Grupo Sorria <contato@grcconsultoria.siteempresarial.com>';
+  assert.equal(getEmailFrom(), DEFAULT_EMAIL_FROM);
 
   process.env.EMAIL_FROM = previousFrom;
   process.env.SMTP_FROM = previousSmtpFrom;
@@ -76,12 +79,11 @@ test('getResendFromCandidates keeps the professional sender and configured fallb
   const previousFallbackFrom = process.env.RESEND_FALLBACK_FROM;
 
   process.env.EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.net.br>';
-  process.env.RESEND_FALLBACK_FROM = 'GRC Consultoria <fallback@example.com>';
+  process.env.RESEND_FALLBACK_FROM = 'Grupo Sorria <fallback@example.com>';
 
   assert.deepEqual(getResendFromCandidates(), [
     DEFAULT_EMAIL_FROM,
-    'GRC Consultoria <fallback@example.com>',
-    'GRC Consultoria <contato@grcconsultoria.net.br>'
+    'Grupo Sorria <fallback@example.com>'
   ]);
 
   if (previousFrom === undefined) {
@@ -121,8 +123,10 @@ test('renderUserAccessEmail returns the user access template', () => {
   assert.match(template.html, /Maria Silva/);
   assert.match(template.html, /maria@example.com/);
   assert.match(template.html, /Tmp@12345/);
-  assert.match(template.html, /max-width:138px/);
-  assert.match(template.html, /background:linear-gradient\(180deg,rgba\(34,37,42,0\.98\),rgba\(14,16,19,0\.98\)\)/);
+  assert.match(template.html, /Grupo Sorria/);
+  assert.match(template.html, /font-family:Georgia,'Times New Roman',serif/);
+  assert.doesNotMatch(template.html, /<img\b/i);
+  assert.doesNotMatch(template.html, /data:image/i);
   assert.doesNotMatch(template.html, />GRC Consultoria</);
 });
 

@@ -1,13 +1,8 @@
-const fs = require('fs');
-const path = require('path');
 const nodemailer = require('nodemailer');
 const { Resend } = require('resend');
 
-const DEFAULT_EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>';
-const UNAUTHORIZED_EMAIL_FROM_PATTERN = /contato@grcconsultoria\.net\.br/i;
-const BRAND_LOGO_PATH = path.resolve(__dirname, '../../frontend/src/assets/logo3.png');
-
-let cachedBrandLogoDataUrl = null;
+const DEFAULT_EMAIL_FROM = 'Grupo Sorria <contato@grcconsultoria.siteempresarial.com>';
+const LEGACY_EMAIL_FROM_PATTERN = /GRC\s+Consultoria|contato@grcconsultoria\.net\.br/i;
 
 function getEmailProvider() {
   const configuredProvider = String(process.env.EMAIL_PROVIDER || '').trim().toLowerCase();
@@ -23,7 +18,7 @@ function getEmailFrom() {
     process.env.EMAIL_FROM || process.env.SMTP_FROM || process.env.SMTP_USER || DEFAULT_EMAIL_FROM
   ).trim();
 
-  if (!configuredFrom || UNAUTHORIZED_EMAIL_FROM_PATTERN.test(configuredFrom)) {
+  if (!configuredFrom || LEGACY_EMAIL_FROM_PATTERN.test(configuredFrom)) {
     return DEFAULT_EMAIL_FROM;
   }
 
@@ -38,6 +33,10 @@ function pushUniqueEmailFrom(list, value) {
   const normalizedValue = String(value || '').trim();
 
   if (!normalizedValue) {
+    return;
+  }
+
+  if (LEGACY_EMAIL_FROM_PATTERN.test(normalizedValue)) {
     return;
   }
 
@@ -56,21 +55,6 @@ function getResendFromCandidates() {
   pushUniqueEmailFrom(candidates, getConfiguredEmailFrom());
 
   return candidates;
-}
-
-function getBrandLogoDataUrl() {
-  if (cachedBrandLogoDataUrl !== null) {
-    return cachedBrandLogoDataUrl;
-  }
-
-  try {
-    const fileBuffer = fs.readFileSync(BRAND_LOGO_PATH);
-    cachedBrandLogoDataUrl = `data:image/png;base64,${fileBuffer.toString('base64')}`;
-  } catch (error) {
-    cachedBrandLogoDataUrl = '';
-  }
-
-  return cachedBrandLogoDataUrl;
 }
 
 function isResendConfigured() {
@@ -320,14 +304,11 @@ function renderBrandedEmail({
   supportText = 'Portal de relacionamento e experiência',
   footerText = 'Este é um e-mail transacional do sistema. Se você não reconhece esta comunicação, procure o Administrador Master.'
 }) {
-  const logoDataUrl = getBrandLogoDataUrl();
-  const logoBlock = logoDataUrl
-    ? `
-      <div style="display:inline-block;width:138px;max-width:138px;margin:0 0 18px;padding:10px 14px;background:linear-gradient(180deg,rgba(34,37,42,0.98),rgba(14,16,19,0.98));border:1px solid rgba(199,154,90,0.34);border-radius:8px;">
-        <img src="${logoDataUrl}" alt="Sistema GRC" width="110" style="display:block;width:110px;max-width:110px;height:auto;border:0;filter:brightness(1.16) contrast(1.06);" />
-      </div>
-    `
-    : '';
+  const brandBlock = `
+    <p style="margin:0 0 18px;font-family:Georgia,'Times New Roman',serif;font-size:30px;line-height:1.05;font-weight:700;font-style:italic;letter-spacing:0.035em;color:#d8ad5a;text-shadow:0 1px 0 rgba(255,255,255,0.14);">
+      Grupo Sorria
+    </p>
+  `;
   const eyebrowBlock = eyebrow
     ? `<p style="margin:0 0 8px;font-size:11px;font-weight:800;letter-spacing:0.11em;text-transform:uppercase;color:#e0bc82;">${escapeHtml(eyebrow)}</p>`
     : '';
@@ -345,7 +326,7 @@ function renderBrandedEmail({
     <div style="margin:0;padding:28px 16px;background:#f6efe4;font-family:Arial,Helvetica,sans-serif;color:#161218;line-height:1.65;">
       <div style="max-width:720px;margin:0 auto;background:#ffffff;border:1px solid #ddcfbc;border-radius:8px;overflow:hidden;box-shadow:0 18px 42px rgba(22,18,24,0.12);">
         <div style="padding:24px 32px 24px;background:linear-gradient(135deg,#171b21 0%,#262b32 72%,#5b4329 100%);color:#ffffff;border-bottom:4px solid #c89a57;">
-          ${logoBlock}
+          ${brandBlock}
           ${eyebrowBlock}
           <h1 style="margin:0 0 10px;font-size:28px;line-height:1.2;color:#ffffff;">${escapeHtml(title)}</h1>
           <p style="margin:0;color:rgba(255,255,255,0.76);font-size:14px;">${escapeHtml(supportText)}</p>
@@ -575,7 +556,6 @@ async function sendWelcomeEmail({
 
 module.exports = {
   DEFAULT_EMAIL_FROM,
-  getBrandLogoDataUrl,
   getEmailFrom,
   getEmailProvider,
   getResendFromCandidates,
