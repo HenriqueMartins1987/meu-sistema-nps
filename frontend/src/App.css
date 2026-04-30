@@ -16,10 +16,12 @@
   --shadow-sm: 0 8px 20px rgba(12, 12, 16, 0.08);
   --shadow-md: 0 18px 45px rgba(12, 12, 16, 0.14);
   --shadow-lg: 0 28px 70px rgba(12, 12, 16, 0.22);
-  --system-status-height: 68px;
-  --system-status-gap: 8px;
+  --page-shell-width: 1220px;
+  --page-shell-padding: 30px;
+  --system-status-height: 88px;
+  --system-status-gap: 10px;
   --sticky-primary-top: calc(var(--system-status-height) + var(--system-status-gap));
-  --sticky-secondary-top: calc(var(--system-status-height) + 88px);
+  --sticky-secondary-top: calc(var(--system-status-height) + 92px);
 }
 
 * {
@@ -383,7 +385,7 @@ a {
 .page-form-feedback,
 .admin-feedback,
 .protocol-success-card {
-  width: min(1220px, 100%);
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
   margin-left: auto;
   margin-right: auto;
 }
@@ -511,7 +513,7 @@ a {
   background-position: top center, center, center 180px;
   background-size: auto, cover, 680px auto;
   background-repeat: no-repeat;
-  padding: calc(8px + var(--system-status-height) + 8px) 30px 30px;
+  padding: calc(14px + var(--system-status-height) + 10px) var(--page-shell-padding) 30px;
   position: relative;
   isolation: isolate;
 }
@@ -635,7 +637,7 @@ a {
 .management-panel,
 .bi-endpoint,
 .feedback-intake-panel {
-  width: min(1220px, 100%);
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
   margin: 0 auto;
 }
 
@@ -757,7 +759,7 @@ a {
 .quick-grid,
 .kpi-grid,
 .chart-grid {
-  width: min(1220px, 100%);
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
   margin: 22px auto 0;
   display: grid;
   gap: 18px;
@@ -1292,7 +1294,7 @@ a {
 }
 
 .page-heading {
-  width: min(1220px, 100%);
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
   margin: 0 auto 22px;
   color: var(--ink);
   background: rgba(255, 255, 255, 0.94);
@@ -1512,7 +1514,7 @@ a {
 }
 
 .dashboard-filter-panel {
-  width: min(1220px, 100%);
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
   margin: 22px auto 0;
   background: rgba(255, 255, 255, 0.97);
   border: 1px solid var(--line);
@@ -2301,7 +2303,7 @@ a {
 }
 
 .complaint-detail-grid {
-  width: min(1220px, 100%);
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
   margin: 0 auto;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(340px, 0.7fr);
@@ -2533,7 +2535,7 @@ a {
 }
 
 .sla-grid {
-  width: min(1220px, 100%);
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
   margin: 0 auto 18px;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
@@ -2845,7 +2847,7 @@ a {
 }
 
 .admin-layout {
-  width: min(1220px, 100%);
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
   margin: 24px auto 0;
   display: grid;
   grid-template-columns: minmax(290px, 330px) minmax(0, 1fr);
@@ -3054,7 +3056,7 @@ a {
 }
 
 .patient-dashboard-grid {
-  width: min(1220px, 100%);
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
   margin: 0 auto 18px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: stretch;
@@ -3106,7 +3108,7 @@ a {
 }
 
 .crm-stage-grid {
-  width: min(1220px, 100%);
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
   margin: 0 auto 18px;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -3335,27 +3337,35 @@ a {
 
 .system-status-bar {
   position: fixed;
-  top: 6px;
-  left: 6px;
-  right: auto;
+  top: 10px;
+  left: 0;
+  right: 0;
   z-index: 60;
   padding: 0;
   pointer-events: none;
 }
 
+.system-status-shell {
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
+  margin: 0 auto;
+  display: flex;
+  justify-content: flex-start;
+}
+
 .system-status-inner {
-  width: min(198px, calc(100vw - 12px)) !important;
+  width: min(188px, 100%);
+  min-height: var(--system-status-height);
   margin: 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   justify-content: flex-start;
-  gap: 5px;
-  padding: 7px 8px;
-  border: 1px solid rgba(212, 167, 100, 0.18);
-  border-radius: 6px;
-  background: rgba(21, 24, 29, 0.96);
-  box-shadow: 0 10px 24px rgba(10, 10, 14, 0.18);
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(212, 167, 100, 0.22);
+  border-radius: 8px;
+  background: rgba(18, 20, 25, 0.97);
+  box-shadow: 0 14px 30px rgba(10, 10, 14, 0.2);
   backdrop-filter: blur(14px);
   pointer-events: auto;
 }
@@ -3368,8 +3378,8 @@ a {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 0 0;
-  border: 0;
+  padding: 7px 0 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 6px;
   background: transparent;
   color: #fff;
@@ -3379,7 +3389,7 @@ a {
 
 .logged-user-badge {
   display: grid;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
   width: 100%;
   flex: 0 0 auto;
@@ -3394,7 +3404,7 @@ a {
 
 .logged-user-badge span {
   color: rgba(212, 167, 100, 0.92);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 900;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -3402,15 +3412,15 @@ a {
 
 .logged-user-badge strong {
   color: #fff;
-  font-size: 12px;
-  line-height: 1.1;
+  font-size: 14px;
+  line-height: 1.15;
 }
 
 .logged-user-badge small {
   color: rgba(255, 255, 255, 0.72);
   display: block;
   max-width: 100%;
-  font-size: 9px;
+  font-size: 10px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3422,9 +3432,9 @@ a {
 
 .session-countdown-clock {
   position: relative;
-  width: 12px;
-  height: 12px;
-  flex: 0 0 12px;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
   border: 2px solid rgba(255, 255, 255, 0.82);
   border-radius: 50%;
 }
@@ -3457,12 +3467,12 @@ a {
 }
 
 .session-countdown-copy strong {
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1;
 }
 
 .session-countdown-copy span {
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 800;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.78);
@@ -4171,8 +4181,9 @@ a {
 
 @media (max-width: 1020px) {
   :root {
-    --system-status-height: 68px;
-    --sticky-secondary-top: calc(var(--system-status-height) + 88px);
+    --page-shell-padding: 20px;
+    --system-status-height: 84px;
+    --sticky-secondary-top: calc(var(--system-status-height) + 90px);
   }
 
   .app-page,
@@ -4216,7 +4227,7 @@ a {
   }
 
   .app-page {
-    padding: calc(8px + var(--system-status-height) + 8px) 20px 20px;
+    padding: calc(12px + var(--system-status-height) + 10px) var(--page-shell-padding) 20px;
   }
 
   .page-heading,
@@ -4420,8 +4431,9 @@ a {
 
 @media (max-width: 620px) {
   :root {
-    --system-status-height: 66px;
-    --sticky-secondary-top: calc(var(--system-status-height) + 88px);
+    --page-shell-padding: 14px;
+    --system-status-height: 80px;
+    --sticky-secondary-top: calc(var(--system-status-height) + 86px);
   }
 
   .login-brand h1,
@@ -4521,13 +4533,16 @@ a {
   }
 
   .system-status-bar {
-    top: 6px;
-    left: 6px;
+    top: 8px;
+  }
+
+  .system-status-shell {
+    width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
   }
 
   .system-status-inner {
-    width: min(182px, calc(100vw - 12px)) !important;
-    padding: 6px 7px;
+    width: min(176px, 100%);
+    padding: 9px 10px;
   }
 
   .session-countdown {
