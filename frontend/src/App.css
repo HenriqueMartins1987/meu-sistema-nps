@@ -16,15 +16,15 @@
   --shadow-sm: 0 8px 20px rgba(12, 12, 16, 0.08);
   --shadow-md: 0 18px 45px rgba(12, 12, 16, 0.14);
   --shadow-lg: 0 28px 70px rgba(12, 12, 16, 0.22);
-  --page-shell-width: 1220px;
-  --page-shell-padding: 30px;
-  --system-status-height: 0px;
-  --system-status-gap: 12px;
-  --system-status-top: 12px;
-  --system-status-anchor-height: 92px;
-  --sticky-primary-top: 12px;
+  --page-shell-width: 1320px;
+  --page-shell-padding: 24px;
+  --system-status-height: 50px;
+  --system-status-gap: 10px;
+  --system-status-top: 10px;
+  --system-status-clearance: 68px;
+  --sticky-primary-top: var(--system-status-clearance);
   --sticky-secondary-top: 148px;
-  --session-badge-width: 184px;
+  --session-badge-width: 360px;
 }
 
 * {
@@ -329,12 +329,12 @@ a {
 
 .field {
   width: 100%;
-  min-height: 46px;
+  min-height: 42px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: #fff;
   color: var(--ink);
-  padding: 11px 13px;
+  padding: 9px 12px;
   outline: none;
   box-shadow: inset 0 1px 0 rgba(16, 32, 51, 0.03);
 }
@@ -434,9 +434,9 @@ a {
 .secondary-action,
 .outline-action,
 .ghost-action {
-  min-height: 46px;
+  min-height: 42px;
   border-radius: 8px;
-  padding: 11px 17px;
+  padding: 9px 14px;
   font-weight: 800;
   cursor: pointer;
   letter-spacing: 0;
@@ -516,7 +516,7 @@ a {
   background-position: top center, center, center 180px;
   background-size: auto, cover, 680px auto;
   background-repeat: no-repeat;
-  padding: 14px var(--page-shell-padding) 30px;
+  padding: var(--system-status-clearance) var(--page-shell-padding) 26px;
   position: relative;
   isolation: isolate;
 }
@@ -649,7 +649,7 @@ a {
   border: 1px solid var(--line);
   border-radius: 8px;
   box-shadow: var(--shadow-sm);
-  padding: 14px 16px;
+  padding: 12px 14px;
   position: sticky;
   top: var(--system-status-top);
   z-index: 22;
@@ -657,7 +657,7 @@ a {
 }
 
 .brand-mark img {
-  width: 190px;
+  width: 172px;
   background: linear-gradient(180deg, rgba(34, 37, 42, 0.98), rgba(14, 16, 19, 0.98));
   border: 1px solid rgba(199, 154, 90, 0.28);
   border-radius: 8px;
@@ -1417,7 +1417,7 @@ a {
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 26px;
+  padding: 24px;
   box-shadow: var(--shadow-sm);
   position: sticky;
   top: var(--sticky-primary-top);
@@ -3577,7 +3577,7 @@ a {
   left: max(var(--page-shell-padding), calc((100vw - var(--page-shell-width)) / 2));
   right: auto;
   width: min(var(--session-badge-width), calc(100vw - (var(--page-shell-padding) * 2)));
-  height: var(--system-status-anchor-height);
+  height: var(--system-status-height);
   z-index: 42;
   padding: 0;
   pointer-events: none;
@@ -3594,14 +3594,15 @@ a {
 
 .system-status-inner {
   width: 100%;
+  height: 100%;
   min-height: 0;
   margin: 0;
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   align-items: center;
-  justify-content: flex-start;
-  gap: 6px;
-  padding: 9px 10px;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 10px;
   border: 1px solid rgba(212, 167, 100, 0.22);
   border-radius: 8px;
   background: rgba(18, 20, 25, 0.97);
@@ -3613,14 +3614,15 @@ a {
 .session-countdown {
   position: static;
   flex: 0 0 auto;
-  width: 100%;
-  min-width: 0;
+  width: auto;
+  min-width: 92px;
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 6px;
-  padding: 6px 0 0;
-  border-top: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 0 0 0 10px;
+  border-top: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 6px;
   background: transparent;
   color: #fff;
@@ -3630,8 +3632,8 @@ a {
 
 .logged-user-badge {
   display: grid;
-  justify-items: center;
-  gap: 3px;
+  justify-items: start;
+  gap: 1px;
   min-width: 0;
   width: 100%;
   flex: 0 0 auto;
@@ -3642,12 +3644,12 @@ a {
   background: transparent;
   box-shadow: none;
   backdrop-filter: none;
-  text-align: center;
+  text-align: left;
 }
 
 .logged-user-badge span {
   color: rgba(212, 167, 100, 0.92);
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 900;
   letter-spacing: 0;
   text-transform: uppercase;
@@ -3655,7 +3657,7 @@ a {
 
 .logged-user-badge strong {
   color: #fff;
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1.15;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3666,7 +3668,7 @@ a {
   color: rgba(255, 255, 255, 0.72);
   display: block;
   max-width: 100%;
-  font-size: 9px;
+  font-size: 8px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -3678,9 +3680,9 @@ a {
 
 .session-countdown-clock {
   position: relative;
-  width: 12px;
-  height: 12px;
-  flex: 0 0 12px;
+  width: 11px;
+  height: 11px;
+  flex: 0 0 11px;
   border: 2px solid rgba(255, 255, 255, 0.82);
   border-radius: 50%;
 }
@@ -3709,17 +3711,17 @@ a {
 
 .session-countdown-copy {
   display: grid;
-  justify-items: center;
+  justify-items: start;
   gap: 2px;
 }
 
 .session-countdown-copy strong {
-  font-size: 12px;
+  font-size: 11px;
   line-height: 1;
 }
 
 .session-countdown-copy span {
-  font-size: 9px;
+  font-size: 8px;
   font-weight: 800;
   text-transform: uppercase;
   color: rgba(255, 255, 255, 0.78);
@@ -4147,9 +4149,9 @@ a {
 }
 
 .page-heading {
-  min-height: 150px;
+  min-height: 124px;
   align-items: flex-end;
-  padding: 30px;
+  padding: 24px;
   box-shadow: 0 24px 52px rgba(10, 10, 14, 0.18);
 }
 
@@ -4429,13 +4431,13 @@ a {
 
 @media (max-width: 1020px) {
   :root {
-    --page-shell-padding: 20px;
-    --system-status-height: 0px;
-    --system-status-top: 10px;
-    --system-status-anchor-height: 74px;
-    --sticky-primary-top: 92px;
-    --sticky-secondary-top: 178px;
-    --session-badge-width: 174px;
+    --page-shell-padding: 18px;
+    --system-status-height: 54px;
+    --system-status-top: 8px;
+    --system-status-clearance: 72px;
+    --sticky-primary-top: var(--system-status-clearance);
+    --sticky-secondary-top: 156px;
+    --session-badge-width: 360px;
   }
 
   .app-page,
@@ -4479,7 +4481,7 @@ a {
   }
 
   .app-page {
-    padding: 92px var(--page-shell-padding) 20px;
+    padding: var(--system-status-clearance) var(--page-shell-padding) 20px;
   }
 
   .page-heading,
@@ -4691,12 +4693,12 @@ a {
 @media (max-width: 620px) {
   :root {
     --page-shell-padding: 14px;
-    --system-status-height: 0px;
+    --system-status-height: 58px;
     --system-status-top: 8px;
-    --system-status-anchor-height: 68px;
-    --sticky-primary-top: 84px;
-    --sticky-secondary-top: 164px;
-    --session-badge-width: 156px;
+    --system-status-clearance: 74px;
+    --sticky-primary-top: var(--system-status-clearance);
+    --sticky-secondary-top: 150px;
+    --session-badge-width: calc(100vw - 28px);
   }
 
   .login-brand h1,
@@ -4796,7 +4798,7 @@ a {
   }
 
   .app-page {
-    padding-top: 84px;
+    padding-top: var(--system-status-clearance);
   }
 
   .system-status-shell {
@@ -5026,18 +5028,6 @@ a {
 .home-account-row > .outline-action {
   min-width: 120px;
   justify-content: center;
-}
-
-@media (min-width: 1021px) {
-  .topbar,
-  .page-heading {
-    min-height: 92px;
-    padding-left: max(26px, calc(var(--session-badge-width) + 34px));
-  }
-
-  .home-command-bar {
-    padding-left: max(22px, calc(var(--session-badge-width) + 34px));
-  }
 }
 
 .home-hero {
