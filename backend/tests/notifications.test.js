@@ -185,6 +185,33 @@ test('canReceiveComplaintNotification respects complaint permissions and hierarc
   }), false);
 });
 
+test('canRenotifyComplaint only allows master admin, Supervisor do CRC and Operador de SAC', () => {
+  assert.equal(__testables.canRenotifyComplaint({
+    role: 'master_admin',
+    email: 'henrique.martins@grcconsultoria.net.br'
+  }), true);
+
+  assert.equal(__testables.canRenotifyComplaint({
+    role: 'supervisor_crc',
+    email: 'supervisor@example.com'
+  }), true);
+
+  assert.equal(__testables.canRenotifyComplaint({
+    role: 'sac_operator',
+    email: 'sac@example.com'
+  }), true);
+
+  assert.equal(__testables.canRenotifyComplaint({
+    role: 'admin',
+    email: 'admin@example.com'
+  }), false);
+
+  assert.equal(__testables.canRenotifyComplaint({
+    role: 'manager',
+    email: 'manager@example.com'
+  }), false);
+});
+
 test('normalizeStoredUploadUrl rewrites localhost upload links to the current public API host', () => {
   const normalized = __testables.normalizeStoredUploadUrl('http://localhost:3001/uploads/teste-anexo.png');
   const normalizedRelative = __testables.normalizeStoredUploadUrl('uploads/teste-anexo.png');

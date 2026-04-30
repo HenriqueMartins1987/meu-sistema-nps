@@ -1308,6 +1308,18 @@ a {
   backdrop-filter: blur(14px);
 }
 
+.page-heading > div:first-child,
+.panel-heading > div:first-child,
+.dashboard-filter-heading > div:first-child,
+.patient-records-head > div:first-child,
+.nps-list-headline > div:first-child,
+.nps-modal-title > div:first-child,
+.notification-head > div:first-child,
+.drawer-head > div:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 .form-shell {
   display: grid;
   gap: 18px;
@@ -2532,6 +2544,21 @@ a {
   background:
     linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(223, 242, 237, 0.88));
   border-top: 4px solid var(--brand);
+  align-items: flex-start;
+}
+
+.complaint-heading .heading-actions {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
+  gap: 10px;
+  margin-left: auto;
+}
+
+.complaint-heading .heading-actions > button,
+.complaint-heading .heading-actions > a {
+  min-height: 50px;
+  white-space: nowrap;
+  flex: 0 0 auto;
 }
 
 .sla-grid {
@@ -3944,6 +3971,7 @@ a {
 .crm-heading-actions,
 .crm-filter-actions {
   align-items: center;
+  flex: 0 0 auto;
 }
 
 .heading-actions {
@@ -4272,6 +4300,13 @@ a {
   .pagination-bar {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .complaint-heading .heading-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    margin-left: 0;
   }
 
   .filters,

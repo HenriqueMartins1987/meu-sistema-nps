@@ -394,6 +394,10 @@ function canDeleteRecords(user) {
   return isMasterAdminUser(user) || user?.role === 'supervisor_crc';
 }
 
+function canRenotifyComplaint(user) {
+  return isMasterAdminUser(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
+}
+
 function canViewDeletedRecords(user) {
   return isMasterAdminUser(user);
 }
@@ -5959,6 +5963,12 @@ app.get('/complaints/:id', authenticate, async (req, res) => {
 
 app.post('/complaints/:id/renotify', authenticate, async (req, res) => {
   try {
+    if (!canRenotifyComplaint(req.user)) {
+      return res.status(403).json({
+        error: 'Somente o Administrador Master, Supervisor do CRC ou Operador de SAC pode reenviar essas notificações.'
+      });
+    }
+
     const rows = await getComplaintRows({
       id: req.params.id,
       user: req.user,
@@ -6397,6 +6407,7 @@ module.exports = {
   startServer,
   __testables: {
     buildAuthenticatedUser,
+    canRenotifyComplaint,
     canReceiveComplaintNotification,
     changeUserPassword,
     isPasswordChangeRouteAllowed,

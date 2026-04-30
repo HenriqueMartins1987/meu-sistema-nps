@@ -232,6 +232,7 @@ function ComplaintDetail() {
   const canSupervisorAccept = user?.role === 'supervisor_crc' || isAdmin;
   const canSacClose = user?.role === 'sac_operator' || isAdmin;
   const canDeleteComplaint = isMasterAdmin(user) || user?.role === 'supervisor_crc';
+  const canRenotifyComplaint = isMasterAdmin(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
   const hasTreatment = Boolean(complaint?.treatment_at);
   const isHighPriority = normalizePriority(complaint?.priority) === 'alta';
   const hasSupervisorApproval = Boolean(complaint?.supervisor_approval_at);
@@ -486,7 +487,7 @@ function ComplaintDetail() {
           <button className="outline-action" onClick={() => navigate('/gestao')}>
             Voltar para gestão
           </button>
-          {!isDeletedRecord && (
+          {canRenotifyComplaint && !isDeletedRecord && (
             <button className="outline-action" onClick={handleRenotify} disabled={saving}>
               Notificar responsáveis
             </button>
