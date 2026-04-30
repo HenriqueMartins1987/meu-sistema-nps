@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from './api';
 import logo from './assets/logo3.png';
-import { hasPermission, isMasterAdmin, readUser } from './constants';
+import { getUserDisplayName, hasPermission, isMasterAdmin, readUser } from './constants';
 import { clearSession, saveSession } from './session';
 
 const notificationTypeLabels = {
@@ -146,6 +146,8 @@ function complaintAgendaTone(item) {
 function HomeShellFixed() {
   const navigate = useNavigate();
   const user = useMemo(() => readUser(), []);
+  const userLabel = getUserDisplayName(user);
+  const userEmail = String(user?.email || '').trim();
   const masterUser = isMasterAdmin(user);
   const canManageComplaints = hasPermission(user, 'complaints_management');
   const canManagePatients = hasPermission(user, 'patient_management');
@@ -587,6 +589,11 @@ function HomeShellFixed() {
     <main className="app-page">
       <header className="topbar home-command-bar">
         <div className="home-brand-zone">
+          <aside className="home-user-card" aria-label="Usuário logado">
+            <span>Usuário logado</span>
+            <strong>{userLabel}</strong>
+            <small>{userEmail || 'E-mail não informado'}</small>
+          </aside>
           <div className="brand-mark">
             <img src={logo} alt="GRC Consultoria Empresarial" />
           </div>
