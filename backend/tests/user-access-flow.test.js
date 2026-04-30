@@ -329,3 +329,32 @@ test('manual WhatsApp route accepts telefone and mensagem payload', async () => 
   assert.match(response.body.warning, /provedor|configur/i);
 });
 
+test('uploaded file route serves persisted database fallback when disk file is missing', async () => {
+  const content = Buffer.from('arquivo persistido');
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('FROM uploaded_files') && sql.includes('WHERE filename = ?'),
+      reply: async (_sql, params) => {
+        assert.equal(params[0], 'teste-persistido.txt');
+
+        return [[{
+          filename: 'teste-persistido.txt',
+          original_name: 'comprovante clínica.txt',
+          mime_type: 'text/plain; charset=utf-8',
+          size_bytes: content.length,
+          content
+        }]];
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .get('/uploads/teste-persistido.txt');
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers['content-type'], /text\/plain/);
+  assert.match(response.headers['content-disposition'], /inline/);
+  assert.equal(response.text, 'arquivo persistido');
+});
+

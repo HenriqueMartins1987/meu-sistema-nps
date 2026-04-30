@@ -109,6 +109,7 @@ app.use(cors({
 
 app.use(express.json());
 app.use('/uploads', express.static(uploadDir));
+app.get(/^\/uploads\/(.+)$/, servePersistedUploadedFile);
 
 const initialPasswordChangeLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -355,6 +356,128 @@ function resolveStoredUploadFilePath(value) {
   }
 
   return resolvedPath;
+}
+
+function getStoredUploadFilename(value) {
+  const normalizedValue = normalizeStoredUploadUrl(value);
+
+  if (!normalizedValue || !normalizedValue.toLowerCase().startsWith('/uploads/')) {
+    return '';
+  }
+
+  const pathWithoutQuery = normalizedValue.split(/[?#]/)[0];
+  const relativePath = pathWithoutQuery.replace(/^\/uploads\//i, '');
+
+  if (!relativePath) {
+    return '';
+  }
+
+  let decodedPath = relativePath;
+
+  try {
+    decodedPath = decodeURIComponent(relativePath);
+  } catch (error) {
+    decodedPath = relativePath;
+  }
+
+  const safeSegments = decodedPath
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean);
+
+  if (!safeSegments.length || safeSegments.some((segment) => segment === '..')) {
+    return '';
+  }
+
+  return safeSegments[safeSegments.length - 1] || '';
+}
+
+function buildInlineContentDisposition(filename) {
+  const safeFilename = String(filename || 'arquivo')
+    .replace(/[\r\n"]/g, '')
+    .trim() || 'arquivo';
+
+  return `inline; filename="${safeFilename.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`;
+}
+
+async function persistUploadedFile(file) {
+  if (!file?.filename || !file?.path) {
+    return null;
+  }
+
+  const content = await fs.promises.readFile(file.path);
+  const originalName = normalizeUploadedOriginalName(file) || file.originalname || file.filename;
+
+  await pool.query(
+    `INSERT INTO uploaded_files
+       (filename, original_name, mime_type, size_bytes, content)
+     VALUES (?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       original_name = VALUES(original_name),
+       mime_type = VALUES(mime_type),
+       size_bytes = VALUES(size_bytes),
+       content = VALUES(content),
+       updated_at = CURRENT_TIMESTAMP`,
+    [
+      file.filename,
+      originalName || null,
+      file.mimetype || 'application/octet-stream',
+      Number(file.size || content.length || 0),
+      content
+    ]
+  );
+
+  return {
+    filename: file.filename,
+    originalName,
+    sizeBytes: Number(file.size || content.length || 0)
+  };
+}
+
+async function deletePersistedUploadedFile(value) {
+  const filename = getStoredUploadFilename(value);
+
+  if (!filename) {
+    return;
+  }
+
+  await pool.query('DELETE FROM uploaded_files WHERE filename = ?', [filename]);
+}
+
+async function servePersistedUploadedFile(req, res, next) {
+  try {
+    const filename = getStoredUploadFilename(`/uploads/${req.params[0] || ''}`);
+
+    if (!filename) {
+      return res.status(404).send('Arquivo não encontrado.');
+    }
+
+    const [rows] = await pool.query(
+      `SELECT filename, original_name, mime_type, size_bytes, content
+         FROM uploaded_files
+        WHERE filename = ?
+        LIMIT 1`,
+      [filename]
+    );
+
+    const file = rows[0];
+
+    if (!file?.content) {
+      return res.status(404).send('Arquivo não encontrado.');
+    }
+
+    const content = Buffer.isBuffer(file.content) ? file.content : Buffer.from(file.content);
+    const displayName = file.original_name || file.filename || filename;
+
+    res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
+    res.setHeader('Content-Length', file.size_bytes || content.length);
+    res.setHeader('Content-Disposition', buildInlineContentDisposition(displayName));
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+
+    return res.send(content);
+  } catch (error) {
+    return next(error);
+  }
 }
 
 function formatNpsProtocol(id, createdAt) {
@@ -1541,6 +1664,18 @@ async function ensureDatabaseSchema() {
       INDEX idx_whatsapp_message_logs_provider_message_id (provider_message_id),
       INDEX idx_whatsapp_message_logs_recipient_phone (recipient_phone),
       INDEX idx_whatsapp_message_logs_status (status)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS uploaded_files (
+      filename VARCHAR(255) PRIMARY KEY,
+      original_name VARCHAR(255) NULL,
+      mime_type VARCHAR(120) NULL,
+      size_bytes INT UNSIGNED NULL,
+      content LONGBLOB NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )
   `);
 
@@ -5974,6 +6109,11 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
     const file_url = req.file
       ? `/uploads/${req.file.filename}`
       : null;
+
+    if (req.file) {
+      await persistUploadedFile(req.file);
+    }
+
     const assignment = await resolveCoordinatorAssignment(clinic_id);
 
     const [result] = await pool.query(
@@ -6174,6 +6314,7 @@ app.post('/complaints/:id/evidences', authenticate, upload.single('file'), async
 
     const fileUrl = `/uploads/${req.file.filename}`;
     const originalName = normalizeUploadedOriginalName(req.file);
+    await persistUploadedFile(req.file);
 
     await pool.query(
       `INSERT INTO complaint_evidences
@@ -6247,6 +6388,7 @@ app.delete('/complaints/:id/evidences/:evidenceId', authenticate, async (req, re
     );
 
     const evidenceFilePath = resolveStoredUploadFilePath(evidence.file_url);
+    await deletePersistedUploadedFile(evidence.file_url);
 
     if (evidenceFilePath) {
       try {
@@ -6616,9 +6758,11 @@ module.exports = {
     changeUserPassword,
     decodeUploadedText,
     isPasswordChangeRouteAllowed,
+    getStoredUploadFilename,
     normalizeStoredUploadUrl,
     normalizeUploadedOriginalName,
     parseBodyWithSchema,
+    persistUploadedFile,
     resolveStoredUploadFilePath,
     sendPasswordChangedNotifications,
     sendUserAccessNotifications,
