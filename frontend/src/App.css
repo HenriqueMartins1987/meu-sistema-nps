@@ -19,10 +19,9 @@
   --page-shell-width: 1320px;
   --page-shell-padding: 24px;
   --session-timer-height: 44px;
-  --session-timer-top: 10px;
-  --session-timer-clearance: 64px;
+  --session-timer-bottom: 14px;
   --session-timer-width: 178px;
-  --sticky-primary-top: var(--session-timer-clearance);
+  --sticky-primary-top: 12px;
   --sticky-secondary-top: 148px;
 }
 
@@ -515,7 +514,7 @@ a {
   background-position: top center, center, center 180px;
   background-size: auto, cover, 680px auto;
   background-repeat: no-repeat;
-  padding: var(--session-timer-clearance) var(--page-shell-padding) 26px;
+  padding: 12px var(--page-shell-padding) 26px;
   position: relative;
   isolation: isolate;
 }
@@ -3572,7 +3571,7 @@ a {
 
 .session-timer-bar {
   position: fixed;
-  top: var(--session-timer-top);
+  bottom: var(--session-timer-bottom);
   left: max(var(--page-shell-padding), calc((100vw - var(--page-shell-width)) / 2));
   width: min(var(--session-timer-width), calc(100vw - (var(--page-shell-padding) * 2)));
   z-index: 44;
@@ -4359,11 +4358,10 @@ a {
   :root {
     --page-shell-padding: 18px;
     --session-timer-height: 44px;
-    --session-timer-top: 8px;
-    --session-timer-clearance: 60px;
+    --session-timer-bottom: 12px;
     --session-timer-width: 176px;
-    --sticky-primary-top: var(--session-timer-clearance);
-    --sticky-secondary-top: 140px;
+    --sticky-primary-top: 12px;
+    --sticky-secondary-top: 128px;
   }
 
   .app-page,
@@ -4407,7 +4405,7 @@ a {
   }
 
   .app-page {
-    padding: var(--session-timer-clearance) var(--page-shell-padding) 20px;
+    padding: 12px var(--page-shell-padding) 20px;
   }
 
   .page-heading,
@@ -4620,11 +4618,10 @@ a {
   :root {
     --page-shell-padding: 14px;
     --session-timer-height: 42px;
-    --session-timer-top: 8px;
-    --session-timer-clearance: 58px;
+    --session-timer-bottom: 10px;
     --session-timer-width: 184px;
-    --sticky-primary-top: var(--session-timer-clearance);
-    --sticky-secondary-top: 126px;
+    --sticky-primary-top: 10px;
+    --sticky-secondary-top: 112px;
   }
 
   .login-brand h1,
@@ -4724,7 +4721,7 @@ a {
   }
 
   .app-page {
-    padding-top: var(--session-timer-clearance);
+    padding-top: 12px;
   }
 }
 
