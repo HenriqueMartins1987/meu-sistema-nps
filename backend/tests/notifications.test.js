@@ -11,6 +11,8 @@ const {
   DEFAULT_EMAIL_FROM,
   getEmailFrom,
   getEmailProvider,
+  getResendFromCandidates,
+  isResendSenderAuthorizationError,
   renderOperationalTestEmail,
   renderPasswordResetEmail,
   renderUserAccessEmail,
@@ -67,6 +69,44 @@ test('getEmailFrom uses configured sender and falls back to default', () => {
   process.env.EMAIL_FROM = previousFrom;
   process.env.SMTP_FROM = previousSmtpFrom;
   process.env.SMTP_USER = previousSmtpUser;
+});
+
+test('getResendFromCandidates keeps the professional sender and configured fallback', () => {
+  const previousFrom = process.env.EMAIL_FROM;
+  const previousFallbackFrom = process.env.RESEND_FALLBACK_FROM;
+
+  process.env.EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>';
+  process.env.RESEND_FALLBACK_FROM = 'GRC Consultoria <fallback@example.com>';
+
+  assert.deepEqual(getResendFromCandidates(), [
+    DEFAULT_EMAIL_FROM,
+    'GRC Consultoria <fallback@example.com>',
+    'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>'
+  ]);
+
+  if (previousFrom === undefined) {
+    delete process.env.EMAIL_FROM;
+  } else {
+    process.env.EMAIL_FROM = previousFrom;
+  }
+
+  if (previousFallbackFrom === undefined) {
+    delete process.env.RESEND_FALLBACK_FROM;
+  } else {
+    process.env.RESEND_FALLBACK_FROM = previousFallbackFrom;
+  }
+});
+
+test('isResendSenderAuthorizationError detects unauthorized sender responses', () => {
+  assert.equal(isResendSenderAuthorizationError({
+    message: 'This API key is not authorized to send emails from grcconsultoria.net.br',
+    statusCode: 403
+  }), true);
+
+  assert.equal(isResendSenderAuthorizationError({
+    message: 'Invalid recipient',
+    statusCode: 422
+  }), false);
 });
 
 test('renderUserAccessEmail returns the user access template', () => {

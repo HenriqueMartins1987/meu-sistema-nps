@@ -30,6 +30,34 @@ function getEmailFrom() {
   return configuredFrom;
 }
 
+function getConfiguredEmailFrom() {
+  return String(process.env.EMAIL_FROM || process.env.SMTP_FROM || process.env.SMTP_USER || '').trim();
+}
+
+function pushUniqueEmailFrom(list, value) {
+  const normalizedValue = String(value || '').trim();
+
+  if (!normalizedValue) {
+    return;
+  }
+
+  const normalizedKey = normalizedValue.toLowerCase();
+
+  if (!list.some((item) => item.toLowerCase() === normalizedKey)) {
+    list.push(normalizedValue);
+  }
+}
+
+function getResendFromCandidates() {
+  const candidates = [];
+
+  pushUniqueEmailFrom(candidates, getEmailFrom());
+  pushUniqueEmailFrom(candidates, process.env.RESEND_FALLBACK_FROM || process.env.EMAIL_FALLBACK_FROM);
+  pushUniqueEmailFrom(candidates, getConfiguredEmailFrom());
+
+  return candidates;
+}
+
 function getBrandLogoDataUrl() {
   if (cachedBrandLogoDataUrl !== null) {
     return cachedBrandLogoDataUrl;
@@ -102,6 +130,37 @@ async function normalizeAttachments(attachments = []) {
   return resolved.filter(Boolean);
 }
 
+function getResendErrorMessage(error) {
+  if (!error) {
+    return '';
+  }
+
+  return String(error.message || error.name || error || '').trim();
+}
+
+function getResendErrorStatus(error) {
+  return error?.statusCode || error?.status_code || error?.status || null;
+}
+
+function isResendSenderAuthorizationError(error) {
+  const message = getResendErrorMessage(error).toLowerCase();
+  const status = Number(getResendErrorStatus(error) || 0);
+
+  return status === 403 && message.includes('not authorized to send emails from');
+}
+
+function buildResendError(error, from) {
+  const message = getResendErrorMessage(error) || 'Falha no envio pelo Resend.';
+  const status = getResendErrorStatus(error);
+  const resendError = new Error(status ? `Resend (${status}) recusou ${from}: ${message}` : `Resend recusou ${from}: ${message}`);
+
+  resendError.provider = 'resend';
+  resendError.statusCode = status || undefined;
+  resendError.raw = error;
+
+  return resendError;
+}
+
 async function sendWithResend({ to, subject, html, text, attachments = [] }) {
   if (!isResendConfigured()) {
     throw new Error('RESEND_API_KEY não configurada para o envio de e-mail.');
@@ -114,21 +173,40 @@ async function sendWithResend({ to, subject, html, text, attachments = [] }) {
     content: attachment.content.toString('base64'),
     ...(attachment.contentType ? { contentType: attachment.contentType } : {})
   }));
+  const fromCandidates = getResendFromCandidates();
+  let lastError = null;
 
-  const response = await resend.emails.send({
-    from: getEmailFrom(),
-    to: Array.isArray(to) ? to : [to],
-    subject,
-    html,
-    text,
-    attachments: resendAttachments.length ? resendAttachments : undefined
-  });
+  for (const from of fromCandidates) {
+    const response = await resend.emails.send({
+      from,
+      to: Array.isArray(to) ? to : [to],
+      subject,
+      html,
+      text,
+      attachments: resendAttachments.length ? resendAttachments : undefined
+    });
 
-  return {
-    provider: 'resend',
-    id: response?.data?.id || response?.id || null,
-    raw: response
-  };
+    if (response?.error) {
+      lastError = buildResendError(response.error, from);
+
+      if (isResendSenderAuthorizationError(response.error)) {
+        console.warn(`Resend recusou o remetente ${from}; tentando remetente alternativo configurado.`);
+        continue;
+      }
+
+      throw lastError;
+    }
+
+    return {
+      provider: 'resend',
+      id: response?.data?.id || response?.id || null,
+      from,
+      fallbackFrom: from !== fromCandidates[0],
+      raw: response
+    };
+  }
+
+  throw lastError || new Error('Nenhum remetente autorizado foi encontrado para envio pelo Resend.');
 }
 
 async function sendWithSmtp({ to, subject, html, text, attachments = [] }) {
@@ -490,7 +568,9 @@ module.exports = {
   getBrandLogoDataUrl,
   getEmailFrom,
   getEmailProvider,
+  getResendFromCandidates,
   htmlToText,
+  isResendSenderAuthorizationError,
   renderBrandedEmail,
   renderMarketingProtocolEmail,
   renderOperationalTestEmail,

@@ -2176,7 +2176,7 @@ async function sendEmail(to, subject, html, attachments = []) {
     to,
     subject,
     html,
-    text: String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+    text: emailService.htmlToText(html),
     attachments
   });
 }
