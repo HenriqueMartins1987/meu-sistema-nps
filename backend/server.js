@@ -40,7 +40,11 @@ const app = express();
 // ============================================
 const PORT = process.env.PORT || 3001;
 const SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
-const publicBaseUrl = process.env.PUBLIC_API_URL || `http://localhost:${PORT}`;
+const defaultPublicBaseUrl = process.env.RENDER_EXTERNAL_URL
+  || (process.env.NODE_ENV === 'production'
+    ? 'https://meu-sistema-nps-backend.onrender.com'
+    : `http://localhost:${PORT}`);
+const publicBaseUrl = process.env.PUBLIC_API_URL || defaultPublicBaseUrl;
 const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
 const appBaseUrl = process.env.APP_BASE_URL || frontendUrl;
 const approvalEmail = process.env.APPROVAL_EMAIL || 'henrique.martins@grcconsultoria.net.br';
