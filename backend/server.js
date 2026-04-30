@@ -4152,6 +4152,61 @@ app.post('/api/test-email', authenticate, requireMasterAdmin, async (req, res) =
   }
 });
 
+app.post('/api/test-upload', authenticate, requireMasterAdmin, upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Selecione um arquivo para testar o upload.' });
+    }
+
+    await persistUploadedFile(req.file);
+
+    const fileUrl = `/uploads/${req.file.filename}`;
+    const publicUrl = `${publicBaseUrl.replace(/\/$/, '')}${fileUrl}`;
+
+    return res.status(201).json({
+      success: true,
+      fileUrl,
+      publicUrl,
+      filename: req.file.filename,
+      originalName: normalizeUploadedOriginalName(req.file) || req.file.originalname || req.file.filename,
+      sizeBytes: req.file.size || null,
+      mimeType: req.file.mimetype || null
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Não foi possível testar o upload.' });
+  }
+});
+
+app.delete('/api/test-upload/:filename', authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    const filename = getStoredUploadFilename(`/uploads/${req.params.filename || ''}`);
+
+    if (!filename) {
+      return res.status(400).json({ error: 'Arquivo de teste inválido.' });
+    }
+
+    await deletePersistedUploadedFile(`/uploads/${filename}`);
+
+    const filePath = resolveStoredUploadFilePath(`/uploads/${filename}`);
+
+    if (filePath) {
+      try {
+        await fs.promises.unlink(filePath);
+      } catch (fileError) {
+        if (fileError.code !== 'ENOENT') {
+          console.warn('Não foi possível remover o arquivo físico do teste de upload:', fileError.message);
+        }
+      }
+    }
+
+    return res.json({ success: true, message: 'Arquivo de teste removido.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Não foi possível remover o upload de teste.' });
+  }
+});
+
 app.post('/auth/request-password-reset', passwordRecoveryRequestLimiter, async (req, res) => {
   try {
     const parsed = parseBodyWithSchema(passwordResetRequestSchema, req.body);
