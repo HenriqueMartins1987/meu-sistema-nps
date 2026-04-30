@@ -58,7 +58,10 @@ test('getEmailFrom uses configured sender and falls back to default', () => {
   assert.equal(getEmailFrom(), DEFAULT_EMAIL_FROM);
 
   process.env.EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>';
-  assert.equal(getEmailFrom(), 'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>');
+  assert.equal(getEmailFrom(), DEFAULT_EMAIL_FROM);
+
+  process.env.EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.net.br>';
+  assert.equal(getEmailFrom(), 'GRC Consultoria <contato@grcconsultoria.net.br>');
 
   process.env.EMAIL_FROM = previousFrom;
   process.env.SMTP_FROM = previousSmtpFrom;
@@ -218,4 +221,16 @@ test('normalizeStoredUploadUrl rewrites localhost upload links to the current pu
 
   assert.match(normalized, /\/uploads\/teste-anexo\.png$/);
   assert.match(normalizedRelative, /\/uploads\/teste-anexo\.png$/);
+});
+
+test('decodeUploadedText preserves accents from UTF-8 and Windows-1252 uploads', () => {
+  const utf8Csv = Buffer.from('Nome;Telefone / WhatsApp\nJoão Clínica;+5562999999999', 'utf8');
+  const windows1252Csv = Buffer.from('Nome;Telefone / WhatsApp\nJoão Clínica Canaã;+5562999999999', 'latin1');
+
+  assert.match(__testables.decodeUploadedText(utf8Csv), /João Clínica/);
+  assert.match(__testables.decodeUploadedText(windows1252Csv), /João Clínica Canaã/);
+  assert.equal(
+    __testables.normalizeUploadedOriginalName({ originalname: 'comprovante clÃ­nica.pdf' }),
+    'comprovante clínica.pdf'
+  );
 });

@@ -3,7 +3,8 @@ const path = require('path');
 const nodemailer = require('nodemailer');
 const { Resend } = require('resend');
 
-const DEFAULT_EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>';
+const DEFAULT_EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.net.br>';
+const LEGACY_EMAIL_FROM_PATTERN = /contato@grcconsultoria\.siteempresarial\.com/i;
 const BRAND_LOGO_PATH = path.resolve(__dirname, '../../frontend/src/assets/logo3.png');
 
 let cachedBrandLogoDataUrl = null;
@@ -18,7 +19,15 @@ function getEmailProvider() {
 }
 
 function getEmailFrom() {
-  return process.env.EMAIL_FROM || process.env.SMTP_FROM || process.env.SMTP_USER || DEFAULT_EMAIL_FROM;
+  const configuredFrom = String(
+    process.env.EMAIL_FROM || process.env.SMTP_FROM || process.env.SMTP_USER || DEFAULT_EMAIL_FROM
+  ).trim();
+
+  if (!configuredFrom || LEGACY_EMAIL_FROM_PATTERN.test(configuredFrom)) {
+    return DEFAULT_EMAIL_FROM;
+  }
+
+  return configuredFrom;
 }
 
 function getBrandLogoDataUrl() {

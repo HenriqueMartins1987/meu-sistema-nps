@@ -18,10 +18,11 @@
   --shadow-lg: 0 28px 70px rgba(12, 12, 16, 0.22);
   --page-shell-width: 1220px;
   --page-shell-padding: 30px;
-  --system-status-height: 88px;
-  --system-status-gap: 10px;
-  --sticky-primary-top: calc(var(--system-status-height) + var(--system-status-gap));
-  --sticky-secondary-top: calc(var(--system-status-height) + 92px);
+  --system-status-height: 0px;
+  --system-status-gap: 12px;
+  --sticky-primary-top: 12px;
+  --sticky-secondary-top: 148px;
+  --session-badge-width: 214px;
 }
 
 * {
@@ -513,7 +514,7 @@ a {
   background-position: top center, center, center 180px;
   background-size: auto, cover, 680px auto;
   background-repeat: no-repeat;
-  padding: calc(14px + var(--system-status-height) + 10px) var(--page-shell-padding) 30px;
+  padding: 14px var(--page-shell-padding) 30px;
   position: relative;
   isolation: isolate;
 }
@@ -2547,6 +2548,14 @@ a {
   align-items: flex-start;
 }
 
+.complaint-heading h1 {
+  max-width: 100%;
+  font-size: clamp(28px, 3vw, 36px);
+  line-height: 1.08;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 .complaint-heading .heading-actions {
   flex: 0 0 auto;
   flex-wrap: nowrap;
@@ -3365,23 +3374,24 @@ a {
 .system-status-bar {
   position: fixed;
   top: 10px;
-  left: 0;
-  right: 0;
+  left: 10px;
+  right: auto;
+  width: min(var(--session-badge-width), calc(100vw - 20px));
   z-index: 60;
   padding: 0;
   pointer-events: none;
 }
 
 .system-status-shell {
-  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
-  margin: 0 auto;
+  width: 100%;
+  margin: 0;
   display: flex;
   justify-content: flex-start;
 }
 
 .system-status-inner {
-  width: min(188px, 100%);
-  min-height: var(--system-status-height);
+  width: 100%;
+  min-height: 0;
   margin: 0;
   display: flex;
   flex-direction: column;
@@ -4210,8 +4220,9 @@ a {
 @media (max-width: 1020px) {
   :root {
     --page-shell-padding: 20px;
-    --system-status-height: 84px;
-    --sticky-secondary-top: calc(var(--system-status-height) + 90px);
+    --system-status-height: 0px;
+    --sticky-secondary-top: 128px;
+    --session-badge-width: 200px;
   }
 
   .app-page,
@@ -4255,7 +4266,7 @@ a {
   }
 
   .app-page {
-    padding: calc(12px + var(--system-status-height) + 10px) var(--page-shell-padding) 20px;
+    padding: 12px var(--page-shell-padding) 20px;
   }
 
   .page-heading,
@@ -4467,8 +4478,10 @@ a {
 @media (max-width: 620px) {
   :root {
     --page-shell-padding: 14px;
-    --system-status-height: 80px;
-    --sticky-secondary-top: calc(var(--system-status-height) + 86px);
+    --system-status-height: 0px;
+    --sticky-primary-top: 10px;
+    --sticky-secondary-top: 112px;
+    --session-badge-width: 176px;
   }
 
   .login-brand h1,
@@ -4572,11 +4585,11 @@ a {
   }
 
   .system-status-shell {
-    width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
+    width: 100%;
   }
 
   .system-status-inner {
-    width: min(176px, 100%);
+    width: 100%;
     padding: 9px 10px;
   }
 

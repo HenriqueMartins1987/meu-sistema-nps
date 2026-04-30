@@ -138,7 +138,7 @@ const storage = multer.diskStorage({
     cb(null, uploadDir);
   },
   filename: (req, file, cb) => {
-    cb(null, Date.now() + path.extname(file.originalname));
+    cb(null, `${Date.now()}${getSafeUploadExtension(file)}`);
   }
 });
 
@@ -528,7 +528,7 @@ function buildActivityEmailHtml(req, responseBody) {
   const sanitizedQuery = sanitizeActivityValue(req.query || {});
   const sanitizedResponse = sanitizeActivityValue(responseBody || {});
   const fileInfo = req.file
-    ? { original_name: req.file.originalname, size_bytes: req.file.size }
+    ? { original_name: normalizeUploadedOriginalName(req.file), size_bytes: req.file.size }
     : null;
   const redirectLocation = typeof req.res?.getHeader === 'function'
     ? req.res.getHeader('Location')
@@ -770,6 +770,57 @@ function decodePossiblyLatin1Text(value) {
     .replaceAll('\u00c2\u00b7', '·');
 }
 
+function decodeWindows1252Buffer(buffer) {
+  const bytes = Buffer.isBuffer(buffer) ? buffer : Buffer.from(String(buffer || ''), 'binary');
+  const map = {
+    0x80: '€', 0x82: '‚', 0x83: 'ƒ', 0x84: '„', 0x85: '…', 0x86: '†', 0x87: '‡', 0x88: 'ˆ',
+    0x89: '‰', 0x8a: 'Š', 0x8b: '‹', 0x8c: 'Œ', 0x8e: 'Ž', 0x91: '‘', 0x92: '’', 0x93: '“',
+    0x94: '”', 0x95: '•', 0x96: '–', 0x97: '—', 0x98: '˜', 0x99: '™', 0x9a: 'š', 0x9b: '›',
+    0x9c: 'œ', 0x9e: 'ž', 0x9f: 'Ÿ'
+  };
+
+  let decoded = '';
+
+  for (const byte of bytes) {
+    decoded += map[byte] || String.fromCharCode(byte);
+  }
+
+  return decoded;
+}
+
+function textEncodingDamageScore(value) {
+  const text = String(value || '');
+  const replacementCount = (text.match(/\ufffd/g) || []).length;
+  const mojibakeCount = (text.match(/[\u00c3\u00c2\u0192\u00e2\u00c5\u00f0]/gu) || []).length;
+  const controlCount = (text.match(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f-\u009f]/g) || []).length;
+
+  return (replacementCount * 5) + (mojibakeCount * 2) + (controlCount * 3);
+}
+
+function decodeUploadedText(value) {
+  if (Buffer.isBuffer(value)) {
+    const utf8Text = decodePossiblyLatin1Text(value.toString('utf8')).replace(/^\uFEFF/, '');
+    const windows1252Text = decodePossiblyLatin1Text(decodeWindows1252Buffer(value)).replace(/^\uFEFF/, '');
+
+    return textEncodingDamageScore(windows1252Text) < textEncodingDamageScore(utf8Text)
+      ? windows1252Text
+      : utf8Text;
+  }
+
+  return decodePossiblyLatin1Text(value).replace(/^\uFEFF/, '');
+}
+
+function normalizeUploadedOriginalName(file) {
+  return decodePossiblyLatin1Text(file?.originalname || '').trim();
+}
+
+function getSafeUploadExtension(file) {
+  const normalizedName = normalizeUploadedOriginalName(file) || file?.originalname || '';
+  const extension = path.extname(normalizedName).toLowerCase().replace(/[^.a-z0-9]/g, '');
+
+  return extension || '';
+}
+
 function normalizeClinicLookupValue(value) {
   return decodePossiblyLatin1Text(value)
     .normalize('NFD')
@@ -842,7 +893,7 @@ function normalizeColumnName(value) {
 }
 
 function parseBulkNpsCsv(content) {
-  const normalizedContent = decodePossiblyLatin1Text(String(content || '')).replace(/^\uFEFF/, '');
+  const normalizedContent = decodeUploadedText(content);
   const lines = normalizedContent
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -5453,8 +5504,8 @@ app.post('/nps/bulk-dispatch', authenticate, upload.single('file'), async (req, 
   try {
     const publicNpsLink = `${frontendUrl}/pesquisa-nps`;
     const content = req.file?.path
-      ? fs.readFileSync(req.file.path, 'utf8')
-      : String(req.body?.content || '');
+      ? decodeUploadedText(fs.readFileSync(req.file.path))
+      : decodeUploadedText(req.body?.content || '');
 
     if (!String(content || '').trim()) {
       return res.status(400).json({ error: 'Envie uma planilha CSV com nome e telefone dos pacientes.' });
@@ -6034,6 +6085,7 @@ app.post('/complaints/:id/evidences', authenticate, upload.single('file'), async
     }
 
     const fileUrl = `/uploads/${req.file.filename}`;
+    const originalName = normalizeUploadedOriginalName(req.file);
 
     await pool.query(
       `INSERT INTO complaint_evidences
@@ -6042,7 +6094,7 @@ app.post('/complaints/:id/evidences', authenticate, upload.single('file'), async
       [
         id,
         fileUrl,
-        req.file.originalname || null,
+        originalName || null,
         description || null,
         getActorName(req.user),
         req.user.role || null
@@ -6052,7 +6104,7 @@ app.post('/complaints/:id/evidences', authenticate, upload.single('file'), async
     await insertComplaintLog(
       id,
       'evidence_added',
-      description || req.file.originalname || 'Evidencia anexada ao protocolo.',
+      description || originalName || 'Evidência anexada ao protocolo.',
       req.user
     );
 
@@ -6411,8 +6463,10 @@ module.exports = {
     canRenotifyComplaint,
     canReceiveComplaintNotification,
     changeUserPassword,
+    decodeUploadedText,
     isPasswordChangeRouteAllowed,
     normalizeStoredUploadUrl,
+    normalizeUploadedOriginalName,
     parseBodyWithSchema,
     sendPasswordChangedNotifications,
     sendUserAccessNotifications,

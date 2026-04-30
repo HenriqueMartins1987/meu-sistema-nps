@@ -400,7 +400,7 @@ function ComplaintDetail() {
 
     try {
       const response = await api.post(`/complaints/${id}/renotify`);
-      setFeedback(response.data?.message || 'Notificaç?es reenviadas aos responsáveis.');
+      setFeedback(response.data?.message || 'Notificações reenviadas aos responsáveis.');
       await loadComplaint();
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível reenviar as notificações do protocolo.');
@@ -724,7 +724,7 @@ function ComplaintDetail() {
           <div className="detail-title-row">
             <div>
               <p className="eyebrow">Histórico imutável</p>
-              <h2>Tratativas e atualizaç?es do protocolo</h2>
+              <h2>Tratativas e atualizações do protocolo</h2>
               <p className="history-note">Cada descrição salva permanece vinculada ao usuário, data e perfil. Não há exclusão de relatos pela tela.</p>
             </div>
             <span className="mini-badge">{complaint.logs?.length || 0} registros</span>
