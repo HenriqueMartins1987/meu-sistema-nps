@@ -4797,25 +4797,34 @@ a {
   min-height: 96px;
   padding: 18px 22px;
   gap: 24px;
+  flex-wrap: wrap;
 }
 
 .home-brand-zone {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 14px;
+  flex: 1 1 460px;
   min-width: 0;
   flex-wrap: wrap;
+}
+
+.home-brand-zone > .home-menu-top {
+  flex: 0 0 clamp(118px, 12vw, 138px);
+  min-height: 64px;
+  justify-content: center;
 }
 
 .home-user-card {
   display: grid;
   align-content: center;
   gap: 3px;
-  width: clamp(118px, 12vw, 138px);
-  min-width: 118px;
+  flex: 1 1 280px;
+  width: clamp(260px, 30vw, 380px);
+  min-width: 240px;
+  max-width: 100%;
   min-height: 64px;
-  padding: 10px 12px;
-  overflow: hidden;
+  padding: 10px 14px;
   color: #fff;
   background: linear-gradient(180deg, rgba(34, 37, 42, 0.98), rgba(14, 16, 19, 0.98));
   border: 1px solid rgba(199, 154, 90, 0.34);
@@ -4836,9 +4845,8 @@ a {
 .home-user-card small {
   display: block;
   max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .home-user-card strong {
@@ -4852,17 +4860,6 @@ a {
   color: rgba(255, 255, 255, 0.72);
   font-size: 9px;
   line-height: 1.2;
-}
-
-.home-command-bar .brand-mark {
-  display: flex;
-  align-items: center;
-}
-
-.home-command-bar .brand-mark img {
-  width: clamp(118px, 12vw, 138px);
-  min-width: 118px;
-  padding: 10px 14px;
 }
 
 .home-command-bar .home-menu-top,
@@ -5036,6 +5033,11 @@ a {
     padding: 18px;
   }
 
+  .home-brand-zone {
+    width: 100%;
+    flex-basis: 100%;
+  }
+
   .home-command-actions {
     width: 100%;
     justify-content: flex-start;
@@ -5085,9 +5087,15 @@ a {
 }
 
 @media (max-width: 620px) {
+  .home-brand-zone > .home-menu-top {
+    flex-basis: 108px;
+    min-height: 58px;
+  }
+
   .home-user-card {
-    width: 108px;
-    min-width: 108px;
+    flex-basis: min(100%, 260px);
+    width: auto;
+    min-width: 0;
     min-height: 58px;
     padding: 8px 10px;
   }
@@ -5098,11 +5106,6 @@ a {
 
   .home-user-card small {
     font-size: 8px;
-  }
-
-  .home-command-bar .brand-mark img {
-    width: 108px;
-    min-width: 108px;
   }
 
   .home-copy h1 {
