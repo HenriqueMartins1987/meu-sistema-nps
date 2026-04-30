@@ -182,6 +182,45 @@ function normalizeAppUrl(appUrl) {
   return String(appUrl || '').trim() || process.env.APP_BASE_URL || process.env.FRONTEND_URL || 'https://meu-sistema-nps.vercel.app/';
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function renderMetricGrid(items = []) {
+  const safeItems = Array.isArray(items)
+    ? items.filter((item) => item && item.label && item.value !== undefined && item.value !== null && item.value !== '')
+    : [];
+
+  if (!safeItems.length) {
+    return '';
+  }
+
+  return `
+    <div style="margin:24px 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;">
+      ${safeItems.map((item) => `
+        <div style="padding:18px;border-radius:14px;border:1px solid #ead7bb;background:linear-gradient(180deg,#fffdfa 0%,#f9f1e4 100%);">
+          <p style="margin:0 0 8px;font-size:11px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:#9b6d34;">${escapeHtml(item.label)}</p>
+          <strong style="display:block;font-size:16px;line-height:1.45;color:#231f20;">${escapeHtml(item.value)}</strong>
+        </div>
+      `).join('')}
+    </div>
+  `.trim();
+}
+
+function renderCodePanel(label, code) {
+  return `
+    <div style="margin:24px 0;padding:22px 20px;border-radius:16px;background:linear-gradient(180deg,#fffdfa 0%,#f9f1e4 100%);border:1px solid #ead7bb;text-align:center;">
+      <p style="margin:0 0 10px;font-size:11px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:#816038;">${escapeHtml(label)}</p>
+      <strong style="display:block;font-size:34px;letter-spacing:0.18em;color:#231f20;">${escapeHtml(code)}</strong>
+    </div>
+  `.trim();
+}
+
 function renderBrandedEmail({
   eyebrow = 'GRC Consultoria',
   title,
@@ -189,13 +228,14 @@ function renderBrandedEmail({
   bodyHtml = '',
   actionLabel = '',
   actionUrl = '',
+  supportText = 'Portal de relacionamento e experiência',
   footerText = 'Este é um e-mail transacional do sistema. Se você não reconhece esta comunicação, procure o Administrador Master.'
 }) {
   const logoDataUrl = getBrandLogoDataUrl();
   const actionBlock = actionLabel && actionUrl
     ? `
-      <div style="margin:28px 0 0;">
-        <a href="${actionUrl}" style="display:inline-block;padding:14px 22px;border-radius:10px;background:#c89a57;color:#ffffff;text-decoration:none;font-weight:700;">
+      <div style="margin:30px 0 0;">
+        <a href="${actionUrl}" style="display:inline-block;padding:15px 24px;border-radius:12px;background:linear-gradient(135deg,#d4a764 0%,#9b6d34 100%);color:#ffffff;text-decoration:none;font-weight:800;letter-spacing:0.01em;box-shadow:0 14px 28px rgba(155,109,52,0.24);">
           ${actionLabel}
         </a>
       </div>
@@ -203,18 +243,21 @@ function renderBrandedEmail({
     : '';
 
   return `
-    <div style="margin:0;padding:24px;background:#f4efe6;font-family:Arial,Helvetica,sans-serif;color:#231f20;line-height:1.65;">
-      <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #e7dcc8;border-radius:18px;overflow:hidden;box-shadow:0 18px 36px rgba(35,31,32,0.08);">
-        <div style="padding:28px 32px;background:linear-gradient(135deg,#1f2329 0%,#2b3038 100%);color:#ffffff;">
-          ${logoDataUrl ? `<img src="${logoDataUrl}" alt="GRC Consultoria" style="display:block;max-width:170px;height:auto;margin:0 0 18px;" />` : ''}
-          <p style="margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#d5a24c;">${eyebrow}</p>
-          <h1 style="margin:0;font-size:28px;line-height:1.2;">${title}</h1>
+    <div style="margin:0;padding:28px 16px;background:linear-gradient(180deg,#fbf5eb 0%,#f2e7d6 100%);font-family:Arial,Helvetica,sans-serif;color:#231f20;line-height:1.65;">
+      <div style="max-width:720px;margin:0 auto;background:#ffffff;border:1px solid #e7dcc8;border-radius:22px;overflow:hidden;box-shadow:0 24px 48px rgba(35,31,32,0.12);">
+        <div style="padding:30px 34px 28px;background:radial-gradient(circle at top right,rgba(212,167,100,0.18),transparent 36%),linear-gradient(135deg,#171b21 0%,#262b32 58%,#4f3c25 100%);color:#ffffff;">
+          ${logoDataUrl ? `<img src="${logoDataUrl}" alt="GRC Consultoria" style="display:block;max-width:182px;height:auto;margin:0 0 20px;" />` : ''}
+          <p style="margin:0 0 8px;font-size:11px;font-weight:800;letter-spacing:0.11em;text-transform:uppercase;color:#e0bc82;">${escapeHtml(eyebrow)}</p>
+          <h1 style="margin:0 0 10px;font-size:30px;line-height:1.18;color:#ffffff;">${escapeHtml(title)}</h1>
+          <p style="margin:0;color:rgba(255,255,255,0.76);font-size:14px;">${escapeHtml(supportText)}</p>
         </div>
-        <div style="padding:32px;">
-          ${intro ? `<p style="margin:0 0 18px;">${intro}</p>` : ''}
+        <div style="padding:34px;">
+          ${intro ? `<p style="margin:0 0 18px;font-size:16px;color:#2f2825;">${intro}</p>` : ''}
           ${bodyHtml}
           ${actionBlock}
-          <p style="margin:28px 0 0;color:#6a6360;">${footerText}</p>
+          <div style="margin:30px 0 0;padding-top:18px;border-top:1px solid #efe1cb;">
+            <p style="margin:0;color:#6a6360;font-size:13px;">${footerText}</p>
+          </div>
         </div>
       </div>
     </div>
@@ -223,67 +266,161 @@ function renderBrandedEmail({
 
 function renderUserAccessEmail({ name, email, temporaryPassword, appUrl }) {
   const portalUrl = normalizeAppUrl(appUrl);
-  const html = renderBrandedEmail({
-    title: 'Seu acesso ao portal foi criado',
-    intro: `Olá, <strong>${name || 'colaborador'}</strong>.`,
-    bodyHtml: `
-      <p style="margin:0 0 20px;">Seu acesso ao portal foi criado com sucesso. Abaixo estão os dados iniciais para o primeiro acesso.</p>
-      <div style="margin:24px 0;padding:20px;border-radius:14px;background:#fbf8f2;border:1px solid #eadfc8;">
-        <p style="margin:0 0 10px;"><strong>Login:</strong> ${email}</p>
-        <p style="margin:0 0 10px;"><strong>Senha temporária:</strong> ${temporaryPassword}</p>
-        <p style="margin:0;"><strong>Acesse:</strong> <a href="${portalUrl}" style="color:#a56a09;text-decoration:none;">${portalUrl}</a></p>
-      </div>
-      <p style="margin:0;">No primeiro acesso, a troca de senha será obrigatória por segurança.</p>
-    `,
-    actionLabel: 'Acessar o sistema',
-    actionUrl: portalUrl
-  });
-
   return {
     subject: 'Seu acesso ao portal foi criado',
-    html
+    html: renderBrandedEmail({
+      title: 'Seu acesso ao portal foi criado',
+      intro: `Olá, <strong>${escapeHtml(name || 'colaborador')}</strong>.`,
+      bodyHtml: `
+        <p style="margin:0 0 20px;">Seu acesso ao portal foi criado com sucesso. Use as credenciais abaixo para entrar no sistema com segurança.</p>
+        ${renderMetricGrid([
+          { label: 'Login', value: email },
+          { label: 'Senha temporária', value: temporaryPassword },
+          { label: 'Portal', value: portalUrl }
+        ])}
+        <div style="padding:16px 18px;border-radius:14px;background:#fff8ed;border:1px solid #ecd9b7;color:#6a512c;">
+          <strong style="display:block;margin:0 0 6px;color:#8e6731;">Atenção</strong>
+          <span>No primeiro acesso, a troca de senha será obrigatória. Recomendamos concluir a alteração imediatamente.</span>
+        </div>
+      `,
+      actionLabel: 'Acessar o sistema',
+      actionUrl: portalUrl
+    })
   };
 }
 
 function renderRegistrationApprovedEmail({ name, appUrl }) {
   const approvedUrl = normalizeAppUrl(appUrl);
-  const html = renderBrandedEmail({
-    title: 'Seu cadastro foi aprovado',
-    intro: `Olá, <strong>${name || 'colaborador'}</strong>.`,
-    bodyHtml: `
-      <p style="margin:0 0 18px;">Seu cadastro foi aprovado e seu acesso já está liberado.</p>
-      <p style="margin:0;"><strong>Acesse:</strong> <a href="${approvedUrl}" style="color:#a56a09;text-decoration:none;">${approvedUrl}</a></p>
-    `,
-    actionLabel: 'Entrar no portal',
-    actionUrl: approvedUrl
-  });
-
   return {
     subject: 'Seu cadastro foi aprovado',
-    html
+    html: renderBrandedEmail({
+      title: 'Seu cadastro foi aprovado',
+      intro: `Olá, <strong>${escapeHtml(name || 'colaborador')}</strong>.`,
+      bodyHtml: `
+        <p style="margin:0 0 18px;">Seu cadastro foi aprovado e o acesso ao sistema já está liberado.</p>
+        ${renderMetricGrid([{ label: 'Portal', value: approvedUrl }])}
+      `,
+      actionLabel: 'Entrar no portal',
+      actionUrl: approvedUrl
+    })
   };
 }
 
 function renderPasswordResetEmail({ name, temporaryPassword, appUrl }) {
   const changePasswordUrl = normalizeAppUrl(appUrl);
-  const html = renderBrandedEmail({
-    title: 'Sua senha foi reiniciada',
-    intro: `Olá, <strong>${name || 'colaborador'}</strong>.`,
-    bodyHtml: `
-      <p style="margin:0 0 20px;">Seu acesso recebeu uma nova senha temporária. Entre no sistema e conclua a alteração da senha no primeiro acesso.</p>
-      <div style="margin:24px 0;padding:20px;border-radius:14px;background:#fbf8f2;border:1px solid #eadfc8;">
-        <p style="margin:0 0 10px;"><strong>Senha temporária:</strong> ${temporaryPassword}</p>
-        <p style="margin:0 0 12px;"><strong>Link para alteração da senha:</strong> <a href="${changePasswordUrl}" style="color:#a56a09;text-decoration:none;">${changePasswordUrl}</a></p>
-        <p style="margin:0;color:#6a6360;">Ao acessar o link, entre com a senha temporária. O sistema abrirá a troca obrigatória automaticamente.</p>
-      </div>
-    `,
-    actionLabel: 'Acessar e alterar senha',
-    actionUrl: changePasswordUrl
-  });
-
   return {
     subject: 'Senha reiniciada - Sistema GRC',
-    html
+    html: renderBrandedEmail({
+      title: 'Sua senha foi reiniciada',
+      intro: `Olá, <strong>${escapeHtml(name || 'colaborador')}</strong>.`,
+      bodyHtml: `
+        <p style="margin:0 0 20px;">Uma nova senha temporária foi gerada para o seu acesso. Entre no portal e conclua a alteração para manter sua conta protegida.</p>
+        ${renderMetricGrid([
+          { label: 'Senha temporária', value: temporaryPassword },
+          { label: 'Link para alteração', value: changePasswordUrl }
+        ])}
+        <div style="padding:16px 18px;border-radius:14px;background:#fff8ed;border:1px solid #ecd9b7;color:#6a512c;">
+          <strong style="display:block;margin:0 0 6px;color:#8e6731;">Próximo passo</strong>
+          <span>Entre com a senha temporária. O sistema abrirá a troca obrigatória automaticamente.</span>
+        </div>
+      `,
+      actionLabel: 'Acessar e alterar senha',
+      actionUrl: changePasswordUrl
+    })
+  };
+}
+
+function renderPasswordRecoveryCodeEmail({ name, code, appUrl, expirationMinutes }) {
+  const loginUrl = normalizeAppUrl(appUrl);
+  return {
+    subject: 'Código para redefinição de senha - Sistema GRC',
+    html: renderBrandedEmail({
+      title: 'Recuperação de senha',
+      intro: `Olá, <strong>${escapeHtml(name || 'colaborador')}</strong>.`,
+      bodyHtml: `
+        <p style="margin:0 0 20px;">Recebemos uma solicitação para redefinir a senha do seu acesso.</p>
+        ${renderCodePanel('Código de confirmação', code)}
+        <div style="padding:16px 18px;border-radius:14px;background:#fff8ed;border:1px solid #ecd9b7;color:#6a512c;">
+          <strong style="display:block;margin:0 0 6px;color:#8e6731;">Como usar</strong>
+          <span>Informe esse código na tela de login para cadastrar uma nova senha forte. O código expira em ${escapeHtml(expirationMinutes)} minutos.</span>
+        </div>
+      `,
+      actionLabel: 'Abrir tela de login',
+      actionUrl: loginUrl
+    })
+  };
+}
+
+function renderRegistrationReviewEmail({ name, email, position, profileLabel, phone, whatsapp, department, approvalLink }) {
+  return {
+    subject: 'Novo cadastro aguardando aprovação - Sistema GRC',
+    html: renderBrandedEmail({
+      eyebrow: 'Solicitação de acesso',
+      title: 'Novo cadastro aguardando aprovação',
+      intro: 'Um novo colaborador solicitou acesso ao sistema.',
+      bodyHtml: renderMetricGrid([
+        { label: 'Nome', value: name },
+        { label: 'E-mail', value: email },
+        { label: 'Cargo', value: position },
+        { label: 'Perfil solicitado', value: profileLabel },
+        { label: 'Telefone', value: phone || 'Não informado' },
+        { label: 'WhatsApp', value: whatsapp || 'Não informado' },
+        { label: 'Área / unidade', value: department || 'Não informado' }
+      ]),
+      actionLabel: 'Aprovar cadastro',
+      actionUrl: approvalLink,
+      footerText: 'O acesso ao conteúdo permanece protegido por login e senha. Revise os dados antes de aprovar.'
+    })
+  };
+}
+
+function renderRegistrationRejectedEmail({ name }) {
+  return {
+    subject: 'Cadastro não aprovado - Sistema GRC',
+    html: renderBrandedEmail({
+      eyebrow: 'Solicitação encerrada',
+      title: 'Cadastro não aprovado',
+      intro: `Olá, <strong>${escapeHtml(name || 'colaborador')}</strong>.`,
+      bodyHtml: `
+        <p style="margin:0;">Seu cadastro foi analisado e não foi aprovado neste momento. Se precisar de esclarecimentos, procure o responsável pela administração do sistema.</p>
+      `
+    })
+  };
+}
+
+function renderWeeklyCoordinatorReportEmail({ coordinatorName, total, delayed, reportUrl = '' }) {
+  return {
+    subject: `Relatório semanal - ${coordinatorName}`,
+    html: renderBrandedEmail({
+      eyebrow: 'Relatório operacional',
+      title: `Relatório semanal de ${coordinatorName}`,
+      intro: 'Segue o resumo da carteira do coordenador para acompanhamento da operação.',
+      bodyHtml: renderMetricGrid([
+        { label: 'Total de protocolos', value: String(total) },
+        { label: 'Atrasadas', value: String(delayed) }
+      ]),
+      actionLabel: reportUrl ? 'Abrir relatório' : '',
+      actionUrl: reportUrl || ''
+    })
+  };
+}
+
+function renderMarketingProtocolEmail({ protocol, patientName, clinicName, complaintUrl }) {
+  return {
+    subject: `Protocolo ${protocol} registrado pelo Marketing`,
+    html: renderBrandedEmail({
+      eyebrow: 'Link externo',
+      title: 'Novo protocolo registrado pelo Marketing',
+      intro: 'Um novo protocolo foi criado a partir do link externo do Marketing.',
+      bodyHtml: renderMetricGrid([
+        { label: 'Protocolo', value: protocol },
+        { label: 'Paciente', value: patientName },
+        { label: 'Clínica', value: clinicName || 'Não informada' }
+      ]),
+      actionLabel: complaintUrl ? 'Abrir no sistema' : '',
+      actionUrl: complaintUrl || '',
+      footerText: 'O acesso ao protocolo continua protegido por login e senha.'
+    })
   };
 }
 
@@ -321,9 +458,14 @@ module.exports = {
   getEmailProvider,
   htmlToText,
   renderBrandedEmail,
+  renderMarketingProtocolEmail,
+  renderPasswordRecoveryCodeEmail,
   renderPasswordResetEmail,
   renderRegistrationApprovedEmail,
+  renderRegistrationRejectedEmail,
+  renderRegistrationReviewEmail,
   renderUserAccessEmail,
+  renderWeeklyCoordinatorReportEmail,
   sendEmail,
   sendWelcomeEmail
 };

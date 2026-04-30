@@ -2514,23 +2514,14 @@ async function sendPasswordResetNotifications(user, temporaryPassword) {
 
 async function sendPasswordRecoveryCodeEmail(user, code) {
   const appUrl = `${frontendUrl}/`;
-  const html = emailService.renderBrandedEmail({
-    title: 'Recuperação de senha',
-    intro: `Olá, <strong>${user.name || 'colaborador'}</strong>.`,
-    bodyHtml: `
-      <p style="margin:0 0 20px;">Recebemos uma solicitação para redefinir a senha do seu acesso.</p>
-      <div style="margin:24px 0;padding:20px;border-radius:14px;background:#fbf8f2;border:1px solid #eadfc8;text-align:center;">
-        <p style="margin:0 0 8px;font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6a6360;">Código de confirmação</p>
-        <strong style="display:block;font-size:36px;letter-spacing:0.16em;color:#231f20;">${code}</strong>
-      </div>
-      <p style="margin:0 0 12px;">Use esse código na tela de login para cadastrar uma nova senha forte. O código expira em ${passwordRecoveryCodeExpiresMinutes} minutos.</p>
-      <p style="margin:0;"><strong>Acesse:</strong> <a href="${appUrl}" style="color:#a56a09;text-decoration:none;">${appUrl}</a></p>
-    `,
-    actionLabel: 'Abrir tela de login',
-    actionUrl: appUrl
+  const emailTemplate = emailService.renderPasswordRecoveryCodeEmail({
+    name: user.name,
+    code,
+    appUrl,
+    expirationMinutes: passwordRecoveryCodeExpiresMinutes
   });
 
-  return sendEmail(user.email, 'Código para redefinição de senha - Sistema GRC', html);
+  return sendEmail(user.email, emailTemplate.subject, emailTemplate.html);
 }
 
 async function sendPasswordChangedNotifications(user) {
@@ -3193,10 +3184,17 @@ async function dispatchWeeklyCoordinatorReports() {
       message: `Relatório semanal do coordenador ${coordinatorName}. Total de protocolos: ${coordinatorRows.length}. Atrasadas: ${coordinatorRows.filter((row) => row.delayed).length}.`
     });
 
+    const weeklyReportEmail = emailService.renderWeeklyCoordinatorReportEmail({
+      coordinatorName,
+      total: coordinatorRows.length,
+      delayed: coordinatorRows.filter((row) => row.delayed).length,
+      reportUrl: report.url
+    });
+
     await sendEmail(
       approvalEmail,
-      `Relatório semanal - ${coordinatorName}`,
-      `<p>Segue o relatório semanal do coordenador <strong>${coordinatorName}</strong>.</p><p>Total de protocolos: ${coordinatorRows.length}</p><p>Atrasadas: ${coordinatorRows.filter((row) => row.delayed).length}</p>`,
+      weeklyReportEmail.subject,
+      weeklyReportEmail.html,
       [{ filename: report.fileName, path: report.filePath }]
     );
   }
@@ -4191,21 +4189,18 @@ app.post('/registration-requests', async (req, res) => {
 
     const approvalLink = `${publicBaseUrl}/registration-requests/${token}/approve`;
 
-    await sendEmail(
-      approvalEmail,
-      'Novo cadastro aguardando aprovação - Sistema GRC',
-      `
-        <h2>Novo cadastro aguardando aprovação</h2>
-        <p><strong>Nome:</strong> ${name}</p>
-        <p><strong>E-mail:</strong> ${normalizedEmail}</p>
-        <p><strong>Cargo:</strong> ${position}</p>
-        <p><strong>Perfil solicitado:</strong> ${accessProfiles[role]}</p>
-        <p><strong>Telefone:</strong> ${normalizedPhone}</p>
-        <p><strong>WhatsApp:</strong> ${normalizedWhatsapp}</p>
-        <p><strong>Área/unidade:</strong> ${department || 'Não informado'}</p>
-        <p><a href="${approvalLink}">Aprovar cadastro</a></p>
-      `
-    );
+    const registrationReviewEmail = emailService.renderRegistrationReviewEmail({
+      name,
+      email: normalizedEmail,
+      position,
+      profileLabel: accessProfiles[role],
+      phone: normalizedPhone,
+      whatsapp: normalizedWhatsapp,
+      department,
+      approvalLink
+    });
+
+    await sendEmail(approvalEmail, registrationReviewEmail.subject, registrationReviewEmail.html);
     await createNotificationForAdmins(
       'registration_request',
       'Novo cadastro aguardando aprovação',
@@ -4405,11 +4400,10 @@ app.post('/admin/registration-requests/:id/reject', authenticate, requireMasterA
       'UPDATE registration_requests SET status = ? WHERE id = ?',
       ['rejeitado', request.id]
     );
-    await sendEmail(
-      request.email,
-      'Cadastro não aprovado - Sistema GRC',
-      '<p>Seu cadastro foi analisado e não foi aprovado neste momento.</p>'
-    );
+    const rejectedEmail = emailService.renderRegistrationRejectedEmail({
+      name: request.name
+    });
+    await sendEmail(request.email, rejectedEmail.subject, rejectedEmail.html);
     await createNotificationForAdmins(
       'registration_rejected',
       'Cadastro rejeitado',
@@ -5908,16 +5902,23 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
       console.warn('Nao foi possivel enviar protocolo ao paciente por WhatsApp:', error.message);
     }
 
-    if (normalizedOrigin === 'Marketing') {
-      try {
-        await sendEmail(
-          approvalEmail,
-          `Protocolo ${protocol} registrado pelo Marketing`,
-          `<p>Um novo protocolo foi registrado pelo link externo de Marketing.</p><p><strong>Paciente:</strong> ${patient_name}</p><p><strong>Protocolo:</strong> ${protocol}</p>`
-        );
-      } catch (error) {
-        console.warn('Nao foi possivel enviar e-mail do protocolo de Marketing:', error.message);
-      }
+      if (normalizedOrigin === 'Marketing') {
+        try {
+          const marketingProtocolEmail = emailService.renderMarketingProtocolEmail({
+            protocol,
+            patientName: patient_name,
+            clinicName: selectedClinic?.name || clinic_name || '',
+            complaintUrl: `${frontendUrl}/reclamacoes/${result.insertId}`
+          });
+
+          await sendEmail(
+            approvalEmail,
+            marketingProtocolEmail.subject,
+            marketingProtocolEmail.html
+          );
+        } catch (error) {
+          console.warn('Nao foi possivel enviar e-mail do protocolo de Marketing:', error.message);
+        }
 
       try {
         await sendWhatsappNotification({
