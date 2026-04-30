@@ -121,6 +121,9 @@ test('renderUserAccessEmail returns the user access template', () => {
   assert.match(template.html, /Maria Silva/);
   assert.match(template.html, /maria@example.com/);
   assert.match(template.html, /Tmp@12345/);
+  assert.match(template.html, /max-width:138px/);
+  assert.match(template.html, /background:linear-gradient\(180deg,rgba\(34,37,42,0\.98\),rgba\(14,16,19,0\.98\)\)/);
+  assert.doesNotMatch(template.html, />GRC Consultoria</);
 });
 
 test('sendWelcomeEmail forwards the rendered template to the configured sender', async () => {
