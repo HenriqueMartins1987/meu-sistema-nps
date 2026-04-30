@@ -624,6 +624,20 @@ function HomeShellFixed() {
         </div>
       </header>
 
+      <section className="grupo-sorria-banner" aria-label="Grupo Sorria">
+        <div className="grupo-sorria-banner-track" aria-hidden="true">
+          <div className="grupo-sorria-banner-panel">
+            <span>Grupo Sorria</span>
+          </div>
+          <div className="grupo-sorria-banner-panel rose">
+            <span>Grupo Sorria</span>
+          </div>
+          <div className="grupo-sorria-banner-panel classic">
+            <span>Grupo Sorria</span>
+          </div>
+        </div>
+      </section>
+
       {mustChangePassword && (
         <div className="modal-backdrop forced-password-backdrop" role="dialog" aria-modal="true">
           <form className="modal-panel forced-password-modal" onSubmit={handleForcedPasswordChange}>
