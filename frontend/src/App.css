@@ -2752,7 +2752,7 @@ a {
 
 .evidence-item {
   display: grid;
-  gap: 4px;
+  gap: 10px;
   width: 100%;
   text-decoration: none;
   border: 1px solid var(--line);
@@ -2760,8 +2760,7 @@ a {
   padding: 13px;
   background: #fff;
   text-align: left;
-  cursor: pointer;
-  appearance: none;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 .evidence-item:hover {
@@ -2769,17 +2768,46 @@ a {
   box-shadow: var(--shadow-sm);
 }
 
-.evidence-item span {
+.evidence-open-button {
+  display: grid;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  appearance: none;
+}
+
+.evidence-open-button span {
   color: var(--ink);
   font-weight: 900;
 }
 
-.evidence-item small,
+.evidence-open-button small,
 .empty-mini,
 .permission-note,
 .blocking-note {
   color: var(--muted);
   font-weight: 700;
+}
+
+.evidence-delete-button {
+  justify-self: start;
+  border: 1px solid rgba(196, 69, 54, 0.26);
+  border-radius: 8px;
+  padding: 7px 10px;
+  background: #fff7f5;
+  color: var(--danger);
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.evidence-delete-button:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .approval-grid {

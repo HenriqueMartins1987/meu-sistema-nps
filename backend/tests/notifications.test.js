@@ -11,6 +11,7 @@ const {
   DEFAULT_EMAIL_FROM,
   getEmailFrom,
   getEmailProvider,
+  renderOperationalTestEmail,
   renderPasswordResetEmail,
   renderUserAccessEmail,
   sendWelcomeEmail
@@ -103,6 +104,19 @@ test('sendWelcomeEmail forwards the rendered template to the configured sender',
   assert.match(payload.html, /Maria Silva/);
   assert.match(payload.html, /Tmp@12345/);
   assert.match(payload.text, /maria@example.com/);
+});
+
+test('renderOperationalTestEmail returns a dedicated channel validation template', () => {
+  const template = renderOperationalTestEmail({
+    name: 'Administrador Master',
+    loginEmail: 'admin@example.com',
+    appUrl: 'https://meu-sistema-nps.vercel.app/'
+  });
+
+  assert.equal(template.subject, 'Teste de e-mail - Sistema GRC');
+  assert.match(template.html, /Canal de e-mail validado/);
+  assert.match(template.html, /admin@example.com/);
+  assert.doesNotMatch(template.html, /Senha tempor/iu);
 });
 
 test('normalizeWhatsAppPhone normalizes brazilian phones to E.164 digits', () => {
@@ -215,6 +229,33 @@ test('canRenotifyComplaint only allows master admin, Supervisor do CRC and Opera
   }), false);
 });
 
+test('canDeleteEvidence only allows master admin, Supervisor do CRC and Operador de SAC', () => {
+  assert.equal(__testables.canDeleteEvidence({
+    role: 'master_admin',
+    email: 'henrique.martins@grcconsultoria.net.br'
+  }), true);
+
+  assert.equal(__testables.canDeleteEvidence({
+    role: 'supervisor_crc',
+    email: 'supervisor@example.com'
+  }), true);
+
+  assert.equal(__testables.canDeleteEvidence({
+    role: 'sac_operator',
+    email: 'sac@example.com'
+  }), true);
+
+  assert.equal(__testables.canDeleteEvidence({
+    role: 'admin',
+    email: 'admin@example.com'
+  }), false);
+
+  assert.equal(__testables.canDeleteEvidence({
+    role: 'coordinator',
+    email: 'coordinator@example.com'
+  }), false);
+});
+
 test('normalizeStoredUploadUrl rewrites localhost upload links to the current public API host', () => {
   const normalized = __testables.normalizeStoredUploadUrl('http://localhost:3001/uploads/teste-anexo.png');
   const normalizedRelative = __testables.normalizeStoredUploadUrl('uploads/teste-anexo.png');
@@ -226,11 +267,20 @@ test('normalizeStoredUploadUrl rewrites localhost upload links to the current pu
 test('decodeUploadedText preserves accents from UTF-8 and Windows-1252 uploads', () => {
   const utf8Csv = Buffer.from('Nome;Telefone / WhatsApp\nJoão Clínica;+5562999999999', 'utf8');
   const windows1252Csv = Buffer.from('Nome;Telefone / WhatsApp\nJoão Clínica Canaã;+5562999999999', 'latin1');
+  const utf8NameDecodedAsLatin1 = Buffer.from('comprovante clínica final.pdf', 'utf8').toString('latin1');
 
   assert.match(__testables.decodeUploadedText(utf8Csv), /João Clínica/);
   assert.match(__testables.decodeUploadedText(windows1252Csv), /João Clínica Canaã/);
   assert.equal(
     __testables.normalizeUploadedOriginalName({ originalname: 'comprovante clÃ­nica.pdf' }),
     'comprovante clínica.pdf'
+  );
+  assert.equal(
+    __testables.normalizeUploadedOriginalName({ originalname: utf8NameDecodedAsLatin1 }),
+    'comprovante clínica final.pdf'
+  );
+  assert.equal(
+    __testables.normalizeUploadedOriginalName({ originalname: 'pasta\\comprovante clínica.pdf' }),
+    'pasta comprovante clínica.pdf'
   );
 });

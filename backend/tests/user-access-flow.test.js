@@ -235,16 +235,18 @@ test('change-initial-password clears must_change_password and returns refreshed 
   assert.equal(updateParams[1], 9);
 });
 
-test('test-email route sends a validation message through the welcome template', async () => {
-  emailService.sendWelcomeEmail = async ({ to, name, loginEmail, password }) => ({
-    provider: 'mock',
-    id: 'email-123',
-    skipped: false,
-    to,
-    name,
-    loginEmail,
-    password
-  });
+test('test-email route sends a dedicated validation message', async () => {
+  let emailPayload = null;
+
+  emailService.sendEmail = async (payload) => {
+    emailPayload = payload;
+    return {
+      provider: 'mock',
+      id: 'email-123',
+      skipped: false,
+      to: payload.to
+    };
+  };
 
   pool.query = buildQueryStub([
     {
@@ -283,6 +285,10 @@ test('test-email route sends a validation message through the welcome template',
   assert.equal(response.body.success, true);
   assert.equal(response.body.to, 'teste@example.com');
   assert.equal(response.body.messageId, 'email-123');
+  assert.equal(emailPayload.to, 'teste@example.com');
+  assert.equal(emailPayload.subject, 'Teste de e-mail - Sistema GRC');
+  assert.match(emailPayload.html, /Canal de e-mail validado/);
+  assert.doesNotMatch(emailPayload.html, /Tmp@12345/);
 });
 
 test('manual WhatsApp route accepts telefone and mensagem payload', async () => {

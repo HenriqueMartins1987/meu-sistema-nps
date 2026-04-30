@@ -245,7 +245,7 @@ function AdminPanel() {
   };
 
   const sendRecurringWhatsAppTest = async () => {
-    const phoneTarget = selectedUser?.whatsapp || selectedUser?.phone;
+    const phoneTarget = formatBrazilPhoneInput(selectedUser?.whatsapp || selectedUser?.phone);
 
     if (!phoneTarget || !isCompleteBrazilPhone(phoneTarget)) {
       setFeedback('Selecione um colaborador com WhatsApp válido para enviar o teste.');
@@ -257,7 +257,7 @@ function AdminPanel() {
     setTestMenuOpen(false);
 
     try {
-      const response = await api.post('/api/whatsapp/enviar', {
+      const response = await api.post('/api/test-whatsapp', {
         telefone: phoneTarget,
         mensagem: `Teste recorrente do sistema GRC enviado para ${selectedUser.name || 'colaborador'} em ${new Date().toLocaleString('pt-BR')}.`
       });

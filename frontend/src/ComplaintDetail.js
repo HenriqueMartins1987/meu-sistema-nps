@@ -206,6 +206,7 @@ function ComplaintDetail() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [deletingEvidenceId, setDeletingEvidenceId] = useState(null);
   const [showForwardModal, setShowForwardModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [forwardToRole, setForwardToRole] = useState('');
@@ -232,6 +233,7 @@ function ComplaintDetail() {
   const canSupervisorAccept = user?.role === 'supervisor_crc' || isAdmin;
   const canSacClose = user?.role === 'sac_operator' || isAdmin;
   const canDeleteComplaint = isMasterAdmin(user) || user?.role === 'supervisor_crc';
+  const canDeleteEvidence = isMasterAdmin(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
   const canRenotifyComplaint = isMasterAdmin(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
   const hasTreatment = Boolean(complaint?.treatment_at);
   const isHighPriority = normalizePriority(complaint?.priority) === 'alta';
@@ -391,6 +393,32 @@ function ComplaintDetail() {
       setFeedback(error.response?.data?.error || 'Erro ao anexar evidência.');
     } finally {
       setUploading(false);
+    }
+  };
+
+  const handleDeleteEvidence = async (evidence) => {
+    if (!canDeleteEvidence || !evidence?.id) {
+      return;
+    }
+
+    const label = evidence.description || evidence.original_name || 'esta evidência';
+    const confirmed = window.confirm(`Excluir ${label}? Esta ação remove o arquivo da ficha do protocolo.`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingEvidenceId(evidence.id);
+    setFeedback('');
+
+    try {
+      await api.delete(`/complaints/${id}/evidences/${evidence.id}`);
+      setFeedback('Evidência excluída com sucesso.');
+      await loadComplaint();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Erro ao excluir evidência.');
+    } finally {
+      setDeletingEvidenceId(null);
     }
   };
 
@@ -693,26 +721,37 @@ function ComplaintDetail() {
               const evidenceUrl = resolveUploadedFileUrl(evidence.file_url);
 
               return (
-                <button
-                  type="button"
-                  className="evidence-item"
-                  onClick={() => openUploadedItem(evidenceUrl, evidence.description || evidence.original_name || 'Evidência anexada')}
-                  key={evidence.id}
-                >
-                  {isPreviewableImage(evidenceUrl) && (
-                    <img
-                      className="evidence-preview"
-                      src={evidenceUrl}
-                      alt={evidence.description || evidence.original_name || 'Evidência anexada'}
-                      loading="lazy"
-                    />
+                <article className="evidence-item" key={evidence.id}>
+                  <button
+                    type="button"
+                    className="evidence-open-button"
+                    onClick={() => openUploadedItem(evidenceUrl, evidence.description || evidence.original_name || 'Evidência anexada')}
+                  >
+                    {isPreviewableImage(evidenceUrl) && (
+                      <img
+                        className="evidence-preview"
+                        src={evidenceUrl}
+                        alt={evidence.description || evidence.original_name || 'Evidência anexada'}
+                        loading="lazy"
+                      />
+                    )}
+                    <span>{evidence.description || evidence.original_name || 'Evidência anexada'}</span>
+                    <small>
+                      {formatDate(evidence.created_at)}
+                      {evidence.uploaded_by_name ? ` · ${evidence.uploaded_by_name}` : ''}
+                    </small>
+                  </button>
+                  {canDeleteEvidence && (
+                    <button
+                      type="button"
+                      className="evidence-delete-button"
+                      onClick={() => handleDeleteEvidence(evidence)}
+                      disabled={deletingEvidenceId === evidence.id}
+                    >
+                      {deletingEvidenceId === evidence.id ? 'Excluindo...' : 'Excluir evidência'}
+                    </button>
                   )}
-                  <span>{evidence.description || evidence.original_name || 'Evidência anexada'}</span>
-                  <small>
-                    {formatDate(evidence.created_at)}
-                    {evidence.uploaded_by_name ? ` · ${evidence.uploaded_by_name}` : ''}
-                  </small>
-                </button>
+                </article>
               );
             }) : (
               <p className="empty-mini">Nenhuma evidência complementar anexada.</p>

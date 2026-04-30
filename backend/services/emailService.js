@@ -210,22 +210,24 @@ function renderMetricGrid(items = []) {
   }
 
   return `
-    <div style="margin:24px 0;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;">
+    <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:24px 0;border-collapse:separate;border-spacing:0 10px;">
       ${safeItems.map((item) => `
-        <div style="padding:18px;border-radius:14px;border:1px solid #ead7bb;background:linear-gradient(180deg,#fffdfa 0%,#f9f1e4 100%);">
-          <p style="margin:0 0 8px;font-size:11px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:#9b6d34;">${escapeHtml(item.label)}</p>
-          <strong style="display:block;font-size:16px;line-height:1.45;color:#231f20;">${escapeHtml(item.value)}</strong>
-        </div>
+        <tr>
+          <td style="padding:16px 18px;border-radius:8px;border:1px solid #ddcfbc;background:#fffdfa;">
+            <p style="margin:0 0 7px;font-size:11px;font-weight:800;letter-spacing:0.08em;text-transform:uppercase;color:#8e6731;">${escapeHtml(item.label)}</p>
+            <strong style="display:block;font-size:16px;line-height:1.45;color:#161218;">${escapeHtml(item.value)}</strong>
+          </td>
+        </tr>
       `).join('')}
-    </div>
+    </table>
   `.trim();
 }
 
 function renderCodePanel(label, code) {
   return `
-    <div style="margin:24px 0;padding:22px 20px;border-radius:16px;background:linear-gradient(180deg,#fffdfa 0%,#f9f1e4 100%);border:1px solid #ead7bb;text-align:center;">
+    <div style="margin:24px 0;padding:22px 20px;border-radius:8px;background:#fffdfa;border:1px solid #ddcfbc;text-align:center;">
       <p style="margin:0 0 10px;font-size:11px;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:#816038;">${escapeHtml(label)}</p>
-      <strong style="display:block;font-size:34px;letter-spacing:0.18em;color:#231f20;">${escapeHtml(code)}</strong>
+      <strong style="display:block;font-size:34px;letter-spacing:0.12em;color:#161218;">${escapeHtml(code)}</strong>
     </div>
   `.trim();
 }
@@ -243,29 +245,29 @@ function renderBrandedEmail({
   const logoDataUrl = getBrandLogoDataUrl();
   const actionBlock = actionLabel && actionUrl
     ? `
-      <div style="margin:30px 0 0;">
-        <a href="${actionUrl}" style="display:inline-block;padding:15px 24px;border-radius:12px;background:linear-gradient(135deg,#d4a764 0%,#9b6d34 100%);color:#ffffff;text-decoration:none;font-weight:800;letter-spacing:0.01em;box-shadow:0 14px 28px rgba(155,109,52,0.24);">
-          ${actionLabel}
+      <div style="margin:28px 0 0;">
+        <a href="${escapeHtml(actionUrl)}" style="display:inline-block;padding:14px 22px;border-radius:8px;background:#8e6731;color:#ffffff;text-decoration:none;font-weight:800;">
+          ${escapeHtml(actionLabel)}
         </a>
       </div>
     `
     : '';
 
   return `
-    <div style="margin:0;padding:28px 16px;background:linear-gradient(180deg,#fbf5eb 0%,#f2e7d6 100%);font-family:Arial,Helvetica,sans-serif;color:#231f20;line-height:1.65;">
-      <div style="max-width:720px;margin:0 auto;background:#ffffff;border:1px solid #e7dcc8;border-radius:22px;overflow:hidden;box-shadow:0 24px 48px rgba(35,31,32,0.12);">
-        <div style="padding:30px 34px 28px;background:radial-gradient(circle at top right,rgba(212,167,100,0.18),transparent 36%),linear-gradient(135deg,#171b21 0%,#262b32 58%,#4f3c25 100%);color:#ffffff;">
+    <div style="margin:0;padding:28px 16px;background:#f6efe4;font-family:Arial,Helvetica,sans-serif;color:#161218;line-height:1.65;">
+      <div style="max-width:720px;margin:0 auto;background:#ffffff;border:1px solid #ddcfbc;border-radius:8px;overflow:hidden;box-shadow:0 18px 42px rgba(22,18,24,0.12);">
+        <div style="padding:28px 32px 26px;background:linear-gradient(135deg,#171b21 0%,#262b32 68%,#8e6731 100%);color:#ffffff;border-bottom:4px solid #c89a57;">
           ${logoDataUrl ? `<img src="${logoDataUrl}" alt="GRC Consultoria" style="display:block;max-width:182px;height:auto;margin:0 0 20px;" />` : ''}
           <p style="margin:0 0 8px;font-size:11px;font-weight:800;letter-spacing:0.11em;text-transform:uppercase;color:#e0bc82;">${escapeHtml(eyebrow)}</p>
-          <h1 style="margin:0 0 10px;font-size:30px;line-height:1.18;color:#ffffff;">${escapeHtml(title)}</h1>
+          <h1 style="margin:0 0 10px;font-size:28px;line-height:1.2;color:#ffffff;">${escapeHtml(title)}</h1>
           <p style="margin:0;color:rgba(255,255,255,0.76);font-size:14px;">${escapeHtml(supportText)}</p>
         </div>
-        <div style="padding:34px;">
+        <div style="padding:32px;background:#fffdfa;">
           ${intro ? `<p style="margin:0 0 18px;font-size:16px;color:#2f2825;">${intro}</p>` : ''}
           ${bodyHtml}
           ${actionBlock}
-          <div style="margin:30px 0 0;padding-top:18px;border-top:1px solid #efe1cb;">
-            <p style="margin:0;color:#6a6360;font-size:13px;">${footerText}</p>
+          <div style="margin:30px 0 0;padding-top:18px;border-top:1px solid #ddcfbc;">
+            <p style="margin:0;color:#6c5a4e;font-size:13px;">${escapeHtml(footerText)}</p>
           </div>
         </div>
       </div>
@@ -433,6 +435,29 @@ function renderMarketingProtocolEmail({ protocol, patientName, clinicName, compl
   };
 }
 
+function renderOperationalTestEmail({ name, loginEmail, appUrl }) {
+  const portalUrl = normalizeAppUrl(appUrl);
+  return {
+    subject: 'Teste de e-mail - Sistema GRC',
+    html: renderBrandedEmail({
+      eyebrow: 'Teste operacional',
+      title: 'Canal de e-mail validado',
+      intro: `Olá, <strong>${escapeHtml(name || 'Administrador Master')}</strong>.`,
+      bodyHtml: `
+        <p style="margin:0 0 18px;color:#2f2825;">Este é um envio de teste do Sistema GRC para confirmar a configuração do provedor, do remetente padrão e do layout transacional.</p>
+        ${renderMetricGrid([
+          { label: 'Destinatário', value: loginEmail || 'Administrador Master' },
+          { label: 'Remetente padrão', value: getEmailFrom() },
+          { label: 'Portal', value: portalUrl }
+        ])}
+      `,
+      actionLabel: 'Abrir sistema',
+      actionUrl: portalUrl,
+      footerText: 'Este teste confirma o canal de e-mail do sistema. Nenhuma ação operacional é necessária.'
+    })
+  };
+}
+
 async function sendWelcomeEmail({
   to,
   name,
@@ -468,6 +493,7 @@ module.exports = {
   htmlToText,
   renderBrandedEmail,
   renderMarketingProtocolEmail,
+  renderOperationalTestEmail,
   renderPasswordRecoveryCodeEmail,
   renderPasswordResetEmail,
   renderRegistrationApprovedEmail,

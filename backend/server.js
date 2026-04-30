@@ -316,6 +316,47 @@ function normalizeStoredUploadUrl(value) {
   return normalizedValue;
 }
 
+function resolveStoredUploadFilePath(value) {
+  const normalizedValue = normalizeStoredUploadUrl(value);
+
+  if (!normalizedValue || !normalizedValue.toLowerCase().startsWith('/uploads/')) {
+    return '';
+  }
+
+  const pathWithoutQuery = normalizedValue.split(/[?#]/)[0];
+  const relativePath = pathWithoutQuery.replace(/^\/uploads\//i, '');
+
+  if (!relativePath) {
+    return '';
+  }
+
+  let decodedPath = relativePath;
+
+  try {
+    decodedPath = decodeURIComponent(relativePath);
+  } catch (error) {
+    decodedPath = relativePath;
+  }
+
+  const safeSegments = decodedPath
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(Boolean);
+
+  if (!safeSegments.length || safeSegments.some((segment) => segment === '..')) {
+    return '';
+  }
+
+  const resolvedPath = path.resolve(uploadDir, ...safeSegments);
+  const resolvedUploadDir = path.resolve(uploadDir);
+
+  if (!resolvedPath.startsWith(`${resolvedUploadDir}${path.sep}`)) {
+    return '';
+  }
+
+  return resolvedPath;
+}
+
 function formatNpsProtocol(id, createdAt) {
   const year = createdAt ? new Date(createdAt).getFullYear() : new Date().getFullYear();
   return `NPS-${year}-${String(id).padStart(6, '0')}`;
@@ -368,6 +409,10 @@ function defaultPermissionsForRole(role) {
 
 function canAttachEvidence(user) {
   return evidenceRoles.has(user?.role) || isAdminUser(user);
+}
+
+function canDeleteEvidence(user) {
+  return isMasterAdminUser(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
 }
 
 function canAddTreatment(user) {
@@ -810,8 +855,47 @@ function decodeUploadedText(value) {
   return decodePossiblyLatin1Text(value).replace(/^\uFEFF/, '');
 }
 
+function decodeUploadNameCandidate(value, encoding) {
+  try {
+    return decodePossiblyLatin1Text(Buffer.from(String(value || ''), encoding).toString('utf8'));
+  } catch (error) {
+    return '';
+  }
+}
+
 function normalizeUploadedOriginalName(file) {
-  return decodePossiblyLatin1Text(file?.originalname || '').trim();
+  const originalName = String(file?.originalname || '').trim();
+
+  if (!originalName) {
+    return '';
+  }
+
+  const candidates = [
+    decodePossiblyLatin1Text(originalName),
+    decodeUploadNameCandidate(originalName, 'latin1'),
+    decodeUploadNameCandidate(originalName, 'binary')
+  ].filter(Boolean);
+
+  const normalized = candidates.reduce((best, candidate) => {
+    const candidateScore = textEncodingDamageScore(candidate);
+    const bestScore = textEncodingDamageScore(best);
+
+    if (candidateScore < bestScore) {
+      return candidate;
+    }
+
+    if (candidateScore === bestScore && /[\u00c3\u00c2\u0192\u00e2\u00c5\u00f0\ufffd]/u.test(best) && candidate !== best) {
+      return candidate;
+    }
+
+    return best;
+  }, originalName);
+
+  return normalized
+    .normalize('NFC')
+    .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function getSafeUploadExtension(file) {
@@ -3882,15 +3966,19 @@ app.post('/api/test-email', authenticate, requireMasterAdmin, async (req, res) =
 
     const payload = parsed.data;
     const to = payload.to || masterAdminEmail;
-    const password = payload.password || generateTemporaryPassword();
     const loginEmail = payload.loginEmail || to;
 
-    const result = await emailService.sendWelcomeEmail({
-      to,
+    const template = emailService.renderOperationalTestEmail({
       name: payload.name || 'Administrador Master',
       loginEmail,
-      password,
       appUrl: appBaseUrl
+    });
+
+    const result = await emailService.sendEmail({
+      to,
+      subject: template.subject,
+      html: template.html,
+      text: emailService.htmlToText(template.html)
     });
 
     return res.json({
@@ -6115,6 +6203,68 @@ app.post('/complaints/:id/evidences', authenticate, upload.single('file'), async
   }
 });
 
+app.delete('/complaints/:id/evidences/:evidenceId', authenticate, async (req, res) => {
+  try {
+    const { id, evidenceId } = req.params;
+
+    if (!canDeleteEvidence(req.user)) {
+      return res.status(403).json({
+        error: 'Somente o Administrador Master, Supervisor do CRC ou Operador de SAC pode excluir evidências.'
+      });
+    }
+
+    const complaints = await getComplaintRows({ id }, req.user);
+
+    if (!complaints.length) {
+      return res.status(404).json({ error: 'Reclamação não encontrada' });
+    }
+
+    const [evidenceRows] = await pool.query(
+      `SELECT id, complaint_id, file_url, original_name, description
+         FROM complaint_evidences
+        WHERE id = ?
+          AND complaint_id = ?
+        LIMIT 1`,
+      [evidenceId, id]
+    );
+
+    const evidence = evidenceRows[0];
+
+    if (!evidence) {
+      return res.status(404).json({ error: 'Evidência não encontrada.' });
+    }
+
+    await pool.query(
+      'DELETE FROM complaint_evidences WHERE id = ? AND complaint_id = ?',
+      [evidenceId, id]
+    );
+
+    await insertComplaintLog(
+      id,
+      'evidence_deleted',
+      `Evidência excluída por ${getActorName(req.user)}: ${evidence.description || evidence.original_name || 'arquivo sem nome'}.`,
+      req.user
+    );
+
+    const evidenceFilePath = resolveStoredUploadFilePath(evidence.file_url);
+
+    if (evidenceFilePath) {
+      try {
+        await fs.promises.unlink(evidenceFilePath);
+      } catch (fileError) {
+        if (fileError.code !== 'ENOENT') {
+          console.warn('Não foi possível remover o arquivo físico da evidência:', fileError.message);
+        }
+      }
+    }
+
+    return res.json({ message: 'Evidência excluída com sucesso.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao excluir evidência.' });
+  }
+});
+
 app.patch('/complaints/:id', authenticate, async (req, res) => {
   try {
     const { id } = req.params;
@@ -6460,6 +6610,7 @@ module.exports = {
   startServer,
   __testables: {
     buildAuthenticatedUser,
+    canDeleteEvidence,
     canRenotifyComplaint,
     canReceiveComplaintNotification,
     changeUserPassword,
@@ -6468,6 +6619,7 @@ module.exports = {
     normalizeStoredUploadUrl,
     normalizeUploadedOriginalName,
     parseBodyWithSchema,
+    resolveStoredUploadFilePath,
     sendPasswordChangedNotifications,
     sendUserAccessNotifications,
     signUserToken
