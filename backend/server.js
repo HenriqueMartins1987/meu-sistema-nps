@@ -232,6 +232,7 @@ function isNoShowStatus(value) {
 
 const treatmentRoles = new Set(['coordinator', 'manager', 'supervisor_crc']);
 const evidenceRoles = new Set(['coordinator', 'manager', 'supervisor_crc', 'sac_operator', 'admin']);
+let uploadedFilesTableReady = false;
 
 function normalizePriority(priority) {
   const value = String(priority || 'media').toLowerCase();
@@ -400,10 +401,32 @@ function buildInlineContentDisposition(filename) {
   return `inline; filename="${safeFilename.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`;
 }
 
+async function ensureUploadedFilesTable() {
+  if (uploadedFilesTableReady) {
+    return;
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS uploaded_files (
+      filename VARCHAR(255) PRIMARY KEY,
+      original_name VARCHAR(255) NULL,
+      mime_type VARCHAR(120) NULL,
+      size_bytes INT UNSIGNED NULL,
+      content LONGBLOB NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+
+  uploadedFilesTableReady = true;
+}
+
 async function persistUploadedFile(file) {
   if (!file?.filename || !file?.path) {
     return null;
   }
+
+  await ensureUploadedFilesTable();
 
   const content = await fs.promises.readFile(file.path);
   const originalName = normalizeUploadedOriginalName(file) || file.originalname || file.filename;
@@ -441,16 +464,23 @@ async function deletePersistedUploadedFile(value) {
     return;
   }
 
+  await ensureUploadedFilesTable();
+
   await pool.query('DELETE FROM uploaded_files WHERE filename = ?', [filename]);
 }
 
 async function servePersistedUploadedFile(req, res, next) {
   try {
-    const filename = getStoredUploadFilename(`/uploads/${req.params[0] || ''}`);
+    const requestedPath = req.params?.[0]
+      || req.path.replace(/^\/uploads\//i, '')
+      || req.originalUrl.replace(/^\/uploads\//i, '').split(/[?#]/)[0];
+    const filename = getStoredUploadFilename(`/uploads/${requestedPath}`);
 
     if (!filename) {
       return res.status(404).send('Arquivo não encontrado.');
     }
+
+    await ensureUploadedFilesTable();
 
     const [rows] = await pool.query(
       `SELECT filename, original_name, mime_type, size_bytes, content
@@ -1330,6 +1360,8 @@ async function ensureColumn(table, column, definition) {
 }
 
 async function ensureDatabaseSchema() {
+  await ensureUploadedFilesTable();
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS clinics (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -1664,18 +1696,6 @@ async function ensureDatabaseSchema() {
       INDEX idx_whatsapp_message_logs_provider_message_id (provider_message_id),
       INDEX idx_whatsapp_message_logs_recipient_phone (recipient_phone),
       INDEX idx_whatsapp_message_logs_status (status)
-    )
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS uploaded_files (
-      filename VARCHAR(255) PRIMARY KEY,
-      original_name VARCHAR(255) NULL,
-      mime_type VARCHAR(120) NULL,
-      size_bytes INT UNSIGNED NULL,
-      content LONGBLOB NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )
   `);
 

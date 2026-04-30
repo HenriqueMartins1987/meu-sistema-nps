@@ -334,6 +334,10 @@ test('uploaded file route serves persisted database fallback when disk file is m
 
   pool.query = buildQueryStub([
     {
+      match: (sql) => sql.includes('CREATE TABLE IF NOT EXISTS uploaded_files'),
+      reply: async () => [{ affectedRows: 0 }]
+    },
+    {
       match: (sql) => sql.includes('FROM uploaded_files') && sql.includes('WHERE filename = ?'),
       reply: async (_sql, params) => {
         assert.equal(params[0], 'teste-persistido.txt');
