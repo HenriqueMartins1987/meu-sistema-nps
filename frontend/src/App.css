@@ -21,6 +21,7 @@
   --system-status-height: 0px;
   --system-status-gap: 12px;
   --system-status-top: 12px;
+  --system-status-anchor-height: 92px;
   --sticky-primary-top: 12px;
   --sticky-secondary-top: 148px;
   --session-badge-width: 184px;
@@ -3572,10 +3573,11 @@ a {
 
 .system-status-bar {
   position: fixed;
-  top: var(--sticky-primary-top);
+  top: var(--system-status-top);
   left: max(var(--page-shell-padding), calc((100vw - var(--page-shell-width)) / 2));
   right: auto;
   width: min(var(--session-badge-width), calc(100vw - (var(--page-shell-padding) * 2)));
+  height: var(--system-status-anchor-height);
   z-index: 42;
   padding: 0;
   pointer-events: none;
@@ -3583,8 +3585,10 @@ a {
 
 .system-status-shell {
   width: 100%;
+  height: 100%;
   margin: 0;
   display: flex;
+  align-items: center;
   justify-content: flex-start;
 }
 
@@ -3594,10 +3598,10 @@ a {
   margin: 0;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   justify-content: flex-start;
   gap: 6px;
-  padding: 8px 10px;
+  padding: 9px 10px;
   border: 1px solid rgba(212, 167, 100, 0.22);
   border-radius: 8px;
   background: rgba(18, 20, 25, 0.97);
@@ -3613,6 +3617,7 @@ a {
   min-width: 0;
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   padding: 6px 0 0;
   border-top: 1px solid rgba(255, 255, 255, 0.12);
@@ -3625,6 +3630,7 @@ a {
 
 .logged-user-badge {
   display: grid;
+  justify-items: center;
   gap: 3px;
   min-width: 0;
   width: 100%;
@@ -3636,6 +3642,7 @@ a {
   background: transparent;
   box-shadow: none;
   backdrop-filter: none;
+  text-align: center;
 }
 
 .logged-user-badge span {
@@ -3702,6 +3709,7 @@ a {
 
 .session-countdown-copy {
   display: grid;
+  justify-items: center;
   gap: 2px;
 }
 
@@ -4424,6 +4432,7 @@ a {
     --page-shell-padding: 20px;
     --system-status-height: 0px;
     --system-status-top: 10px;
+    --system-status-anchor-height: 74px;
     --sticky-primary-top: 92px;
     --sticky-secondary-top: 178px;
     --session-badge-width: 174px;
@@ -4684,6 +4693,7 @@ a {
     --page-shell-padding: 14px;
     --system-status-height: 0px;
     --system-status-top: 8px;
+    --system-status-anchor-height: 68px;
     --sticky-primary-top: 84px;
     --sticky-secondary-top: 164px;
     --session-badge-width: 156px;
