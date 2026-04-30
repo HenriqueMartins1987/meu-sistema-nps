@@ -18,7 +18,11 @@
   --shadow-lg: 0 28px 70px rgba(12, 12, 16, 0.22);
   --page-shell-width: 1320px;
   --page-shell-padding: 24px;
-  --sticky-primary-top: 12px;
+  --session-timer-height: 44px;
+  --session-timer-top: 10px;
+  --session-timer-clearance: 64px;
+  --session-timer-width: 178px;
+  --sticky-primary-top: var(--session-timer-clearance);
   --sticky-secondary-top: 148px;
 }
 
@@ -511,7 +515,7 @@ a {
   background-position: top center, center, center 180px;
   background-size: auto, cover, 680px auto;
   background-repeat: no-repeat;
-  padding: 12px var(--page-shell-padding) 26px;
+  padding: var(--session-timer-clearance) var(--page-shell-padding) 26px;
   position: relative;
   isolation: isolate;
 }
@@ -3566,6 +3570,89 @@ a {
   overflow: auto;
 }
 
+.session-timer-bar {
+  position: fixed;
+  top: var(--session-timer-top);
+  left: max(var(--page-shell-padding), calc((100vw - var(--page-shell-width)) / 2));
+  width: min(var(--session-timer-width), calc(100vw - (var(--page-shell-padding) * 2)));
+  z-index: 44;
+  pointer-events: none;
+}
+
+.session-countdown {
+  width: 100%;
+  min-height: var(--session-timer-height);
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  padding: 9px 12px;
+  color: #fff;
+  background: rgba(18, 20, 25, 0.97);
+  border: 1px solid rgba(212, 167, 100, 0.26);
+  border-radius: 8px;
+  box-shadow: 0 14px 30px rgba(10, 10, 14, 0.2);
+  backdrop-filter: blur(14px);
+  pointer-events: auto;
+}
+
+.session-countdown.warning {
+  color: #ffd4cf;
+  border-color: rgba(196, 69, 54, 0.38);
+}
+
+.session-countdown-clock {
+  position: relative;
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+}
+
+.session-countdown-clock::before,
+.session-countdown-clock::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: 50%;
+  width: 2px;
+  background: currentColor;
+  border-radius: 999px;
+  transform-origin: bottom center;
+}
+
+.session-countdown-clock::before {
+  height: 5px;
+  transform: translateX(-50%) rotate(0deg);
+}
+
+.session-countdown-clock::after {
+  height: 7px;
+  transform: translateX(-50%) rotate(54deg);
+}
+
+.session-countdown-copy {
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.session-countdown-copy strong {
+  font-size: 12px;
+  line-height: 1;
+}
+
+.session-countdown-copy span {
+  color: rgba(255, 255, 255, 0.78);
+  font-size: 8px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .public-page {
   min-height: 100vh;
   background:
@@ -4271,8 +4358,12 @@ a {
 @media (max-width: 1020px) {
   :root {
     --page-shell-padding: 18px;
-    --sticky-primary-top: 12px;
-    --sticky-secondary-top: 128px;
+    --session-timer-height: 44px;
+    --session-timer-top: 8px;
+    --session-timer-clearance: 60px;
+    --session-timer-width: 176px;
+    --sticky-primary-top: var(--session-timer-clearance);
+    --sticky-secondary-top: 140px;
   }
 
   .app-page,
@@ -4316,7 +4407,7 @@ a {
   }
 
   .app-page {
-    padding: 12px var(--page-shell-padding) 20px;
+    padding: var(--session-timer-clearance) var(--page-shell-padding) 20px;
   }
 
   .page-heading,
@@ -4528,8 +4619,12 @@ a {
 @media (max-width: 620px) {
   :root {
     --page-shell-padding: 14px;
-    --sticky-primary-top: 10px;
-    --sticky-secondary-top: 112px;
+    --session-timer-height: 42px;
+    --session-timer-top: 8px;
+    --session-timer-clearance: 58px;
+    --session-timer-width: 184px;
+    --sticky-primary-top: var(--session-timer-clearance);
+    --sticky-secondary-top: 126px;
   }
 
   .login-brand h1,
@@ -4629,7 +4724,7 @@ a {
   }
 
   .app-page {
-    padding-top: 12px;
+    padding-top: var(--session-timer-clearance);
   }
 }
 
@@ -4797,69 +4892,25 @@ a {
   min-height: 96px;
   padding: 18px 22px;
   gap: 24px;
-  flex-wrap: wrap;
 }
 
 .home-brand-zone {
   display: flex;
   align-items: center;
-  gap: 14px;
-  flex: 1 1 460px;
+  gap: 16px;
   min-width: 0;
   flex-wrap: wrap;
 }
 
-.home-brand-zone > .home-menu-top {
-  flex: 0 0 clamp(118px, 12vw, 138px);
-  min-height: 64px;
-  justify-content: center;
+.home-command-bar .brand-mark {
+  display: flex;
+  align-items: center;
 }
 
-.home-user-card {
-  display: grid;
-  align-content: center;
-  gap: 3px;
-  flex: 1 1 280px;
-  width: clamp(260px, 30vw, 380px);
-  min-width: 240px;
-  max-width: 100%;
-  min-height: 64px;
+.home-command-bar .brand-mark img {
+  width: clamp(118px, 12vw, 138px);
+  min-width: 118px;
   padding: 10px 14px;
-  color: #fff;
-  background: linear-gradient(180deg, rgba(34, 37, 42, 0.98), rgba(14, 16, 19, 0.98));
-  border: 1px solid rgba(199, 154, 90, 0.34);
-  border-radius: 8px;
-  box-shadow: 0 12px 24px rgba(10, 10, 14, 0.18);
-}
-
-.home-user-card span {
-  color: rgba(212, 167, 100, 0.94);
-  font-size: 8px;
-  font-weight: 900;
-  line-height: 1;
-  letter-spacing: 0;
-  text-transform: uppercase;
-}
-
-.home-user-card strong,
-.home-user-card small {
-  display: block;
-  max-width: 100%;
-  overflow-wrap: anywhere;
-  white-space: normal;
-}
-
-.home-user-card strong {
-  color: #fff;
-  font-size: 12px;
-  font-weight: 900;
-  line-height: 1.15;
-}
-
-.home-user-card small {
-  color: rgba(255, 255, 255, 0.72);
-  font-size: 9px;
-  line-height: 1.2;
 }
 
 .home-command-bar .home-menu-top,
@@ -5033,11 +5084,6 @@ a {
     padding: 18px;
   }
 
-  .home-brand-zone {
-    width: 100%;
-    flex-basis: 100%;
-  }
-
   .home-command-actions {
     width: 100%;
     justify-content: flex-start;
@@ -5087,25 +5133,9 @@ a {
 }
 
 @media (max-width: 620px) {
-  .home-brand-zone > .home-menu-top {
-    flex-basis: 108px;
-    min-height: 58px;
-  }
-
-  .home-user-card {
-    flex-basis: min(100%, 260px);
-    width: auto;
-    min-width: 0;
-    min-height: 58px;
-    padding: 8px 10px;
-  }
-
-  .home-user-card strong {
-    font-size: 11px;
-  }
-
-  .home-user-card small {
-    font-size: 8px;
+  .home-command-bar .brand-mark img {
+    width: 108px;
+    min-width: 108px;
   }
 
   .home-copy h1 {

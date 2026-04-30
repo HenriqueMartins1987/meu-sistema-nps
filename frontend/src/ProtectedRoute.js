@@ -5,13 +5,23 @@ import {
   clearSession,
   getRemainingSessionMs,
   hasActiveSession,
-  touchSessionActivity
+  touchSessionActivity,
+  SESSION_IDLE_LIMIT_MS
 } from './session';
+
+function formatRemainingTime(remainingMs) {
+  const totalSeconds = Math.max(0, Math.ceil(remainingMs / 1000));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
 
 export function ProtectedRoute() {
   const location = useLocation();
   const [sessionActive, setSessionActive] = useState(() => hasActiveSession());
   const [timedOut, setTimedOut] = useState(false);
+  const [remainingMs, setRemainingMs] = useState(() => getRemainingSessionMs());
 
   useEffect(() => {
     if (!sessionActive) {
@@ -20,10 +30,12 @@ export function ProtectedRoute() {
 
     const markActivity = () => {
       touchSessionActivity();
+      setRemainingMs(SESSION_IDLE_LIMIT_MS);
     };
 
     const validateSession = () => {
       const nextRemainingMs = getRemainingSessionMs();
+      setRemainingMs(nextRemainingMs);
       const stillActive = hasActiveSession();
 
       if (!stillActive || nextRemainingMs <= 0) {
@@ -36,6 +48,7 @@ export function ProtectedRoute() {
     const handleStorage = () => {
       const stillActive = hasActiveSession();
       setSessionActive(stillActive);
+      setRemainingMs(getRemainingSessionMs());
     };
 
     const activityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart', 'click'];
@@ -46,6 +59,7 @@ export function ProtectedRoute() {
     window.addEventListener('storage', handleStorage);
 
     touchSessionActivity();
+    setRemainingMs(SESSION_IDLE_LIMIT_MS);
     const intervalId = window.setInterval(validateSession, 1000);
 
     return () => {
@@ -60,6 +74,7 @@ export function ProtectedRoute() {
   useEffect(() => {
     const stillActive = hasActiveSession();
     setSessionActive(stillActive);
+    setRemainingMs(getRemainingSessionMs());
 
     if (stillActive) {
       setTimedOut(false);
@@ -79,7 +94,24 @@ export function ProtectedRoute() {
     );
   }
 
-  return <Outlet />;
+  return (
+    <>
+      <div className="session-timer-bar" aria-label="Tempo da sessão">
+        <aside
+          className={`session-countdown ${remainingMs <= 5 * 60 * 1000 ? 'warning' : ''}`}
+          aria-live="polite"
+          aria-label={`Tempo restante da sessão: ${formatRemainingTime(remainingMs)}`}
+        >
+          <span className="session-countdown-clock" aria-hidden="true" />
+          <div className="session-countdown-copy">
+            <strong>{formatRemainingTime(remainingMs)}</strong>
+            <span>logout automático</span>
+          </div>
+        </aside>
+      </div>
+      <Outlet />
+    </>
+  );
 }
 
 export function PermissionRoute({ permission = '', masterOnly = false }) {
