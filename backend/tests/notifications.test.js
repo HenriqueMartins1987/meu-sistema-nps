@@ -60,11 +60,11 @@ test('getEmailFrom uses configured sender and falls back to default', () => {
   delete process.env.SMTP_USER;
   assert.equal(getEmailFrom(), DEFAULT_EMAIL_FROM);
 
-  process.env.EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>';
+  process.env.EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.net.br>';
   assert.equal(getEmailFrom(), DEFAULT_EMAIL_FROM);
 
-  process.env.EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.net.br>';
-  assert.equal(getEmailFrom(), 'GRC Consultoria <contato@grcconsultoria.net.br>');
+  process.env.EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>';
+  assert.equal(getEmailFrom(), 'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>');
 
   process.env.EMAIL_FROM = previousFrom;
   process.env.SMTP_FROM = previousSmtpFrom;
@@ -75,13 +75,13 @@ test('getResendFromCandidates keeps the professional sender and configured fallb
   const previousFrom = process.env.EMAIL_FROM;
   const previousFallbackFrom = process.env.RESEND_FALLBACK_FROM;
 
-  process.env.EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>';
+  process.env.EMAIL_FROM = 'GRC Consultoria <contato@grcconsultoria.net.br>';
   process.env.RESEND_FALLBACK_FROM = 'GRC Consultoria <fallback@example.com>';
 
   assert.deepEqual(getResendFromCandidates(), [
     DEFAULT_EMAIL_FROM,
     'GRC Consultoria <fallback@example.com>',
-    'GRC Consultoria <contato@grcconsultoria.siteempresarial.com>'
+    'GRC Consultoria <contato@grcconsultoria.net.br>'
   ]);
 
   if (previousFrom === undefined) {
