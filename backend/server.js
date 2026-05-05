@@ -21,6 +21,11 @@ const { z } = require('zod');
 const { clinicSeed, legacyDefaultClinicNames } = require('./clinicSeed');
 const emailService = require('./services/emailService');
 const {
+  sendComplaintNotification: sendTwilioComplaintNotification,
+  sendNpsNotification: sendTwilioNpsNotification,
+  normalizePhoneNumber: normalizeTwilioPhoneNumber
+} = require('./services/twilioWhatsAppService');
+const {
   buildAppointmentReminderMessage,
   buildNoShowAlertMessage,
   buildPasswordChangeUrl,
@@ -61,6 +66,8 @@ const defaultAdminEmail = masterAdminEmail;
 const defaultAdminPassword = process.env.MASTER_ADMIN_PASSWORD || process.env.DEFAULT_ADMIN_PASSWORD || 'Zyck1987#';
 const whatsappWebhookUrl = process.env.WHATSAPP_WEBHOOK_URL || '';
 const whatsappGroupId = process.env.WHATSAPP_GROUP_ID || '';
+// Numeros fixos que recebem apenas alertas de RECLAMACAO. Altere aqui se a regra de escalonamento mudar.
+const fixedComplaintWhatsAppRecipients = ['5562996807670', '556299669966'];
 const requirePasswordChangeOnFirstLogin = String(process.env.REQUIRE_PASSWORD_CHANGE_ON_FIRST_LOGIN || 'true').toLowerCase() !== 'false';
 const appointmentReminderLeadHours = Math.max(1, Number(process.env.APPOINTMENT_REMINDER_LEAD_HOURS || 24));
 const appointmentReminderIntervalMinutes = Math.max(5, Number(process.env.APPOINTMENT_REMINDER_INTERVAL_MINUTES || 30));
@@ -1572,6 +1579,8 @@ async function ensureDatabaseSchema() {
 
   await ensureColumn('clinics', 'coordinator_name', 'VARCHAR(160) NULL');
   await ensureColumn('clinics', 'catalog_code', 'VARCHAR(220) NULL');
+  await ensureColumn('clinics', 'responsible_whatsapp', 'VARCHAR(40) NULL');
+  await ensureColumn('clinics', 'responsible_email', 'VARCHAR(180) NULL');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS user_clinics (
@@ -1598,6 +1607,28 @@ async function ensureDatabaseSchema() {
       read_at TIMESTAMP NULL,
       INDEX idx_notification_events_user_id (user_id),
       INDEX idx_notification_events_status (status)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS notification_logs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      event_type VARCHAR(80) NOT NULL,
+      protocol VARCHAR(80) NULL,
+      channel VARCHAR(20) NOT NULL,
+      recipient_phone VARCHAR(40) NULL,
+      recipient_email VARCHAR(220) NULL,
+      recipient_user_id INT NULL,
+      recipient_role VARCHAR(80) NULL,
+      status VARCHAR(40) NOT NULL,
+      error_message TEXT NULL,
+      twilio_sid VARCHAR(255) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_notification_logs_event_type (event_type),
+      INDEX idx_notification_logs_protocol (protocol),
+      INDEX idx_notification_logs_channel (channel),
+      INDEX idx_notification_logs_status (status),
+      INDEX idx_notification_logs_created_at (created_at)
     )
   `);
 
@@ -2600,6 +2631,511 @@ async function sendEmail(to, subject, html, attachments = []) {
   }
 }
 
+function escapeNotificationHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function normalizeNotificationEmail(email) {
+  return String(email || '').trim().toLowerCase();
+}
+
+function isValidNotificationEmail(email) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizeNotificationEmail(email));
+}
+
+function getRecipientRoleLabel(role) {
+  const normalizedRole = String(role || '').trim();
+
+  if (normalizedRole === 'clinic_responsible') return 'Responsável da unidade';
+  if (normalizedRole === 'fixed_complaint_number') return 'Número fixo de reclamação';
+  if (normalizedRole === 'master_admin') return 'Administrador Master';
+
+  return accessProfiles[normalizedRole] || normalizedRole || 'Destinatário';
+}
+
+async function insertNotificationLog({
+  eventType,
+  protocol,
+  channel,
+  recipientPhone = null,
+  recipientEmail = null,
+  recipientUserId = null,
+  recipientRole = null,
+  status,
+  errorMessage = null,
+  twilioSid = null
+}) {
+  try {
+    await pool.query(
+      `INSERT INTO notification_logs
+       (event_type, protocol, channel, recipient_phone, recipient_email, recipient_user_id, recipient_role, status, error_message, twilio_sid)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        eventType,
+        protocol || null,
+        channel,
+        recipientPhone || null,
+        recipientEmail || null,
+        recipientUserId || null,
+        recipientRole || null,
+        status,
+        errorMessage ? String(errorMessage).slice(0, 2000) : null,
+        twilioSid || null
+      ]
+    );
+  } catch (error) {
+    console.warn('Nao foi possivel gravar notification_logs:', error.message);
+  }
+}
+
+function addNotificationRecipient(recipientMap, recipient = {}) {
+  const userId = recipient.userId || recipient.id || null;
+  const email = normalizeNotificationEmail(recipient.email || recipient.recipient_email);
+  const phone = String(recipient.whatsapp || recipient.phone || recipient.recipient_phone || '').trim();
+  const normalizedPhone = normalizeTwilioPhoneNumber(phone);
+  const role = recipient.role || recipient.recipientRole || 'recipient';
+  const key = userId
+    ? `user:${userId}`
+    : email
+      ? `email:${email}`
+      : normalizedPhone
+        ? `phone:${normalizedPhone}`
+        : `${role}:${recipientMap.size + 1}`;
+  const current = recipientMap.get(key) || {};
+
+  recipientMap.set(key, {
+    userId: current.userId || userId || null,
+    name: current.name || recipient.name || recipient.label || getRecipientRoleLabel(role),
+    role: current.role || role,
+    email: current.email || email || '',
+    phone: current.phone || phone || ''
+  });
+}
+
+async function getAdminAndSupervisorNotificationRecipients() {
+  const recipientMap = new Map();
+  const [users] = await pool.query(
+    `SELECT DISTINCT id, name, email, whatsapp, phone, role
+       FROM users
+      WHERE active = 1
+        AND deleted_at IS NULL
+        AND (
+          role IN ('admin', 'master_admin', 'supervisor_crc')
+          OR LOWER(email) IN (?, ?)
+        )`,
+    [masterAdminEmail, defaultAdminEmail]
+  );
+
+  users.forEach((user) => addNotificationRecipient(recipientMap, {
+    userId: user.id,
+    name: user.name,
+    role: user.role,
+    email: user.email,
+    whatsapp: user.whatsapp || user.phone
+  }));
+
+  addNotificationRecipient(recipientMap, {
+    name: 'Administrador Master',
+    role: 'master_admin',
+    email: masterAdminEmail,
+    whatsapp: masterAdminWhatsapp
+  });
+
+  return Array.from(recipientMap.values());
+}
+
+async function getComplaintNotificationContext(complaintId) {
+  const [rows] = await pool.query(
+    `SELECT
+       c.id,
+       c.protocol,
+       c.clinic_id,
+       c.assigned_coordinator_user_id,
+       c.assigned_coordinator_name,
+       c.patient_name,
+       c.complaint_type,
+       c.priority,
+       c.created_origin,
+       cl.name AS clinic_name,
+       cl.city,
+       cl.state,
+       cl.responsible_whatsapp,
+       cl.responsible_email,
+       au.id AS assigned_user_id,
+       au.name AS assigned_user_name,
+       au.email AS assigned_user_email,
+       au.whatsapp AS assigned_user_whatsapp,
+       au.phone AS assigned_user_phone,
+       au.role AS assigned_user_role
+     FROM complaints c
+     LEFT JOIN clinics cl ON cl.id = c.clinic_id
+     LEFT JOIN users au ON au.id = c.assigned_coordinator_user_id
+     WHERE c.id = ?
+     LIMIT 1`,
+    [complaintId]
+  );
+
+  return rows[0] || null;
+}
+
+async function getNpsNotificationContext(npsId) {
+  const [rows] = await pool.query(
+    `SELECT
+       n.id,
+       n.nps_protocol,
+       n.clinic_id,
+       n.patient_name,
+       n.score,
+       n.nps_profile,
+       n.feedback_type,
+       cl.name AS clinic_name,
+       cl.city,
+       cl.state
+     FROM nps_responses n
+     LEFT JOIN clinics cl ON cl.id = n.clinic_id
+     WHERE n.id = ?
+     LIMIT 1`,
+    [npsId]
+  );
+
+  return rows[0] || null;
+}
+
+async function buildComplaintNotificationRecipients(complaint) {
+  const recipientMap = new Map();
+  const adminAndSupervisorRecipients = await getAdminAndSupervisorNotificationRecipients();
+
+  // Responsavel da unidade: altere os campos responsible_whatsapp/responsible_email no cadastro da unidade.
+  addNotificationRecipient(recipientMap, {
+    name: 'Responsável da unidade',
+    role: 'clinic_responsible',
+    email: complaint?.responsible_email,
+    whatsapp: complaint?.responsible_whatsapp
+  });
+
+  // Fallback para sistemas antigos: usa o coordenador atribuido enquanto a unidade nao tiver responsavel direto.
+  addNotificationRecipient(recipientMap, {
+    userId: complaint?.assigned_user_id,
+    name: complaint?.assigned_user_name || complaint?.assigned_coordinator_name,
+    role: complaint?.assigned_user_role || 'clinic_responsible',
+    email: complaint?.assigned_user_email,
+    whatsapp: complaint?.assigned_user_whatsapp || complaint?.assigned_user_phone
+  });
+
+  // Numeros fixos: altere fixedComplaintWhatsAppRecipients no topo deste arquivo se a regra mudar.
+  fixedComplaintWhatsAppRecipients.forEach((phone) => {
+    addNotificationRecipient(recipientMap, {
+      name: `Fixo ${phone}`,
+      role: 'fixed_complaint_number',
+      whatsapp: phone
+    });
+  });
+
+  adminAndSupervisorRecipients.forEach((recipient) => addNotificationRecipient(recipientMap, recipient));
+
+  return Array.from(recipientMap.values());
+}
+
+function buildComplaintNotificationEmail(complaint, protocol) {
+  const clinicLabel = complaint?.clinic_name
+    ? `${complaint.clinic_name}${complaint.city ? ` - ${complaint.city}/${complaint.state || 'UF'}` : ''}`
+    : 'Unidade não informada';
+  const safeProtocol = protocol || complaint?.protocol || complaint?.id || 'sem protocolo';
+  const complaintUrl = `${frontendUrl}/gestao/${complaint?.id}`;
+
+  return {
+    subject: `Nova demanda atribuída - protocolo ${safeProtocol}`,
+    html: emailService.renderBrandedEmail({
+      eyebrow: 'Reclamação',
+      title: `Nova demanda ${safeProtocol}`,
+      intro: 'Olá,',
+      bodyHtml: `
+        <p style="margin:0 0 18px;color:#2f2825;">
+          Você possui uma nova demanda atribuída a você, sob número de protocolo <strong>${escapeNotificationHtml(safeProtocol)}</strong>.
+        </p>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:0 0 8px;">
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Paciente</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(complaint?.patient_name || 'Não informado')}</td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Unidade</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(clinicLabel)}</td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Classificação</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(complaint?.complaint_type || 'Não informado')}</td></tr>
+          <tr><td style="padding:10px 0;color:#6c5a4e;">Prioridade</td><td style="padding:10px 0;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(complaint?.priority || 'Não informada')}</td></tr>
+        </table>
+      `,
+      actionLabel: 'Abrir protocolo',
+      actionUrl: complaintUrl,
+      footerText: 'Este aviso foi enviado aos responsáveis definidos para Reclamação. Falhas de e-mail e WhatsApp são registradas sem bloquear o protocolo.'
+    })
+  };
+}
+
+function buildNpsNotificationEmail(nps, protocol) {
+  const clinicLabel = nps?.clinic_name
+    ? `${nps.clinic_name}${nps.city ? ` - ${nps.city}/${nps.state || 'UF'}` : ''}`
+    : 'Unidade não informada';
+  const safeProtocol = protocol || nps?.nps_protocol || nps?.id || 'sem protocolo';
+
+  return {
+    subject: `Novo NPS registrado - protocolo ${safeProtocol}`,
+    html: emailService.renderBrandedEmail({
+      eyebrow: 'NPS',
+      title: `Novo NPS ${safeProtocol}`,
+      intro: 'Olá,',
+      bodyHtml: `
+        <p style="margin:0 0 18px;color:#2f2825;">
+          Uma nova pesquisa NPS foi registrada no sistema e já está disponível para acompanhamento.
+        </p>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:0 0 8px;">
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Paciente</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(nps?.patient_name || 'Não informado')}</td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Unidade</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(clinicLabel)}</td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Nota</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(nps?.score || 'Não informada')}</td></tr>
+          <tr><td style="padding:10px 0;color:#6c5a4e;">Perfil</td><td style="padding:10px 0;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(nps?.nps_profile || nps?.feedback_type || 'Não informado')}</td></tr>
+        </table>
+      `,
+      actionLabel: 'Abrir NPS',
+      actionUrl: `${frontendUrl}/gestao-nps`,
+      footerText: 'Este aviso de NPS é enviado somente para administradores e Supervisor do CRC.'
+    })
+  };
+}
+
+async function sendLoggedTwilioNotification({ eventType, protocol, recipient, sender }) {
+  const originalPhone = recipient?.phone || '';
+  const normalizedPhone = normalizeTwilioPhoneNumber(originalPhone);
+
+  if (!originalPhone) {
+    await insertNotificationLog({
+      eventType,
+      protocol,
+      channel: 'WHATSAPP',
+      recipientUserId: recipient?.userId,
+      recipientRole: recipient?.role,
+      status: 'skipped',
+      errorMessage: 'Destinatário sem WhatsApp cadastrado.'
+    });
+
+    return { channel: 'WHATSAPP', status: 'skipped', reason: 'missing_phone' };
+  }
+
+  if (!normalizedPhone) {
+    await insertNotificationLog({
+      eventType,
+      protocol,
+      channel: 'WHATSAPP',
+      recipientPhone: originalPhone,
+      recipientUserId: recipient?.userId,
+      recipientRole: recipient?.role,
+      status: 'failed',
+      errorMessage: 'Telefone invalido para WhatsApp Twilio.'
+    });
+
+    return { channel: 'WHATSAPP', status: 'failed' };
+  }
+
+  const result = await sender({ to: normalizedPhone, protocol });
+  const status = result?.success ? 'sent' : result?.skipped ? 'skipped' : 'failed';
+
+  await insertNotificationLog({
+    eventType,
+    protocol,
+    channel: 'WHATSAPP',
+    recipientPhone: normalizedPhone,
+    recipientUserId: recipient?.userId,
+    recipientRole: recipient?.role,
+    status,
+    errorMessage: result?.success ? null : result?.error || 'Falha no envio pela Twilio.',
+    twilioSid: result?.twilioSid || result?.providerMessageId || null
+  });
+
+  return {
+    channel: 'WHATSAPP',
+    status,
+    success: Boolean(result?.success),
+    error: result?.error || null
+  };
+}
+
+async function sendLoggedNotificationEmail({ eventType, protocol, recipient, template }) {
+  const email = normalizeNotificationEmail(recipient?.email);
+
+  if (!email) {
+    await insertNotificationLog({
+      eventType,
+      protocol,
+      channel: 'EMAIL',
+      recipientPhone: recipient?.phone || null,
+      recipientUserId: recipient?.userId,
+      recipientRole: recipient?.role,
+      status: 'skipped',
+      errorMessage: 'Destinatário sem e-mail cadastrado.'
+    });
+
+    return { channel: 'EMAIL', status: 'skipped', reason: 'missing_email' };
+  }
+
+  if (!isValidNotificationEmail(email)) {
+    await insertNotificationLog({
+      eventType,
+      protocol,
+      channel: 'EMAIL',
+      recipientEmail: email,
+      recipientUserId: recipient?.userId,
+      recipientRole: recipient?.role,
+      status: 'failed',
+      errorMessage: 'E-mail invalido.'
+    });
+
+    return { channel: 'EMAIL', status: 'failed' };
+  }
+
+  try {
+    const result = await sendEmail(email, template.subject, template.html);
+    const status = result?.skipped ? 'skipped' : 'sent';
+
+    await insertNotificationLog({
+      eventType,
+      protocol,
+      channel: 'EMAIL',
+      recipientEmail: email,
+      recipientUserId: recipient?.userId,
+      recipientRole: recipient?.role,
+      status,
+      errorMessage: result?.skipped ? 'Provider de e-mail em modo log/skipped.' : null
+    });
+
+    return { channel: 'EMAIL', status, success: status === 'sent' };
+  } catch (error) {
+    await insertNotificationLog({
+      eventType,
+      protocol,
+      channel: 'EMAIL',
+      recipientEmail: email,
+      recipientUserId: recipient?.userId,
+      recipientRole: recipient?.role,
+      status: 'failed',
+      errorMessage: error.message
+    });
+
+    return { channel: 'EMAIL', status: 'failed', error: error.message };
+  }
+}
+
+function summarizeNotificationStatus(results = []) {
+  const sentCount = results.filter((result) => result.status === 'sent').length;
+  const problemCount = results.filter((result) => (
+    result.status === 'failed'
+    || (result.status === 'skipped' && !['missing_phone', 'missing_email'].includes(result.reason))
+  )).length;
+
+  if (sentCount && problemCount) return 'partial_error';
+  if (sentCount) return 'sent';
+  return 'failed';
+}
+
+async function deliverProtocolNotifications({ eventType, protocol, recipients, emailTemplate, whatsappSender }) {
+  const phoneTargets = new Set();
+  const emailTargets = new Set();
+  const tasks = [];
+
+  recipients.forEach((recipient) => {
+    const phoneKey = normalizeTwilioPhoneNumber(recipient.phone);
+    const emailKey = normalizeNotificationEmail(recipient.email);
+
+    if (!phoneKey || !phoneTargets.has(phoneKey)) {
+      if (phoneKey) phoneTargets.add(phoneKey);
+      tasks.push(sendLoggedTwilioNotification({ eventType, protocol, recipient, sender: whatsappSender }));
+    }
+
+    if (!emailKey || !emailTargets.has(emailKey)) {
+      if (emailKey) emailTargets.add(emailKey);
+      tasks.push(sendLoggedNotificationEmail({ eventType, protocol, recipient, template: emailTemplate }));
+    }
+  });
+
+  const results = await Promise.all(tasks.map((task) => task.catch((error) => ({
+    status: 'failed',
+    error: error.message
+  }))));
+
+  return {
+    notificationStatus: summarizeNotificationStatus(results),
+    results
+  };
+}
+
+async function dispatchComplaintCreatedNotifications(complaintId, protocol) {
+  try {
+    const complaint = await getComplaintNotificationContext(complaintId);
+
+    if (!complaint) {
+      return { notificationStatus: 'failed', results: [] };
+    }
+
+    const recipients = await buildComplaintNotificationRecipients(complaint);
+
+    return deliverProtocolNotifications({
+      eventType: 'COMPLAINT_CREATED',
+      protocol: protocol || complaint.protocol,
+      recipients,
+      emailTemplate: buildComplaintNotificationEmail(complaint, protocol),
+      whatsappSender: sendTwilioComplaintNotification
+    });
+  } catch (error) {
+    console.warn('Nao foi possivel disparar notificacoes Twilio/e-mail da reclamacao:', error.message);
+    return { notificationStatus: 'failed', results: [{ status: 'failed', error: error.message }] };
+  }
+}
+
+async function dispatchNpsCreatedNotifications(npsId, protocol) {
+  try {
+    const nps = await getNpsNotificationContext(npsId);
+    const recipients = await getAdminAndSupervisorNotificationRecipients();
+
+    return deliverProtocolNotifications({
+      eventType: 'NPS_CREATED',
+      protocol: protocol || nps?.nps_protocol,
+      recipients,
+      emailTemplate: buildNpsNotificationEmail(nps, protocol),
+      whatsappSender: sendTwilioNpsNotification
+    });
+  } catch (error) {
+    console.warn('Nao foi possivel disparar notificacoes Twilio/e-mail do NPS:', error.message);
+    return { notificationStatus: 'failed', results: [{ status: 'failed', error: error.message }] };
+  }
+}
+
+async function createNpsCreatedInAppNotifications({ npsId, protocol, patientName, clinicId, npsProfile }) {
+  const title = `Nova pesquisa NPS ${protocol}`;
+  const message = [
+    'Nova pesquisa de satisfação registrada.',
+    `Paciente: ${patientName || 'Não informado'}`,
+    `Unidade: ${clinicId ? `Clínica #${clinicId}` : 'Não informada'}`,
+    `Perfil: ${npsProfile || 'Não informado'}`
+  ].join('\n');
+  const link = `${frontendUrl}/gestao-nps`;
+  const payload = { npsId, protocol, profile: npsProfile };
+  let notifiedUserIds = [];
+
+  try {
+    const adminIds = await createNotificationForAdmins('nps_created', title, message, link, payload);
+    notifiedUserIds = [...notifiedUserIds, ...adminIds];
+  } catch (error) {
+    console.warn('Nao foi possivel registrar notificacao administrativa do NPS:', error.message);
+  }
+
+  try {
+    const supervisorIds = await createNotificationForRoles(['supervisor_crc'], 'nps_created', title, message, link, payload);
+    notifiedUserIds = [...notifiedUserIds, ...supervisorIds];
+  } catch (error) {
+    console.warn('Nao foi possivel registrar notificacao do Supervisor CRC para NPS:', error.message);
+  }
+
+  return Array.from(new Set(notifiedUserIds));
+}
+
 function parseSqlCount(row, key) {
   return Number(row?.[key] || 0);
 }
@@ -2757,8 +3293,10 @@ async function getOverviewMetrics() {
       (SELECT COUNT(*) FROM patient_interactions) AS patient_interactions_total,
       (SELECT COUNT(*) FROM patient_interactions WHERE DATE(created_at) = CURDATE()) AS patient_interactions_today,
       (SELECT COUNT(*) FROM notification_events WHERE status = 'unread') AS notifications_unread,
-      (SELECT COUNT(*) FROM whatsapp_message_logs WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS whatsapp_24h,
-      (SELECT COUNT(*) FROM whatsapp_message_logs WHERE status = 'failed' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS whatsapp_failed_24h,
+      ((SELECT COUNT(*) FROM whatsapp_message_logs WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR))
+        + (SELECT COUNT(*) FROM notification_logs WHERE channel = 'WHATSAPP' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR))) AS whatsapp_24h,
+      ((SELECT COUNT(*) FROM whatsapp_message_logs WHERE status = 'failed' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR))
+        + (SELECT COUNT(*) FROM notification_logs WHERE channel = 'WHATSAPP' AND status = 'failed' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR))) AS whatsapp_failed_24h,
       (SELECT COUNT(*) FROM email_delivery_logs WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS emails_24h,
       (SELECT COUNT(*) FROM email_delivery_logs WHERE status = 'sent' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS emails_sent_24h,
       (SELECT COUNT(*) FROM email_delivery_logs WHERE status = 'failed' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS emails_failed_24h,
@@ -2869,6 +3407,10 @@ async function getActivityMonitoring() {
       SELECT 'WhatsApp' AS source, status AS action, COALESCE(error_message, event_key, 'Mensagem registrada') AS summary, NULL AS actor_name, NULL AS actor_role, recipient_phone AS context, NULL AS status_code, NULL AS duration_ms, created_at
       FROM whatsapp_message_logs
       UNION ALL
+      SELECT 'WhatsApp' AS source, status AS action, COALESCE(error_message, event_type, 'Template Twilio registrado') AS summary, NULL AS actor_name, recipient_role AS actor_role, recipient_phone AS context, NULL AS status_code, NULL AS duration_ms, created_at
+      FROM notification_logs
+      WHERE channel = 'WHATSAPP'
+      UNION ALL
       SELECT 'E-mail' AS source, status AS action, subject AS summary, NULL AS actor_name, NULL AS actor_role, recipient_email AS context, NULL AS status_code, duration_ms, created_at
       FROM email_delivery_logs
     ) timeline
@@ -2883,6 +3425,7 @@ async function getActivityMonitoring() {
       UNION ALL SELECT 'NPS' AS source, created_at FROM nps_treatment_logs
       UNION ALL SELECT 'Relacionamento' AS source, created_at FROM patient_interaction_logs
       UNION ALL SELECT 'WhatsApp' AS source, created_at FROM whatsapp_message_logs
+      UNION ALL SELECT 'WhatsApp' AS source, created_at FROM notification_logs WHERE channel = 'WHATSAPP'
       UNION ALL SELECT 'E-mail' AS source, created_at FROM email_delivery_logs
     ) movements
     WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
@@ -4030,6 +4573,8 @@ async function getClinicsForUser(user) {
          state,
          region,
          coordinator_name,
+         responsible_whatsapp,
+         responsible_email,
          active,
          created_at,
          updated_at
@@ -4057,6 +4602,8 @@ async function getClinicsForUser(user) {
        state,
        region,
        coordinator_name,
+       responsible_whatsapp,
+       responsible_email,
        active,
        created_at,
        updated_at
@@ -4330,33 +4877,12 @@ async function notifyComplaintCreated(complaintId, protocol) {
   ].join('\n');
   const payload = { complaintId, protocol: protocol || complaint.protocol || complaintId };
   const detailedMessage = `${message}\n\nAcesse o protocolo para dar ciência e iniciar a tratativa.`;
-  const operationalMessage = `${message}\n\nSupervisor do CRC e Operador de SAC devem acompanhar o protocolo ate a conclusao.`;
   let notifiedUserIds = [];
 
+  // Canais externos de RECLAMACAO (e-mail + WhatsApp por template Twilio) ficam em
+  // dispatchComplaintCreatedNotifications. Aqui mantemos apenas as notificacoes internas.
   try {
-    await sendWhatsappNotification({
-      event: 'complaint_created',
-      protocol: protocol || complaint.protocol || complaintId,
-      complaintId,
-      message
-    });
-  } catch (error) {
-    console.warn('Nao foi possivel enviar notificacao geral da reclamacao:', error.message);
-  }
-
-  try {
-    await sendWhatsappGroupNotification({
-      event: 'complaint_created_group',
-      message,
-      payload,
-      link
-    });
-  } catch (error) {
-    console.warn('Nao foi possivel enviar notificacao para o grupo de WhatsApp da reclamacao:', error.message);
-  }
-
-  try {
-    const adminIds = await notifyAdminsThroughChannels(
+    const adminIds = await createNotificationForAdmins(
       'complaint_created',
       title,
       detailedMessage,
@@ -4369,30 +4895,17 @@ async function notifyComplaintCreated(complaintId, protocol) {
   }
 
   try {
-    const scopedIds = await notifyClinicResponsibles(
-      complaint.clinic_id,
-      'complaint_assigned',
+    const supervisorIds = await createNotificationForRoles(
+      ['supervisor_crc'],
+      'complaint_created',
       title,
       detailedMessage,
       link,
       payload
     );
-    notifiedUserIds = [...notifiedUserIds, ...scopedIds];
+    notifiedUserIds = [...notifiedUserIds, ...supervisorIds];
   } catch (error) {
-    console.warn('Nao foi possivel notificar responsaveis da unidade:', error.message);
-  }
-
-  try {
-    const operationalIds = await notifyOperationalComplaintTeam(
-      title,
-      operationalMessage,
-      link,
-      payload,
-      notifiedUserIds
-    );
-    notifiedUserIds = [...notifiedUserIds, ...operationalIds];
-  } catch (error) {
-    console.warn('Nao foi possivel notificar Supervisor CRC e Operador SAC:', error.message);
+    console.warn('Nao foi possivel registrar notificacao do Supervisor CRC:', error.message);
   }
 
   try {
@@ -4644,11 +5157,13 @@ async function convertNpsToComplaint(npsId, user) {
   });
   await insertNpsLog(npsId, 'migrado_para_reclamacao', `Detrator migrado para reclamação ${protocol}.`, user);
   await notifyComplaintCreated(result.insertId, protocol);
+  const notificationResult = await dispatchComplaintCreatedNotifications(result.insertId, protocol);
 
   return {
     complaintId: result.insertId,
     protocol,
-    alreadyConverted: false
+    alreadyConverted: false,
+    notificationStatus: notificationResult.notificationStatus
   };
 }
 
@@ -6278,8 +6793,21 @@ app.post('/nps', async (req, res) => {
       name: 'Registro NPS interno',
       role: 'interno'
     });
+    await createNpsCreatedInAppNotifications({
+      npsId: npsInsert.insertId,
+      protocol,
+      patientName: patient_name,
+      clinicId: clinic_id,
+      npsProfile
+    });
+    const notificationResult = await dispatchNpsCreatedNotifications(npsInsert.insertId, protocol);
 
-    res.status(201).json({ message: 'NPS salvo com sucesso.', protocol, npsId: npsInsert.insertId });
+    res.status(201).json({
+      message: 'NPS salvo com sucesso.',
+      protocol,
+      npsId: npsInsert.insertId,
+      notificationStatus: notificationResult.notificationStatus
+    });
 
   } catch (error) {
     console.error(error);
@@ -6442,6 +6970,7 @@ app.post('/nps/public', async (req, res) => {
         role: 'externo'
       });
       await notifyComplaintCreated(result.insertId, protocol);
+      await dispatchComplaintCreatedNotifications(result.insertId, protocol);
     }
 
     const protocol = formatNpsProtocol(npsInsert.insertId);
@@ -6482,40 +7011,24 @@ app.post('/nps/public', async (req, res) => {
     const duplicatePhones = await getMonthlyDuplicateNpsPhones(new Date());
     const duplicatePhoneEntry = duplicatePhones.find((item) => item.patient_phone === normalizedPatientPhone);
 
-    await notifyAdminsThroughChannels(
-      'nps_created',
-      `Nova pesquisa NPS ${protocol}`,
-      `Nova pesquisa de satisfação registrada.\nPaciente: ${patient_name}\nUnidade: ${clinic_id ? `Clínica #${clinic_id}` : 'Não informada'}\nPerfil: ${npsProfile}`,
-      `${frontendUrl}/gestao-nps`,
-      { npsId: npsInsert.insertId, protocol, profile: npsProfile }
-    );
-
-    await sendWhatsappGroupNotification({
-      event: 'nps_created_group',
-      message: `Nova pesquisa NPS ${protocol}\nPaciente: ${patient_name}\nPerfil: ${npsProfile}`,
-      link: `${frontendUrl}/gestao-nps`,
-      payload: { npsId: npsInsert.insertId, protocol, profile: npsProfile }
+    await createNpsCreatedInAppNotifications({
+      npsId: npsInsert.insertId,
+      protocol,
+      patientName: patient_name,
+      clinicId: clinic_id,
+      npsProfile
     });
+    const notificationResult = await dispatchNpsCreatedNotifications(npsInsert.insertId, protocol);
 
     if (duplicatePhoneEntry && Number(duplicatePhoneEntry.total) > 1) {
       await alertDuplicateNpsPhone(normalizedPatientPhone, protocol, npsInsert.insertId);
-    }
-
-    if (npsProfile === 'detrator') {
-      await notifyClinicResponsibles(
-        clinic_id,
-        'nps_detractor_assigned',
-        `Novo detrator NPS ${protocol}`,
-        `Novo detrator registrado na pesquisa NPS.\nPaciente: ${patient_name}\nProtocolo NPS: ${protocol}`,
-        `${frontendUrl}/gestao-nps`,
-        { npsId: npsInsert.insertId, protocol }
-      );
     }
 
     res.status(201).json({
       message: 'Pesquisa NPS salva com sucesso.',
       protocol,
       npsId: npsInsert.insertId,
+      notificationStatus: notificationResult.notificationStatus,
       linkedPatientProtocol: linkedPatientRecord?.protocol || null,
       linkedPatientInteractionId: linkedPatientRecord?.id || null
     });
@@ -7047,11 +7560,15 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
       name: 'Sistema GRC',
       role: 'sistema'
     });
+    let notificationResult = { notificationStatus: 'failed' };
+
     try {
       await notifyComplaintCreated(result.insertId, protocol);
     } catch (error) {
-      console.warn('Nao foi possivel concluir notificacoes do protocolo:', error.message);
+      console.warn('Nao foi possivel concluir notificacoes internas do protocolo:', error.message);
     }
+
+    notificationResult = await dispatchComplaintCreatedNotifications(result.insertId, protocol);
 
     try {
       await sendWhatsappNotification({
@@ -7098,7 +7615,8 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
     res.json({
       message: 'Reclamação salva com sucesso',
       id: result.insertId,
-      protocol
+      protocol,
+      notificationStatus: notificationResult.notificationStatus
     });
 
   } catch (error) {
@@ -7145,9 +7663,13 @@ app.post('/complaints/:id/renotify', authenticate, async (req, res) => {
     }
 
     await notifyComplaintCreated(complaint.id, complaint.protocol);
+    const notificationResult = await dispatchComplaintCreatedNotifications(complaint.id, complaint.protocol);
     await insertComplaintLog(complaint.id, 'renotificado', `Notificações reenviadas por ${getActorName(req.user)}.`, req.user);
 
-    return res.json({ message: 'Notificações reenviadas aos responsáveis.' });
+    return res.json({
+      message: 'Notificações reenviadas aos responsáveis.',
+      notificationStatus: notificationResult.notificationStatus
+    });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Não foi possível reenviar as notificações do protocolo.' });

@@ -25,6 +25,10 @@ const {
   buildWelcomeMessage,
   normalizeWhatsAppPhone
 } = require('../services/whatsappService');
+const {
+  normalizePhoneNumber: normalizeTwilioPhoneNumber,
+  sendTemplateMessage
+} = require('../services/twilioWhatsAppService');
 const { __testables } = require('../server');
 
 test('generateTemporaryPassword creates a strong temporary password', () => {
@@ -170,6 +174,44 @@ test('normalizeWhatsAppPhone normalizes brazilian phones to E.164 digits', () =>
   assert.equal(normalizeWhatsAppPhone('+55 (62) 99966-9966'), '5562999669966');
   assert.equal(normalizeWhatsAppPhone('62999669966'), '5562999669966');
   assert.equal(normalizeWhatsAppPhone('123'), '');
+});
+
+test('normalizeTwilioPhoneNumber keeps WhatsApp prefix and accepts fixed complaint numbers', () => {
+  assert.equal(normalizeTwilioPhoneNumber('5562996807670'), 'whatsapp:+5562996807670');
+  assert.equal(normalizeTwilioPhoneNumber('556299669966'), 'whatsapp:+556299669966');
+  assert.equal(normalizeTwilioPhoneNumber('whatsapp:+5562996807670'), 'whatsapp:+5562996807670');
+  assert.equal(normalizeTwilioPhoneNumber('123'), '');
+});
+
+test('sendTemplateMessage skips safely when Twilio credentials are missing', async () => {
+  const previousSid = process.env.TWILIO_ACCOUNT_SID;
+  const previousToken = process.env.TWILIO_AUTH_TOKEN;
+
+  process.env.TWILIO_ACCOUNT_SID = '';
+  process.env.TWILIO_AUTH_TOKEN = '';
+
+  const result = await sendTemplateMessage({
+    to: '5562996807670',
+    templateSid: 'HX00000000000000000000000000000000',
+    variables: { protocolo: 'GRC-2026-000001' },
+    protocol: 'GRC-2026-000001'
+  });
+
+  assert.equal(result.success, false);
+  assert.equal(result.skipped, true);
+  assert.match(result.error, /TWILIO_ACCOUNT_SID/);
+
+  if (previousSid === undefined) {
+    delete process.env.TWILIO_ACCOUNT_SID;
+  } else {
+    process.env.TWILIO_ACCOUNT_SID = previousSid;
+  }
+
+  if (previousToken === undefined) {
+    delete process.env.TWILIO_AUTH_TOKEN;
+  } else {
+    process.env.TWILIO_AUTH_TOKEN = previousToken;
+  }
 });
 
 test('buildWelcomeMessage includes login and temporary password', () => {
