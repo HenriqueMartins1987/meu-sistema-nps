@@ -205,6 +205,7 @@ function HomeShellFixed() {
       title: 'Administração',
       items: [
         { label: 'Painel Gerencial', path: '/admin', permission: 'admin_panel', adminOnly: true },
+        { label: 'Monitoria Master', path: '/admin/monitoria', permission: 'admin_panel', adminOnly: true },
         { label: 'Minha conta', path: '/perfil', permission: 'home' }
       ]
     }

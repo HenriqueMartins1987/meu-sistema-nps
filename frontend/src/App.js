@@ -15,6 +15,7 @@ import NpsSurveyPage from './NpsSurveyPage';
 import NpsManagement from './NpsManagement';
 import NpsDashboard from './NpsDashboard';
 import AdminPanel from './AdminPanel';
+import MasterMonitoring from './MasterMonitoring';
 import PatientManagement from './PatientManagementPage';
 import CrmWorkspace from './CrmWorkspace';
 import { PermissionRoute, ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
@@ -43,6 +44,7 @@ function App() {
         <Route path="/crm" element={<CrmWorkspace />} />
         <Route element={<PermissionRoute masterOnly />}>
           <Route path="/admin" element={<AdminPanel />} />
+          <Route path="/admin/monitoria" element={<MasterMonitoring />} />
         </Route>
         <Route element={<PermissionRoute permission="patient_management" />}>
           <Route path="/pacientes" element={<PatientManagement />} />

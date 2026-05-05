@@ -5,6 +5,7 @@ require('dotenv').config({ quiet: true });
 
 const express = require('express');
 const mysql = require('mysql2/promise');
+const axios = require('axios');
 const cors = require('cors');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
@@ -14,6 +15,8 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const os = require('os');
+const { performance } = require('perf_hooks');
 const { z } = require('zod');
 const { clinicSeed, legacyDefaultClinicNames } = require('./clinicSeed');
 const emailService = require('./services/emailService');
@@ -34,6 +37,7 @@ const {
 const { generateTemporaryPassword } = require('./utils/password');
 
 const app = express();
+const serverStartedAt = new Date();
 
 // ============================================
 // CONFIG
@@ -62,6 +66,15 @@ const appointmentReminderLeadHours = Math.max(1, Number(process.env.APPOINTMENT_
 const appointmentReminderIntervalMinutes = Math.max(5, Number(process.env.APPOINTMENT_REMINDER_INTERVAL_MINUTES || 30));
 const complaintDueReminderIntervalMinutes = Math.max(5, Number(process.env.COMPLAINT_REMINDER_INTERVAL_MINUTES || 30));
 const passwordRecoveryCodeExpiresMinutes = Math.max(5, Number(process.env.PASSWORD_RECOVERY_CODE_EXPIRES_MINUTES || 15));
+const vercelApiToken = String(process.env.VERCEL_API_TOKEN || '').trim();
+const vercelProjectId = String(process.env.VERCEL_PROJECT_ID || process.env.VERCEL_PROJECT_SLUG || '').trim();
+const vercelTeamId = String(process.env.VERCEL_TEAM_ID || '').trim();
+const railwayApiToken = String(process.env.RAILWAY_API_TOKEN || '').trim();
+const railwayProjectAccessToken = String(process.env.RAILWAY_PROJECT_ACCESS_TOKEN || '').trim();
+const railwayProjectId = String(process.env.RAILWAY_PROJECT_ID || '').trim();
+const railwayEnvironmentId = String(process.env.RAILWAY_ENVIRONMENT_ID || '').trim();
+const railwayServiceId = String(process.env.RAILWAY_SERVICE_ID || '').trim();
+const railwayApiUrl = String(process.env.RAILWAY_API_URL || 'https://backboard.railway.app/graphql/v2').trim();
 const uploadDir = path.join(__dirname, 'uploads');
 const reportsDir = path.join(uploadDir, 'reports');
 const maxUploadSizeBytes = 10 * 1024 * 1024;
@@ -712,6 +725,147 @@ function shouldEmailMasterForActivity(req) {
   return false;
 }
 
+function shouldRecordSystemActivity(req) {
+  if (process.env.NODE_ENV === 'test') {
+    return false;
+  }
+
+  const method = String(req.method || '').toUpperCase();
+
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+    return false;
+  }
+
+  const route = String(req.originalUrl || req.path || '').split('?')[0];
+  if (!route || route.startsWith('/uploads')) return false;
+  if (route === '/api/test-whatsapp/status') return false;
+
+  return true;
+}
+
+function buildSystemActivityAction(req) {
+  const method = String(req.method || '').toUpperCase();
+  const route = String(req.originalUrl || req.path || '').split('?')[0];
+
+  if (route === '/login') return 'Login';
+  if (route.includes('/auth/request-password-reset')) return 'Solicitação de código de senha';
+  if (route.includes('/auth/reset-password-with-code')) return 'Redefinição de senha';
+  if (route.includes('/complaints') && route.includes('/evidences')) return method === 'DELETE' ? 'Exclusão de evidência' : 'Envio de evidência';
+  if (route.includes('/complaints') && method === 'POST') return 'Registro de protocolo';
+  if (route.includes('/complaints') && method === 'PATCH') return 'Atualização de protocolo';
+  if (route.includes('/complaints') && method === 'DELETE') return 'Exclusão de protocolo';
+  if (route.includes('/nps/bulk-dispatch')) return 'Disparo de NPS';
+  if (route.includes('/nps') && method === 'POST') return 'Registro de NPS';
+  if (route.includes('/nps') && method === 'PATCH') return 'Tratativa de NPS';
+  if (route.includes('/nps') && method === 'DELETE') return 'Exclusão de NPS';
+  if (route.includes('/patient-interactions')) return method === 'POST' ? 'Registro de relacionamento' : 'Atualização de relacionamento';
+  if (route.includes('/admin/users') && method === 'POST') return 'Criação de usuário';
+  if (route.includes('/admin/users') && method === 'PATCH') return 'Atualização de usuário';
+  if (route.includes('/admin/users') && method === 'DELETE') return 'Exclusão de usuário';
+  if (route.includes('/registration-requests')) return 'Solicitação/Aprovação de acesso';
+  if (route.includes('/profile/change-password') || route.includes('/change-initial-password')) return 'Alteração de senha';
+  if (route.includes('/api/test-email')) return 'Teste de e-mail';
+  if (route.includes('/api/test-whatsapp')) return 'Teste de WhatsApp';
+
+  return `${method} ${route}`;
+}
+
+function buildSystemActivitySummary(req, responseBody) {
+  const route = String(req.originalUrl || req.path || '').split('?')[0];
+  const responseSummary = responseBody?.message || responseBody?.error || responseBody?.protocol || responseBody?.id;
+
+  if (responseSummary) {
+    return String(responseSummary).slice(0, 500);
+  }
+
+  return `Movimentação executada em ${route || 'rota não identificada'}.`;
+}
+
+function compactPayload(value) {
+  const sanitized = sanitizeActivityValue(value || {});
+  const text = JSON.stringify(sanitized);
+  return text && text.length > 4000 ? `${text.slice(0, 3997)}...` : text;
+}
+
+async function insertSystemActivityLog(req, res, responseBody, durationMs) {
+  try {
+    const route = String(req.originalUrl || req.path || '').split('?')[0] || '/';
+    const fileInfo = req.file
+      ? {
+        original_name: normalizeUploadedOriginalName(req.file),
+        stored_name: req.file.filename,
+        size_bytes: req.file.size
+      }
+      : null;
+    const requestPayload = {
+      body: req.body || {},
+      params: req.params || {},
+      query: req.query || {},
+      file: fileInfo
+    };
+
+    await pool.query(
+      `INSERT INTO system_activity_logs
+       (method, route, status_code, actor_user_id, actor_name, actor_email, actor_role, action, summary, request_payload, response_payload, ip_address, user_agent, duration_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        String(req.method || '').toUpperCase(),
+        route,
+        res.statusCode || null,
+        req.user?.id || null,
+        req.user?.name || null,
+        req.user?.email || null,
+        req.user?.role || null,
+        buildSystemActivityAction(req),
+        buildSystemActivitySummary(req, responseBody),
+        compactPayload(requestPayload),
+        compactPayload(responseBody || {}),
+        getRequestIp(req),
+        String(req.headers['user-agent'] || '').slice(0, 500) || null,
+        Math.max(0, Math.round(durationMs || 0))
+      ]
+    );
+  } catch (error) {
+    console.warn('Não foi possível gravar auditoria central:', error.message);
+  }
+}
+
+function installSystemActivityLogger() {
+  app.use((req, res, next) => {
+    if (!shouldRecordSystemActivity(req)) {
+      return next();
+    }
+
+    const startedAt = performance.now();
+    let responseBody;
+    const originalJson = res.json.bind(res);
+    const originalSend = res.send.bind(res);
+
+    res.json = (body) => {
+      responseBody = body;
+      return originalJson(body);
+    };
+
+    res.send = (body) => {
+      if (responseBody === undefined) {
+        responseBody = normalizeActivityResponseBody(body);
+      }
+
+      return originalSend(body);
+    };
+
+    res.on('finish', () => {
+      if (res.statusCode < 200 || res.statusCode >= 500) return;
+
+      setImmediate(() => {
+        insertSystemActivityLog(req, res, normalizeActivityResponseBody(responseBody), performance.now() - startedAt);
+      });
+    });
+
+    return next();
+  });
+}
+
 function buildActivityActorLabel(req) {
   if (req.user) {
     return `${req.user.name || 'Usuario'} (${req.user.email || req.user.role || 'sem e-mail'})`;
@@ -915,6 +1069,7 @@ function installMasterActivityEmailNotifier() {
 }
 
 installMasterActivityEmailNotifier();
+installSystemActivityLogger();
 
 function decodePossiblyLatin1Text(value) {
   const text = String(value || '');
@@ -1443,6 +1598,50 @@ async function ensureDatabaseSchema() {
       read_at TIMESTAMP NULL,
       INDEX idx_notification_events_user_id (user_id),
       INDEX idx_notification_events_status (status)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS system_activity_logs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      method VARCHAR(12) NOT NULL,
+      route VARCHAR(255) NOT NULL,
+      status_code INT NULL,
+      actor_user_id INT NULL,
+      actor_name VARCHAR(160) NULL,
+      actor_email VARCHAR(180) NULL,
+      actor_role VARCHAR(80) NULL,
+      action VARCHAR(160) NOT NULL,
+      summary TEXT NULL,
+      request_payload LONGTEXT NULL,
+      response_payload LONGTEXT NULL,
+      ip_address VARCHAR(120) NULL,
+      user_agent VARCHAR(500) NULL,
+      duration_ms INT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_system_activity_logs_created_at (created_at),
+      INDEX idx_system_activity_logs_route (route),
+      INDEX idx_system_activity_logs_actor_user_id (actor_user_id),
+      INDEX idx_system_activity_logs_action (action)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS email_delivery_logs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      provider VARCHAR(60) NULL,
+      status VARCHAR(40) NOT NULL,
+      recipient_email VARCHAR(220) NULL,
+      subject VARCHAR(255) NULL,
+      sender_email VARCHAR(220) NULL,
+      provider_message_id VARCHAR(255) NULL,
+      error_message TEXT NULL,
+      duration_ms INT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_email_delivery_logs_created_at (created_at),
+      INDEX idx_email_delivery_logs_status (status),
+      INDEX idx_email_delivery_logs_provider (provider)
     )
   `);
 
@@ -2333,14 +2532,567 @@ function slugify(value) {
     .replace(/^-+|-+$/g, '') || 'sem-coordenador';
 }
 
+function normalizeEmailRecipientForLog(to) {
+  return Array.isArray(to) ? to.join(', ') : String(to || '').trim();
+}
+
+async function insertEmailDeliveryLog({ to, subject, provider, status, senderEmail, providerMessageId, errorMessage, durationMs }) {
+  if (process.env.NODE_ENV === 'test') {
+    return;
+  }
+
+  try {
+    await pool.query(
+      `INSERT INTO email_delivery_logs
+       (provider, status, recipient_email, subject, sender_email, provider_message_id, error_message, duration_ms)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        provider || null,
+        status,
+        normalizeEmailRecipientForLog(to).slice(0, 220) || null,
+        String(subject || '').slice(0, 255) || null,
+        String(senderEmail || '').slice(0, 220) || null,
+        providerMessageId || null,
+        errorMessage ? String(errorMessage).slice(0, 1000) : null,
+        Math.max(0, Math.round(durationMs || 0))
+      ]
+    );
+  } catch (error) {
+    console.warn('Não foi possível gravar log de e-mail:', error.message);
+  }
+}
+
 async function sendEmail(to, subject, html, attachments = []) {
-  return emailService.sendEmail({
-    to,
-    subject,
-    html,
-    text: emailService.htmlToText(html),
-    attachments
-  });
+  const startedAt = performance.now();
+
+  try {
+    const response = await emailService.sendEmail({
+      to,
+      subject,
+      html,
+      text: emailService.htmlToText(html),
+      attachments
+    });
+
+    await insertEmailDeliveryLog({
+      to,
+      subject,
+      provider: response?.provider || emailService.getEmailProvider(),
+      status: response?.skipped ? 'skipped' : 'sent',
+      senderEmail: response?.from || emailService.getEmailFrom(),
+      providerMessageId: response?.id || null,
+      durationMs: performance.now() - startedAt
+    });
+
+    return response;
+  } catch (error) {
+    await insertEmailDeliveryLog({
+      to,
+      subject,
+      provider: error?.provider || emailService.getEmailProvider(),
+      status: 'failed',
+      senderEmail: emailService.getEmailFrom(),
+      errorMessage: error.message,
+      durationMs: performance.now() - startedAt
+    });
+
+    throw error;
+  }
+}
+
+function parseSqlCount(row, key) {
+  return Number(row?.[key] || 0);
+}
+
+function statusRowsToObject(rows = []) {
+  return rows.reduce((acc, row) => {
+    acc[row.Variable_name] = Number(row.Value || 0);
+    return acc;
+  }, {});
+}
+
+async function queryMysqlStatus(names = []) {
+  const placeholders = names.map(() => '?').join(',');
+  const [rows] = await pool.query(`SHOW GLOBAL STATUS WHERE Variable_name IN (${placeholders})`, names);
+  return statusRowsToObject(rows);
+}
+
+async function queryMysqlVariables(names = []) {
+  const placeholders = names.map(() => '?').join(',');
+  const [rows] = await pool.query(`SHOW VARIABLES WHERE Variable_name IN (${placeholders})`, names);
+  return rows.reduce((acc, row) => {
+    acc[row.Variable_name] = row.Value;
+    return acc;
+  }, {});
+}
+
+async function getRuntimeMetrics() {
+  const cpuStart = process.cpuUsage();
+  const sampleStart = performance.now();
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  const elapsedMs = Math.max(1, performance.now() - sampleStart);
+  const cpuDiff = process.cpuUsage(cpuStart);
+  const cpuMs = (cpuDiff.user + cpuDiff.system) / 1000;
+  const cpuCount = os.cpus().length || 1;
+  const memory = process.memoryUsage();
+
+  return {
+    status: 'online',
+    startedAt: serverStartedAt.toISOString(),
+    uptimeSeconds: Math.round(process.uptime()),
+    nodeVersion: process.version,
+    platform: process.platform,
+    hostname: os.hostname(),
+    cpuCount,
+    cpuModel: os.cpus()[0]?.model || 'CPU não identificada',
+    processCpuPercent: Number(((cpuMs / (elapsedMs * cpuCount)) * 100).toFixed(2)),
+    loadAverage: os.loadavg(),
+    memory: {
+      rssBytes: memory.rss,
+      heapUsedBytes: memory.heapUsed,
+      heapTotalBytes: memory.heapTotal,
+      externalBytes: memory.external,
+      systemFreeBytes: os.freemem(),
+      systemTotalBytes: os.totalmem()
+    }
+  };
+}
+
+async function getDatabaseMonitoring() {
+  const pingStart = performance.now();
+  await pool.query('SELECT 1');
+  const latencyMs = Math.round(performance.now() - pingStart);
+  const status = await queryMysqlStatus([
+    'Threads_connected',
+    'Max_used_connections',
+    'Connections',
+    'Questions',
+    'Slow_queries',
+    'Aborted_connects',
+    'Uptime',
+    'Bytes_received',
+    'Bytes_sent'
+  ]);
+  const variables = await queryMysqlVariables([
+    'max_connections',
+    'version',
+    'innodb_buffer_pool_size',
+    'table_open_cache'
+  ]);
+  const [sizeRows] = await pool.query(`
+    SELECT
+      DATABASE() AS database_name,
+      COUNT(*) AS table_count,
+      COALESCE(SUM(data_length + index_length), 0) AS total_bytes,
+      COALESCE(SUM(data_length), 0) AS data_bytes,
+      COALESCE(SUM(index_length), 0) AS index_bytes
+    FROM information_schema.TABLES
+    WHERE table_schema = DATABASE()
+  `);
+  const [tableRows] = await pool.query(`
+    SELECT
+      table_name,
+      table_rows,
+      data_length + index_length AS total_bytes,
+      data_length AS data_bytes,
+      index_length AS index_bytes
+    FROM information_schema.TABLES
+    WHERE table_schema = DATABASE()
+    ORDER BY total_bytes DESC
+    LIMIT 8
+  `);
+  const maxConnections = Number(variables.max_connections || 0);
+  const connected = Number(status.Threads_connected || 0);
+
+  return {
+    status: latencyMs <= 250 ? 'online' : 'attention',
+    latencyMs,
+    version: variables.version || 'Não informado',
+    uptimeSeconds: Number(status.Uptime || 0),
+    connections: {
+      current: connected,
+      max: maxConnections,
+      usagePercent: maxConnections ? Number(((connected / maxConnections) * 100).toFixed(2)) : null,
+      maxUsed: Number(status.Max_used_connections || 0),
+      total: Number(status.Connections || 0)
+    },
+    traffic: {
+      questions: Number(status.Questions || 0),
+      slowQueries: Number(status.Slow_queries || 0),
+      abortedConnects: Number(status.Aborted_connects || 0),
+      bytesReceived: Number(status.Bytes_received || 0),
+      bytesSent: Number(status.Bytes_sent || 0)
+    },
+    capacity: {
+      databaseName: sizeRows[0]?.database_name || process.env.DB_NAME || 'nps_system',
+      tableCount: Number(sizeRows[0]?.table_count || 0),
+      totalBytes: Number(sizeRows[0]?.total_bytes || 0),
+      dataBytes: Number(sizeRows[0]?.data_bytes || 0),
+      indexBytes: Number(sizeRows[0]?.index_bytes || 0),
+      innodbBufferPoolBytes: Number(variables.innodb_buffer_pool_size || 0),
+      tableOpenCache: Number(variables.table_open_cache || 0)
+    },
+    largestTables: tableRows.map((row) => ({
+      tableName: row.table_name,
+      estimatedRows: Number(row.table_rows || 0),
+      totalBytes: Number(row.total_bytes || 0),
+      dataBytes: Number(row.data_bytes || 0),
+      indexBytes: Number(row.index_bytes || 0)
+    }))
+  };
+}
+
+async function getOverviewMetrics() {
+  const [rows] = await pool.query(`
+    SELECT
+      (SELECT COUNT(*) FROM users WHERE deleted_at IS NULL) AS users_total,
+      (SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND active = 1) AS users_active,
+      (SELECT COUNT(*) FROM complaints WHERE deleted_at IS NULL) AS complaints_total,
+      (SELECT COUNT(*) FROM complaints WHERE deleted_at IS NULL AND DATE(created_at) = CURDATE()) AS complaints_today,
+      (SELECT COUNT(*) FROM complaints WHERE deleted_at IS NULL AND status <> 'resolvida') AS complaints_open,
+      (SELECT COUNT(*) FROM complaints WHERE deleted_at IS NULL AND resolution_due_at IS NOT NULL AND resolution_due_at < NOW() AND status <> 'resolvida') AS complaints_overdue,
+      (SELECT COUNT(*) FROM nps_responses WHERE deleted_at IS NULL) AS nps_total,
+      (SELECT COUNT(*) FROM nps_responses WHERE deleted_at IS NULL AND DATE(created_at) = CURDATE()) AS nps_today,
+      (SELECT ROUND(AVG(score), 2) FROM nps_responses WHERE deleted_at IS NULL) AS nps_average,
+      (SELECT COUNT(*) FROM patient_interactions) AS patient_interactions_total,
+      (SELECT COUNT(*) FROM patient_interactions WHERE DATE(created_at) = CURDATE()) AS patient_interactions_today,
+      (SELECT COUNT(*) FROM notification_events WHERE status = 'unread') AS notifications_unread,
+      (SELECT COUNT(*) FROM whatsapp_message_logs WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS whatsapp_24h,
+      (SELECT COUNT(*) FROM whatsapp_message_logs WHERE status = 'failed' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS whatsapp_failed_24h,
+      (SELECT COUNT(*) FROM email_delivery_logs WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS emails_24h,
+      (SELECT COUNT(*) FROM email_delivery_logs WHERE status = 'sent' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS emails_sent_24h,
+      (SELECT COUNT(*) FROM email_delivery_logs WHERE status = 'failed' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS emails_failed_24h,
+      (SELECT COUNT(*) FROM system_activity_logs WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS activities_24h
+  `);
+  const row = rows[0] || {};
+  const emailFailures = parseSqlCount(row, 'emails_failed_24h');
+  const whatsappFailures = parseSqlCount(row, 'whatsapp_failed_24h');
+  const overdue = parseSqlCount(row, 'complaints_overdue');
+  const healthScore = Math.max(0, 100 - (emailFailures * 4) - (whatsappFailures * 4) - (overdue * 2));
+
+  return {
+    healthScore,
+    users: {
+      total: parseSqlCount(row, 'users_total'),
+      active: parseSqlCount(row, 'users_active')
+    },
+    complaints: {
+      total: parseSqlCount(row, 'complaints_total'),
+      today: parseSqlCount(row, 'complaints_today'),
+      open: parseSqlCount(row, 'complaints_open'),
+      overdue
+    },
+    nps: {
+      total: parseSqlCount(row, 'nps_total'),
+      today: parseSqlCount(row, 'nps_today'),
+      average: Number(row.nps_average || 0)
+    },
+    relationships: {
+      total: parseSqlCount(row, 'patient_interactions_total'),
+      today: parseSqlCount(row, 'patient_interactions_today')
+    },
+    communications: {
+      emails24h: parseSqlCount(row, 'emails_24h'),
+      emailsSent24h: parseSqlCount(row, 'emails_sent_24h'),
+      emailsFailed24h: emailFailures,
+      whatsapp24h: parseSqlCount(row, 'whatsapp_24h'),
+      whatsappFailed24h: whatsappFailures,
+      unreadNotifications: parseSqlCount(row, 'notifications_unread')
+    },
+    activities24h: parseSqlCount(row, 'activities_24h')
+  };
+}
+
+async function getEmailMonitoring() {
+  const [summaryRows] = await pool.query(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(status = 'sent') AS sent,
+      SUM(status = 'failed') AS failed,
+      SUM(status = 'skipped') AS skipped,
+      SUM(created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS last_24h,
+      SUM(DATE(created_at) = CURDATE()) AS today
+    FROM email_delivery_logs
+  `);
+  const [providerRows] = await pool.query(`
+    SELECT provider, status, COUNT(*) AS total
+    FROM email_delivery_logs
+    WHERE created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+    GROUP BY provider, status
+    ORDER BY total DESC
+  `);
+  const [recentRows] = await pool.query(`
+    SELECT provider, status, recipient_email, subject, sender_email, provider_message_id, error_message, duration_ms, created_at
+    FROM email_delivery_logs
+    ORDER BY created_at DESC
+    LIMIT 10
+  `);
+  const summary = summaryRows[0] || {};
+
+  return {
+    provider: emailService.getEmailProvider(),
+    from: emailService.getEmailFrom(),
+    resendConfigured: emailService.getEmailProvider() === 'resend' && Boolean(process.env.RESEND_API_KEY),
+    summary: {
+      total: Number(summary.total || 0),
+      sent: Number(summary.sent || 0),
+      failed: Number(summary.failed || 0),
+      skipped: Number(summary.skipped || 0),
+      last24h: Number(summary.last_24h || 0),
+      today: Number(summary.today || 0)
+    },
+    byProviderStatus: providerRows.map((row) => ({
+      provider: row.provider || 'não informado',
+      status: row.status,
+      total: Number(row.total || 0)
+    })),
+    recent: recentRows
+  };
+}
+
+async function getActivityMonitoring() {
+  const [recent] = await pool.query(`
+    SELECT *
+    FROM (
+      SELECT 'Sistema' AS source, action, summary, actor_name, actor_role, route AS context, status_code, duration_ms, created_at
+      FROM system_activity_logs
+      UNION ALL
+      SELECT 'Protocolo' AS source, action, message AS summary, actor_name, actor_role, CONCAT('ID ', complaint_id) AS context, NULL AS status_code, NULL AS duration_ms, created_at
+      FROM complaint_logs
+      UNION ALL
+      SELECT 'NPS' AS source, action, message AS summary, actor_name, actor_role, CONCAT('ID ', nps_response_id) AS context, NULL AS status_code, NULL AS duration_ms, created_at
+      FROM nps_treatment_logs
+      UNION ALL
+      SELECT 'Relacionamento' AS source, action, message AS summary, actor_name, actor_role, CONCAT('ID ', interaction_id) AS context, NULL AS status_code, NULL AS duration_ms, created_at
+      FROM patient_interaction_logs
+      UNION ALL
+      SELECT 'WhatsApp' AS source, status AS action, COALESCE(error_message, event_key, 'Mensagem registrada') AS summary, NULL AS actor_name, NULL AS actor_role, recipient_phone AS context, NULL AS status_code, NULL AS duration_ms, created_at
+      FROM whatsapp_message_logs
+      UNION ALL
+      SELECT 'E-mail' AS source, status AS action, subject AS summary, NULL AS actor_name, NULL AS actor_role, recipient_email AS context, NULL AS status_code, duration_ms, created_at
+      FROM email_delivery_logs
+    ) timeline
+    ORDER BY created_at DESC
+    LIMIT 120
+  `);
+  const [sourceRows] = await pool.query(`
+    SELECT source, COUNT(*) AS total
+    FROM (
+      SELECT 'Sistema' AS source, created_at FROM system_activity_logs
+      UNION ALL SELECT 'Protocolo' AS source, created_at FROM complaint_logs
+      UNION ALL SELECT 'NPS' AS source, created_at FROM nps_treatment_logs
+      UNION ALL SELECT 'Relacionamento' AS source, created_at FROM patient_interaction_logs
+      UNION ALL SELECT 'WhatsApp' AS source, created_at FROM whatsapp_message_logs
+      UNION ALL SELECT 'E-mail' AS source, created_at FROM email_delivery_logs
+    ) movements
+    WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+    GROUP BY source
+    ORDER BY total DESC
+  `);
+
+  return {
+    recent,
+    bySource24h: sourceRows.map((row) => ({ source: row.source, total: Number(row.total || 0) }))
+  };
+}
+
+async function fetchVercelMonitoring() {
+  const status = {
+    configured: Boolean(vercelApiToken),
+    status: vercelApiToken ? 'unknown' : 'not_configured',
+    label: 'Vercel',
+    metrics: {},
+    recentDeployments: [],
+    notes: []
+  };
+
+  try {
+    const publicStatus = await axios.get('https://www.vercel-status.com/api/v2/status.json', { timeout: 6000 });
+    status.publicStatus = publicStatus.data?.status?.description || 'Não informado';
+  } catch (error) {
+    status.notes.push(`Status público indisponível: ${error.message}`);
+  }
+
+  if (!vercelApiToken) {
+    status.notes.push('Configure VERCEL_API_TOKEN e, se possível, VERCEL_PROJECT_ID/VERCEL_TEAM_ID para monitorar deploys em tempo real.');
+    return status;
+  }
+
+  try {
+    const params = new URLSearchParams({ limit: '6' });
+    if (vercelProjectId) params.set('projectId', vercelProjectId);
+    if (vercelTeamId) params.set('teamId', vercelTeamId);
+    const response = await axios.get(`https://api.vercel.com/v6/deployments?${params.toString()}`, {
+      timeout: 8000,
+      headers: { Authorization: `Bearer ${vercelApiToken}` }
+    });
+    const deployments = Array.isArray(response.data?.deployments) ? response.data.deployments : [];
+    const latest = deployments[0] || null;
+
+    status.status = latest?.state === 'READY' ? 'online' : latest ? 'attention' : 'unknown';
+    status.metrics = {
+      latestState: latest?.state || 'Sem deploy encontrado',
+      latestTarget: latest?.target || latest?.meta?.githubCommitRef || 'Não informado',
+      latestUrl: latest?.url ? `https://${latest.url}` : '',
+      latestCreatedAt: latest?.createdAt ? new Date(latest.createdAt).toISOString() : null,
+      deploymentsLoaded: deployments.length
+    };
+    status.recentDeployments = deployments.map((deployment) => ({
+      uid: deployment.uid,
+      name: deployment.name,
+      state: deployment.state,
+      target: deployment.target,
+      url: deployment.url ? `https://${deployment.url}` : '',
+      createdAt: deployment.createdAt ? new Date(deployment.createdAt).toISOString() : null
+    }));
+    status.notes.push('CPU/memória de execução da Vercel não é exposta por este endpoint REST; o painel acompanha disponibilidade, deploys e status público.');
+  } catch (error) {
+    status.status = 'error';
+    status.notes.push(`Falha ao consultar Vercel: ${error.response?.data?.error?.message || error.message}`);
+  }
+
+  return status;
+}
+
+async function fetchRailwayMonitoring() {
+  const token = railwayApiToken || railwayProjectAccessToken;
+  const status = {
+    configured: Boolean(token && railwayProjectId),
+    status: token && railwayProjectId ? 'unknown' : 'not_configured',
+    label: 'Railway MySQL',
+    metrics: {},
+    notes: [],
+    samples: []
+  };
+
+  if (!token || !railwayProjectId) {
+    status.notes.push('Configure RAILWAY_API_TOKEN ou RAILWAY_PROJECT_ACCESS_TOKEN, RAILWAY_PROJECT_ID, RAILWAY_ENVIRONMENT_ID e RAILWAY_SERVICE_ID para coletar CPU/memória/disco direto da Railway.');
+    return status;
+  }
+
+  const headers = railwayProjectAccessToken
+    ? { 'Project-Access-Token': railwayProjectAccessToken }
+    : { Authorization: `Bearer ${railwayApiToken}` };
+
+  try {
+    const projectResponse = await axios.post(
+      railwayApiUrl,
+      {
+        query: `
+          query ProjectHealth($projectId: String!) {
+            project(id: $projectId) {
+              id
+              name
+            }
+          }
+        `,
+        variables: { projectId: railwayProjectId }
+      },
+      { timeout: 8000, headers }
+    );
+
+    if (projectResponse.data?.errors?.length) {
+      throw new Error(projectResponse.data.errors[0].message);
+    }
+
+    status.status = 'online';
+    status.metrics.projectName = projectResponse.data?.data?.project?.name || 'Projeto Railway';
+  } catch (error) {
+    status.status = 'error';
+    status.notes.push(`Falha ao consultar projeto Railway: ${error.response?.data?.errors?.[0]?.message || error.message}`);
+    return status;
+  }
+
+  if (!railwayEnvironmentId || !railwayServiceId) {
+    status.notes.push('Projeto conectado. Informe RAILWAY_ENVIRONMENT_ID e RAILWAY_SERVICE_ID para obter séries de CPU/memória/disco.');
+    return status;
+  }
+
+  try {
+    const endDate = new Date();
+    const startDate = new Date(endDate.getTime() - 30 * 60 * 1000);
+    const metricsResponse = await axios.post(
+      railwayApiUrl,
+      {
+        query: `
+          query ServiceMetrics($input: MetricsInput!) {
+            metrics(input: $input) {
+              measurement
+              values {
+                ts
+                value
+              }
+            }
+          }
+        `,
+        variables: {
+          input: {
+            projectId: railwayProjectId,
+            environmentId: railwayEnvironmentId,
+            serviceId: railwayServiceId,
+            measurements: ['CPU_USAGE', 'MEMORY_USAGE_GB', 'DISK_USAGE_GB'],
+            startDate: startDate.toISOString(),
+            endDate: endDate.toISOString(),
+            sampleRate: 60
+          }
+        }
+      },
+      { timeout: 8000, headers }
+    );
+
+    if (metricsResponse.data?.errors?.length) {
+      throw new Error(metricsResponse.data.errors[0].message);
+    }
+
+    status.samples = Array.isArray(metricsResponse.data?.data?.metrics) ? metricsResponse.data.data.metrics : [];
+    status.metrics.samplesLoaded = status.samples.reduce((total, item) => total + (item.values?.length || 0), 0);
+  } catch (error) {
+    status.notes.push(`Métricas Railway indisponíveis no momento: ${error.response?.data?.errors?.[0]?.message || error.message}`);
+  }
+
+  return status;
+}
+
+async function fetchResendMonitoring(emailMonitoring) {
+  const status = {
+    configured: Boolean(process.env.RESEND_API_KEY),
+    status: process.env.RESEND_API_KEY ? 'unknown' : 'not_configured',
+    label: 'Resend',
+    metrics: {
+      provider: emailMonitoring.provider,
+      from: emailMonitoring.from,
+      volume24h: emailMonitoring.summary.last24h,
+      failed24h: emailMonitoring.summary.failed
+    },
+    notes: []
+  };
+
+  if (!process.env.RESEND_API_KEY) {
+    status.notes.push('RESEND_API_KEY não configurada; o sistema está usando o provedor de e-mail definido no ambiente.');
+    return status;
+  }
+
+  try {
+    const response = await axios.get('https://api.resend.com/domains', {
+      timeout: 8000,
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}` }
+    });
+    const domains = Array.isArray(response.data?.data) ? response.data.data : [];
+    status.status = 'online';
+    status.metrics.domains = domains.length;
+    status.metrics.verifiedDomains = domains.filter((domain) => domain.status === 'verified').length;
+    status.domains = domains.slice(0, 5).map((domain) => ({
+      id: domain.id,
+      name: domain.name,
+      status: domain.status,
+      createdAt: domain.created_at
+    }));
+  } catch (error) {
+    status.status = 'error';
+    status.notes.push(`Falha ao consultar Resend: ${error.response?.data?.message || error.message}`);
+  }
+
+  return status;
 }
 
 function parsePermissionsFromUser(user) {
@@ -4136,12 +4888,7 @@ app.post('/api/test-email', authenticate, requireMasterAdmin, async (req, res) =
       appUrl: appBaseUrl
     });
 
-    const result = await emailService.sendEmail({
-      to,
-      subject: template.subject,
-      html: template.html,
-      text: emailService.htmlToText(template.html)
-    });
+    const result = await sendEmail(to, template.subject, template.html);
 
     return res.json({
       success: !result?.skipped,
@@ -4211,6 +4958,54 @@ app.delete('/api/test-upload/:filename', authenticate, requireMasterAdmin, async
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Não foi possível remover o upload de teste.' });
+  }
+});
+
+app.get('/admin/master-monitoring', authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+
+    const [overview, runtime, database, activity, email] = await Promise.all([
+      getOverviewMetrics(),
+      getRuntimeMetrics(),
+      getDatabaseMonitoring(),
+      getActivityMonitoring(),
+      getEmailMonitoring()
+    ]);
+    const [vercel, railway, resend] = await Promise.all([
+      fetchVercelMonitoring(),
+      fetchRailwayMonitoring(),
+      fetchResendMonitoring(email)
+    ]);
+
+    return res.json({
+      generatedAt: new Date().toISOString(),
+      refreshMs: 15000,
+      overview,
+      runtime,
+      database,
+      activity,
+      email,
+      providers: {
+        vercel,
+        railway,
+        resend
+      },
+      monitors: [
+        'Auditoria central de POST/PATCH/DELETE',
+        'Movimentações de protocolos, NPS e relacionamento',
+        'Volume e falhas de e-mails enviados pelo sistema',
+        'Volume e falhas de WhatsApp',
+        'Saúde do Node/API, CPU local e memória',
+        'Latência, conexões, storage e queries lentas do MySQL',
+        'Deploys e status público da Vercel',
+        'CPU, memória e disco Railway quando tokens e IDs estiverem configurados'
+      ]
+    });
+  } catch (error) {
+    console.error('Erro ao carregar monitoria master:', error);
+    return res.status(500).json({ error: 'Não foi possível carregar a monitoria master.' });
   }
 });
 
