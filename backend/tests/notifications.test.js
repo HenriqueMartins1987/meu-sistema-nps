@@ -28,6 +28,7 @@ const {
 const {
   normalizePhoneNumber: normalizeTwilioPhoneNumber,
   normalizeTwilioWhatsAppFrom,
+  describeTwilioMessageError,
   sendTemplateMessage
 } = require('../services/twilioWhatsAppService');
 const { __testables } = require('../server');
@@ -187,6 +188,11 @@ test('normalizeTwilioPhoneNumber keeps WhatsApp prefix and accepts fixed complai
 test('normalizeTwilioWhatsAppFrom accepts Render values with or without whatsapp prefix', () => {
   assert.equal(normalizeTwilioWhatsAppFrom('+14155238886'), 'whatsapp:+14155238886');
   assert.equal(normalizeTwilioWhatsAppFrom('whatsapp:+14155238886'), 'whatsapp:+14155238886');
+});
+
+test('describeTwilioMessageError explains sandbox delivery failures', () => {
+  assert.match(describeTwilioMessageError(63015), /Sandbox/);
+  assert.match(describeTwilioMessageError(63015), /sender WhatsApp aprovado/);
 });
 
 test('sendTemplateMessage skips safely when Twilio credentials are missing', async () => {

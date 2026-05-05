@@ -5388,13 +5388,18 @@ async function handleManualWhatsAppSend(req, res, eventKey = 'manual_test') {
       event: eventKey,
       to: phone,
       message,
-      userId: req.user?.id
+      userId: req.user?.id,
+      verifyFinalStatus: true
     });
 
     if (!result?.success && !result?.skipped) {
       return res.status(502).json({
         success: false,
         provider: result?.provider || getWhatsAppProvider(),
+        to: phone,
+        providerMessageId: result?.providerMessageId || null,
+        status: result?.status || null,
+        errorCode: result?.errorCode || null,
         error: result?.error || 'Falha ao enviar a mensagem de WhatsApp.'
       });
     }
@@ -5404,6 +5409,8 @@ async function handleManualWhatsAppSend(req, res, eventKey = 'manual_test') {
       provider: result?.provider || getWhatsAppProvider(),
       to: phone,
       providerMessageId: result?.providerMessageId || null,
+      status: result?.status || null,
+      errorCode: result?.errorCode || null,
       error: result?.success ? null : result?.error || null,
       warning: result?.skipped ? result?.error || 'O envio foi ignorado por configuração do provedor.' : null
     });

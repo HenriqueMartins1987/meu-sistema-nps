@@ -82,7 +82,8 @@ async function sendWhatsAppMessage(to, message, metadata = {}) {
     to: normalizeTwilioPhoneNumber(normalizedPhone) || normalizedPhone,
     message,
     eventType: event,
-    protocol: metadata.protocol || ''
+    protocol: metadata.protocol || '',
+    verifyFinalStatus: Boolean(metadata.verifyFinalStatus)
   });
 
   await appendLog({

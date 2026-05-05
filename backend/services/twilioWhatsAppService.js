@@ -11,6 +11,20 @@ function normalizeTwilioWhatsAppFrom(from) {
   return `whatsapp:+${digits}`;
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function describeTwilioMessageError(errorCode, fallbackMessage = '') {
+  const normalizedCode = Number(errorCode || 0);
+
+  if (normalizedCode === 63015) {
+    return 'Twilio 63015: o remetente esta usando o WhatsApp Sandbox. O destinatario precisa entrar no Sandbox enviando o codigo join para o numero da Twilio, ou o sistema precisa usar um sender WhatsApp aprovado para producao.';
+  }
+
+  return fallbackMessage || (normalizedCode ? `Twilio retornou erro ${normalizedCode}.` : 'Falha ao entregar a mensagem pela Twilio.');
+}
+
 function getTwilioConfig() {
   return {
     accountSid: String(process.env.TWILIO_ACCOUNT_SID || '').trim(),
@@ -72,6 +86,59 @@ function getMissingConfigKeys(config, templateSid, templateLabel = 'TWILIO_TEMPL
   return missing;
 }
 
+async function fetchTwilioMessageStatus(config, messageSid) {
+  if (!messageSid) return null;
+
+  const endpoint = `https://api.twilio.com/${TWILIO_MESSAGES_API_VERSION}/Accounts/${encodeURIComponent(config.accountSid)}/Messages/${encodeURIComponent(messageSid)}.json`;
+  const response = await axios.get(endpoint, {
+    timeout: 10000,
+    auth: {
+      username: config.accountSid,
+      password: config.authToken
+    },
+    validateStatus: () => true
+  });
+
+  return {
+    ok: response.status >= 200 && response.status < 300,
+    statusCode: response.status,
+    data: response.data || null
+  };
+}
+
+async function verifyTwilioMessageStatus(config, messageSid) {
+  const delayMs = Math.max(500, Math.min(Number(process.env.TWILIO_STATUS_CHECK_DELAY_MS || 1800), 6000));
+
+  await sleep(delayMs);
+
+  const statusResult = await fetchTwilioMessageStatus(config, messageSid);
+  const message = statusResult?.data || {};
+  const finalStatus = String(message.status || '').toLowerCase();
+  const failed = ['failed', 'undelivered', 'canceled'].includes(finalStatus);
+
+  if (failed) {
+    return {
+      success: false,
+      provider: 'twilio',
+      providerMessageId: message.sid || messageSid,
+      twilioSid: message.sid || messageSid,
+      status: finalStatus,
+      errorCode: message.error_code || null,
+      error: describeTwilioMessageError(message.error_code, message.error_message),
+      raw: message
+    };
+  }
+
+  return {
+    success: true,
+    provider: 'twilio',
+    providerMessageId: message.sid || messageSid,
+    twilioSid: message.sid || messageSid,
+    status: finalStatus || 'accepted',
+    raw: message
+  };
+}
+
 function buildProtocolTemplateVariables(protocol) {
   const protocolVariableKey = String(process.env.TWILIO_TEMPLATE_PROTOCOL_VARIABLE || 'protocolo').trim() || 'protocolo';
 
@@ -115,7 +182,8 @@ async function sendTemplateMessage({
   variables = {},
   eventType = 'TEMPLATE_NOTIFICATION',
   protocol = '',
-  templateLabel
+  templateLabel,
+  verifyFinalStatus = false
 }) {
   const config = getTwilioConfig();
   const normalizedTo = normalizePhoneNumber(to);
@@ -177,7 +245,7 @@ async function sendTemplateMessage({
       };
     }
 
-    return {
+    const sendResult = {
       success: true,
       provider: 'twilio',
       to: normalizedTo,
@@ -187,6 +255,19 @@ async function sendTemplateMessage({
       twilioSid: response.data?.sid || null,
       raw: response.data || null
     };
+
+    if (verifyFinalStatus && sendResult.twilioSid) {
+      const verified = await verifyTwilioMessageStatus(config, sendResult.twilioSid);
+      return {
+        ...sendResult,
+        ...verified,
+        to: normalizedTo,
+        eventType,
+        protocol
+      };
+    }
+
+    return sendResult;
   } catch (error) {
     return {
       success: false,
@@ -198,7 +279,7 @@ async function sendTemplateMessage({
   }
 }
 
-async function sendGenericNotification({ to, message, eventType = 'GENERIC_NOTIFICATION', protocol = '' }) {
+async function sendGenericNotification({ to, message, eventType = 'GENERIC_NOTIFICATION', protocol = '', verifyFinalStatus = false }) {
   const { templateSid, templateLabel } = resolveGenericTemplate(eventType);
 
   // Mensagens gerais e testes manuais usam exclusivamente template Twilio.
@@ -210,7 +291,8 @@ async function sendGenericNotification({ to, message, eventType = 'GENERIC_NOTIF
     templateLabel,
     variables: buildMessageTemplateVariables(message),
     eventType,
-    protocol
+    protocol,
+    verifyFinalStatus
   });
 }
 
@@ -249,5 +331,6 @@ module.exports = {
   getTwilioConfigStatus,
   sendTemplateMessage,
   normalizeTwilioWhatsAppFrom,
+  describeTwilioMessageError,
   normalizePhoneNumber
 };
