@@ -594,6 +594,15 @@ function HomeShellFixed() {
           <button className="ghost-action menu-trigger home-menu-top" onClick={() => setDrawerOpen(true)}>
             Menu
           </button>
+          {masterUser && (
+            <button
+              type="button"
+              className="outline-action home-monitoring-top"
+              onClick={() => navigate('/admin/monitoria')}
+            >
+              Monitoria
+            </button>
+          )}
         </div>
 
         <div className="home-command-actions">

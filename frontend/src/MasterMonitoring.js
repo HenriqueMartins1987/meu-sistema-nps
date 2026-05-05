@@ -90,6 +90,19 @@ function ProviderCard({ provider }) {
   );
 }
 
+function ExecutiveStatus({ label, status, value, detail }) {
+  return (
+    <article className="monitor-executive-card">
+      <div>
+        <span>{label}</span>
+        <strong>{value || statusLabels[status] || 'N/D'}</strong>
+      </div>
+      <em className={statusClass(status)}>{statusLabels[status] || status || 'N/D'}</em>
+      {detail && <small>{detail}</small>}
+    </article>
+  );
+}
+
 function MasterMonitoring() {
   const navigate = useNavigate();
   const currentUser = useMemo(() => readUser(), []);
@@ -168,6 +181,33 @@ function MasterMonitoring() {
               <strong>{formatNumber(overview.healthScore || 0)}</strong>
               <small>baseado em falhas, atrasos e comunicação</small>
             </div>
+          </section>
+
+          <section className="monitor-executive-strip" aria-label="Resumo executivo da monitoria">
+            <ExecutiveStatus
+              label="API"
+              status={runtime.status}
+              value={formatPercent(runtime.processCpuPercent)}
+              detail={`CPU atual · uptime ${formatDuration(runtime.uptimeSeconds)}`}
+            />
+            <ExecutiveStatus
+              label="MySQL Railway"
+              status={database.status}
+              value={`${formatNumber(database.latencyMs)} ms`}
+              detail={`${formatBytes(database.capacity?.totalBytes)} de storage monitorado`}
+            />
+            <ExecutiveStatus
+              label="Vercel"
+              status={providers.vercel?.status}
+              value={providers.vercel?.metrics?.latestState || 'Deploys'}
+              detail={providers.vercel?.metrics?.latestUrl || providers.vercel?.publicStatus || 'Status de frontend'}
+            />
+            <ExecutiveStatus
+              label="Resend"
+              status={providers.resend?.status}
+              value={`${formatNumber(email.summary?.last24h)} e-mails`}
+              detail={`${formatNumber(email.summary?.failed)} falhas registradas`}
+            />
           </section>
 
           <section className="monitor-kpi-grid">
