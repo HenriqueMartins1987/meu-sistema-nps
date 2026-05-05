@@ -47,16 +47,40 @@ function formatDateTime(value) {
   }).format(new Date(value));
 }
 
+function clampPercent(value, fallback = 0) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(0, Math.min(100, number));
+}
+
+function percentFromStatus(status) {
+  if (status === 'online') return 100;
+  if (status === 'attention') return 68;
+  if (status === 'not_configured') return 42;
+  if (status === 'unknown') return 50;
+  if (status === 'error') return 8;
+  return 0;
+}
+
 function statusClass(status) {
   return `monitor-status ${status || 'unknown'}`;
 }
 
-function KpiCard({ label, value, detail, tone = 'neutral' }) {
+function GaugeCard({ label, percent, value, detail, tone = 'neutral' }) {
+  const safePercent = clampPercent(percent);
+  const gaugeDeg = safePercent * 1.8;
+
   return (
-    <article className={`monitor-kpi-card ${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {detail && <small>{detail}</small>}
+    <article className={`monitor-gauge-card ${tone}`} style={{ '--gauge-deg': `${gaugeDeg}deg` }}>
+      <div className="monitor-gauge-dial" aria-hidden="true">
+        <span className="monitor-gauge-needle" />
+        <span className="monitor-gauge-pin" />
+      </div>
+      <div className="monitor-gauge-copy">
+        <span>{label}</span>
+        <strong>{value}</strong>
+        {detail && <small>{detail}</small>}
+      </div>
     </article>
   );
 }
@@ -146,6 +170,10 @@ function MasterMonitoring() {
   const memoryUsagePercent = runtime.memory?.systemTotalBytes
     ? (runtime.memory.systemTotalBytes - runtime.memory.systemFreeBytes) / runtime.memory.systemTotalBytes * 100
     : null;
+  const emailTotal24h = Number(email.summary?.last24h || overview.communications?.emails24h || 0);
+  const emailFailed24h = Number(overview.communications?.emailsFailed24h || 0);
+  const emailSuccessPercent = emailTotal24h ? ((emailTotal24h - emailFailed24h) / emailTotal24h) * 100 : 100;
+  const resendNote = Array.isArray(providers.resend?.notes) ? providers.resend.notes[0] : '';
 
   return (
     <main className="app-page master-monitoring-page">
@@ -211,13 +239,23 @@ function MasterMonitoring() {
           </section>
 
           <section className="monitor-kpi-grid">
-            <KpiCard label="Atividades 24h" value={formatNumber(overview.activities24h)} detail="ações auditadas" tone="gold" />
-            <KpiCard label="Protocolos abertos" value={formatNumber(overview.complaints?.open)} detail={`${formatNumber(overview.complaints?.overdue)} atrasados`} tone={overview.complaints?.overdue ? 'danger' : 'neutral'} />
-            <KpiCard label="CPU API" value={formatPercent(runtime.processCpuPercent)} detail={`${runtime.cpuCount || 0} núcleos`} />
-            <KpiCard label="Memória host" value={formatPercent(memoryUsagePercent)} detail={`${formatBytes(runtime.memory?.rssBytes)} em uso no Node`} />
-            <KpiCard label="MySQL latência" value={`${formatNumber(database.latencyMs)} ms`} detail={`${formatPercent(database.connections?.usagePercent)} conexões`} tone={database.latencyMs > 250 ? 'danger' : 'neutral'} />
-            <KpiCard label="E-mails 24h" value={formatNumber(email.summary?.last24h)} detail={`${formatNumber(email.summary?.failed)} falhas no histórico`} tone={email.summary?.failed ? 'danger' : 'neutral'} />
+            <GaugeCard label="Saúde geral" percent={overview.healthScore} value={formatPercent(overview.healthScore)} detail={`${formatNumber(overview.activities24h)} ações em 24h`} tone="gold" />
+            <GaugeCard label="CPU API" percent={runtime.processCpuPercent} value={formatPercent(runtime.processCpuPercent)} detail={`${runtime.cpuCount || 0} núcleos monitorados`} />
+            <GaugeCard label="Memória host" percent={memoryUsagePercent} value={formatPercent(memoryUsagePercent)} detail={`${formatBytes(runtime.memory?.rssBytes)} em uso no Node`} />
+            <GaugeCard label="Conexões MySQL" percent={database.connections?.usagePercent} value={formatPercent(database.connections?.usagePercent)} detail={`${formatNumber(database.connections?.current)} de ${formatNumber(database.connections?.max)}`} />
+            <GaugeCard label="Entrega de e-mail" percent={emailSuccessPercent} value={formatPercent(emailSuccessPercent)} detail={`${formatNumber(emailTotal24h)} envios em 24h · ${formatNumber(emailFailed24h)} falhas`} tone={emailFailed24h ? 'danger' : 'neutral'} />
+            <GaugeCard label="Resend API" percent={percentFromStatus(providers.resend?.status)} value={statusLabels[providers.resend?.status] || 'N/D'} detail={resendNote || 'Monitoria do provedor de e-mail'} tone={providers.resend?.status === 'error' ? 'danger' : 'neutral'} />
           </section>
+
+          {providers.resend?.status && providers.resend.status !== 'online' && (
+            <section className="monitor-diagnostic-panel" aria-label="Diagnóstico Resend">
+              <div>
+                <p className="eyebrow">Diagnóstico Resend</p>
+                <h2>{statusLabels[providers.resend.status] || 'Verificação do provedor'}</h2>
+              </div>
+              <p>{resendNote || 'A monitoria do Resend retornou uma condição que exige revisão da configuração.'}</p>
+            </section>
+          )}
 
           <section className="monitor-grid">
             <article className="management-panel monitor-panel">

@@ -3088,8 +3088,15 @@ async function fetchResendMonitoring(emailMonitoring) {
       createdAt: domain.created_at
     }));
   } catch (error) {
-    status.status = 'error';
-    status.notes.push(`Falha ao consultar Resend: ${error.response?.data?.message || error.message}`);
+    const apiMessage = error.response?.data?.message || error.message;
+    const lowerMessage = String(apiMessage || '').toLowerCase();
+    const restrictedToSend = lowerMessage.includes('restricted to only send emails');
+
+    status.status = restrictedToSend ? 'attention' : 'error';
+    status.metrics.domainCheck = restrictedToSend ? 'Sem permissão de leitura' : 'Falha';
+    status.notes.push(restrictedToSend
+      ? 'A RESEND_API_KEY atual está restrita apenas ao envio de e-mails. O envio pode funcionar, mas a monitoria de domínios exige uma chave com permissão de leitura/gerenciamento de domínios.'
+      : `Falha ao consultar Resend: ${apiMessage}`);
   }
 
   return status;

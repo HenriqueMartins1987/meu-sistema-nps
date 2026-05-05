@@ -5177,7 +5177,7 @@ a {
 }
 
 .monitor-hero-panel,
-.monitor-kpi-card,
+.monitor-gauge-card,
 .monitor-provider-card,
 .monitor-table-card {
   border: 1px solid rgba(200, 154, 87, 0.22);
@@ -5214,7 +5214,7 @@ a {
 }
 
 .monitor-health-score span,
-.monitor-kpi-card span,
+.monitor-gauge-card span,
 .monitor-provider-heading span,
 .monitor-table-card span {
   font-size: 11px;
@@ -5250,7 +5250,7 @@ a {
 }
 
 .monitor-kpi-grid {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
 }
 
 .monitor-grid {
@@ -5265,7 +5265,7 @@ a {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
-.monitor-kpi-card,
+.monitor-gauge-card,
 .monitor-executive-card,
 .monitor-table-card {
   min-height: 126px;
@@ -5273,6 +5273,111 @@ a {
   align-content: center;
   gap: 8px;
   padding: 18px;
+}
+
+.monitor-gauge-card {
+  min-height: 236px;
+  align-content: start;
+  justify-items: center;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.monitor-gauge-dial {
+  --gauge-track: rgba(221, 207, 188, 0.7);
+  --gauge-active: #c89a57;
+  position: relative;
+  width: min(190px, 100%);
+  aspect-ratio: 2 / 1;
+  overflow: hidden;
+  border-radius: 190px 190px 0 0;
+  background:
+    conic-gradient(from 270deg at 50% 100%,
+      var(--gauge-active) 0deg,
+      var(--gauge-active) var(--gauge-deg),
+      var(--gauge-track) var(--gauge-deg),
+      var(--gauge-track) 180deg,
+      transparent 180deg 360deg);
+  box-shadow: inset 0 10px 24px rgba(22, 18, 24, 0.12);
+}
+
+.monitor-gauge-dial::after {
+  content: '';
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  bottom: -2px;
+  height: 76%;
+  border-radius: 160px 160px 0 0;
+  background: rgba(255, 252, 247, 0.98);
+  box-shadow: inset 0 8px 18px rgba(22, 18, 24, 0.06);
+}
+
+.monitor-gauge-dial::before {
+  content: '0  50  100';
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  bottom: 8px;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  color: rgba(108, 90, 78, 0.72);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0;
+  white-space: pre;
+}
+
+.monitor-gauge-needle {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  z-index: 3;
+  width: 3px;
+  height: 78%;
+  border-radius: 999px;
+  background: #171b21;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.28);
+  transform: translateX(-50%) rotate(calc(-90deg + var(--gauge-deg)));
+  transform-origin: 50% 100%;
+}
+
+.monitor-gauge-pin {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  z-index: 4;
+  width: 18px;
+  height: 18px;
+  border: 3px solid #fffdfa;
+  border-radius: 50%;
+  background: #171b21;
+  transform: translate(-50%, 50%);
+  box-shadow: 0 8px 18px rgba(22, 18, 24, 0.18);
+}
+
+.monitor-gauge-copy {
+  width: 100%;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  text-align: center;
+}
+
+.monitor-gauge-copy strong {
+  color: var(--ink);
+  font-size: 28px;
+  line-height: 1.05;
+}
+
+.monitor-gauge-copy small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.monitor-gauge-card.danger .monitor-gauge-dial {
+  --gauge-active: #c44536;
 }
 
 .monitor-executive-card {
@@ -5322,26 +5427,48 @@ a {
   line-height: 1.35;
 }
 
-.monitor-kpi-card strong,
 .monitor-table-card strong {
   color: var(--ink);
   font-size: 28px;
   line-height: 1.1;
 }
 
-.monitor-kpi-card small,
 .monitor-table-card small {
   color: var(--muted);
   line-height: 1.35;
 }
 
-.monitor-kpi-card.gold {
+.monitor-gauge-card.gold {
   background: linear-gradient(180deg, rgba(255, 252, 247, 0.98), rgba(250, 239, 218, 0.98));
 }
 
-.monitor-kpi-card.danger {
+.monitor-gauge-card.danger {
   border-color: rgba(196, 69, 54, 0.34);
   background: rgba(255, 246, 244, 0.98);
+}
+
+.monitor-diagnostic-panel {
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: minmax(180px, 280px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: center;
+  padding: 18px 22px;
+  border: 1px solid rgba(212, 167, 100, 0.3);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255, 249, 240, 0.98), rgba(255, 252, 247, 0.98));
+  box-shadow: var(--shadow-sm);
+}
+
+.monitor-diagnostic-panel h2,
+.monitor-diagnostic-panel p {
+  margin: 0;
+}
+
+.monitor-diagnostic-panel p {
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .monitor-panel {
