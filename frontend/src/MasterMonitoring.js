@@ -114,19 +114,6 @@ function ProviderCard({ provider }) {
   );
 }
 
-function ExecutiveStatus({ label, status, value, detail }) {
-  return (
-    <article className="monitor-executive-card">
-      <div>
-        <span>{label}</span>
-        <strong>{value || statusLabels[status] || 'N/D'}</strong>
-      </div>
-      <em className={statusClass(status)}>{statusLabels[status] || status || 'N/D'}</em>
-      {detail && <small>{detail}</small>}
-    </article>
-  );
-}
-
 function MasterMonitoring() {
   const navigate = useNavigate();
   const currentUser = useMemo(() => readUser(), []);
@@ -174,6 +161,10 @@ function MasterMonitoring() {
   const emailFailed24h = Number(overview.communications?.emailsFailed24h || 0);
   const emailSuccessPercent = emailTotal24h ? ((emailTotal24h - emailFailed24h) / emailTotal24h) * 100 : 100;
   const resendNote = Array.isArray(providers.resend?.notes) ? providers.resend.notes[0] : '';
+  const openComplaints = Number(overview.complaints?.open || 0);
+  const overdueComplaints = Number(overview.complaints?.overdue || 0);
+  const complaintSlaPercent = openComplaints ? ((openComplaints - overdueComplaints) / openComplaints) * 100 : 100;
+  const mysqlLatencyHealth = Math.max(0, 100 - (Number(database.latencyMs || 0) / 500) * 100);
 
   return (
     <main className="app-page master-monitoring-page">
@@ -201,51 +192,28 @@ function MasterMonitoring() {
         <>
           <section className="monitor-hero-panel">
             <div>
-              <p className="eyebrow">Atualização contínua</p>
-              <h2>Saúde operacional, infraestrutura e auditoria</h2>
-              <p>Dados atualizados a cada {Math.round((data?.refreshMs || 15000) / 1000)} segundos. Última leitura: {formatDateTime(data?.generatedAt)}.</p>
+              <p className="eyebrow">Monitoria online</p>
+              <h2>Central executiva de saúde do sistema</h2>
+              <p>Leitura em tempo real da operação, infraestrutura, banco de dados e canais de comunicação.</p>
             </div>
-            <div className="monitor-health-score">
-              <span>Índice de saúde</span>
-              <strong>{formatNumber(overview.healthScore || 0)}</strong>
-              <small>baseado em falhas, atrasos e comunicação</small>
+            <div className="monitor-hero-meta" aria-label="Estado da atualização">
+              <span>Atualiza a cada {Math.round((data?.refreshMs || 15000) / 1000)}s</span>
+              <strong>{formatDateTime(data?.generatedAt)}</strong>
+              <small>última leitura consolidada</small>
             </div>
           </section>
 
-          <section className="monitor-executive-strip" aria-label="Resumo executivo da monitoria">
-            <ExecutiveStatus
-              label="API"
-              status={runtime.status}
-              value={formatPercent(runtime.processCpuPercent)}
-              detail={`CPU atual · uptime ${formatDuration(runtime.uptimeSeconds)}`}
-            />
-            <ExecutiveStatus
-              label="MySQL Railway"
-              status={database.status}
-              value={`${formatNumber(database.latencyMs)} ms`}
-              detail={`${formatBytes(database.capacity?.totalBytes)} de storage monitorado`}
-            />
-            <ExecutiveStatus
-              label="Vercel"
-              status={providers.vercel?.status}
-              value={providers.vercel?.metrics?.latestState || 'Deploys'}
-              detail={providers.vercel?.metrics?.latestUrl || providers.vercel?.publicStatus || 'Status de frontend'}
-            />
-            <ExecutiveStatus
-              label="Resend"
-              status={providers.resend?.status}
-              value={`${formatNumber(email.summary?.last24h)} e-mails`}
-              detail={`${formatNumber(email.summary?.failed)} falhas registradas`}
-            />
-          </section>
-
-          <section className="monitor-kpi-grid">
-            <GaugeCard label="Saúde geral" percent={overview.healthScore} value={formatPercent(overview.healthScore)} detail={`${formatNumber(overview.activities24h)} ações em 24h`} tone="gold" />
-            <GaugeCard label="CPU API" percent={runtime.processCpuPercent} value={formatPercent(runtime.processCpuPercent)} detail={`${runtime.cpuCount || 0} núcleos monitorados`} />
+          <section className="monitor-kpi-grid" aria-label="Mostradores principais">
+            <GaugeCard label="Saúde geral" percent={overview.healthScore} value={formatPercent(overview.healthScore)} detail={`${formatNumber(overview.activities24h)} movimentações em 24h`} tone="gold" />
+            <GaugeCard label="SLA protocolos" percent={complaintSlaPercent} value={formatPercent(complaintSlaPercent)} detail={`${formatNumber(overdueComplaints)} atrasados de ${formatNumber(openComplaints)} abertos`} tone={overdueComplaints ? 'danger' : 'neutral'} />
+            <GaugeCard label="CPU API" percent={runtime.processCpuPercent} value={formatPercent(runtime.processCpuPercent)} detail={`${runtime.cpuCount || 0} núcleos · uptime ${formatDuration(runtime.uptimeSeconds)}`} />
             <GaugeCard label="Memória host" percent={memoryUsagePercent} value={formatPercent(memoryUsagePercent)} detail={`${formatBytes(runtime.memory?.rssBytes)} em uso no Node`} />
-            <GaugeCard label="Conexões MySQL" percent={database.connections?.usagePercent} value={formatPercent(database.connections?.usagePercent)} detail={`${formatNumber(database.connections?.current)} de ${formatNumber(database.connections?.max)}`} />
+            <GaugeCard label="Latência MySQL" percent={mysqlLatencyHealth} value={`${formatNumber(database.latencyMs)} ms`} detail={`${formatBytes(database.capacity?.totalBytes)} em storage`} tone={database.latencyMs > 250 ? 'danger' : 'neutral'} />
+            <GaugeCard label="Conexões MySQL" percent={database.connections?.usagePercent} value={formatPercent(database.connections?.usagePercent)} detail={`${formatNumber(database.connections?.current)} de ${formatNumber(database.connections?.max)} conexões`} />
             <GaugeCard label="Entrega de e-mail" percent={emailSuccessPercent} value={formatPercent(emailSuccessPercent)} detail={`${formatNumber(emailTotal24h)} envios em 24h · ${formatNumber(emailFailed24h)} falhas`} tone={emailFailed24h ? 'danger' : 'neutral'} />
             <GaugeCard label="Resend API" percent={percentFromStatus(providers.resend?.status)} value={statusLabels[providers.resend?.status] || 'N/D'} detail={resendNote || 'Monitoria do provedor de e-mail'} tone={providers.resend?.status === 'error' ? 'danger' : 'neutral'} />
+            <GaugeCard label="Vercel" percent={percentFromStatus(providers.vercel?.status)} value={statusLabels[providers.vercel?.status] || 'N/D'} detail={providers.vercel?.metrics?.latestState || providers.vercel?.publicStatus || 'Frontend'} tone={providers.vercel?.status === 'error' ? 'danger' : 'neutral'} />
+            <GaugeCard label="Railway API" percent={percentFromStatus(providers.railway?.status)} value={statusLabels[providers.railway?.status] || 'N/D'} detail={providers.railway?.metrics?.projectName || 'Métricas do banco'} tone={providers.railway?.status === 'error' ? 'danger' : 'neutral'} />
           </section>
 
           {providers.resend?.status && providers.resend.status !== 'online' && (
@@ -263,7 +231,7 @@ function MasterMonitoring() {
               <div className="panel-heading">
                 <div>
                   <p className="eyebrow">API Node</p>
-                  <h2>Recursos do servidor</h2>
+                  <h2>Capacidade da API</h2>
                 </div>
                 <span className={statusClass(runtime.status)}>{statusLabels[runtime.status] || 'Online'}</span>
               </div>
@@ -279,7 +247,7 @@ function MasterMonitoring() {
               <div className="panel-heading">
                 <div>
                   <p className="eyebrow">Railway MySQL</p>
-                  <h2>Banco de dados</h2>
+                  <h2>Capacidade do banco</h2>
                 </div>
                 <span className={statusClass(database.status)}>{statusLabels[database.status] || 'Online'}</span>
               </div>
@@ -302,7 +270,7 @@ function MasterMonitoring() {
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Movimentações</p>
-                <h2>Auditoria em tempo real</h2>
+                <h2>Linha do tempo operacional</h2>
               </div>
             </div>
             <div className="monitor-source-strip">
@@ -340,7 +308,7 @@ function MasterMonitoring() {
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Capacidade</p>
-                <h2>Maiores tabelas do MySQL</h2>
+                <h2>Distribuição de storage MySQL</h2>
               </div>
             </div>
             <div className="monitor-table-grid">
