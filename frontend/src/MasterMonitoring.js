@@ -183,6 +183,7 @@ function MasterMonitoring() {
           <h1>Monitoria do sistema</h1>
         </div>
         <div className="heading-actions">
+          <button type="button" className="ghost-action" onClick={() => navigate('/home')}>Home</button>
           <button type="button" className="outline-action" onClick={() => navigate('/admin')}>Painel gerencial</button>
           <button type="button" className="primary-action" onClick={() => loadData(true)} disabled={refreshing}>
             {refreshing ? 'Atualizando...' : 'Atualizar agora'}
