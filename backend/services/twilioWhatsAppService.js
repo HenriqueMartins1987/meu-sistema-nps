@@ -3,11 +3,19 @@ const axios = require('axios');
 const TWILIO_MESSAGES_API_VERSION = '2010-04-01';
 const DEFAULT_TWILIO_WHATSAPP_FROM = 'whatsapp:+14155238886';
 
+function normalizeTwilioWhatsAppFrom(from) {
+  const rawValue = String(from || DEFAULT_TWILIO_WHATSAPP_FROM).trim();
+  const digits = rawValue.replace(/^whatsapp:/i, '').replace(/\D/g, '');
+
+  if (!digits) return '';
+  return `whatsapp:+${digits}`;
+}
+
 function getTwilioConfig() {
   return {
     accountSid: String(process.env.TWILIO_ACCOUNT_SID || '').trim(),
     authToken: String(process.env.TWILIO_AUTH_TOKEN || '').trim(),
-    from: String(process.env.TWILIO_WHATSAPP_FROM || DEFAULT_TWILIO_WHATSAPP_FROM).trim(),
+    from: normalizeTwilioWhatsAppFrom(process.env.TWILIO_WHATSAPP_FROM),
     complaintTemplateSid: String(process.env.TWILIO_TEMPLATE_DEMANDA_SID || '').trim(),
     npsTemplateSid: String(process.env.TWILIO_TEMPLATE_NPS_SID || '').trim(),
     genericTemplateSid: String(process.env.TWILIO_TEMPLATE_GENERIC_SID || '').trim(),
@@ -240,5 +248,6 @@ module.exports = {
   sendNpsNotification,
   getTwilioConfigStatus,
   sendTemplateMessage,
+  normalizeTwilioWhatsAppFrom,
   normalizePhoneNumber
 };

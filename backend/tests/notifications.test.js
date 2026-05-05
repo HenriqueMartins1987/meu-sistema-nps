@@ -27,6 +27,7 @@ const {
 } = require('../services/whatsappService');
 const {
   normalizePhoneNumber: normalizeTwilioPhoneNumber,
+  normalizeTwilioWhatsAppFrom,
   sendTemplateMessage
 } = require('../services/twilioWhatsAppService');
 const { __testables } = require('../server');
@@ -181,6 +182,11 @@ test('normalizeTwilioPhoneNumber keeps WhatsApp prefix and accepts fixed complai
   assert.equal(normalizeTwilioPhoneNumber('556299669966'), 'whatsapp:+556299669966');
   assert.equal(normalizeTwilioPhoneNumber('whatsapp:+5562996807670'), 'whatsapp:+5562996807670');
   assert.equal(normalizeTwilioPhoneNumber('123'), '');
+});
+
+test('normalizeTwilioWhatsAppFrom accepts Render values with or without whatsapp prefix', () => {
+  assert.equal(normalizeTwilioWhatsAppFrom('+14155238886'), 'whatsapp:+14155238886');
+  assert.equal(normalizeTwilioWhatsAppFrom('whatsapp:+14155238886'), 'whatsapp:+14155238886');
 });
 
 test('sendTemplateMessage skips safely when Twilio credentials are missing', async () => {
