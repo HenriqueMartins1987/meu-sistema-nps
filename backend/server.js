@@ -23,7 +23,8 @@ const emailService = require('./services/emailService');
 const {
   sendComplaintNotification: sendTwilioComplaintNotification,
   sendNpsNotification: sendTwilioNpsNotification,
-  normalizePhoneNumber: normalizeTwilioPhoneNumber
+  normalizePhoneNumber: normalizeTwilioPhoneNumber,
+  getTwilioConfigStatus
 } = require('./services/twilioWhatsAppService');
 const {
   buildAppointmentReminderMessage,
@@ -64,8 +65,6 @@ const masterAdminEmail = (process.env.MASTER_ADMIN_EMAIL || 'henrique.martins@gr
 const masterAdminWhatsapp = normalizeBrazilPhone(process.env.MASTER_ADMIN_WHATSAPP || '');
 const defaultAdminEmail = masterAdminEmail;
 const defaultAdminPassword = process.env.MASTER_ADMIN_PASSWORD || process.env.DEFAULT_ADMIN_PASSWORD || 'Zyck1987#';
-const whatsappWebhookUrl = process.env.WHATSAPP_WEBHOOK_URL || '';
-const whatsappGroupId = process.env.WHATSAPP_GROUP_ID || '';
 // Numeros fixos que recebem apenas alertas de RECLAMACAO. Altere aqui se a regra de escalonamento mudar.
 const fixedComplaintWhatsAppRecipients = ['5562996807670', '556299669966'];
 const requirePasswordChangeOnFirstLogin = String(process.env.REQUIRE_PASSWORD_CHANGE_ON_FIRST_LOGIN || 'true').toLowerCase() !== 'false';
@@ -3388,6 +3387,65 @@ async function getEmailMonitoring() {
   };
 }
 
+async function getWhatsAppMonitoring() {
+  const [summaryRows] = await pool.query(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(status IN ('sent', 'delivered', 'read')) AS sent,
+      SUM(status = 'failed') AS failed,
+      SUM(status = 'skipped') AS skipped,
+      SUM(created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS last_24h,
+      SUM(DATE(created_at) = CURDATE()) AS today
+    FROM (
+      SELECT status, created_at FROM whatsapp_message_logs
+      UNION ALL
+      SELECT status, created_at FROM notification_logs WHERE channel = 'WHATSAPP'
+    ) whatsapp_events
+  `);
+  const config = getTwilioConfigStatus();
+  const coreConfigured = config.accountSidConfigured && config.authTokenConfigured && config.fromConfigured;
+  const protocolTemplatesConfigured = config.complaintTemplateConfigured && config.npsTemplateConfigured;
+  const manualTemplatesConfigured = config.genericTemplateConfigured || config.testTemplateConfigured;
+  const summary = summaryRows[0] || {};
+  const notes = [];
+
+  if (!coreConfigured) {
+    notes.push('Configure TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN e TWILIO_WHATSAPP_FROM no Render.');
+  }
+
+  if (!protocolTemplatesConfigured) {
+    notes.push('Configure TWILIO_TEMPLATE_DEMANDA_SID e TWILIO_TEMPLATE_NPS_SID para Reclamação e NPS.');
+  }
+
+  if (!manualTemplatesConfigured) {
+    notes.push('Configure TWILIO_TEMPLATE_TESTE_SID ou TWILIO_TEMPLATE_GENERIC_SID para testes e mensagens operacionais.');
+  }
+
+  return {
+    configured: coreConfigured,
+    status: coreConfigured && protocolTemplatesConfigured && manualTemplatesConfigured
+      ? 'online'
+      : coreConfigured
+        ? 'attention'
+        : 'not_configured',
+    label: 'Twilio WhatsApp',
+    metrics: {
+      from: config.fromConfigured ? config.from : 'Não configurado',
+      demandaTemplate: config.complaintTemplateConfigured ? 'Configurado' : 'Ausente',
+      npsTemplate: config.npsTemplateConfigured ? 'Configurado' : 'Ausente',
+      testeTemplate: config.testTemplateConfigured ? 'Configurado' : 'Ausente',
+      genericoTemplate: config.genericTemplateConfigured ? 'Configurado' : 'Ausente',
+      total: Number(summary.total || 0),
+      last24h: Number(summary.last_24h || 0),
+      sent: Number(summary.sent || 0),
+      failed: Number(summary.failed || 0),
+      skipped: Number(summary.skipped || 0),
+      today: Number(summary.today || 0)
+    },
+    notes
+  };
+}
+
 async function getActivityMonitoring() {
   const [recent] = await pool.query(`
     SELECT *
@@ -3801,7 +3859,6 @@ async function sendWhatsappNotification(payload = {}) {
   const message = payload?.message || '';
   const provider = getWhatsAppProvider();
   const normalizedPhone = payload?.to ? normalizeWhatsAppPhone(payload.to) : '';
-  const canUseDirectSend = provider === 'meta' || provider === 'webhook';
   const logId = await createWhatsAppLog({
     eventKey: payload?.event || 'generic_notification',
     recipientPhone: normalizedPhone || payload?.to || null,
@@ -3812,12 +3869,13 @@ async function sendWhatsappNotification(payload = {}) {
     relatedEntityId: payload?.relatedEntityId || payload?.complaintId || payload?.npsId || null
   });
 
-  const result = canUseDirectSend
+  const result = provider === 'twilio'
     ? await sendWhatsAppMessage(normalizedPhone || payload?.to, message, payload)
     : {
       success: false,
       skipped: true,
-      error: 'Nenhum provedor de WhatsApp configurado para envio direto.'
+      provider,
+      error: 'Somente Twilio está habilitado para WhatsApp.'
     };
 
   await updateWhatsAppLog(logId, result);
@@ -3825,54 +3883,23 @@ async function sendWhatsappNotification(payload = {}) {
 }
 
 async function sendWhatsappGroupNotification({ event, message, payload = null, link = null }) {
-  if (!whatsappWebhookUrl || !whatsappGroupId) {
-    return {
-      success: false,
-      skipped: true,
-      error: 'Grupo de WhatsApp não configurado para notificações.'
-    };
-  }
+  const skippedReason = 'Envio por grupo/webhook removido. O WhatsApp oficial do sistema usa somente Twilio por template.';
+  const logId = await createWhatsAppLog({
+    eventKey: event || 'group_notification',
+    recipientPhone: null,
+    messageBody: link ? `${message}\n${link}` : message,
+    relatedEntityType: 'twilio_only_group_skipped',
+    relatedEntityId: payload?.complaintId || payload?.id || null,
+    status: 'skipped'
+  });
+  await updateWhatsAppLog(logId, { skipped: true, provider: 'twilio', error: skippedReason });
 
-  try {
-    const response = await fetch(whatsappWebhookUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        event: event || 'group_notification',
-        groupId: whatsappGroupId,
-        message: link ? `${message}\n${link}` : message,
-        metadata: payload || {}
-      })
-    });
-    const text = await response.text();
-    let raw = text;
-
-    try {
-      raw = JSON.parse(text);
-    } catch (error) {
-      raw = text;
-    }
-
-    if (!response.ok) {
-      return {
-        success: false,
-        error: (raw && raw.error) || text || 'Falha ao enviar notificação para o grupo.'
-      };
-    }
-
-    return {
-      success: true,
-      provider: 'group_webhook',
-      raw
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error.message || 'Falha ao acionar o grupo de WhatsApp.'
-    };
-  }
+  return {
+    success: false,
+    skipped: true,
+    provider: 'twilio',
+    error: 'Envio por grupo/webhook removido. Configure destinatários individuais via Twilio.'
+  };
 }
 
 async function createNotification(userId, type, title, message, link = null, payload = null) {
@@ -5490,12 +5517,13 @@ app.get('/admin/master-monitoring', authenticate, requireMasterAdmin, async (req
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.set('Pragma', 'no-cache');
 
-    const [overview, runtime, database, activity, email] = await Promise.all([
+    const [overview, runtime, database, activity, email, whatsapp] = await Promise.all([
       getOverviewMetrics(),
       getRuntimeMetrics(),
       getDatabaseMonitoring(),
       getActivityMonitoring(),
-      getEmailMonitoring()
+      getEmailMonitoring(),
+      getWhatsAppMonitoring()
     ]);
     const [vercel, railway, resend] = await Promise.all([
       fetchVercelMonitoring(),
@@ -5511,10 +5539,12 @@ app.get('/admin/master-monitoring', authenticate, requireMasterAdmin, async (req
       database,
       activity,
       email,
+      whatsapp,
       providers: {
         vercel,
         railway,
-        resend
+        resend,
+        twilio: whatsapp
       },
       monitors: [
         'Auditoria central de POST/PATCH/DELETE',
@@ -5674,58 +5704,19 @@ app.post('/auth/reset-password-with-code', passwordRecoveryRequestLimiter, async
 });
 
 app.get('/webhook/whatsapp', (req, res) => {
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode === 'subscribe' && token === process.env.WHATSAPP_WEBHOOK_VERIFY_TOKEN) {
-    return res.status(200).send(challenge);
-  }
-
-  return res.status(403).send('Webhook do WhatsApp não autorizado.');
+  return res.status(410).json({
+    success: false,
+    provider: 'twilio',
+    error: 'Webhook Meta removido. O WhatsApp oficial do sistema usa somente Twilio.'
+  });
 });
 
 app.post('/webhook/whatsapp', async (req, res) => {
-  try {
-    const statuses = Array.isArray(req.body?.entry)
-      ? req.body.entry.flatMap((entry) => (
-        Array.isArray(entry?.changes)
-          ? entry.changes.flatMap((change) => change?.value?.statuses || [])
-          : []
-      ))
-      : [];
-    const incomingMessages = Array.isArray(req.body?.entry)
-      ? req.body.entry.flatMap((entry) => (
-        Array.isArray(entry?.changes)
-          ? entry.changes.flatMap((change) => change?.value?.messages || [])
-          : []
-      ))
-      : [];
-
-    await Promise.all(statuses.map((statusPayload) => (
-      updateWhatsAppLogByProviderMessageId(statusPayload?.id, statusPayload?.status, statusPayload)
-    )));
-
-    await Promise.all(incomingMessages.map((messagePayload) => (
-      createWhatsAppLog({
-        eventKey: 'incoming_message',
-        recipientPhone: messagePayload?.from || null,
-        messageBody: messagePayload?.text?.body || null,
-        relatedEntityType: 'incoming_whatsapp',
-        relatedEntityId: null,
-        status: 'received'
-      })
-    )));
-
-    return res.status(200).json({
-      success: true,
-      processedStatuses: statuses.length,
-      processedMessages: incomingMessages.length
-    });
-  } catch (error) {
-    console.error(error);
-    return res.status(400).json({ success: false, error: 'Webhook do WhatsApp inválido.' });
-  }
+  return res.status(410).json({
+    success: false,
+    provider: 'twilio',
+    error: 'Webhook Meta removido. O WhatsApp oficial do sistema usa somente Twilio.'
+  });
 });
 
 // ============================================

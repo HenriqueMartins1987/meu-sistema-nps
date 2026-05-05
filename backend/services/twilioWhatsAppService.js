@@ -9,7 +9,24 @@ function getTwilioConfig() {
     authToken: String(process.env.TWILIO_AUTH_TOKEN || '').trim(),
     from: String(process.env.TWILIO_WHATSAPP_FROM || DEFAULT_TWILIO_WHATSAPP_FROM).trim(),
     complaintTemplateSid: String(process.env.TWILIO_TEMPLATE_DEMANDA_SID || '').trim(),
-    npsTemplateSid: String(process.env.TWILIO_TEMPLATE_NPS_SID || '').trim()
+    npsTemplateSid: String(process.env.TWILIO_TEMPLATE_NPS_SID || '').trim(),
+    genericTemplateSid: String(process.env.TWILIO_TEMPLATE_GENERIC_SID || '').trim(),
+    testTemplateSid: String(process.env.TWILIO_TEMPLATE_TESTE_SID || '').trim()
+  };
+}
+
+function getTwilioConfigStatus() {
+  const config = getTwilioConfig();
+
+  return {
+    accountSidConfigured: Boolean(config.accountSid),
+    authTokenConfigured: Boolean(config.authToken),
+    fromConfigured: Boolean(config.from),
+    from: config.from || '',
+    complaintTemplateConfigured: Boolean(config.complaintTemplateSid),
+    npsTemplateConfigured: Boolean(config.npsTemplateSid),
+    genericTemplateConfigured: Boolean(config.genericTemplateSid),
+    testTemplateConfigured: Boolean(config.testTemplateSid)
   };
 }
 
@@ -36,13 +53,13 @@ function normalizePhoneNumber(phone) {
   return `whatsapp:+${normalizedDigits}`;
 }
 
-function getMissingConfigKeys(config, templateSid) {
+function getMissingConfigKeys(config, templateSid, templateLabel = 'TWILIO_TEMPLATE_DEMANDA_SID ou TWILIO_TEMPLATE_NPS_SID') {
   const missing = [];
 
   if (!config.accountSid) missing.push('TWILIO_ACCOUNT_SID');
   if (!config.authToken) missing.push('TWILIO_AUTH_TOKEN');
   if (!config.from) missing.push('TWILIO_WHATSAPP_FROM');
-  if (!templateSid) missing.push('TWILIO_TEMPLATE_DEMANDA_SID ou TWILIO_TEMPLATE_NPS_SID');
+  if (!templateSid) missing.push(templateLabel);
 
   return missing;
 }
@@ -57,12 +74,40 @@ function buildProtocolTemplateVariables(protocol) {
   };
 }
 
+function buildMessageTemplateVariables(message) {
+  const messageVariableKey = String(process.env.TWILIO_TEMPLATE_MESSAGE_VARIABLE || 'mensagem').trim() || 'mensagem';
+
+  // Para mensagens simples, configure o template Twilio com a variavel {{mensagem}}
+  // ou ajuste TWILIO_TEMPLATE_MESSAGE_VARIABLE para o nome/indice usado no Content Template.
+  return {
+    [messageVariableKey]: String(message || '')
+  };
+}
+
+function resolveGenericTemplate(eventType) {
+  const config = getTwilioConfig();
+  const normalizedEvent = String(eventType || '').trim().toLowerCase();
+
+  if (normalizedEvent === 'manual_test') {
+    return {
+      templateSid: config.testTemplateSid || config.genericTemplateSid,
+      templateLabel: 'TWILIO_TEMPLATE_TESTE_SID ou TWILIO_TEMPLATE_GENERIC_SID'
+    };
+  }
+
+  return {
+    templateSid: config.genericTemplateSid,
+    templateLabel: 'TWILIO_TEMPLATE_GENERIC_SID'
+  };
+}
+
 async function sendTemplateMessage({
   to,
   templateSid,
   variables = {},
   eventType = 'TEMPLATE_NOTIFICATION',
-  protocol = ''
+  protocol = '',
+  templateLabel
 }) {
   const config = getTwilioConfig();
   const normalizedTo = normalizePhoneNumber(to);
@@ -76,7 +121,7 @@ async function sendTemplateMessage({
     };
   }
 
-  const missing = getMissingConfigKeys(config, templateSid);
+  const missing = getMissingConfigKeys(config, templateSid, templateLabel);
 
   if (missing.length) {
     return {
@@ -145,6 +190,22 @@ async function sendTemplateMessage({
   }
 }
 
+async function sendGenericNotification({ to, message, eventType = 'GENERIC_NOTIFICATION', protocol = '' }) {
+  const { templateSid, templateLabel } = resolveGenericTemplate(eventType);
+
+  // Mensagens gerais e testes manuais usam exclusivamente template Twilio.
+  // Altere TWILIO_TEMPLATE_TESTE_SID para o teste "Envio de mensagem teste" e
+  // TWILIO_TEMPLATE_GENERIC_SID para mensagens operacionais com a variavel {{mensagem}}.
+  return sendTemplateMessage({
+    to,
+    templateSid,
+    templateLabel,
+    variables: buildMessageTemplateVariables(message),
+    eventType,
+    protocol
+  });
+}
+
 async function sendComplaintNotification({ to, protocol }) {
   const config = getTwilioConfig();
 
@@ -175,7 +236,9 @@ async function sendNpsNotification({ to, protocol }) {
 
 module.exports = {
   sendComplaintNotification,
+  sendGenericNotification,
   sendNpsNotification,
+  getTwilioConfigStatus,
   sendTemplateMessage,
   normalizePhoneNumber
 };

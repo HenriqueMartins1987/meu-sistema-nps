@@ -292,6 +292,14 @@ test('test-email route sends a dedicated validation message', async () => {
 });
 
 test('manual WhatsApp route accepts telefone and mensagem payload', async () => {
+  const previousWhatsAppEnabled = process.env.WHATSAPP_ENABLED;
+  const previousTwilioSid = process.env.TWILIO_ACCOUNT_SID;
+  const previousTwilioToken = process.env.TWILIO_AUTH_TOKEN;
+
+  process.env.WHATSAPP_ENABLED = 'true';
+  process.env.TWILIO_ACCOUNT_SID = '';
+  process.env.TWILIO_AUTH_TOKEN = '';
+
   pool.query = buildQueryStub([
     {
       match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
@@ -307,26 +315,47 @@ test('manual WhatsApp route accepts telefone and mensagem payload', async () => 
     }
   ]);
 
-  const response = await request(app)
-    .post('/api/whatsapp/enviar')
-    .set('Authorization', `Bearer ${signToken({
-      id: 1,
-      email: 'henrique.martins@grcconsultoria.net.br',
-      role: 'master_admin',
-      name: 'Administrador Master',
-      permissions: ['admin_panel'],
-      clinicIds: [],
-      mustChangePassword: false
-    })}`)
-    .send({
-      telefone: '+55 (62) 99966-9966',
-      mensagem: 'Teste manual de WhatsApp'
-    });
+  try {
+    const response = await request(app)
+      .post('/api/whatsapp/enviar')
+      .set('Authorization', `Bearer ${signToken({
+        id: 1,
+        email: 'henrique.martins@grcconsultoria.net.br',
+        role: 'master_admin',
+        name: 'Administrador Master',
+        permissions: ['admin_panel'],
+        clinicIds: [],
+        mustChangePassword: false
+      })}`)
+      .send({
+        telefone: '+55 (62) 99966-9966',
+        mensagem: 'Teste manual de WhatsApp'
+      });
 
-  assert.equal(response.status, 200);
-  assert.equal(response.body.success, false);
-  assert.equal(response.body.to, '5562999669966');
-  assert.match(response.body.warning, /provedor|configur/i);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.success, false);
+    assert.equal(response.body.provider, 'twilio');
+    assert.equal(response.body.to, '5562999669966');
+    assert.match(response.body.warning, /twilio|configur/i);
+  } finally {
+    if (previousWhatsAppEnabled === undefined) {
+      delete process.env.WHATSAPP_ENABLED;
+    } else {
+      process.env.WHATSAPP_ENABLED = previousWhatsAppEnabled;
+    }
+
+    if (previousTwilioSid === undefined) {
+      delete process.env.TWILIO_ACCOUNT_SID;
+    } else {
+      process.env.TWILIO_ACCOUNT_SID = previousTwilioSid;
+    }
+
+    if (previousTwilioToken === undefined) {
+      delete process.env.TWILIO_AUTH_TOKEN;
+    } else {
+      process.env.TWILIO_AUTH_TOKEN = previousTwilioToken;
+    }
+  }
 });
 
 test('test WhatsApp route sends the fixed management message', async () => {

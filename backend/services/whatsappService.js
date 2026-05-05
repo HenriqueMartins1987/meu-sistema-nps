@@ -1,24 +1,21 @@
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
+const {
+  sendGenericNotification,
+  normalizePhoneNumber: normalizeTwilioPhoneNumber
+} = require('./twilioWhatsAppService');
 
 const logsDir = path.join(__dirname, '..', 'logs');
 const logFilePath = path.join(logsDir, 'whatsapp.log');
-const metaApiVersion = process.env.WHATSAPP_API_VERSION || process.env.WHATSAPP_META_VERSION || 'v20.0';
 
 fs.mkdirSync(logsDir, { recursive: true });
 
 function getWhatsAppProvider() {
-  const configuredProvider = String(process.env.WHATSAPP_PROVIDER || '').trim().toLowerCase();
-
-  if (configuredProvider) return configuredProvider;
-  if (process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID) return 'meta';
-  if (process.env.WHATSAPP_WEBHOOK_URL) return 'webhook';
-  return 'log';
+  return 'twilio';
 }
 
 function isWhatsAppEnabled() {
-  return String(process.env.WHATSAPP_ENABLED || 'false').trim().toLowerCase() === 'true';
+  return String(process.env.WHATSAPP_ENABLED || 'true').trim().toLowerCase() !== 'false';
 }
 
 function normalizeWhatsAppPhone(phone) {
@@ -30,18 +27,6 @@ function normalizeWhatsAppPhone(phone) {
   return '';
 }
 
-function sanitizeText(value, limit = 4096) {
-  return String(value || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim()
-    .slice(0, limit);
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function appendLog(entry) {
   const serialized = JSON.stringify({
     at: new Date().toISOString(),
@@ -49,141 +34,6 @@ async function appendLog(entry) {
   });
 
   await fs.promises.appendFile(logFilePath, `${serialized}\n`, 'utf8');
-}
-
-async function sendViaMeta({ to, message, event, metadata }) {
-  if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_NUMBER_ID) {
-    return {
-      success: false,
-      error: 'Meta WhatsApp Cloud API não configurada.'
-    };
-  }
-
-  const endpoint = `https://graph.facebook.com/${metaApiVersion}/${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`;
-  const payload = {
-    messaging_product: 'whatsapp',
-    to,
-    type: 'text',
-    text: {
-      body: sanitizeText(message)
-    }
-  };
-
-  let lastError = 'Falha desconhecida no envio via Meta Cloud API.';
-
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try {
-      const response = await axios.post(endpoint, payload, {
-        timeout: 10000,
-        headers: {
-          Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-          'Content-Type': 'application/json'
-        }
-      });
-
-      await appendLog({
-        event,
-        provider: 'meta',
-        to,
-        status: 'sent',
-        attempt,
-        providerMessageId: response.data?.messages?.[0]?.id || null,
-        metadata,
-        response: response.data
-      });
-
-      return {
-        success: true,
-        provider: 'meta',
-        to,
-        providerMessageId: response.data?.messages?.[0]?.id || null,
-        raw: response.data
-      };
-    } catch (error) {
-      lastError = error.response?.data?.error?.message || error.message || lastError;
-
-      await appendLog({
-        event,
-        provider: 'meta',
-        to,
-        status: 'retry',
-        attempt,
-        metadata,
-        error: lastError,
-        response: error.response?.data || null
-      });
-
-      if (attempt < 3) {
-        await sleep(attempt * 500);
-      }
-    }
-  }
-
-  return {
-    success: false,
-    provider: 'meta',
-    to,
-    error: lastError
-  };
-}
-
-async function sendViaWebhook({ to, message, event, metadata }) {
-  const webhookUrl = String(process.env.WHATSAPP_WEBHOOK_URL || '').trim();
-
-  if (!webhookUrl) {
-    return {
-      success: false,
-      error: 'Webhook de WhatsApp não configurado.'
-    };
-  }
-
-  try {
-    const response = await axios.post(webhookUrl, {
-      to,
-      event,
-      message: sanitizeText(message),
-      groupId: process.env.WHATSAPP_GROUP_ID || undefined,
-      metadata
-    }, {
-      timeout: 8000
-    });
-
-    await appendLog({
-      event,
-      provider: 'webhook',
-      to,
-      status: 'sent',
-      metadata,
-      response: response.data
-    });
-
-    return {
-      success: true,
-      provider: 'webhook',
-      to,
-      providerMessageId: response.data?.id || null,
-      raw: response.data
-    };
-  } catch (error) {
-    const lastError = error.response?.data?.error || error.message || 'Falha ao enviar via webhook.';
-
-    await appendLog({
-      event,
-      provider: 'webhook',
-      to,
-      status: 'failed',
-      metadata,
-      error: lastError,
-      response: error.response?.data || null
-    });
-
-    return {
-      success: false,
-      provider: 'webhook',
-      to,
-      error: lastError
-    };
-  }
 }
 
 async function sendWhatsAppMessage(to, message, metadata = {}) {
@@ -202,6 +52,7 @@ async function sendWhatsAppMessage(to, message, metadata = {}) {
 
     return {
       success: false,
+      provider: 'twilio',
       error: 'Telefone em padrão E.164 inválido.'
     };
   }
@@ -219,35 +70,37 @@ async function sendWhatsAppMessage(to, message, metadata = {}) {
     return {
       success: false,
       skipped: true,
+      provider: 'twilio',
       to: normalizedPhone,
       error: 'WhatsApp desabilitado.'
     };
   }
 
-  const provider = getWhatsAppProvider();
-
-  if (provider === 'meta') {
-    return sendViaMeta({ to: normalizedPhone, message, event, metadata });
-  }
-
-  if (provider === 'webhook') {
-    return sendViaWebhook({ to: normalizedPhone, message, event, metadata });
-  }
+  // Integração oficial única: todo envio geral passa por template Twilio.
+  // Para alterar templates, configure TWILIO_TEMPLATE_TESTE_SID ou TWILIO_TEMPLATE_GENERIC_SID.
+  const result = await sendGenericNotification({
+    to: normalizeTwilioPhoneNumber(normalizedPhone) || normalizedPhone,
+    message,
+    eventType: event,
+    protocol: metadata.protocol || ''
+  });
 
   await appendLog({
     event,
-    provider: 'log',
+    provider: 'twilio',
     to: normalizedPhone,
-    status: 'skipped',
+    status: result?.success ? 'sent' : result?.skipped ? 'skipped' : 'failed',
     metadata,
-    error: 'Nenhum provedor de WhatsApp configurado.'
+    providerMessageId: result?.providerMessageId || result?.twilioSid || null,
+    error: result?.success ? null : result?.error || null,
+    response: result?.raw || null
   });
 
   return {
-    success: false,
-    skipped: true,
+    ...result,
+    provider: 'twilio',
     to: normalizedPhone,
-    error: 'Nenhum provedor de WhatsApp configurado.'
+    providerMessageId: result?.providerMessageId || result?.twilioSid || null
   };
 }
 
