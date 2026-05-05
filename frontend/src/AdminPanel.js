@@ -259,7 +259,7 @@ function AdminPanel() {
     try {
       const response = await api.post('/api/test-whatsapp', {
         telefone: phoneTarget,
-        mensagem: `Teste recorrente do sistema GRC enviado para ${selectedUser.name || 'colaborador'} em ${new Date().toLocaleString('pt-BR')}.`
+        mensagem: 'Envio de mensagem teste'
       });
 
       if (response.data?.success) {

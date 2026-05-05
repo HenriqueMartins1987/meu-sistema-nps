@@ -232,7 +232,12 @@ function HomeShellFixed() {
       });
       setRegistrationRequests(Array.isArray(registrationRes.data) ? registrationRes.data : []);
 
-      if (Array.isArray(unreadRes.data) && unreadRes.data.some((item) => item.type === 'password_reset')) {
+      const storedUser = readUser();
+      if (
+        Boolean(storedUser?.mustChangePassword)
+        && Array.isArray(unreadRes.data)
+        && unreadRes.data.some((item) => item.type === 'password_reset')
+      ) {
         setMustChangePassword(true);
       }
     } catch (error) {
@@ -564,6 +569,9 @@ function HomeShellFixed() {
         current_password: passwordForm.current_password,
         new_password: passwordForm.new_password
       });
+      const refreshedUser = response.data?.user || { ...(user || {}), mustChangePassword: false };
+
+      saveSession(response.data?.token || localStorage.getItem('token') || '', refreshedUser);
 
       await Promise.all(
         notificationGroups.unread
@@ -571,7 +579,6 @@ function HomeShellFixed() {
           .map((notification) => api.post(`/notifications/${notification.id}/read`))
       );
 
-      saveSession(response.data?.token || '', response.data?.user || { ...(user || {}), mustChangePassword: false });
       setNotificationGroups((prev) => ({
         unread: prev.unread.filter((notification) => notification.type !== 'password_reset'),
         read: prev.read

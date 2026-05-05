@@ -5349,7 +5349,9 @@ async function handleManualWhatsAppSend(req, res, eventKey = 'manual_test') {
     const rawPhone = parsed.data.telefone || parsed.data.phone;
     const rawMessage = parsed.data.mensagem || parsed.data.message;
     const phone = normalizeWhatsAppPhone(rawPhone);
-    const message = String(rawMessage || '').trim();
+    const message = eventKey === 'manual_test'
+      ? 'Envio de mensagem teste'
+      : String(rawMessage || '').trim();
 
     if (!phone) {
       return res.status(400).json({ error: 'Informe o telefone em padrão E.164.' });

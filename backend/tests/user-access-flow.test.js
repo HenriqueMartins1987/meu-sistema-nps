@@ -329,6 +329,50 @@ test('manual WhatsApp route accepts telefone and mensagem payload', async () => 
   assert.match(response.body.warning, /provedor|configur/i);
 });
 
+test('test WhatsApp route sends the fixed management message', async () => {
+  let whatsappLogParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO whatsapp_message_logs'),
+      reply: async (_sql, params) => {
+        whatsappLogParams = params;
+        return [{ insertId: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_message_logs'),
+      reply: async () => [{ affectedRows: 1 }]
+    }
+  ]);
+
+  const response = await request(app)
+    .post('/api/test-whatsapp')
+    .set('Authorization', `Bearer ${signToken({
+      id: 1,
+      email: 'henrique.martins@grcconsultoria.net.br',
+      role: 'master_admin',
+      name: 'Administrador Master',
+      permissions: ['admin_panel'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({
+      telefone: '+55 (62) 99966-9966',
+      mensagem: 'Mensagem ignorada pelo teste'
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.to, '5562999669966');
+  assert.ok(whatsappLogParams);
+  assert.equal(whatsappLogParams[0], 'manual_test');
+  assert.equal(whatsappLogParams[6], 'Envio de mensagem teste');
+});
+
 test('uploaded file route serves persisted database fallback when disk file is missing', async () => {
   const content = Buffer.from('arquivo persistido');
 
