@@ -50,6 +50,12 @@ function getNpsStatus(item) {
   return item?.nps_status || 'registrado';
 }
 
+function canFinalizeNps(item) {
+  if (!item || item.deleted_at) return false;
+  const profile = item.nps_profile || profileFromScore(item.score);
+  return profile === 'detrator' && getNpsStatus(item) !== 'tratado';
+}
+
 function protocolLabel(item) {
   if (item?.nps_protocol) return item.nps_protocol;
 
@@ -328,6 +334,49 @@ function NpsManagement() {
     }
   };
 
+  const handleFinalizeNps = async (item = selectedNps) => {
+    if (!item || !canFinalizeNps(item)) return;
+
+    const isCurrentSelection = selectedNps?.id === item.id;
+    const comment = (isCurrentSelection ? treatmentText : '').trim() || String(item.nps_treatment_comment || '').trim();
+
+    if (!comment) {
+      setSelectedNps(item);
+      setTreatmentStatus('tratado');
+      setFeedback('Descreva a tratativa antes de finalizar o NPS.');
+      return;
+    }
+
+    setSavingId(item.id);
+    setFeedback('');
+
+    try {
+      const res = await api.patch(`/nps/responses/${item.id}/treatment`, {
+        treatment_comment: comment,
+        status: 'tratado'
+      });
+      const updated = res.data?.response;
+
+      if (updated) {
+        setRows((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
+        if (isCurrentSelection) {
+          setSelectedNps(updated);
+        }
+      } else {
+        await loadRows();
+      }
+
+      setFeedback(`NPS finalizado no protocolo ${res.data?.protocol || protocolLabel(item)}.`);
+      if (isCurrentSelection) {
+        closeTreatment();
+      }
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel finalizar a tratativa NPS.');
+    } finally {
+      setSavingId(null);
+    }
+  };
+
   const handleConvertToComplaint = async () => {
     setSavingId(selectedNps.id);
     setFeedback('');
@@ -545,6 +594,7 @@ function NpsManagement() {
               const reasons = parseReasons(item.detractor_reasons);
               const isDetractor = profile === 'detrator';
               const isDeleted = Boolean(item.deleted_at);
+              const canFinalize = canFinalizeNps(item);
 
               return (
                 <article className={`nps-list-item ${profile}`} key={item.id}>
@@ -588,6 +638,15 @@ function NpsManagement() {
                     >
                       {isDetractor ? 'Abrir relato para tratamento' : 'Abrir avaliação'}
                     </button>
+                    {canFinalize && (
+                      <button
+                        className="outline-action"
+                        onClick={() => handleFinalizeNps(item)}
+                        disabled={savingId === item.id}
+                      >
+                        {savingId === item.id ? 'Finalizando...' : 'Finalizar'}
+                      </button>
+                    )}
                   </div>
                 </article>
               );
@@ -719,6 +778,11 @@ function NpsManagement() {
               ) : (selectedNps.nps_profile || profileFromScore(selectedNps.score)) === 'detrator' && (
                 <button className="secondary-action" onClick={handleConvertToComplaint} disabled={savingId === selectedNps.id}>
                   Migrar para reclamação
+                </button>
+              )}
+              {canFinalizeNps(selectedNps) && (
+                <button className="outline-action" onClick={() => handleFinalizeNps()} disabled={savingId === selectedNps.id}>
+                  {savingId === selectedNps.id ? 'Finalizando...' : 'Finalizar'}
                 </button>
               )}
               {!selectedNps.deleted_at && (selectedNps.nps_profile || profileFromScore(selectedNps.score)) === 'detrator' && (
