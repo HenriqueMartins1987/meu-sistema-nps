@@ -266,7 +266,7 @@ function isNoShowStatus(value) {
 
 const treatmentRoles = new Set(['coordinator', 'manager', 'supervisor_crc']);
 const evidenceRoles = new Set(['coordinator', 'manager', 'supervisor_crc', 'sac_operator', 'admin']);
-const complaintUnitChangeRoles = new Set(['master_admin', 'admin', 'supervisor_crc', 'sac_operator']);
+const complaintUnitChangeRoles = new Set(['master_admin', 'supervisor_crc', 'sac_operator']);
 let uploadedFilesTableReady = false;
 
 function normalizePriority(priority) {
@@ -604,7 +604,7 @@ function canDeleteEvidence(user) {
 }
 
 function canChangeComplaintUnit(user) {
-  return complaintUnitChangeRoles.has(user?.role) || isAdminUser(user);
+  return complaintUnitChangeRoles.has(user?.role);
 }
 
 function canEditComplaintPatientPhone(user) {
@@ -616,7 +616,7 @@ function canAddTreatment(user) {
 }
 
 function canCloseComplaint(user) {
-  return user?.role === 'sac_operator' || isAdminUser(user);
+  return ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
 }
 
 function canSupervisorApprove(user) {
@@ -624,11 +624,11 @@ function canSupervisorApprove(user) {
 }
 
 function canMarkPatientContact(user) {
-  return user?.role === 'sac_operator' || isAdminUser(user);
+  return ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
 }
 
 function canRegisterFirstAttendance(user) {
-  return user?.role === 'sac_operator' || isAdminUser(user);
+  return ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
 }
 
 function canDeleteRecords(user) {
@@ -636,7 +636,7 @@ function canDeleteRecords(user) {
 }
 
 function canRenotifyComplaint(user) {
-  return isMasterAdminUser(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
+  return user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
 }
 
 function canViewDeletedRecords(user) {
@@ -8692,7 +8692,7 @@ app.post('/complaints/:id/renotify', authenticate, async (req, res) => {
   try {
     if (!canRenotifyComplaint(req.user)) {
       return res.status(403).json({
-        error: 'Somente o Administrador Master, Supervisor do CRC ou Operador de SAC pode reenviar essas notificações.'
+        error: 'Somente o Supervisor do CRC ou Operador de SAC pode reenviar essas notificações.'
       });
     }
 
@@ -9053,7 +9053,11 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
 
     if (patient_contacted) {
       if (!canMarkPatientContact(req.user)) {
-        return res.status(403).json({ error: 'Somente o Operador de SAC pode registrar contato com o paciente.' });
+        return res.status(403).json({ error: 'Somente Administrador Master, Supervisor do CRC ou Operador de SAC podem registrar contato com o paciente.' });
+      }
+
+      if (!Boolean(complaint.treatment_at) && !(cleanedComment && canAddTreatment(req.user))) {
+        return res.status(409).json({ error: 'Registre e salve uma tratativa antes de liberar o contato com o paciente.' });
       }
 
       updates.push('patient_contacted_at = COALESCE(patient_contacted_at, NOW())');
@@ -9069,7 +9073,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
 
     if (first_attendance) {
       if (!canRegisterFirstAttendance(req.user)) {
-        return res.status(403).json({ error: 'Somente Operador de SAC ou Administrador pode registrar o primeiro atendimento.' });
+        return res.status(403).json({ error: 'Somente Administrador Master, Supervisor do CRC ou Operador de SAC podem registrar o primeiro atendimento.' });
       }
 
       const allowedForwardRoles = {
@@ -9139,7 +9143,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         || (supervisor_accept && canSupervisorApprove(req.user));
 
       if (!canCloseComplaint(req.user)) {
-        return res.status(403).json({ error: 'Somente o Operador de SAC pode fechar uma reclamacao.' });
+        return res.status(403).json({ error: 'Somente Administrador Master, Supervisor do CRC ou Operador de SAC podem fechar uma reclamacao.' });
       }
 
       if (!hasManagementTreatment) {

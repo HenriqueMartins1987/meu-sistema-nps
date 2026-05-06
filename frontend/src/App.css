@@ -2528,6 +2528,25 @@ a {
   font-weight: 800;
 }
 
+.detail-subsection {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(200, 154, 87, 0.18);
+  display: grid;
+  gap: 14px;
+}
+
+.responsibles-grid {
+  margin-top: 0;
+}
+
+.executive-detail-grid .detail-card:first-child .meta-grid > div:nth-child(6),
+.executive-detail-grid .detail-card:first-child .meta-grid > div:nth-child(7),
+.executive-detail-grid .detail-card:first-child .meta-grid > div:nth-child(8),
+.executive-detail-grid .detail-card:first-child .meta-grid > div:nth-child(9) {
+  display: none;
+}
+
 .priority-selector {
   display: grid;
   gap: 14px;

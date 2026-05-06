@@ -250,16 +250,17 @@ function ComplaintDetail() {
   );
 
   const isAdmin = isAdminUser(user);
+  const canOperationalClose = ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
+  const canRegisterAttendanceFlow = ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
   const canFormalTreatment = treatmentRoles.includes(user?.role) || isAdmin;
   const canRecordTreatment = Boolean(user?.role);
   const canAttachEvidence = evidenceRoles.includes(user?.role) || isAdmin;
   const canSupervisorAccept = user?.role === 'supervisor_crc' || isAdmin;
-  const canSacClose = user?.role === 'sac_operator' || isAdmin;
   const canDeleteComplaint = isMasterAdmin(user) || user?.role === 'supervisor_crc';
   const canDeleteEvidence = Boolean(user?.id || user?.email || user?.role);
-  const canChangeComplaintUnit = isAdmin || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
+  const canChangeComplaintUnit = ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
   const canEditPatientPhone = ['sac_operator', 'supervisor_crc', 'master_admin'].includes(user?.role);
-  const canRenotifyComplaint = isMasterAdmin(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
+  const canRenotifyComplaint = user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
   const activeUnitOptions = useMemo(() => (
     unitOptions
       .filter((unit) => unit?.name && String(unit.active ?? 1) !== '0')
@@ -272,19 +273,22 @@ function ComplaintDetail() {
   const hasSacApproval = Boolean(complaint?.sac_approval_at);
   const hasPatientContact = Boolean(complaint?.patient_contacted_at);
   const isDeletedRecord = Boolean(complaint?.deleted_at);
-  const canMarkPatientContact = canSacClose && complaint?.status !== 'resolvida' && !hasPatientContact;
+  const canMarkPatientContact = canOperationalClose
+    && complaint?.status !== 'resolvida'
+    && !hasPatientContact
+    && hasTreatment;
   const hasFirstAttendance = Boolean(complaint?.first_attendance_at);
-  const canRegisterFirstAttendance = canSacClose
+  const canRegisterFirstAttendance = canRegisterAttendanceFlow
     && complaint?.status !== 'resolvida'
     && !hasFirstAttendance;
-  const closeBlockedReason = !canSacClose
-    ? 'Apenas o Operador de SAC ou o Administrador pode fechar este protocolo.'
+  const closeBlockedReason = !canOperationalClose
+    ? 'Apenas o Administrador Master, Supervisor do CRC ou Operador de SAC podem fechar este protocolo.'
     : !hasTreatment
       ? 'Aguarde a tratativa de Coordenador, Gerente ou Supervisor do CRC.'
       : isHighPriority && !hasSupervisorApproval
         ? 'Prioridade alta exige aceite do Supervisor do CRC.'
         : '';
-  const canCloseNow = canSacClose && !closeBlockedReason && complaint?.status !== 'resolvida';
+  const canCloseNow = canOperationalClose && !closeBlockedReason && complaint?.status !== 'resolvida';
 
   const loadComplaint = useCallback(async () => {
     setLoading(true);
@@ -814,6 +818,28 @@ function ComplaintDetail() {
               <dd>{formatDate(complaint.updated_at)}</dd>
             </div>
           </dl>
+
+          <div className="detail-subsection responsibles-section">
+            <p className="eyebrow">Responsáveis da unidade</p>
+            <dl className="meta-grid responsibles-grid">
+              <div>
+                <dt>Coordenador responsável</dt>
+                <dd>{complaint.coordinator_name || 'Não informado'}</dd>
+              </div>
+              <div>
+                <dt>Telefone do coordenador</dt>
+                <dd>{formatPhoneDisplay(complaint.coordinator_phone)}</dd>
+              </div>
+              <div>
+                <dt>Gerente responsável</dt>
+                <dd>{complaint.manager_name || 'Não informado'}</dd>
+              </div>
+              <div>
+                <dt>Telefone do gerente</dt>
+                <dd>{formatPhoneDisplay(complaint.manager_phone)}</dd>
+              </div>
+            </dl>
+          </div>
         </article>
 
         <article className="detail-card">
@@ -986,7 +1012,7 @@ function ComplaintDetail() {
             <div className={`approval-card ${hasFirstAttendance ? 'done' : 'pending'}`}>
               <span>Primeiro atendimento</span>
               <strong>{hasFirstAttendance ? 'Realizado' : 'Pendente'}</strong>
-              <p>{hasFirstAttendance ? `${complaint.first_attendance_by || 'Atendimento'} · ${formatDate(complaint.first_attendance_at)} · ${complaint.forwarded_to_label || 'Tratativa'}` : 'Operador de SAC ou administrador registra e encaminha para tratativa.'}</p>
+              <p>{hasFirstAttendance ? `${complaint.first_attendance_by || 'Atendimento'} · ${formatDate(complaint.first_attendance_at)} · ${complaint.forwarded_to_label || 'Tratativa'}` : 'Administrador Master, Supervisor do CRC ou Operador de SAC registram e encaminham para tratativa.'}</p>
             </div>
             <div className={`approval-card ${!isHighPriority ? 'neutral' : hasSupervisorApproval ? 'done' : 'pending'}`}>
               <span>Aceite Supervisor CRC</span>
@@ -1031,19 +1057,21 @@ function ComplaintDetail() {
                 Registrar aceite CRC
               </button>
             )}
-            {canSacClose && complaint.status !== 'resolvida' && (
+            {canOperationalClose && complaint.status !== 'resolvida' && (
               <button className="outline-action" onClick={handlePatientContact} disabled={saving || !canMarkPatientContact || isDeletedRecord}>
                 {hasPatientContact ? 'Contato já registrado' : 'Registrar contato com paciente'}
               </button>
             )}
-            {canSacClose && complaint.status !== 'resolvida' && (
+            {canRegisterAttendanceFlow && complaint.status !== 'resolvida' && (
               <button className="outline-action" onClick={() => setShowForwardModal(true)} disabled={saving || !canRegisterFirstAttendance || isDeletedRecord}>
                 {hasFirstAttendance ? 'Primeiro atendimento registrado' : 'Registrar primeiro atendimento'}
               </button>
             )}
-            <button className="primary-action" onClick={handleClose} disabled={saving || !canCloseNow || isDeletedRecord}>
-              {saving ? 'Fechando...' : 'Fechar protocolo'}
-            </button>
+            {canOperationalClose && (
+              <button className="primary-action" onClick={handleClose} disabled={saving || !canCloseNow || isDeletedRecord}>
+                {saving ? 'Fechando...' : 'Fechar protocolo'}
+              </button>
+            )}
           </div>
 
           {closeBlockedReason && complaint.status !== 'resolvida' && (
