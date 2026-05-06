@@ -725,17 +725,21 @@ function HomeShellFixed() {
           <section className="modal-panel notification-center-modal">
             <div className="notification-head">
               <strong>Notificações</strong>
-              <button type="button" className="ghost-action" onClick={loadNotifications}>Atualizar</button>
+              <div className="notification-head-actions">
+                <button type="button" className="ghost-action" onClick={loadNotifications}>Atualizar</button>
+                <button type="button" className="outline-action notification-close-button" onClick={closeNotificationsModal}>Fechar</button>
+              </div>
             </div>
 
-            <div className="notification-tabs">
+            <div className="notification-popover-body">
+              <div className="notification-tabs">
               <button type="button" className={notificationTab === 'unread' ? 'active' : ''} onClick={() => setNotificationTab('unread')}>
                 Não lidas ({totalAlerts})
               </button>
               <button type="button" className={notificationTab === 'read' ? 'active' : ''} onClick={() => setNotificationTab('read')}>
                 Lidas ({notificationGroups.read.length})
               </button>
-            </div>
+              </div>
 
             {feedback && <p className="form-feedback">{feedback}</p>}
 
@@ -778,10 +782,6 @@ function HomeShellFixed() {
             {notificationTab === 'unread' && totalAlerts === 0 && <p className="empty-mini">Nenhuma nova notificação.</p>}
             {notificationTab === 'read' && notificationGroups.read.length === 0 && <p className="empty-mini">Nenhuma notificação lida no histórico.</p>}
 
-            <div className="row-actions">
-              <button type="button" className="outline-action" onClick={closeNotificationsModal}>
-                Fechar
-              </button>
             </div>
           </section>
         </div>

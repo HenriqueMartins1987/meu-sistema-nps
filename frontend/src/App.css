@@ -4851,9 +4851,43 @@ a {
 }
 
 .notification-center-modal {
-  width: min(460px, calc(100vw - 24px));
+    width: min(440px, calc(100vw - 24px));
+    display: grid;
+    gap: 12px;
+    max-height: min(78vh, 680px);
+    padding: 18px;
+    overflow: hidden;
+  }
+
+.notification-head-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.notification-close-button {
+  position: sticky;
+  top: 0;
+}
+
+.notification-popover-body {
   display: grid;
+  align-content: start;
   gap: 12px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.notification-popover-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.notification-popover-body::-webkit-scrollbar-thumb {
+  background: rgba(11, 111, 95, 0.22);
+  border-radius: 999px;
 }
 
 .share-modal {
@@ -5181,7 +5215,17 @@ a {
 
 .notification-center-modal .notification-item,
 .notification-detail-modal .notification-detail-row {
-  text-align: left;
+    text-align: left;
+  }
+
+.notification-center-modal .notification-head {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  align-items: center;
+  background: #fff;
+  margin-bottom: 0;
+  padding-bottom: 12px;
 }
 
 .share-modal-actions button,
