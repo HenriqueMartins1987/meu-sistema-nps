@@ -110,6 +110,8 @@ function sourceToneClass(source) {
   return 'neutral';
 }
 
+const LOGS_PAGE_SIZE = 10;
+
 function clampPercent(value, fallback = 0) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
@@ -184,6 +186,8 @@ function MasterMonitoring() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [feedback, setFeedback] = useState('');
+  const [activityTab, setActivityTab] = useState('Todos');
+  const [activityPage, setActivityPage] = useState(1);
 
   const loadData = useCallback(async (quiet = false) => {
     quiet ? setRefreshing(true) : setLoading(true);
@@ -229,7 +233,38 @@ function MasterMonitoring() {
   const overdueComplaints = Number(overview.complaints?.overdue || 0);
   const complaintSlaPercent = openComplaints ? ((openComplaints - overdueComplaints) / openComplaints) * 100 : 100;
   const mysqlLatencyHealth = Math.max(0, 100 - (Number(database.latencyMs || 0) / 500) * 100);
-  const recentActivity = Array.isArray(activity.recent) ? activity.recent.slice(0, 40) : [];
+  const recentActivity = useMemo(() => (
+    Array.isArray(activity.recent) ? activity.recent.slice(0, 40) : []
+  ), [activity.recent]);
+  const activityTabs = useMemo(() => (
+    ['Todos', ...Array.from(new Set(recentActivity.map((item) => item.source).filter(Boolean)))]
+  ), [recentActivity]);
+  const filteredActivity = useMemo(() => (
+    activityTab === 'Todos'
+      ? recentActivity
+      : recentActivity.filter((item) => item.source === activityTab)
+  ), [activityTab, recentActivity]);
+  const activityTotalPages = Math.max(1, Math.ceil(filteredActivity.length / LOGS_PAGE_SIZE));
+  const paginatedActivity = useMemo(() => {
+    const start = (activityPage - 1) * LOGS_PAGE_SIZE;
+    return filteredActivity.slice(start, start + LOGS_PAGE_SIZE);
+  }, [activityPage, filteredActivity]);
+
+  useEffect(() => {
+    if (!activityTabs.includes(activityTab)) {
+      setActivityTab('Todos');
+    }
+  }, [activityTab, activityTabs]);
+
+  useEffect(() => {
+    setActivityPage(1);
+  }, [activityTab, data?.generatedAt]);
+
+  useEffect(() => {
+    if (activityPage > activityTotalPages) {
+      setActivityPage(activityTotalPages);
+    }
+  }, [activityPage, activityTotalPages]);
 
   return (
     <main className="app-page master-monitoring-page">
@@ -346,8 +381,20 @@ function MasterMonitoring() {
                 <span key={item.source}>{item.source}: <strong>{formatNumber(item.total)}</strong></span>
               ))}
             </div>
+            <div className="monitor-log-tabs" role="tablist" aria-label="Filtrar logs por origem">
+              {activityTabs.map((tab) => (
+                <button
+                  key={tab}
+                  type="button"
+                  className={tab === activityTab ? 'active' : ''}
+                  onClick={() => setActivityTab(tab)}
+                >
+                  {tab}
+                </button>
+              ))}
+            </div>
             <div className="monitor-timeline-list">
-              {recentActivity.map((item, index) => {
+              {paginatedActivity.map((item, index) => {
                 const actor = buildActorLine(item);
                 const origin = buildOriginLine(item);
 
@@ -395,6 +442,30 @@ function MasterMonitoring() {
                   </article>
                 );
               })}
+            </div>
+            <div className="pagination-bar">
+              <span>
+                Exibindo {paginatedActivity.length} de {filteredActivity.length} registros
+              </span>
+              <div className="pagination-actions">
+                <button
+                  type="button"
+                  className="ghost-action"
+                  onClick={() => setActivityPage((page) => Math.max(1, page - 1))}
+                  disabled={activityPage <= 1}
+                >
+                  Anterior
+                </button>
+                <strong>Página {activityPage} de {activityTotalPages}</strong>
+                <button
+                  type="button"
+                  className="ghost-action"
+                  onClick={() => setActivityPage((page) => Math.min(activityTotalPages, page + 1))}
+                  disabled={activityPage >= activityTotalPages}
+                >
+                  Próxima
+                </button>
+              </div>
             </div>
           </section>
 

@@ -5673,6 +5673,28 @@ a {
   font-weight: 800;
 }
 
+.monitor-log-tabs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.monitor-log-tabs button {
+  min-height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--muted);
+  font-weight: 900;
+}
+
+.monitor-log-tabs button.active {
+  background: var(--brand-soft);
+  border-color: rgba(11, 111, 95, 0.22);
+  color: var(--brand-strong);
+}
+
 .monitor-timeline-list {
   display: grid;
   gap: 14px;
