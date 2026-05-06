@@ -99,6 +99,131 @@ test('admin user creation keeps the user when welcome e-mail fails', async () =>
   assert.equal(insertedUserParams[insertedUserParams.length - 1], 1);
 });
 
+test('master admin can update a user e-mail from user management', async () => {
+  let updateUserSql = null;
+  let updateUserParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL'),
+      reply: async () => [[{
+        id: 44,
+        name: 'Maria Silva',
+        email: 'maria.antigo@example.com',
+        role: 'viewer',
+        position: 'Marketing',
+        phone: '+5562999999999',
+        whatsapp: '+5562999999999',
+        department: 'Relacionamento',
+        permissions: '[]',
+        active: 1
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT id FROM users WHERE LOWER(email) = ? AND id <> ? AND deleted_at IS NULL'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE users') && sql.includes('email = ?'),
+      reply: async (sql, params) => {
+        updateUserSql = sql;
+        updateUserParams = params;
+        return [{ affectedRows: 1 }];
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/admin/users/44')
+    .set('Authorization', `Bearer ${signToken({
+      id: 1,
+      email: 'henrique.martins@grcconsultoria.net.br',
+      role: 'master_admin',
+      name: 'Administrador Master',
+      permissions: ['admin_panel'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({
+      name: 'Maria Silva',
+      email: 'maria.novo@example.com',
+      role: 'viewer',
+      position: 'Marketing',
+      phone: '+5562999999999',
+      whatsapp: '+5562999999999',
+      department: 'Relacionamento',
+      active: true,
+      permissions: []
+    });
+
+  assert.equal(response.status, 200);
+  assert.match(updateUserSql, /email = \?/);
+  assert.equal(updateUserParams[0], 'Maria Silva');
+  assert.equal(updateUserParams[1], 'maria.novo@example.com');
+  assert.equal(updateUserParams.at(-1), 44);
+});
+
+test('master admin cannot update a user to duplicated e-mail', async () => {
+  let updateAttempted = false;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL'),
+      reply: async () => [[{
+        id: 44,
+        name: 'Maria Silva',
+        email: 'maria.antigo@example.com',
+        role: 'viewer',
+        position: 'Marketing',
+        phone: '+5562999999999',
+        whatsapp: '+5562999999999',
+        department: 'Relacionamento',
+        permissions: '[]',
+        active: 1
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT id FROM users WHERE LOWER(email) = ? AND id <> ? AND deleted_at IS NULL'),
+      reply: async () => [[{ id: 88 }]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE users'),
+      reply: async () => {
+        updateAttempted = true;
+        return [{ affectedRows: 1 }];
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/admin/users/44')
+    .set('Authorization', `Bearer ${signToken({
+      id: 1,
+      email: 'henrique.martins@grcconsultoria.net.br',
+      role: 'master_admin',
+      name: 'Administrador Master',
+      permissions: ['admin_panel'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({
+      email: 'duplicado@example.com',
+      phone: '+5562999999999',
+      whatsapp: '+5562999999999'
+    });
+
+  assert.equal(response.status, 409);
+  assert.equal(updateAttempted, false);
+});
+
 test('login reports first access requirement and blocks protected routes', async () => {
   const temporaryPassword = 'Tmp@12345';
   const passwordHash = await bcrypt.hash(temporaryPassword, 10);

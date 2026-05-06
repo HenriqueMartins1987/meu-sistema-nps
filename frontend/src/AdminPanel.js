@@ -103,6 +103,7 @@ function AdminPanel() {
 
     setDraft({
       name: selectedUser.name || '',
+      email: selectedUser.email || '',
       role: selectedUser.role || 'viewer',
       position: selectedUser.position || '',
       phone: selectedUser.phone ? formatBrazilPhoneInput(selectedUser.phone) : defaultBrazilPhone,
@@ -160,6 +161,11 @@ function AdminPanel() {
 
   const saveUser = async () => {
     setFeedback('');
+
+    if (!draft.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(draft.email).trim())) {
+      setFeedback('Informe um e-mail válido para o usuário.');
+      return;
+    }
 
     if (!isCompleteBrazilPhone(draft.phone) || !isCompleteBrazilPhone(draft.whatsapp)) {
       setFeedback('Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.');
@@ -425,6 +431,17 @@ function AdminPanel() {
                   <label>
                     Nome completo
                     <input className="field" value={draft.name} onChange={(event) => updateDraft('name', event.target.value)} />
+                  </label>
+                  <label>
+                    E-mail
+                    <input
+                      className="field"
+                      type="email"
+                      value={draft.email}
+                      onChange={(event) => updateDraft('email', event.target.value)}
+                      disabled={isSelectedMaster}
+                      required
+                    />
                   </label>
                   <label>
                     Perfil

@@ -6291,9 +6291,26 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
     const current = rows[0];
     const requestedRole = req.body.role || current.role;
     const currentEmail = String(current.email || '').toLowerCase();
+    const requestedEmail = Object.prototype.hasOwnProperty.call(req.body || {}, 'email')
+      ? String(req.body.email || '').trim().toLowerCase()
+      : currentEmail;
+
+    const parsedEmail = z.string().trim().email('Informe um e-mail válido.').max(180).safeParse(requestedEmail);
+
+    if (!parsedEmail.success) {
+      return res.status(400).json({ error: parsedEmail.error.issues[0]?.message || 'Informe um e-mail válido.' });
+    }
 
     if (requestedRole === 'master_admin' && currentEmail !== masterAdminEmail) {
       return res.status(403).json({ error: 'Administrador Master é exclusivo para henrique.martins@grcconsultoria.net.br.' });
+    }
+
+    if (currentEmail === masterAdminEmail && requestedEmail !== masterAdminEmail) {
+      return res.status(403).json({ error: 'O e-mail do Administrador Master não pode ser alterado.' });
+    }
+
+    if (requestedEmail === masterAdminEmail && currentEmail !== masterAdminEmail) {
+      return res.status(403).json({ error: 'O e-mail do Administrador Master é exclusivo do usuário master.' });
     }
 
     if (currentEmail === masterAdminEmail && requestedRole !== 'master_admin') {
@@ -6306,6 +6323,17 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
 
     if ((current.role === 'master_admin' || requestedRole === 'master_admin') && !isMasterAdminUser(req.user)) {
       return res.status(403).json({ error: 'Apenas o Administrador Master pode alterar esse perfil.' });
+    }
+
+    if (requestedEmail !== currentEmail) {
+      const [duplicates] = await pool.query(
+        'SELECT id FROM users WHERE LOWER(email) = ? AND id <> ? AND deleted_at IS NULL',
+        [requestedEmail, current.id]
+      );
+
+      if (duplicates.length) {
+        return res.status(409).json({ error: 'Já existe outro usuário ativo com este e-mail.' });
+      }
     }
 
     const normalizedPhone = req.body.phone ? normalizeBrazilPhone(req.body.phone) : current.phone;
@@ -6323,6 +6351,7 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
     await pool.query(
       `UPDATE users
           SET name = ?,
+              email = ?,
               role = ?,
               position = ?,
               phone = ?,
@@ -6333,6 +6362,7 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
         WHERE id = ?`,
       [
         req.body.name || current.name,
+        requestedEmail,
         nextRole,
         req.body.position || current.position,
         normalizedPhone,
