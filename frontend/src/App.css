@@ -3250,6 +3250,43 @@ a {
   font-weight: 700;
 }
 
+.admin-broadcast-user-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.admin-broadcast-user-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.admin-broadcast-user-item input {
+  margin-top: 2px;
+}
+
+.admin-broadcast-user-item span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.admin-broadcast-user-item strong,
+.admin-broadcast-user-item small {
+  overflow-wrap: anywhere;
+}
+
+.admin-broadcast-user-item small {
+  color: var(--muted);
+}
+
 .mini-actions {
   display: flex;
   align-items: center;

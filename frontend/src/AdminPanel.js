@@ -61,6 +61,7 @@ function AdminPanel() {
   const [testingChannels, setTestingChannels] = useState(false);
   const [testMenuOpen, setTestMenuOpen] = useState(false);
   const [bulkEmailDraft, setBulkEmailDraft] = useState(buildBulkEmailDraft);
+  const [bulkEmailUserIds, setBulkEmailUserIds] = useState([]);
   const [sendingBulkEmail, setSendingBulkEmail] = useState(false);
 
   const selectedUser = useMemo(() => (
@@ -80,7 +81,7 @@ function AdminPanel() {
     ].join(' ').toLowerCase().includes(term));
   }, [users, userSearch]);
 
-  const bulkEmailRecipients = useMemo(() => {
+  const bulkEmailEligibleUsers = useMemo(() => {
     const seen = new Set();
 
     return users.filter((user) => {
@@ -90,8 +91,11 @@ function AdminPanel() {
       if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return false;
       seen.add(email);
       return true;
-    }).length;
+    });
   }, [users]);
+
+  const bulkEmailRecipients = bulkEmailEligibleUsers.length;
+  const selectedBulkEmailCount = bulkEmailUserIds.length;
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -148,6 +152,21 @@ function AdminPanel() {
   useEffect(() => {
     setTestMenuOpen(false);
   }, [selectedUserId]);
+
+  useEffect(() => {
+    const eligibleIds = bulkEmailEligibleUsers.map((user) => String(user.id));
+
+    setBulkEmailUserIds((prev) => {
+      const prevIds = prev.map((value) => String(value));
+      const stillValid = prevIds.filter((value) => eligibleIds.includes(value));
+
+      if (stillValid.length > 0) {
+        return stillValid;
+      }
+
+      return eligibleIds;
+    });
+  }, [bulkEmailEligibleUsers]);
 
   const updateDraft = (field, value) => {
     setDraft((prev) => ({ ...prev, [field]: value }));
@@ -360,11 +379,19 @@ function AdminPanel() {
       return;
     }
 
+    if (!bulkEmailUserIds.length) {
+      setFeedback('Selecione pelo menos um usuário para o disparo em massa.');
+      return;
+    }
+
     setSendingBulkEmail(true);
     setFeedback('');
 
     try {
-      const response = await api.post('/api/admin/bulk-email', bulkEmailDraft);
+      const response = await api.post('/api/admin/bulk-email', {
+        ...bulkEmailDraft,
+        userIds: bulkEmailUserIds
+      });
       const summary = response.data?.summary || {};
       const failures = Array.isArray(response.data?.failures) ? response.data.failures : [];
       const failureSuffix = failures.length
@@ -379,6 +406,24 @@ function AdminPanel() {
     } finally {
       setSendingBulkEmail(false);
     }
+  };
+
+  const toggleBulkEmailUser = (userId) => {
+    const normalizedId = String(userId);
+
+    setBulkEmailUserIds((prev) => (
+      prev.includes(normalizedId)
+        ? prev.filter((value) => value !== normalizedId)
+        : [...prev, normalizedId]
+    ));
+  };
+
+  const selectAllBulkEmailUsers = () => {
+    setBulkEmailUserIds(bulkEmailEligibleUsers.map((user) => String(user.id)));
+  };
+
+  const clearBulkEmailUsers = () => {
+    setBulkEmailUserIds([]);
   };
 
   if (!isMasterAdmin(currentUser)) {
@@ -621,9 +666,36 @@ function AdminPanel() {
                     <p className="base-subtitle">Envio direto para todos os usuários ativos com e-mail válido, usando o layout oficial do sistema.</p>
                   </div>
                   <div className="admin-broadcast-meta">
-                    <strong>{bulkEmailRecipients}</strong>
-                    <span>destinatários ativos</span>
+                    <strong>{selectedBulkEmailCount}</strong>
+                    <span>selecionados de {bulkEmailRecipients}</span>
                   </div>
+                </div>
+
+                <div className="admin-section-heading">
+                  <div>
+                    <p className="eyebrow">Destinatários</p>
+                    <h3>Selecionar usuários</h3>
+                  </div>
+                  <div className="mini-actions">
+                    <button type="button" className="outline-action" onClick={selectAllBulkEmailUsers}>Selecionar todos</button>
+                    <button type="button" className="ghost-action" onClick={clearBulkEmailUsers}>Limpar</button>
+                  </div>
+                </div>
+
+                <div className="admin-broadcast-user-list">
+                  {bulkEmailEligibleUsers.map((user) => (
+                    <label key={user.id} className="admin-broadcast-user-item">
+                      <input
+                        type="checkbox"
+                        checked={bulkEmailUserIds.includes(String(user.id))}
+                        onChange={() => toggleBulkEmailUser(user.id)}
+                      />
+                      <span>
+                        <strong>{user.name}</strong>
+                        <small>{user.email}</small>
+                      </span>
+                    </label>
+                  ))}
                 </div>
 
                 <div className="admin-form-grid">
@@ -663,7 +735,7 @@ function AdminPanel() {
                       type="button"
                       className="primary-action"
                       onClick={sendBulkEmail}
-                      disabled={sendingBulkEmail || bulkEmailRecipients === 0}
+                      disabled={sendingBulkEmail || bulkEmailRecipients === 0 || selectedBulkEmailCount === 0}
                     >
                       {sendingBulkEmail ? 'Enviando comunicado...' : 'Enviar comunicado'}
                     </button>

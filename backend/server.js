@@ -1388,7 +1388,8 @@ const testEmailSchema = z.object({
 
 const bulkEmailSchema = z.object({
   subject: z.string().trim().min(3, 'Informe um assunto com pelo menos 3 caracteres.').max(160),
-  message: z.string().trim().min(10, 'Informe a mensagem do comunicado.').max(4000)
+  message: z.string().trim().min(10, 'Informe a mensagem do comunicado.').max(4000),
+  userIds: z.array(z.union([z.string(), z.number()])).max(500).optional()
 });
 
 const manualWhatsAppSchema = z.object({
@@ -6026,10 +6027,20 @@ app.post('/api/admin/bulk-email', authenticate, requireMasterAdmin, async (req, 
     );
 
     const seenEmails = new Set();
+    const selectedIds = new Set(
+      Array.isArray(parsed.data.userIds)
+        ? parsed.data.userIds.map((value) => String(value))
+        : []
+    );
+
     const recipients = users.filter((user) => {
       const email = getUserEmailTarget(user);
 
       if (!email || seenEmails.has(email)) {
+        return false;
+      }
+
+      if (selectedIds.size > 0 && !selectedIds.has(String(user.id))) {
         return false;
       }
 
