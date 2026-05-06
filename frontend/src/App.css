@@ -5641,8 +5641,68 @@ a {
   vertical-align: top;
 }
 
+.monitor-table td {
+  padding-top: 16px;
+  padding-bottom: 16px;
+}
+
+.monitor-time-cell,
+.monitor-origin-cell,
+.monitor-action-cell,
+.monitor-user-cell,
+.monitor-detail-cell {
+  min-width: 0;
+}
+
+.monitor-time-cell strong,
+.monitor-origin-cell strong,
+.monitor-user-cell strong,
+.monitor-detail-cell strong {
+  display: block;
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.monitor-time-cell small,
+.monitor-origin-cell small,
+.monitor-action-cell small,
+.monitor-user-cell small,
+.monitor-detail-cell small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.monitor-origin-cell {
+  min-width: 240px;
+}
+
+.monitor-user-cell {
+  min-width: 220px;
+}
+
+.monitor-detail-cell {
+  min-width: 280px;
+}
+
+.monitor-action-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(200, 154, 87, 0.16);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
 .master-monitoring-page .dashboard-clean-table {
-  min-width: 860px;
+  min-width: 1120px;
 }
 
 .master-monitoring-page > .management-panel {

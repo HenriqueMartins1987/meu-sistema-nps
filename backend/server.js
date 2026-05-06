@@ -3651,27 +3651,117 @@ async function getActivityMonitoring() {
   const [recent] = await pool.query(`
     SELECT *
     FROM (
-      SELECT 'Sistema' AS source, action, summary, actor_name, actor_role, route AS context, status_code, duration_ms, created_at
+      SELECT
+        'Sistema' AS source,
+        action,
+        summary,
+        actor_name,
+        actor_role,
+        actor_email,
+        CONCAT(UPPER(method), ' ', route) AS source_detail,
+        CONCAT('Status ', status_code) AS origin_detail,
+        route AS context,
+        status_code,
+        duration_ms,
+        created_at
       FROM system_activity_logs
       UNION ALL
-      SELECT 'Protocolo' AS source, action, message AS summary, actor_name, actor_role, CONCAT('ID ', complaint_id) AS context, NULL AS status_code, NULL AS duration_ms, created_at
-      FROM complaint_logs
+      SELECT
+        'Protocolo' AS source,
+        cl.action,
+        cl.message AS summary,
+        cl.actor_name,
+        cl.actor_role,
+        NULL AS actor_email,
+        COALESCE(c.protocol, CONCAT('ID ', cl.complaint_id)) AS source_detail,
+        COALESCE(c.created_origin, 'Interno') AS origin_detail,
+        CONCAT('Reclamação ', COALESCE(c.protocol, CONCAT('#', cl.complaint_id))) AS context,
+        NULL AS status_code,
+        NULL AS duration_ms,
+        cl.created_at
+      FROM complaint_logs cl
+      LEFT JOIN complaints c ON c.id = cl.complaint_id
       UNION ALL
-      SELECT 'NPS' AS source, action, message AS summary, actor_name, actor_role, CONCAT('ID ', nps_response_id) AS context, NULL AS status_code, NULL AS duration_ms, created_at
-      FROM nps_treatment_logs
+      SELECT
+        'NPS' AS source,
+        ntl.action,
+        ntl.message AS summary,
+        ntl.actor_name,
+        ntl.actor_role,
+        NULL AS actor_email,
+        COALESCE(n.nps_protocol, CONCAT('ID ', ntl.nps_response_id)) AS source_detail,
+        COALESCE(n.source, 'Pesquisa NPS') AS origin_detail,
+        CONCAT('NPS ', COALESCE(n.nps_protocol, CONCAT('#', ntl.nps_response_id))) AS context,
+        NULL AS status_code,
+        NULL AS duration_ms,
+        ntl.created_at
+      FROM nps_treatment_logs ntl
+      LEFT JOIN nps_responses n ON n.id = ntl.nps_response_id
       UNION ALL
-      SELECT 'Relacionamento' AS source, action, message AS summary, actor_name, actor_role, CONCAT('ID ', interaction_id) AS context, NULL AS status_code, NULL AS duration_ms, created_at
-      FROM patient_interaction_logs
+      SELECT
+        'Relacionamento' AS source,
+        pil.action,
+        pil.message AS summary,
+        pil.actor_name,
+        pil.actor_role,
+        NULL AS actor_email,
+        COALESCE(pi.protocol, CONCAT('ID ', pil.interaction_id)) AS source_detail,
+        COALESCE(pi.channel, 'Relacionamento') AS origin_detail,
+        CONCAT('Paciente ', COALESCE(pi.patient_name, CONCAT('#', pil.interaction_id))) AS context,
+        NULL AS status_code,
+        NULL AS duration_ms,
+        pil.created_at
+      FROM patient_interaction_logs pil
+      LEFT JOIN patient_interactions pi ON pi.id = pil.interaction_id
       UNION ALL
-      SELECT 'WhatsApp' AS source, status AS action, COALESCE(error_message, event_key, 'Mensagem registrada') AS summary, NULL AS actor_name, NULL AS actor_role, recipient_phone AS context, NULL AS status_code, NULL AS duration_ms, created_at
-      FROM whatsapp_message_logs
+      SELECT
+        'WhatsApp' AS source,
+        wml.status AS action,
+        COALESCE(wml.error_message, wml.event_key, 'Mensagem registrada') AS summary,
+        u.name AS actor_name,
+        u.role AS actor_role,
+        u.email AS actor_email,
+        COALESCE(wml.related_entity_type, 'Mensagem avulsa') AS source_detail,
+        wml.recipient_phone AS origin_detail,
+        COALESCE(wml.related_entity_type, 'Registro WhatsApp') AS context,
+        NULL AS status_code,
+        NULL AS duration_ms,
+        wml.created_at
+      FROM whatsapp_message_logs wml
+      LEFT JOIN users u ON u.id = wml.related_user_id
       UNION ALL
-      SELECT 'WhatsApp' AS source, status AS action, COALESCE(error_message, event_type, 'Template Twilio registrado') AS summary, NULL AS actor_name, recipient_role AS actor_role, recipient_phone AS context, NULL AS status_code, NULL AS duration_ms, created_at
-      FROM notification_logs
-      WHERE channel = 'WHATSAPP'
+      SELECT
+        'WhatsApp' AS source,
+        nl.status AS action,
+        COALESCE(nl.error_message, nl.event_type, 'Template Twilio registrado') AS summary,
+        u.name AS actor_name,
+        COALESCE(u.role, nl.recipient_role) AS actor_role,
+        u.email AS actor_email,
+        COALESCE(nl.protocol, nl.event_type, 'Notificação template') AS source_detail,
+        nl.recipient_phone AS origin_detail,
+        COALESCE(nl.channel, 'WHATSAPP') AS context,
+        NULL AS status_code,
+        NULL AS duration_ms,
+        nl.created_at
+      FROM notification_logs nl
+      LEFT JOIN users u ON u.id = nl.recipient_user_id
+      WHERE nl.channel = 'WHATSAPP'
       UNION ALL
-      SELECT 'E-mail' AS source, status AS action, subject AS summary, NULL AS actor_name, NULL AS actor_role, recipient_email AS context, NULL AS status_code, duration_ms, created_at
-      FROM email_delivery_logs
+      SELECT
+        'E-mail' AS source,
+        edl.status AS action,
+        edl.subject AS summary,
+        u.name AS actor_name,
+        u.role AS actor_role,
+        COALESCE(u.email, edl.recipient_email) AS actor_email,
+        edl.subject AS source_detail,
+        edl.recipient_email AS origin_detail,
+        COALESCE(edl.provider, 'E-mail transacional') AS context,
+        NULL AS status_code,
+        edl.duration_ms,
+        edl.created_at
+      FROM email_delivery_logs edl
+      LEFT JOIN users u ON LOWER(u.email) = LOWER(edl.recipient_email) AND u.deleted_at IS NULL
     ) timeline
     ORDER BY created_at DESC
     LIMIT 120
@@ -6951,6 +7041,92 @@ app.post('/admin/users/:id/reset-password', authenticate, requireMasterAdmin, as
     res.status(500).json({ error: 'Erro ao reiniciar senha.' });
   }
 });
+
+app.post('/admin/users/resend-pending-passwords', authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    const [rows] = await pool.query(`
+      SELECT id, role, email, name, phone, whatsapp
+        FROM users
+       WHERE active = 1
+         AND deleted_at IS NULL
+         AND must_change_password = 1
+         AND LOWER(email) <> ?
+       ORDER BY name ASC
+    `, [masterAdminEmail]);
+
+    if (!rows.length) {
+      return res.json({
+        message: 'Nenhum usuário pendente de troca de senha foi encontrado.',
+        summary: { processed: 0, sent: 0, failed: 0 }
+      });
+    }
+
+    const results = [];
+
+    for (const user of rows) {
+      try {
+        const temporaryPassword = generateTemporaryPassword();
+        const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+
+        await pool.query(
+          'UPDATE users SET password = ?, must_change_password = ?, token_version = COALESCE(token_version, 1) + 1 WHERE id = ?',
+          [passwordHash, requirePasswordChangeOnFirstLogin ? 1 : 0, user.id]
+        );
+
+        await createNotification(
+          user.id,
+          'password_reset',
+          'Senha temporária reenviada',
+          'Sua senha temporária foi reenviada. Use a nova senha recebida e altere-a no primeiro acesso.',
+          '/perfil',
+          { temporaryPassword: true, resendPending: true }
+        );
+
+        const notificationResult = await sendPasswordResetNotifications(user, temporaryPassword);
+        results.push({
+          id: user.id,
+          email: user.email,
+          emailSent: Boolean(notificationResult?.emailSent),
+          whatsappSent: Boolean(notificationResult?.whatsappSent),
+          error: notificationResult?.emailSent || notificationResult?.whatsappSent
+            ? null
+            : notificationResult?.emailError || notificationResult?.whatsappError || 'Falha ao reenviar as credenciais.'
+        });
+      } catch (error) {
+        results.push({
+          id: user.id,
+          email: user.email,
+          emailSent: false,
+          whatsappSent: false,
+          error: error.message || 'Falha ao processar o reenvio da senha temporária.'
+        });
+      }
+    }
+
+    const summary = results.reduce((accumulator, item) => {
+      accumulator.processed += 1;
+      if (item.emailSent) {
+        accumulator.sent += 1;
+      } else {
+        accumulator.failed += 1;
+      }
+      return accumulator;
+    }, { processed: 0, sent: 0, failed: 0 });
+
+    return res.json({
+      message: 'Reenvio das senhas temporárias processado.',
+      summary,
+      failures: results
+        .filter((item) => !item.emailSent)
+        .map((item) => ({ email: item.email, error: item.error || 'Falha ao enviar e-mail.' }))
+        .slice(0, 20)
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao reenviar as senhas temporárias pendentes.' });
+  }
+});
+
 app.delete('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT id, role, email FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);

@@ -47,6 +47,58 @@ function formatDateTime(value) {
   }).format(new Date(value));
 }
 
+function formatActorRole(value) {
+  const role = String(value || '').trim();
+  if (!role) return '';
+
+  return role
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function buildActorLine(item) {
+  const name = String(item?.actor_name || '').trim();
+  const email = String(item?.actor_email || '').trim();
+  const role = formatActorRole(item?.actor_role);
+
+  if (name) {
+    return {
+      primary: name,
+      secondary: [role, email].filter(Boolean).join(' · ') || 'Usuário identificado'
+    };
+  }
+
+  if (email) {
+    return {
+      primary: email,
+      secondary: role || 'Destinatário identificado'
+    };
+  }
+
+  if (role) {
+    return {
+      primary: role,
+      secondary: 'Sem nome vinculado'
+    };
+  }
+
+  return {
+    primary: 'Sistema',
+    secondary: 'Execução automática'
+  };
+}
+
+function buildOriginLine(item) {
+  const origin = String(item?.origin_detail || '').trim();
+  const sourceDetail = String(item?.source_detail || '').trim();
+  const context = String(item?.context || '').trim();
+
+  return {
+    primary: sourceDetail || item?.source || 'Origem não informada',
+    secondary: [origin, context].filter(Boolean).join(' · ') || 'Sem detalhe complementar'
+  };
+}
+
 function clampPercent(value, fallback = 0) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
@@ -166,6 +218,7 @@ function MasterMonitoring() {
   const overdueComplaints = Number(overview.complaints?.overdue || 0);
   const complaintSlaPercent = openComplaints ? ((openComplaints - overdueComplaints) / openComplaints) * 100 : 100;
   const mysqlLatencyHealth = Math.max(0, 100 - (Number(database.latencyMs || 0) / 500) * 100);
+  const recentActivity = Array.isArray(activity.recent) ? activity.recent.slice(0, 40) : [];
 
   return (
     <main className="app-page master-monitoring-page">
@@ -274,6 +327,7 @@ function MasterMonitoring() {
               <div>
                 <p className="eyebrow">Movimentações</p>
                 <h2>Linha do tempo operacional</h2>
+                <p className="base-subtitle">Cada evento mostra a origem detalhada, o usuário vinculado e o resumo operacional consolidado.</p>
               </div>
             </div>
             <div className="monitor-source-strip">
@@ -289,19 +343,39 @@ function MasterMonitoring() {
                     <th>Origem</th>
                     <th>Ação</th>
                     <th>Usuário</th>
-                    <th>Resumo</th>
+                    <th>Detalhes</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {(activity.recent || []).slice(0, 40).map((item, index) => (
+                  {recentActivity.map((item, index) => {
+                    const actor = buildActorLine(item);
+                    const origin = buildOriginLine(item);
+
+                    return (
                     <tr key={`${item.source}-${item.created_at}-${index}`}>
-                      <td>{formatDateTime(item.created_at)}</td>
-                      <td>{item.source}</td>
-                      <td>{item.action}</td>
-                      <td>{item.actor_name || item.actor_role || 'Sistema'}</td>
-                      <td>{item.summary || item.context || 'Sem detalhe adicional'}</td>
+                      <td className="monitor-time-cell">
+                        <strong>{formatDateTime(item.created_at)}</strong>
+                        {item.duration_ms ? <small>{formatNumber(item.duration_ms)} ms</small> : <small>{item.source}</small>}
+                      </td>
+                      <td className="monitor-origin-cell">
+                        <strong>{origin.primary}</strong>
+                        <small>{origin.secondary}</small>
+                      </td>
+                      <td className="monitor-action-cell">
+                        <span className="monitor-action-badge">{item.action || 'Movimentação'}</span>
+                        {item.status_code ? <small>Status HTTP {item.status_code}</small> : <small>{item.source}</small>}
+                      </td>
+                      <td className="monitor-user-cell">
+                        <strong>{actor.primary}</strong>
+                        <small>{actor.secondary}</small>
+                      </td>
+                      <td className="monitor-detail-cell">
+                        <strong>{item.summary || 'Sem detalhe adicional'}</strong>
+                        <small>{item.context || 'Sem contexto adicional'}</small>
+                      </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

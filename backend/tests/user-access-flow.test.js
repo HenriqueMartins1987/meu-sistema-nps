@@ -563,6 +563,73 @@ test('test WhatsApp route sends the fixed management message', async () => {
   assert.equal(whatsappLogParams[6], 'Envio de mensagem teste');
 });
 
+test('master admin can resend temporary passwords to users pending first password change', async () => {
+  const updatedUsers = [];
+
+  emailService.sendEmail = async () => ({ provider: 'mock', id: 'mail-bulk-1' });
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM users') && sql.includes('must_change_password = 1'),
+      reply: async () => [[
+        {
+          id: 21,
+          role: 'viewer',
+          email: 'ana@example.com',
+          name: 'Ana Teste',
+          phone: '+5562999999999',
+          whatsapp: '+5562999999999'
+        },
+        {
+          id: 22,
+          role: 'coordinator',
+          email: 'bruno@example.com',
+          name: 'Bruno Gestor',
+          phone: '+5562888888888',
+          whatsapp: '+5562888888888'
+        }
+      ]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE users SET password = ?, must_change_password = ?, token_version = COALESCE(token_version, 1) + 1 WHERE id = ?'),
+      reply: async (_sql, params) => {
+        updatedUsers.push(params[2]);
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO notification_events'),
+      reply: async () => [{ insertId: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO email_delivery_logs'),
+      reply: async () => [{ insertId: 1 }]
+    }
+  ]);
+
+  const response = await request(app)
+    .post('/admin/users/resend-pending-passwords')
+    .set('Authorization', `Bearer ${signToken({
+      id: 1,
+      email: 'henrique.martins@grcconsultoria.net.br',
+      role: 'master_admin',
+      name: 'Administrador Master',
+      permissions: ['admin_panel'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.summary.processed, 2);
+  assert.equal(response.body.summary.sent, 2);
+  assert.equal(response.body.summary.failed, 0);
+  assert.deepEqual(updatedUsers, [21, 22]);
+});
+
 test('any authenticated user can delete complaint evidence with audit trail', async () => {
   let updateEvidenceParams = null;
   let complaintLogParams = null;
