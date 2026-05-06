@@ -229,6 +229,7 @@ function ComplaintDetail() {
   const [unitOptions, setUnitOptions] = useState([]);
   const [unitOptionsLoading, setUnitOptionsLoading] = useState(false);
   const [selectedClinicId, setSelectedClinicId] = useState('');
+  const [editablePatientPhone, setEditablePatientPhone] = useState('');
   const [showForwardModal, setShowForwardModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [forwardToRole, setForwardToRole] = useState('');
@@ -257,6 +258,7 @@ function ComplaintDetail() {
   const canDeleteComplaint = isMasterAdmin(user) || user?.role === 'supervisor_crc';
   const canDeleteEvidence = Boolean(user?.id || user?.email || user?.role);
   const canChangeComplaintUnit = isAdmin || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
+  const canEditPatientPhone = ['sac_operator', 'supervisor_crc', 'master_admin'].includes(user?.role);
   const canRenotifyComplaint = isMasterAdmin(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
   const activeUnitOptions = useMemo(() => (
     unitOptions
@@ -293,6 +295,7 @@ function ComplaintDetail() {
       const data = res.data;
       setComplaint(data);
       setSelectedClinicId(data?.clinic_id ? String(data.clinic_id) : '');
+      setEditablePatientPhone(data?.patient_phone || '');
       setComment('');
     } catch (error) {
       setFeedback('Não foi possível carregar este protocolo.');
@@ -420,6 +423,27 @@ function ComplaintDetail() {
       setFeedback(error.response?.data?.error || 'Erro ao alterar a unidade do protocolo.');
     } finally {
       setSavingUnit(false);
+    }
+  };
+
+  const handlePatientPhoneSave = async () => {
+    if (!canEditPatientPhone) {
+      return;
+    }
+
+    setSaving(true);
+    setFeedback('');
+
+    try {
+      await api.patch(`/complaints/${id}`, {
+        patient_phone: editablePatientPhone
+      });
+      setFeedback('Telefone do paciente atualizado com sucesso.');
+      await loadComplaint();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Erro ao atualizar o telefone do paciente.');
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -711,7 +735,27 @@ function ComplaintDetail() {
             </div>
             <div>
               <dt>Telefone</dt>
-              <dd>{complaint.patient_phone || 'Não informado'}</dd>
+              {canEditPatientPhone && !isDeletedRecord && (
+                <dd>
+                  <div className="unit-change-inline">
+                    <input
+                      className="field"
+                      value={editablePatientPhone}
+                      onChange={(event) => setEditablePatientPhone(event.target.value)}
+                      placeholder="+5562999999999"
+                    />
+                    <button
+                      type="button"
+                      className="secondary-action"
+                      onClick={handlePatientPhoneSave}
+                      disabled={saving || !editablePatientPhone || editablePatientPhone === (complaint.patient_phone || '')}
+                    >
+                      {saving ? 'Salvando...' : 'Salvar telefone'}
+                    </button>
+                  </div>
+                </dd>
+              )}
+              {!canEditPatientPhone && <dd>{complaint.patient_phone || 'Não informado'}</dd>}
             </div>
             <div>
               <dt>Contato SAC</dt>

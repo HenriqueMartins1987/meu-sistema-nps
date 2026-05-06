@@ -607,6 +607,10 @@ function canChangeComplaintUnit(user) {
   return complaintUnitChangeRoles.has(user?.role) || isAdminUser(user);
 }
 
+function canEditComplaintPatientPhone(user) {
+  return ['sac_operator', 'supervisor_crc', 'master_admin'].includes(user?.role);
+}
+
 function canAddTreatment(user) {
   return treatmentRoles.has(user?.role) || isAdminUser(user);
 }
@@ -1907,6 +1911,9 @@ async function ensureDatabaseSchema() {
   await ensureColumn('complaints', 'forwarded_by', 'VARCHAR(160) NULL');
   await ensureColumn('complaints', 'assigned_coordinator_user_id', 'INT NULL');
   await ensureColumn('complaints', 'assigned_coordinator_name', 'VARCHAR(160) NULL');
+  await ensureColumn('complaints', 'assigned_responsible_user_id', 'INT NULL');
+  await ensureColumn('complaints', 'assigned_responsible_name', 'VARCHAR(160) NULL');
+  await ensureColumn('complaints', 'assigned_responsible_role', 'VARCHAR(80) NULL');
   await ensureColumn('complaints', 'clinic_snapshot_name', 'VARCHAR(180) NULL');
   await ensureColumn('complaints', 'created_origin', "VARCHAR(80) DEFAULT 'Interno'");
   await ensureColumn('complaints', 'financial_involved', 'TINYINT(1) NOT NULL DEFAULT 0');
@@ -1914,6 +1921,7 @@ async function ensureDatabaseSchema() {
   await ensureColumn('complaints', 'financial_amount', 'DECIMAL(12,2) NULL');
   await ensureColumn('complaints', 'resolution_due_at', 'DATETIME NULL');
   await ensureColumn('complaints', 'due_warning_sent_at', 'TIMESTAMP NULL');
+  await ensureColumn('complaints', 'overdue_manager_notified_at', 'TIMESTAMP NULL');
   await ensureColumn('complaints', 'deleted_at', 'TIMESTAMP NULL');
   await ensureColumn('complaints', 'deleted_by', 'VARCHAR(160) NULL');
   await ensureColumn('complaints', 'deletion_reason', 'TEXT NULL');
@@ -2261,12 +2269,12 @@ async function backfillComplaintDeadlines() {
 
 async function backfillComplaintAssignments() {
   const [rows] = await pool.query(
-    `SELECT id, clinic_id, assigned_coordinator_name, clinic_snapshot_name
+    `SELECT id, clinic_id, assigned_coordinator_user_id, assigned_coordinator_name, assigned_responsible_user_id, assigned_responsible_name, assigned_responsible_role, clinic_snapshot_name
        FROM complaints`
   );
 
   await Promise.all(rows.map(async (row) => {
-    if (row.assigned_coordinator_name && row.clinic_snapshot_name) {
+    if (row.assigned_coordinator_name && row.clinic_snapshot_name && row.assigned_responsible_role) {
       return null;
     }
 
@@ -2274,11 +2282,16 @@ async function backfillComplaintAssignments() {
 
     return pool.query(
       `UPDATE complaints
-          SET assigned_coordinator_user_id = COALESCE(assigned_coordinator_user_id, ?),
-              assigned_coordinator_name = COALESCE(assigned_coordinator_name, ?),
-              clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)
+           SET assigned_coordinator_user_id = COALESCE(assigned_coordinator_user_id, ?),
+               assigned_coordinator_name = COALESCE(assigned_coordinator_name, ?),
+               assigned_responsible_user_id = COALESCE(assigned_responsible_user_id, ?),
+               assigned_responsible_name = COALESCE(assigned_responsible_name, ?),
+               assigned_responsible_role = COALESCE(assigned_responsible_role, 'coordinator'),
+               clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)
         WHERE id = ?`,
       [
+        assignment.coordinatorUserId,
+        assignment.coordinatorName || null,
         assignment.coordinatorUserId,
         assignment.coordinatorName || null,
         assignment.clinicSnapshotName || null,
@@ -2346,16 +2359,9 @@ async function getComplaintRows(query = {}, user = null) {
     filters.clause += filters.clause ? ' AND c.deleted_at IS NULL' : 'WHERE c.deleted_at IS NULL';
   }
 
-  if (user && !isAdminUser(user)) {
-    const clinicIds = await getUserClinicIds(user.id);
-
-    if (clinicIds.length) {
-      filters.clause += filters.clause ? ' AND (c.clinic_id IN (?) OR c.assigned_coordinator_user_id = ?)' : 'WHERE (c.clinic_id IN (?) OR c.assigned_coordinator_user_id = ?)';
-      filters.params.push(clinicIds, user.id);
-    } else {
-      filters.clause += filters.clause ? ' AND c.assigned_coordinator_user_id = ?' : 'WHERE c.assigned_coordinator_user_id = ?';
-      filters.params.push(user.id);
-    }
+  if (user && !isAdminUser(user) && user?.role !== 'sac_operator') {
+    filters.clause += filters.clause ? ' AND c.assigned_responsible_user_id = ?' : 'WHERE c.assigned_responsible_user_id = ?';
+    filters.params.push(user.id);
   }
 
   const [rows] = await pool.query(
@@ -2393,11 +2399,14 @@ async function getComplaintRows(query = {}, user = null) {
       c.deadline_locked_at,
       c.forwarded_to_role,
       c.forwarded_to_label,
-      c.forwarded_at,
-      c.forwarded_by,
-      c.assigned_coordinator_user_id,
-      c.assigned_coordinator_name,
-      c.clinic_snapshot_name,
+        c.forwarded_at,
+        c.forwarded_by,
+        c.assigned_coordinator_user_id,
+        c.assigned_coordinator_name,
+        c.assigned_responsible_user_id,
+        c.assigned_responsible_name,
+        c.assigned_responsible_role,
+        c.clinic_snapshot_name,
       c.created_origin,
       c.financial_involved,
       c.financial_description,
@@ -2461,10 +2470,14 @@ async function getComplaintRows(query = {}, user = null) {
           AND u.role = 'manager'
         ORDER BY u.updated_at DESC, u.id DESC
         LIMIT 1
-      ) AS manager_phone
+      ) AS manager_phone,
+      aru.email AS assigned_responsible_email,
+      aru.whatsapp AS assigned_responsible_whatsapp,
+      aru.phone AS assigned_responsible_phone
     FROM complaints c
     LEFT JOIN clinics cl ON cl.id = c.clinic_id
     LEFT JOIN users acu ON acu.id = c.assigned_coordinator_user_id
+    LEFT JOIN users aru ON aru.id = c.assigned_responsible_user_id
     ${filters.clause}
     ORDER BY c.created_at DESC, c.id DESC`,
     filters.params
@@ -2846,6 +2859,9 @@ async function getComplaintNotificationContext(complaintId) {
        c.clinic_id,
        c.assigned_coordinator_user_id,
        c.assigned_coordinator_name,
+       c.assigned_responsible_user_id,
+       c.assigned_responsible_name,
+       c.assigned_responsible_role,
        c.patient_name,
        c.complaint_type,
        c.description,
@@ -2867,7 +2883,7 @@ async function getComplaintNotificationContext(complaintId) {
        au.role AS assigned_user_role
      FROM complaints c
      LEFT JOIN clinics cl ON cl.id = c.clinic_id
-     LEFT JOIN users au ON au.id = c.assigned_coordinator_user_id
+     LEFT JOIN users au ON au.id = COALESCE(c.assigned_responsible_user_id, c.assigned_coordinator_user_id)
      WHERE c.id = ?
      LIMIT 1`,
     [complaintId]
@@ -4667,20 +4683,18 @@ async function notifyOperationalComplaintTeam(title, message, link, payload = nu
   return recipients.map((user) => user.id).filter(Boolean);
 }
 
-async function notifyComplaintAudienceByScope(clinicId, assignedCoordinatorUserId, title, message, link, payload = null, excludedUserIds = []) {
+async function notifyComplaintAudienceByScope(clinicId, assignedResponsibleUserId, title, message, link, payload = null, excludedUserIds = []) {
   const excluded = new Set((excludedUserIds || []).map((id) => Number(id)).filter(Boolean));
   const [users] = await pool.query(
     `SELECT DISTINCT u.id, u.role, u.permissions
        FROM users u
-       LEFT JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = ?
       WHERE u.active = 1
         AND u.deleted_at IS NULL
         AND (
           u.role IN ('admin', 'master_admin')
-          OR uc.clinic_id IS NOT NULL
           OR (? IS NOT NULL AND u.id = ?)
         )`,
-    [clinicId || null, assignedCoordinatorUserId || null, assignedCoordinatorUserId || null]
+      [assignedResponsibleUserId || null, assignedResponsibleUserId || null]
   );
 
   const recipients = users.filter((user) => {
@@ -4783,6 +4797,7 @@ async function dispatchUpcomingComplaintDeadlineReminders() {
        c.protocol,
        c.clinic_id,
        c.assigned_coordinator_user_id,
+       c.assigned_responsible_user_id,
        c.patient_name,
        c.complaint_type,
        c.priority,
@@ -4831,7 +4846,7 @@ async function dispatchUpcomingComplaintDeadlineReminders() {
     });
     await notifyComplaintAudienceByScope(
       complaint.clinic_id,
-      complaint.assigned_coordinator_user_id,
+        complaint.assigned_responsible_user_id || complaint.assigned_coordinator_user_id,
       title,
       message,
       link,
@@ -4850,6 +4865,102 @@ async function dispatchUpcomingComplaintDeadlineReminders() {
     });
 
     await pool.query('UPDATE complaints SET due_warning_sent_at = NOW() WHERE id = ?', [complaint.id]);
+  }
+
+  return rows.length;
+}
+
+function buildExpiredComplaintManagerEmail(complaint) {
+  const protocol = complaint?.protocol || `GRC-${complaint?.id || ''}`;
+  const clinic = complaint?.clinic_name
+    ? `${complaint.clinic_name}${complaint.city ? ` - ${complaint.city}/${complaint.state || 'UF'}` : ''}`
+    : 'Unidade não informada';
+  const complaintUrl = `${frontendUrl}/gestao/${complaint?.id}`;
+
+  return {
+    subject: `Reclamação vencida - protocolo ${protocol}`,
+    html: emailService.renderBrandedEmail({
+      eyebrow: 'Escalonamento',
+      title: `Protocolo vencido ${protocol}`,
+      intro: 'Olá,',
+      bodyHtml: `
+        <p style="margin:0 0 18px;">Uma reclamação ultrapassou o prazo configurado e requer atenção imediata da gerência.</p>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:0 0 8px;">
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Paciente</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(complaint?.patient_name || 'Não informado')}</td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Unidade</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(clinic)}</td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Classificação</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(complaint?.complaint_type || 'Não informado')}</td></tr>
+          <tr><td style="padding:10px 0;color:#6c5a4e;">Prazo expirado em</td><td style="padding:10px 0;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(formatMessageDateTime(complaint?.due_at))}</td></tr>
+        </table>
+      `,
+      actionLabel: 'Abrir protocolo',
+      actionUrl: complaintUrl,
+      footerText: 'Alerta automático de expiração de prazo do sistema Grupo Sorria.'
+    })
+  };
+}
+
+async function dispatchExpiredComplaintManagerAlerts() {
+  const [rows] = await pool.query(
+    `SELECT
+       c.id,
+       c.protocol,
+       c.clinic_id,
+       c.patient_name,
+       c.complaint_type,
+       c.due_at,
+       cl.name AS clinic_name,
+       cl.city,
+       cl.state
+     FROM complaints c
+     LEFT JOIN clinics cl ON cl.id = c.clinic_id
+     WHERE c.deleted_at IS NULL
+       AND c.status <> 'resolvida'
+       AND c.due_at IS NOT NULL
+       AND c.due_at < NOW()
+       AND c.overdue_manager_notified_at IS NULL`
+  );
+
+  for (const complaint of rows) {
+    const [managers] = await pool.query(
+      `SELECT DISTINCT u.id, u.name, u.email
+         FROM users u
+         INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = ?
+        WHERE u.active = 1
+          AND u.deleted_at IS NULL
+          AND u.role = 'manager'`,
+      [complaint.clinic_id]
+    );
+
+    const template = buildExpiredComplaintManagerEmail(complaint);
+    const validManagers = managers.filter((manager) => isValidNotificationEmail(manager.email));
+
+    await Promise.all(validManagers.map(async (manager) => {
+      try {
+        await sendEmail(manager.email, template.subject, template.html);
+        await insertNotificationLog({
+          eventType: 'COMPLAINT_OVERDUE_MANAGER',
+          protocol: complaint.protocol,
+          channel: 'EMAIL',
+          recipientEmail: manager.email,
+          recipientUserId: manager.id,
+          recipientRole: manager.role || 'manager',
+          status: 'sent'
+        });
+      } catch (error) {
+        await insertNotificationLog({
+          eventType: 'COMPLAINT_OVERDUE_MANAGER',
+          protocol: complaint.protocol,
+          channel: 'EMAIL',
+          recipientEmail: manager.email,
+          recipientUserId: manager.id,
+          recipientRole: manager.role || 'manager',
+          status: 'failed',
+          errorMessage: error.message
+        });
+      }
+    }));
+
+    await pool.query('UPDATE complaints SET overdue_manager_notified_at = NOW() WHERE id = ?', [complaint.id]);
   }
 
   return rows.length;
@@ -4932,6 +5043,86 @@ async function resolveCoordinatorAssignment(clinicId) {
     coordinatorUserId: coordinator?.id || null,
     coordinatorName: coordinator?.name || configuredCoordinatorName || 'Coordenador da unidade',
     clinicSnapshotName: clinic?.name || null
+  };
+}
+
+async function resolveManagerAssignment(clinicId) {
+  if (!clinicId) {
+    return {
+      managerUserId: null,
+      managerName: 'Gerente da unidade'
+    };
+  }
+
+  const [rows] = await pool.query(
+    `SELECT
+       u.id,
+       u.name
+     FROM users u
+     INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = ?
+     WHERE u.deleted_at IS NULL
+       AND u.active = 1
+       AND u.role = 'manager'
+     ORDER BY u.name ASC
+     LIMIT 1`,
+    [clinicId]
+  );
+
+  return {
+    managerUserId: rows[0]?.id || null,
+    managerName: rows[0]?.name || 'Gerente da unidade'
+  };
+}
+
+async function resolveComplaintResponsibleAssignment(clinicId, forwardRole) {
+  if (forwardRole === 'coordinator') {
+    const assignment = await resolveCoordinatorAssignment(clinicId);
+    return {
+      userId: assignment.coordinatorUserId || null,
+      name: assignment.coordinatorName || 'Coordenador da unidade',
+      role: 'coordinator',
+      label: assignment.coordinatorName || 'Coordenador da unidade',
+      clinicSnapshotName: assignment.clinicSnapshotName || null
+    };
+  }
+
+  if (forwardRole === 'manager') {
+    const assignment = await resolveManagerAssignment(clinicId);
+    return {
+      userId: assignment.managerUserId || null,
+      name: assignment.managerName || 'Gerente da unidade',
+      role: 'manager',
+      label: assignment.managerName || 'Gerente da unidade',
+      clinicSnapshotName: null
+    };
+  }
+
+  if (forwardRole === 'supervisor_crc') {
+    const [rows] = await pool.query(
+      `SELECT id, name
+         FROM users
+        WHERE deleted_at IS NULL
+          AND active = 1
+          AND role = 'supervisor_crc'
+        ORDER BY name ASC
+        LIMIT 1`
+    );
+
+    return {
+      userId: rows[0]?.id || null,
+      name: rows[0]?.name || 'Supervisor do CRC',
+      role: 'supervisor_crc',
+      label: rows[0]?.name || 'Supervisor do CRC',
+      clinicSnapshotName: null
+    };
+  }
+
+  return {
+    userId: null,
+    name: null,
+    role: null,
+    label: null,
+    clinicSnapshotName: null
   };
 }
 
@@ -5269,16 +5460,9 @@ async function getOpenDemandCountForUser(user) {
   const where = ["c.deleted_at IS NULL", "COALESCE(c.status, 'aberta') <> 'resolvida'"];
   const params = [];
 
-  if (!isAdminUser(user)) {
-    const clinicIds = await getUserClinicIds(user.id);
-
-    if (clinicIds.length) {
-      where.push('(c.clinic_id IN (?) OR c.assigned_coordinator_user_id = ?)');
-      params.push(clinicIds, user.id);
-    } else {
-      where.push('c.assigned_coordinator_user_id = ?');
-      params.push(user.id);
-    }
+  if (!isAdminUser(user) && user?.role !== 'sac_operator') {
+    where.push('c.assigned_responsible_user_id = ?');
+    params.push(user.id);
   }
 
   const [rows] = await pool.query(
@@ -5466,6 +5650,7 @@ async function notifyComplaintCreated(complaintId, protocol) {
        c.protocol,
        c.clinic_id,
        c.assigned_coordinator_user_id,
+       c.assigned_responsible_user_id,
        c.patient_name,
        c.complaint_type,
        c.priority,
@@ -5528,7 +5713,7 @@ async function notifyComplaintCreated(complaintId, protocol) {
   try {
     await notifyComplaintAudienceByScope(
       complaint.clinic_id,
-      complaint.assigned_coordinator_user_id,
+        complaint.assigned_responsible_user_id || complaint.assigned_coordinator_user_id,
       title,
       detailedMessage,
       link,
@@ -5750,8 +5935,8 @@ async function convertNpsToComplaint(npsId, user) {
   const protocol = `GRC-${new Date().getFullYear()}-${String(result.insertId).padStart(6, '0')}`;
   await pool.query('UPDATE complaints SET protocol = ? WHERE id = ?', [protocol, result.insertId]);
   await pool.query(
-    'UPDATE complaints SET assigned_coordinator_user_id = ?, assigned_coordinator_name = ?, clinic_snapshot_name = ? WHERE id = ?',
-    [assignment.coordinatorUserId, assignment.coordinatorName, assignment.clinicSnapshotName, result.insertId]
+    'UPDATE complaints SET assigned_coordinator_user_id = ?, assigned_coordinator_name = ?, assigned_responsible_user_id = ?, assigned_responsible_name = ?, assigned_responsible_role = ?, clinic_snapshot_name = ? WHERE id = ?',
+    [assignment.coordinatorUserId, assignment.coordinatorName, assignment.coordinatorUserId, assignment.coordinatorName, 'coordinator', assignment.clinicSnapshotName, result.insertId]
   );
   const coordinatorLabel = assignment.coordinatorName || 'Coordenador da unidade';
   await pool.query(
@@ -8399,8 +8584,8 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
     const protocol = `GRC-${new Date().getFullYear()}-${String(result.insertId).padStart(6, '0')}`;
     await pool.query('UPDATE complaints SET protocol = ? WHERE id = ?', [protocol, result.insertId]);
     await pool.query(
-      'UPDATE complaints SET assigned_coordinator_user_id = ?, assigned_coordinator_name = ?, clinic_snapshot_name = ? WHERE id = ?',
-      [assignment.coordinatorUserId, assignment.coordinatorName, assignment.clinicSnapshotName, result.insertId]
+      'UPDATE complaints SET assigned_coordinator_user_id = ?, assigned_coordinator_name = ?, assigned_responsible_user_id = ?, assigned_responsible_name = ?, assigned_responsible_role = ?, clinic_snapshot_name = ? WHERE id = ?',
+      [assignment.coordinatorUserId, assignment.coordinatorName, assignment.coordinatorUserId, assignment.coordinatorName, 'coordinator', assignment.clinicSnapshotName, result.insertId]
     );
     const coordinatorLabel = assignment.coordinatorName || 'Coordenador da unidade';
     await pool.query(
@@ -8698,6 +8883,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       operator_comment,
       priority,
       clinic_id,
+      patient_phone,
       supervisor_accept,
       sac_accept,
       patient_contacted,
@@ -8728,6 +8914,28 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       nextPriority
     ];
     const hasClinicChangeRequest = Object.prototype.hasOwnProperty.call(req.body || {}, 'clinic_id');
+    const hasPhoneChangeRequest = Object.prototype.hasOwnProperty.call(req.body || {}, 'patient_phone');
+
+    if (hasPhoneChangeRequest) {
+      if (!canEditComplaintPatientPhone(req.user)) {
+        return res.status(403).json({ error: 'Seu perfil não pode alterar o telefone do paciente.' });
+      }
+
+      if (!isCompleteBrazilPhone(patient_phone)) {
+        return res.status(400).json({ error: 'Informe o telefone completo no formato +55DDDNÚMERO.' });
+      }
+
+      const normalizedPatientPhone = normalizeBrazilPhone(patient_phone);
+
+      if (normalizedPatientPhone !== normalizeBrazilPhone(complaint.patient_phone || '')) {
+        updates.push('patient_phone = ?');
+        values.push(normalizedPatientPhone);
+        logEntries.push({
+          action: 'patient_phone_changed',
+          message: `Telefone do paciente atualizado para ${normalizedPatientPhone}.`
+        });
+      }
+    }
 
     if (hasClinicChangeRequest) {
       if (!canChangeComplaintUnit(req.user)) {
@@ -8764,6 +8972,23 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         values.push(assignment?.coordinatorUserId || null);
         updates.push('assigned_coordinator_name = ?');
         values.push(nextCoordinatorName);
+
+        if (!complaint.forwarded_to_role || complaint.forwarded_to_role === 'coordinator') {
+          updates.push('assigned_responsible_user_id = ?');
+          values.push(assignment?.coordinatorUserId || null);
+          updates.push('assigned_responsible_name = ?');
+          values.push(nextCoordinatorName || 'Coordenador da unidade');
+          updates.push("assigned_responsible_role = 'coordinator'");
+        } else if (complaint.forwarded_to_role === 'manager') {
+          const managerAssignment = await resolveComplaintResponsibleAssignment(nextClinicId, 'manager');
+          updates.push('assigned_responsible_user_id = ?');
+          values.push(managerAssignment.userId || null);
+          updates.push('assigned_responsible_name = ?');
+          values.push(managerAssignment.name || 'Gerente da unidade');
+          updates.push("assigned_responsible_role = 'manager'");
+          updates.push('forwarded_to_label = ?');
+          values.push(managerAssignment.label || 'Gerente da unidade');
+        }
 
         if (complaint.forwarded_to_role === 'coordinator') {
           updates.push('forwarded_to_label = ?');
@@ -8860,9 +9085,11 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       let assignment = null;
       let forwardedLabel = allowedForwardRoles[forward_to_role];
 
+      assignment = await resolveComplaintResponsibleAssignment(complaint.clinic_id, forward_to_role);
       if (forward_to_role === 'coordinator') {
-        assignment = await resolveCoordinatorAssignment(complaint.clinic_id);
-        forwardedLabel = complaint.assigned_coordinator_name || assignment.coordinatorName || allowedForwardRoles[forward_to_role];
+        forwardedLabel = complaint.assigned_coordinator_name || assignment.name || allowedForwardRoles[forward_to_role];
+      } else {
+        forwardedLabel = assignment.label || allowedForwardRoles[forward_to_role];
       }
 
       updates.push('first_attendance_at = COALESCE(first_attendance_at, NOW())');
@@ -8878,12 +9105,18 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       updates.push('forwarded_at = NOW()');
       updates.push('forwarded_by = ?');
       values.push(actorName);
+      updates.push('assigned_responsible_user_id = ?');
+      values.push(assignment?.userId || null);
+      updates.push('assigned_responsible_name = ?');
+      values.push(assignment?.name || forwardedLabel);
+      updates.push('assigned_responsible_role = ?');
+      values.push(assignment?.role || forward_to_role);
 
-      if (forward_to_role === 'coordinator' && !complaint.assigned_coordinator_name) {
+      if (forward_to_role === 'coordinator') {
         updates.push('assigned_coordinator_user_id = ?');
-        values.push(assignment?.coordinatorUserId || null);
+        values.push(assignment?.userId || null);
         updates.push('assigned_coordinator_name = ?');
-        values.push(assignment?.coordinatorName || forwardedLabel);
+        values.push(assignment?.name || forwardedLabel);
         updates.push('clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)');
         values.push(assignment?.clinicSnapshotName || null);
       }
@@ -9053,6 +9286,9 @@ async function startServer() {
     dispatchUpcomingComplaintDeadlineReminders().catch((jobError) => {
       console.warn('Não foi possível executar a rotina inicial de alertas de prazo das reclamações:', jobError.message);
     });
+    dispatchExpiredComplaintManagerAlerts().catch((jobError) => {
+      console.warn('Não foi possível executar a rotina inicial de expiração de reclamações para gerência:', jobError.message);
+    });
     runScheduledUserDemandReminders().catch((jobError) => {
       console.warn('Não foi possível executar a rotina inicial de lembretes semanais aos usuários:', jobError.message);
     });
@@ -9073,6 +9309,12 @@ async function startServer() {
   setInterval(() => {
     dispatchUpcomingComplaintDeadlineReminders().catch((jobError) => {
       console.warn('Não foi possível executar a rotina programada de alertas de prazo das reclamações:', jobError.message);
+    });
+  }, complaintDueReminderIntervalMinutes * 60 * 1000);
+
+  setInterval(() => {
+    dispatchExpiredComplaintManagerAlerts().catch((jobError) => {
+      console.warn('Não foi possível executar a rotina programada de expiração de reclamações para gerência:', jobError.message);
     });
   }, complaintDueReminderIntervalMinutes * 60 * 1000);
 
