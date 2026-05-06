@@ -65,6 +65,24 @@ function buildWhatsappUrl(phone) {
   return `https://wa.me/${normalized}`;
 }
 
+function formatPhoneDisplay(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+
+  if (!digits) return 'Não informado';
+
+  const normalized = digits.startsWith('55') ? digits : `55${digits}`;
+
+  if (normalized.length === 13) {
+    return `+${normalized.slice(0, 2)} (${normalized.slice(2, 4)}) ${normalized.slice(4, 9)}-${normalized.slice(9)}`;
+  }
+
+  if (normalized.length === 12) {
+    return `+${normalized.slice(0, 2)} (${normalized.slice(2, 4)}) ${normalized.slice(4, 8)}-${normalized.slice(8)}`;
+  }
+
+  return `+${normalized}`;
+}
+
 function resolveUploadedFileUrl(value) {
   const rawValue = String(value || '').trim();
 
@@ -706,6 +724,22 @@ function ComplaintDetail() {
             <div>
               <dt>Encaminhado para</dt>
               <dd>{complaint.forwarded_to_label || 'Não encaminhado'}</dd>
+            </div>
+            <div>
+              <dt>Coordenador responsável</dt>
+              <dd>{complaint.coordinator_name || 'Não informado'}</dd>
+            </div>
+            <div>
+              <dt>Telefone do coordenador</dt>
+              <dd>{formatPhoneDisplay(complaint.coordinator_phone)}</dd>
+            </div>
+            <div>
+              <dt>Gerente responsável</dt>
+              <dd>{complaint.manager_name || 'Não informado'}</dd>
+            </div>
+            <div>
+              <dt>Telefone do gerente</dt>
+              <dd>{formatPhoneDisplay(complaint.manager_phone)}</dd>
             </div>
             <div>
               <dt>Canal</dt>

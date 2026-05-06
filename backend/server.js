@@ -2412,9 +2412,59 @@ async function getComplaintRows(query = {}, user = null) {
       cl.city,
       cl.state,
       cl.region,
-      COALESCE(c.assigned_coordinator_name, cl.coordinator_name) AS coordinator_name
+      COALESCE(
+        NULLIF(acu.name, ''),
+        NULLIF(c.assigned_coordinator_name, ''),
+        NULLIF(cl.coordinator_name, ''),
+        (
+          SELECT NULLIF(u.name, '')
+          FROM users u
+          INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = c.clinic_id
+          WHERE u.active = 1
+            AND u.deleted_at IS NULL
+            AND u.role = 'coordinator'
+          ORDER BY u.updated_at DESC, u.id DESC
+          LIMIT 1
+        )
+      ) AS coordinator_name,
+      COALESCE(
+        NULLIF(acu.whatsapp, ''),
+        NULLIF(acu.phone, ''),
+        (
+          SELECT COALESCE(NULLIF(u.whatsapp, ''), NULLIF(u.phone, ''))
+          FROM users u
+          INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = c.clinic_id
+          WHERE u.active = 1
+            AND u.deleted_at IS NULL
+            AND u.role = 'coordinator'
+          ORDER BY CASE WHEN c.assigned_coordinator_user_id IS NOT NULL AND u.id = c.assigned_coordinator_user_id THEN 0 ELSE 1 END, u.updated_at DESC, u.id DESC
+          LIMIT 1
+        ),
+        NULLIF(cl.responsible_whatsapp, '')
+      ) AS coordinator_phone,
+      (
+        SELECT NULLIF(u.name, '')
+        FROM users u
+        INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = c.clinic_id
+        WHERE u.active = 1
+          AND u.deleted_at IS NULL
+          AND u.role = 'manager'
+        ORDER BY u.updated_at DESC, u.id DESC
+        LIMIT 1
+      ) AS manager_name,
+      (
+        SELECT COALESCE(NULLIF(u.whatsapp, ''), NULLIF(u.phone, ''))
+        FROM users u
+        INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = c.clinic_id
+        WHERE u.active = 1
+          AND u.deleted_at IS NULL
+          AND u.role = 'manager'
+        ORDER BY u.updated_at DESC, u.id DESC
+        LIMIT 1
+      ) AS manager_phone
     FROM complaints c
     LEFT JOIN clinics cl ON cl.id = c.clinic_id
+    LEFT JOIN users acu ON acu.id = c.assigned_coordinator_user_id
     ${filters.clause}
     ORDER BY c.created_at DESC, c.id DESC`,
     filters.params
