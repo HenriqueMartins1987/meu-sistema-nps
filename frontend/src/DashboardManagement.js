@@ -271,11 +271,19 @@ function DashboardManagement() {
     setPage(1);
   }, [filters, viewMode]);
 
-  const activeComplaints = useMemo(() => complaints.filter((item) => !item.deleted_at), [complaints]);
+  const operationalComplaints = useMemo(() => complaints.filter((item) => !item.deleted_at), [complaints]);
+  const activeComplaints = useMemo(() => (
+    operationalComplaints.filter((item) => item.status !== 'resolvida')
+  ), [operationalComplaints]);
+  const finishedComplaints = useMemo(() => (
+    operationalComplaints.filter((item) => item.status === 'resolvida')
+  ), [operationalComplaints]);
   const deletedComplaints = useMemo(() => complaints.filter((item) => item.deleted_at), [complaints]);
-  const scopedComplaints = useMemo(() => (
-    viewMode === 'deleted' && canViewDeleted ? deletedComplaints : activeComplaints
-  ), [activeComplaints, canViewDeleted, deletedComplaints, viewMode]);
+  const scopedComplaints = useMemo(() => {
+    if (viewMode === 'finished') return finishedComplaints;
+    if (viewMode === 'deleted' && canViewDeleted) return deletedComplaints;
+    return activeComplaints;
+  }, [activeComplaints, canViewDeleted, deletedComplaints, finishedComplaints, viewMode]);
 
   const filteredComplaints = useMemo(() => scopedComplaints.filter((item) => {
     const matchesStatus = !filters.status || item.status === filters.status;
@@ -315,14 +323,14 @@ function DashboardManagement() {
   ), [complaints]);
 
   const metrics = useMemo(() => {
-    const total = activeComplaints.length;
+    const total = operationalComplaints.length;
     const open = activeComplaints.filter((item) => item.status === 'aberta').length;
     const inProgress = activeComplaints.filter((item) => item.status === 'em_andamento').length;
-    const resolved = activeComplaints.filter((item) => item.status === 'resolvida').length;
+    const resolved = finishedComplaints.length;
     const overdue = activeComplaints.filter((item) => buildDeadlineInfo(item).state === 'overdue').length;
     const warning = activeComplaints.filter((item) => buildDeadlineInfo(item).state === 'warning').length;
     return { total, open, inProgress, resolved, overdue, warning };
-  }, [activeComplaints]);
+  }, [activeComplaints, finishedComplaints, operationalComplaints]);
 
   const totalPages = Math.max(1, Math.ceil(filteredComplaints.length / pageSize));
   const currentPage = Math.min(page, totalPages);
@@ -494,7 +502,13 @@ function DashboardManagement() {
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Protocolos</p>
-            <h2>{viewMode === 'deleted' ? 'Protocolos excluídos com auditoria' : 'Lista priorizada para tratativa'}</h2>
+            <h2>
+              {viewMode === 'deleted'
+                ? 'Protocolos excluídos com auditoria'
+                : viewMode === 'finished'
+                  ? 'Protocolos finalizados'
+                  : 'Lista priorizada para tratativa'}
+            </h2>
           </div>
 
           <div className="export-actions">
@@ -508,24 +522,31 @@ function DashboardManagement() {
             </button>
           </div>
 
-          {canViewDeleted && (
-            <div className="patient-tabs" role="tablist" aria-label="Visões da gestão de reclamações">
-              <button
-                type="button"
-                className={viewMode === 'active' ? 'active' : ''}
-                onClick={() => setViewMode('active')}
-              >
-                Ativos
-              </button>
+          <div className="patient-tabs" role="tablist" aria-label="Visões da gestão de reclamações">
+            <button
+              type="button"
+              className={viewMode === 'active' ? 'active' : ''}
+              onClick={() => setViewMode('active')}
+            >
+              Ativos ({activeComplaints.length})
+            </button>
+            <button
+              type="button"
+              className={viewMode === 'finished' ? 'active' : ''}
+              onClick={() => setViewMode('finished')}
+            >
+              Finalizados ({finishedComplaints.length})
+            </button>
+            {canViewDeleted && (
               <button
                 type="button"
                 className={viewMode === 'deleted' ? 'active' : ''}
                 onClick={() => setViewMode('deleted')}
               >
-                Excluídos
+                Excluídos ({deletedComplaints.length})
               </button>
-            </div>
-          )}
+            )}
+          </div>
 
           <div className="filters management-filters">
             <input

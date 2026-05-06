@@ -6,6 +6,8 @@ import api from './api';
 import {
   defaultBrazilPhone,
   formatBrazilPhoneInput,
+  isMasterAdmin,
+  readUser,
   isCompleteBrazilPhone
 } from './constants';
 
@@ -123,6 +125,8 @@ function PatientManagementPage() {
     const parsedId = Number(rawId);
     return Number.isFinite(parsedId) && parsedId > 0 ? parsedId : null;
   }, [location.search]);
+  const currentUser = readUser();
+  const canViewDeleted = isMasterAdmin(currentUser);
   const [form, setForm] = useState(buildInitialForm);
   const [records, setRecords] = useState([]);
   const [clinics, setClinics] = useState([]);
@@ -142,7 +146,9 @@ function PatientManagementPage() {
 
     try {
       const [recordsRes, clinicsRes] = await Promise.all([
-        api.get('/patient-interactions'),
+        api.get('/patient-interactions', {
+          params: canViewDeleted ? { include_deleted: 1 } : undefined
+        }),
         api.get('/clinics')
       ]);
       const data = Array.isArray(recordsRes.data) ? recordsRes.data : [];
@@ -155,11 +161,17 @@ function PatientManagementPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [canViewDeleted]);
 
   useEffect(() => {
     loadRecords();
   }, [loadRecords]);
+
+  useEffect(() => {
+    if (!canViewDeleted && activeTab === 'excluidos') {
+      setActiveTab('ativos');
+    }
+  }, [activeTab, canViewDeleted]);
 
   useEffect(() => {
     autoOpenRecordRef.current = false;
@@ -177,15 +189,28 @@ function PatientManagementPage() {
     }
 
     autoOpenRecordRef.current = true;
-    setActiveTab(targetRecord.status === 'Cancelado' ? 'cancelados' : 'ativos');
+    if (targetRecord.status === 'Cancelado') {
+      setActiveTab(canViewDeleted ? 'excluidos' : 'ativos');
+    } else if (targetRecord.status === 'Encerrado') {
+      setActiveTab('finalizados');
+    } else {
+      setActiveTab('ativos');
+    }
     setSelectedRecord(targetRecord);
     setShowCancelModal(false);
     navigate(location.pathname, { replace: true });
-  }, [focusRecordId, isDashboard, isRegister, location.pathname, navigate, records]);
+  }, [canViewDeleted, focusRecordId, isDashboard, isRegister, location.pathname, navigate, records]);
 
-  const activeRecords = useMemo(() => records.filter((record) => record.status !== 'Cancelado'), [records]);
-  const cancelledRecords = useMemo(() => records.filter((record) => record.status === 'Cancelado'), [records]);
-  const visibleRecords = activeTab === 'cancelados' ? cancelledRecords : activeRecords;
+  const activeRecords = useMemo(() => (
+    records.filter((record) => record.status !== 'Cancelado' && record.status !== 'Encerrado')
+  ), [records]);
+  const finishedRecords = useMemo(() => records.filter((record) => record.status === 'Encerrado'), [records]);
+  const deletedRecords = useMemo(() => records.filter((record) => record.status === 'Cancelado'), [records]);
+  const visibleRecords = activeTab === 'excluidos'
+    ? deletedRecords
+    : activeTab === 'finalizados'
+      ? finishedRecords
+      : activeRecords;
 
   const grouped = useMemo(() => activeRecords.reduce((acc, record) => {
     acc[record.type] = (acc[record.type] || 0) + 1;
@@ -328,8 +353,8 @@ function PatientManagementPage() {
       await api.delete(`/patient-interactions/${selectedRecord.id}`);
       setShowCancelModal(false);
       await refreshSelectedRecord(selectedRecord.id);
-      setActiveTab('cancelados');
-      setFeedback('Agendamento movido para a aba de cancelados.');
+      setActiveTab(canViewDeleted ? 'excluidos' : 'ativos');
+      setFeedback('Agendamento movido para a aba de excluídos.');
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível cancelar o agendamento.');
     } finally {
@@ -547,11 +572,18 @@ function PatientManagementPage() {
             <strong>{grouped.reagendamento || 0}</strong>
             <p>ALTERAÇÕES</p>
           </article>
-          <article className="kpi-card danger">
-            <span>Cancelados</span>
-            <strong>{statusGrouped.Cancelado || 0}</strong>
-            <p>LASTRO PRESERVADO</p>
+          <article className="kpi-card success">
+            <span>Finalizados</span>
+            <strong>{finishedRecords.length}</strong>
+            <p>REGISTROS ENCERRADOS</p>
           </article>
+          {canViewDeleted && (
+            <article className="kpi-card danger">
+              <span>Excluídos</span>
+              <strong>{statusGrouped.Cancelado || 0}</strong>
+              <p>LASTRO PRESERVADO</p>
+            </article>
+          )}
         </section>
 
         {loading ? (
@@ -606,7 +638,8 @@ function PatientManagementPage() {
                 {[
                   { label: 'Agenda filtrada', value: upcomingRecords.length },
                   { label: 'Ativos', value: activeRecords.length },
-                  { label: 'Cancelados', value: cancelledRecords.length },
+                  { label: 'Finalizados', value: finishedRecords.length },
+                  ...(canViewDeleted ? [{ label: 'Excluídos', value: deletedRecords.length }] : []),
                   { label: 'Confirmações', value: grouped.confirmacao || 0 },
                   { label: 'Agendamentos', value: grouped.agendamento || 0 }
                 ].map((item) => (
@@ -681,7 +714,7 @@ function PatientManagementPage() {
         <div>
           <p className="eyebrow">Gestão do Paciente</p>
           <h1>Gestão do Paciente</h1>
-          <p>Consulte protocolos ativos e cancelados, acompanhe o histórico e acesse o cadastro em uma tela dedicada.</p>
+          <p>Consulte protocolos ativos e finalizados, acompanhe o histórico e acesse o cadastro em uma tela dedicada.</p>
         </div>
 
         <div className="heading-actions">
@@ -720,11 +753,18 @@ function PatientManagementPage() {
           <strong>{grouped.reagendamento || 0}</strong>
           <p>ALTERAÇÕES</p>
         </article>
-        <article className="kpi-card danger">
-          <span>Cancelados</span>
-          <strong>{cancelledRecords.length}</strong>
-          <p>LASTRO DISPONÍVEL</p>
+        <article className="kpi-card success">
+          <span>Finalizados</span>
+          <strong>{finishedRecords.length}</strong>
+          <p>REGISTROS ENCERRADOS</p>
         </article>
+        {canViewDeleted && (
+          <article className="kpi-card danger">
+            <span>Excluídos</span>
+            <strong>{deletedRecords.length}</strong>
+            <p>LASTRO DISPONÍVEL</p>
+          </article>
+        )}
       </section>
 
       <section className="management-panel">
@@ -739,9 +779,14 @@ function PatientManagementPage() {
               <button type="button" className={activeTab === 'ativos' ? 'active' : ''} onClick={() => setActiveTab('ativos')}>
                 Ativos ({activeRecords.length})
               </button>
-              <button type="button" className={activeTab === 'cancelados' ? 'active' : ''} onClick={() => setActiveTab('cancelados')}>
-                Cancelados ({cancelledRecords.length})
+              <button type="button" className={activeTab === 'finalizados' ? 'active' : ''} onClick={() => setActiveTab('finalizados')}>
+                Finalizados ({finishedRecords.length})
               </button>
+              {canViewDeleted && (
+                <button type="button" className={activeTab === 'excluidos' ? 'active' : ''} onClick={() => setActiveTab('excluidos')}>
+                  Excluídos ({deletedRecords.length})
+                </button>
+              )}
             </div>
           </div>
 
@@ -754,7 +799,7 @@ function PatientManagementPage() {
                   <th>Tipo</th>
                   <th>Unidade</th>
                   <th>Data e horário</th>
-                  <th>{activeTab === 'cancelados' ? 'Cancelado por' : 'Última tratativa por'}</th>
+                  <th>{activeTab === 'excluidos' ? 'Excluído por' : 'Última tratativa por'}</th>
                   <th>Leitura rápida</th>
                   <th>Ação</th>
                 </tr>
@@ -768,7 +813,7 @@ function PatientManagementPage() {
                     <td>{record.clinic}</td>
                     <td>{formatDateTime(record.scheduledAt)}</td>
                     <td>
-                      {activeTab === 'cancelados'
+                      {activeTab === 'excluidos'
                         ? (record.cancelledByName || record.lastActorName || 'Sem registro')
                         : (record.lastActorName || 'Sem tratativa')}
                     </td>
@@ -841,7 +886,7 @@ function PatientManagementPage() {
             </div>
 
             <div className="row-actions">
-              {selectedRecord.status !== 'Cancelado' && (
+              {selectedRecord.status !== 'Cancelado' && selectedRecord.status !== 'Encerrado' && (
                 <>
                   <button className="outline-action" onClick={() => updateSelectedStatus('Contato realizado', 'Contato realizado')} disabled={saving}>
                     Contato realizado

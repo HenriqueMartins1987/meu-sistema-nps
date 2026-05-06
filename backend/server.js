@@ -7567,6 +7567,7 @@ app.delete('/nps/responses/:id', authenticate, async (req, res) => {
 
 app.get('/patient-interactions', authenticate, async (req, res) => {
   try {
+    const includeDeleted = Boolean(req.query.include_deleted) && canViewDeletedRecords(req.user);
     const [rows] = await pool.query(
       `SELECT
         id,
@@ -7587,6 +7588,7 @@ app.get('/patient-interactions', authenticate, async (req, res) => {
         created_at,
         updated_at
        FROM patient_interactions
+       ${includeDeleted ? '' : "WHERE status <> 'Cancelado'"}
        ORDER BY COALESCE(cancelled_at, created_at) DESC, id DESC`
     );
 

@@ -161,11 +161,19 @@ function NpsManagement() {
     navigate(location.pathname, { replace: true });
   }, [focusNpsId, location.pathname, navigate, rows]);
 
-  const activeRows = useMemo(() => rows.filter((item) => !item.deleted_at), [rows]);
+  const operationalRows = useMemo(() => rows.filter((item) => !item.deleted_at), [rows]);
+  const activeRows = useMemo(() => (
+    operationalRows.filter((item) => getNpsStatus(item) !== 'tratado')
+  ), [operationalRows]);
+  const finishedRows = useMemo(() => (
+    operationalRows.filter((item) => getNpsStatus(item) === 'tratado')
+  ), [operationalRows]);
   const deletedRows = useMemo(() => rows.filter((item) => item.deleted_at), [rows]);
-  const scopedRows = useMemo(() => (
-    viewMode === 'deleted' && canViewDeleted ? deletedRows : activeRows
-  ), [activeRows, canViewDeleted, deletedRows, viewMode]);
+  const scopedRows = useMemo(() => {
+    if (viewMode === 'finished') return finishedRows;
+    if (viewMode === 'deleted' && canViewDeleted) return deletedRows;
+    return activeRows;
+  }, [activeRows, canViewDeleted, deletedRows, finishedRows, viewMode]);
 
   const filterOptions = useMemo(() => ({
     clinics: uniqueList([...rows.map((item) => item.clinic_name), ...clinics.map((clinic) => clinic.name)]),
@@ -213,17 +221,17 @@ function NpsManagement() {
     }), [filters, scopedRows]);
 
   const metrics = useMemo(() => {
-    const total = activeRows.length;
-    const promoters = activeRows.filter((item) => Number(item.score) >= 9).length;
-    const neutrals = activeRows.filter((item) => Number(item.score) >= 7 && Number(item.score) <= 8).length;
-    const detractors = activeRows.filter((item) => Number(item.score) <= 6).length;
+    const total = operationalRows.length;
+    const promoters = operationalRows.filter((item) => Number(item.score) >= 9).length;
+    const neutrals = operationalRows.filter((item) => Number(item.score) >= 7 && Number(item.score) <= 8).length;
+    const detractors = operationalRows.filter((item) => Number(item.score) <= 6).length;
     const inTreatment = activeRows.filter((item) => getNpsStatus(item) === 'em_tratativa').length;
-    const treated = activeRows.filter((item) => getNpsStatus(item) === 'tratado').length;
+    const treated = finishedRows.length;
     const pendingDetractors = activeRows.filter((item) => Number(item.score) <= 6 && getNpsStatus(item) !== 'tratado').length;
     const nps = total ? Math.round(((promoters - detractors) / total) * 100) : 0;
 
     return { total, promoters, neutrals, detractors, inTreatment, treated, pendingDetractors, nps };
-  }, [activeRows]);
+  }, [activeRows, finishedRows, operationalRows]);
 
   const updateFilter = (field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value }));
@@ -442,27 +450,40 @@ function NpsManagement() {
         <div className="panel-heading">
           <div>
             <p className="eyebrow">Pesquisas</p>
-            <h2>{viewMode === 'deleted' ? 'Pesquisas NPS excluídas com auditoria' : 'Lista de respostas NPS'}</h2>
+            <h2>
+              {viewMode === 'deleted'
+                ? 'Pesquisas NPS excluídas com auditoria'
+                : viewMode === 'finished'
+                  ? 'Pesquisas NPS finalizadas'
+                  : 'Lista de respostas NPS'}
+            </h2>
           </div>
 
-          {canViewDeleted && (
-            <div className="patient-tabs" role="tablist" aria-label="Visões da gestão NPS">
-              <button
-                type="button"
-                className={viewMode === 'active' ? 'active' : ''}
-                onClick={() => setViewMode('active')}
-              >
-                Ativos
-              </button>
+          <div className="patient-tabs" role="tablist" aria-label="Visões da gestão NPS">
+            <button
+              type="button"
+              className={viewMode === 'active' ? 'active' : ''}
+              onClick={() => setViewMode('active')}
+            >
+              Ativos ({activeRows.length})
+            </button>
+            <button
+              type="button"
+              className={viewMode === 'finished' ? 'active' : ''}
+              onClick={() => setViewMode('finished')}
+            >
+              Finalizados ({finishedRows.length})
+            </button>
+            {canViewDeleted && (
               <button
                 type="button"
                 className={viewMode === 'deleted' ? 'active' : ''}
                 onClick={() => setViewMode('deleted')}
               >
-                Excluídos
+                Excluídos ({deletedRows.length})
               </button>
-            </div>
-          )}
+            )}
+          </div>
 
           <div className="filters nps-management-filters">
             <input
