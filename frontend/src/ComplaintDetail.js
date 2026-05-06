@@ -205,8 +205,12 @@ function ComplaintDetail() {
   const [feedback, setFeedback] = useState('');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingUnit, setSavingUnit] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [deletingEvidenceId, setDeletingEvidenceId] = useState(null);
+  const [unitOptions, setUnitOptions] = useState([]);
+  const [unitOptionsLoading, setUnitOptionsLoading] = useState(false);
+  const [selectedClinicId, setSelectedClinicId] = useState('');
   const [showForwardModal, setShowForwardModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [forwardToRole, setForwardToRole] = useState('');
@@ -234,7 +238,14 @@ function ComplaintDetail() {
   const canSacClose = user?.role === 'sac_operator' || isAdmin;
   const canDeleteComplaint = isMasterAdmin(user) || user?.role === 'supervisor_crc';
   const canDeleteEvidence = Boolean(user?.id || user?.email || user?.role);
+  const canChangeComplaintUnit = isAdmin || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
   const canRenotifyComplaint = isMasterAdmin(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
+  const activeUnitOptions = useMemo(() => (
+    unitOptions
+      .filter((unit) => unit?.name && String(unit.active ?? 1) !== '0')
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
+  ), [unitOptions]);
+  const hasUnitChange = String(selectedClinicId || '') !== String(complaint?.clinic_id || '');
   const hasTreatment = Boolean(complaint?.treatment_at);
   const isHighPriority = normalizePriority(complaint?.priority) === 'alta';
   const hasSupervisorApproval = Boolean(complaint?.supervisor_approval_at);
@@ -261,7 +272,9 @@ function ComplaintDetail() {
 
     try {
       const res = await api.get(`/complaints/${id}${includeDeleted ? '?include_deleted=1' : ''}`);
-      setComplaint(res.data);
+      const data = res.data;
+      setComplaint(data);
+      setSelectedClinicId(data?.clinic_id ? String(data.clinic_id) : '');
       setComment('');
     } catch (error) {
       setFeedback('Não foi possível carregar este protocolo.');
@@ -284,6 +297,37 @@ function ComplaintDetail() {
   useEffect(() => {
     loadComplaint();
   }, [loadComplaint]);
+
+  useEffect(() => {
+    if (!canChangeComplaintUnit) {
+      setUnitOptions([]);
+      return;
+    }
+
+    let active = true;
+    setUnitOptionsLoading(true);
+
+    api.get('/complaints/unit-options')
+      .then((res) => {
+        if (active) {
+          setUnitOptions(Array.isArray(res.data) ? res.data : []);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setFeedback('Não foi possível carregar as unidades para alteração.');
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setUnitOptionsLoading(false);
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [canChangeComplaintUnit]);
 
   const handleSaveTreatment = async () => {
     setSaving(true);
@@ -337,6 +381,27 @@ function ComplaintDetail() {
       setFeedback(error.response?.data?.error || 'Erro ao registrar contato com o paciente.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleUnitChange = async () => {
+    if (!canChangeComplaintUnit || !selectedClinicId || !hasUnitChange) {
+      return;
+    }
+
+    setSavingUnit(true);
+    setFeedback('');
+
+    try {
+      await api.patch(`/complaints/${id}`, {
+        clinic_id: Number(selectedClinicId)
+      });
+      setFeedback('Unidade do protocolo atualizada com histórico de auditoria.');
+      await loadComplaint();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Erro ao alterar a unidade do protocolo.');
+    } finally {
+      setSavingUnit(false);
     }
   };
 
@@ -592,7 +657,40 @@ function ComplaintDetail() {
             </span>
           </div>
 
+          {canChangeComplaintUnit && (
+            <div className="unit-change-inline">
+              <label>
+                Unidade cadastrada
+                <select
+                  className="field"
+                  value={selectedClinicId}
+                  onChange={(event) => setSelectedClinicId(event.target.value)}
+                  disabled={savingUnit || unitOptionsLoading || isDeletedRecord}
+                >
+                  <option value="">Selecione a unidade</option>
+                  {activeUnitOptions.map((unit) => (
+                    <option key={unit.id} value={unit.id}>
+                      {unit.name}{unit.city ? ` - ${unit.city}` : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="secondary-action"
+                onClick={handleUnitChange}
+                disabled={savingUnit || unitOptionsLoading || !selectedClinicId || !hasUnitChange || isDeletedRecord}
+              >
+                {savingUnit ? 'Alterando...' : 'Alterar unidade'}
+              </button>
+            </div>
+          )}
+
           <dl className="meta-grid">
+            <div>
+              <dt>Unidade</dt>
+              <dd>{complaint.clinic_name || 'Não informada'}</dd>
+            </div>
             <div>
               <dt>Telefone</dt>
               <dd>{complaint.patient_phone || 'Não informado'}</dd>

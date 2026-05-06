@@ -500,6 +500,124 @@ test('any authenticated user can delete complaint evidence with audit trail', as
   assert.equal(complaintLogParams[4], 'viewer');
 });
 
+test('SAC operator can change complaint unit with audit trail', async () => {
+  let updateComplaintSql = null;
+  let updateComplaintParams = null;
+  let complaintLogParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[{ clinic_id: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes('WHERE c.id = ?'),
+      reply: async () => [[{
+        id: 45,
+        protocol: 'GRC-2026-000045',
+        clinic_id: 1,
+        clinic_name: 'Unidade Antiga',
+        clinic_snapshot_name: null,
+        status: 'aberta',
+        priority: 'media',
+        operator_comment: null,
+        forwarded_to_role: 'coordinator',
+        forwarded_to_label: 'Coordenador Antigo',
+        deleted_at: null,
+        attachment_url: null,
+        created_at: new Date(),
+        updated_at: new Date()
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_evidences') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_logs') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM clinics') && sql.includes('AND active = 1') && sql.includes('LIMIT 1'),
+      reply: async () => [[{
+        id: 2,
+        name: 'Unidade Nova',
+        city: 'Goiânia',
+        state: 'GO',
+        region: 'Centro',
+        coordinator_name: 'Coordenadora Nova',
+        active: 1
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT id, name, coordinator_name FROM clinics WHERE id = ? LIMIT 1'),
+      reply: async () => [[{
+        id: 2,
+        name: 'Unidade Nova',
+        coordinator_name: 'Coordenadora Nova'
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM users u') && sql.includes("u.role = 'coordinator'"),
+      reply: async () => [[{
+        id: 81,
+        name: 'Coordenadora Nova'
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE complaints') && sql.includes('clinic_id = ?'),
+      reply: async (sql, params) => {
+        updateComplaintSql = sql;
+        updateComplaintParams = params;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO complaint_logs'),
+      reply: async (_sql, params) => {
+        complaintLogParams = params;
+        return [{ insertId: 3 }];
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/complaints/45')
+    .set('Authorization', `Bearer ${signToken({
+      id: 9,
+      email: 'sac@example.com',
+      role: 'sac_operator',
+      name: 'Operador SAC',
+      permissions: ['complaints_management'],
+      clinicIds: [1],
+      mustChangePassword: false
+    })}`)
+    .send({ clinic_id: 2 });
+
+  assert.equal(response.status, 200);
+  assert.match(updateComplaintSql, /clinic_id = \?/);
+  assert.match(updateComplaintSql, /clinic_snapshot_name = \?/);
+  assert.match(updateComplaintSql, /assigned_coordinator_user_id = \?/);
+  assert.match(updateComplaintSql, /forwarded_to_label = \?/);
+  assert.deepEqual(updateComplaintParams.slice(3, 8), [
+    2,
+    'Unidade Nova',
+    81,
+    'Coordenadora Nova',
+    'Coordenadora Nova'
+  ]);
+  assert.equal(updateComplaintParams.at(-1), '45');
+  assert.equal(complaintLogParams[1], 'clinic_changed');
+  assert.match(complaintLogParams[2], /Unidade Antiga/);
+  assert.match(complaintLogParams[2], /Unidade Nova/);
+  assert.equal(complaintLogParams[3], 'Operador SAC');
+  assert.equal(complaintLogParams[4], 'sac_operator');
+});
+
 test('uploaded file route serves persisted database fallback when disk file is missing', async () => {
   const content = Buffer.from('arquivo persistido');
 

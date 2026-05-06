@@ -258,6 +258,7 @@ function isNoShowStatus(value) {
 
 const treatmentRoles = new Set(['coordinator', 'manager', 'supervisor_crc']);
 const evidenceRoles = new Set(['coordinator', 'manager', 'supervisor_crc', 'sac_operator', 'admin']);
+const complaintUnitChangeRoles = new Set(['master_admin', 'admin', 'supervisor_crc', 'sac_operator']);
 let uploadedFilesTableReady = false;
 
 function normalizePriority(priority) {
@@ -592,6 +593,10 @@ function canAttachEvidence(user) {
 
 function canDeleteEvidence(user) {
   return Boolean(user?.id || user?.email || user?.role);
+}
+
+function canChangeComplaintUnit(user) {
+  return complaintUnitChangeRoles.has(user?.role) || isAdminUser(user);
 }
 
 function canAddTreatment(user) {
@@ -4654,6 +4659,34 @@ async function getClinicsForUser(user) {
   return rows;
 }
 
+async function getActiveClinicById(clinicId) {
+  const normalizedClinicId = Number(clinicId);
+
+  if (!Number.isInteger(normalizedClinicId) || normalizedClinicId <= 0) {
+    return null;
+  }
+
+  const [rows] = await pool.query(
+    `SELECT
+       id,
+       name,
+       city,
+       state,
+       region,
+       coordinator_name,
+       responsible_whatsapp,
+       responsible_email,
+       active
+     FROM clinics
+     WHERE id = ?
+       AND active = 1
+     LIMIT 1`,
+    [normalizedClinicId]
+  );
+
+  return rows[0] || null;
+}
+
 async function getMonthlyDuplicateNpsPhones(monthRef) {
   const { start, end } = toMonthRange(monthRef);
   const [rows] = await pool.query(
@@ -7470,6 +7503,33 @@ app.get('/complaints', authenticate, async (req, res) => {
   }
 });
 
+app.get('/complaints/unit-options', authenticate, async (req, res) => {
+  try {
+    if (!canChangeComplaintUnit(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode alterar a unidade do protocolo.' });
+    }
+
+    const [rows] = await pool.query(
+      `SELECT
+         id,
+         name,
+         city,
+         state,
+         region,
+         coordinator_name,
+         active
+       FROM clinics
+       WHERE active = 1
+       ORDER BY name ASC`
+    );
+
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar unidades para alteração.' });
+  }
+});
+
 // ============================================
 // CRIAR RECLAMAÇÃO (COM UPLOAD)
 // ============================================
@@ -7847,6 +7907,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       status,
       operator_comment,
       priority,
+      clinic_id,
       supervisor_accept,
       sac_accept,
       patient_contacted,
@@ -7876,6 +7937,55 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       cleanedComment || complaint.operator_comment || null,
       nextPriority
     ];
+    const hasClinicChangeRequest = Object.prototype.hasOwnProperty.call(req.body || {}, 'clinic_id');
+
+    if (hasClinicChangeRequest) {
+      if (!canChangeComplaintUnit(req.user)) {
+        return res.status(403).json({ error: 'Seu perfil não pode alterar a unidade do protocolo.' });
+      }
+
+      const nextClinicId = Number(clinic_id);
+
+      if (!Number.isInteger(nextClinicId) || nextClinicId <= 0) {
+        return res.status(400).json({ error: 'Selecione uma unidade válida.' });
+      }
+
+      const currentClinicId = Number(complaint.clinic_id || 0);
+
+      if (nextClinicId !== currentClinicId) {
+        const nextClinic = await getActiveClinicById(nextClinicId);
+
+        if (!nextClinic) {
+          return res.status(404).json({ error: 'Unidade não encontrada ou inativa.' });
+        }
+
+        const assignment = await resolveCoordinatorAssignment(nextClinicId);
+        const previousClinicLabel = complaint.clinic_name
+          || complaint.clinic_snapshot_name
+          || (currentClinicId ? `Unidade ${currentClinicId}` : 'Unidade não informada');
+        const nextClinicLabel = nextClinic.name || `Unidade ${nextClinicId}`;
+        const nextCoordinatorName = assignment?.coordinatorName || nextClinic.coordinator_name || null;
+
+        updates.push('clinic_id = ?');
+        values.push(nextClinicId);
+        updates.push('clinic_snapshot_name = ?');
+        values.push(nextClinicLabel);
+        updates.push('assigned_coordinator_user_id = ?');
+        values.push(assignment?.coordinatorUserId || null);
+        updates.push('assigned_coordinator_name = ?');
+        values.push(nextCoordinatorName);
+
+        if (complaint.forwarded_to_role === 'coordinator') {
+          updates.push('forwarded_to_label = ?');
+          values.push(nextCoordinatorName || 'Coordenador da unidade');
+        }
+
+        logEntries.push({
+          action: 'clinic_changed',
+          message: `Unidade alterada de ${previousClinicLabel} para ${nextClinicLabel}.`
+        });
+      }
+    }
 
     if (priority && !complaint.deadline_locked_at) {
       const createdAt = complaint.created_at ? new Date(complaint.created_at) : new Date();
@@ -8185,6 +8295,7 @@ module.exports = {
   startServer,
   __testables: {
     buildAuthenticatedUser,
+    canChangeComplaintUnit,
     canDeleteEvidence,
     canRenotifyComplaint,
     canReceiveComplaintNotification,

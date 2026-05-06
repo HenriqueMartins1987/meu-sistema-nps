@@ -364,6 +364,38 @@ test('canDeleteEvidence allows every authenticated system user', () => {
   assert.equal(__testables.canDeleteEvidence(null), false);
 });
 
+test('canChangeComplaintUnit allows only operational admin profiles', () => {
+  assert.equal(__testables.canChangeComplaintUnit({
+    role: 'master_admin',
+    email: 'henrique.martins@grcconsultoria.net.br'
+  }), true);
+
+  assert.equal(__testables.canChangeComplaintUnit({
+    role: 'admin',
+    email: 'admin@example.com'
+  }), true);
+
+  assert.equal(__testables.canChangeComplaintUnit({
+    role: 'supervisor_crc',
+    email: 'supervisor@example.com'
+  }), true);
+
+  assert.equal(__testables.canChangeComplaintUnit({
+    role: 'sac_operator',
+    email: 'sac@example.com'
+  }), true);
+
+  assert.equal(__testables.canChangeComplaintUnit({
+    role: 'coordinator',
+    email: 'coordinator@example.com'
+  }), false);
+
+  assert.equal(__testables.canChangeComplaintUnit({
+    role: 'viewer',
+    email: 'viewer@example.com'
+  }), false);
+});
+
 test('normalizeStoredUploadUrl rewrites localhost upload links to the current public API host', () => {
   const normalized = __testables.normalizeStoredUploadUrl('http://localhost:3001/uploads/teste-anexo.png');
   const normalizedRelative = __testables.normalizeStoredUploadUrl('uploads/teste-anexo.png');

@@ -2488,6 +2488,26 @@ a {
   color: var(--ink);
 }
 
+.unit-change-inline {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  margin: 0 0 18px;
+}
+
+.unit-change-inline label {
+  display: grid;
+  gap: 8px;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.unit-change-inline .secondary-action {
+  min-height: 46px;
+  white-space: nowrap;
+}
+
 .meta-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4468,6 +4488,7 @@ a {
   .complaint-summary dl,
   .complaint-list-item,
   .meta-grid,
+  .unit-change-inline,
   .priority-options,
   .checkbox-grid {
     grid-template-columns: 1fr;
