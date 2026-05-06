@@ -5673,58 +5673,90 @@ a {
   font-weight: 800;
 }
 
-.monitor-table td,
-.monitor-table th {
-  vertical-align: top;
+.monitor-timeline-list {
+  display: grid;
+  gap: 14px;
 }
 
-.monitor-table td {
-  padding-top: 16px;
-  padding-bottom: 16px;
+.monitor-timeline-item {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
 }
 
-.monitor-time-cell,
-.monitor-origin-cell,
-.monitor-action-cell,
-.monitor-user-cell,
-.monitor-detail-cell {
-  min-width: 0;
+.monitor-timeline-rail {
+  position: relative;
 }
 
-.monitor-time-cell strong,
-.monitor-origin-cell strong,
-.monitor-user-cell strong,
-.monitor-detail-cell strong {
+.monitor-timeline-rail::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: rgba(200, 154, 87, 0.22);
+}
+
+.monitor-timeline-dot {
+  position: absolute;
+  top: 20px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 3px solid rgba(255, 252, 247, 0.98);
+  background: rgba(143, 102, 49, 0.92);
+  box-shadow: 0 8px 18px rgba(10, 10, 14, 0.14);
+}
+
+.monitor-timeline-card {
+  display: grid;
+  gap: 16px;
+  padding: 18px 20px;
+  border: 1px solid rgba(200, 154, 87, 0.18);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(248, 243, 235, 0.84));
+}
+
+.monitor-timeline-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.monitor-timeline-time {
+  display: grid;
+  gap: 3px;
+}
+
+.monitor-timeline-time strong,
+.monitor-timeline-block strong {
   display: block;
   color: var(--ink);
   font-size: 14px;
   line-height: 1.45;
 }
 
-.monitor-time-cell small,
-.monitor-origin-cell small,
-.monitor-action-cell small,
-.monitor-user-cell small,
-.monitor-detail-cell small {
+.monitor-timeline-time small,
+.monitor-timeline-block small {
   display: block;
-  margin-top: 4px;
   color: var(--muted);
-  line-height: 1.45;
+  line-height: 1.5;
   overflow-wrap: anywhere;
 }
 
-.monitor-origin-cell {
-  min-width: 240px;
+.monitor-timeline-badges {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
-.monitor-user-cell {
-  min-width: 220px;
-}
-
-.monitor-detail-cell {
-  min-width: 280px;
-}
-
+.monitor-source-badge,
 .monitor-action-badge {
   display: inline-flex;
   align-items: center;
@@ -5738,8 +5770,66 @@ a {
   line-height: 1.2;
 }
 
-.master-monitoring-page .dashboard-clean-table {
-  min-width: 1120px;
+.monitor-source-badge {
+  background: rgba(15, 87, 74, 0.1);
+}
+
+.monitor-timeline-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.monitor-timeline-block {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(200, 154, 87, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.monitor-timeline-block-wide {
+  grid-column: 1 / -1;
+}
+
+.monitor-block-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.monitor-timeline-item.system .monitor-timeline-dot,
+.monitor-timeline-item.system .monitor-action-badge {
+  background: rgba(42, 72, 143, 0.92);
+}
+
+.monitor-timeline-item.complaint .monitor-timeline-dot,
+.monitor-timeline-item.complaint .monitor-action-badge {
+  background: rgba(143, 102, 49, 0.92);
+}
+
+.monitor-timeline-item.nps .monitor-timeline-dot,
+.monitor-timeline-item.nps .monitor-action-badge {
+  background: rgba(100, 76, 168, 0.92);
+}
+
+.monitor-timeline-item.relationship .monitor-timeline-dot,
+.monitor-timeline-item.relationship .monitor-action-badge {
+  background: rgba(15, 87, 74, 0.92);
+}
+
+.monitor-timeline-item.whatsapp .monitor-timeline-dot,
+.monitor-timeline-item.whatsapp .monitor-action-badge {
+  background: rgba(16, 132, 88, 0.92);
+}
+
+.monitor-timeline-item.email .monitor-timeline-dot,
+.monitor-timeline-item.email .monitor-action-badge {
+  background: rgba(169, 88, 35, 0.92);
 }
 
 .master-monitoring-page > .management-panel {
@@ -5768,6 +5858,10 @@ a {
   .monitor-kpi-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .monitor-timeline-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 620px) {
@@ -5780,6 +5874,15 @@ a {
   .monitor-detail-grid,
   .monitor-provider-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .monitor-timeline-item {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .monitor-timeline-rail {
+    display: none;
   }
 
   .monitor-gauge-card {

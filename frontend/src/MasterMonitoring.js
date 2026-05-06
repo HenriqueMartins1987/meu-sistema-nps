@@ -99,6 +99,17 @@ function buildOriginLine(item) {
   };
 }
 
+function sourceToneClass(source) {
+  const normalized = String(source || '').toLowerCase();
+  if (normalized === 'sistema') return 'system';
+  if (normalized === 'protocolo') return 'complaint';
+  if (normalized === 'nps') return 'nps';
+  if (normalized === 'relacionamento') return 'relationship';
+  if (normalized === 'whatsapp') return 'whatsapp';
+  if (normalized === 'e-mail') return 'email';
+  return 'neutral';
+}
+
 function clampPercent(value, fallback = 0) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
@@ -335,49 +346,55 @@ function MasterMonitoring() {
                 <span key={item.source}>{item.source}: <strong>{formatNumber(item.total)}</strong></span>
               ))}
             </div>
-            <div className="table-wrap">
-              <table className="dashboard-clean-table monitor-table">
-                <thead>
-                  <tr>
-                    <th>Hora</th>
-                    <th>Origem</th>
-                    <th>Ação</th>
-                    <th>Usuário</th>
-                    <th>Detalhes</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentActivity.map((item, index) => {
-                    const actor = buildActorLine(item);
-                    const origin = buildOriginLine(item);
+            <div className="monitor-timeline-list">
+              {recentActivity.map((item, index) => {
+                const actor = buildActorLine(item);
+                const origin = buildOriginLine(item);
 
-                    return (
-                    <tr key={`${item.source}-${item.created_at}-${index}`}>
-                      <td className="monitor-time-cell">
-                        <strong>{formatDateTime(item.created_at)}</strong>
-                        {item.duration_ms ? <small>{formatNumber(item.duration_ms)} ms</small> : <small>{item.source}</small>}
-                      </td>
-                      <td className="monitor-origin-cell">
-                        <strong>{origin.primary}</strong>
-                        <small>{origin.secondary}</small>
-                      </td>
-                      <td className="monitor-action-cell">
-                        <span className="monitor-action-badge">{item.action || 'Movimentação'}</span>
-                        {item.status_code ? <small>Status HTTP {item.status_code}</small> : <small>{item.source}</small>}
-                      </td>
-                      <td className="monitor-user-cell">
-                        <strong>{actor.primary}</strong>
-                        <small>{actor.secondary}</small>
-                      </td>
-                      <td className="monitor-detail-cell">
-                        <strong>{item.summary || 'Sem detalhe adicional'}</strong>
-                        <small>{item.context || 'Sem contexto adicional'}</small>
-                      </td>
-                    </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                return (
+                  <article key={`${item.source}-${item.created_at}-${index}`} className={`monitor-timeline-item ${sourceToneClass(item.source)}`}>
+                    <div className="monitor-timeline-rail" aria-hidden="true">
+                      <span className="monitor-timeline-dot" />
+                    </div>
+
+                    <div className="monitor-timeline-card">
+                      <div className="monitor-timeline-topline">
+                        <div className="monitor-timeline-time">
+                          <strong>{formatDateTime(item.created_at)}</strong>
+                          <small>{item.duration_ms ? `${formatNumber(item.duration_ms)} ms` : (item.source || 'Evento')}</small>
+                        </div>
+
+                        <div className="monitor-timeline-badges">
+                          <span className="monitor-source-badge">{item.source || 'Sistema'}</span>
+                          <span className="monitor-action-badge">{item.action || 'Movimentação'}</span>
+                        </div>
+                      </div>
+
+                      <div className="monitor-timeline-grid">
+                        <section className="monitor-timeline-block">
+                          <span className="monitor-block-label">Origem</span>
+                          <strong>{origin.primary}</strong>
+                          <small>{origin.secondary}</small>
+                        </section>
+
+                        <section className="monitor-timeline-block">
+                          <span className="monitor-block-label">Usuário</span>
+                          <strong>{actor.primary}</strong>
+                          <small>{actor.secondary}</small>
+                        </section>
+
+                        <section className="monitor-timeline-block monitor-timeline-block-wide">
+                          <span className="monitor-block-label">Detalhes</span>
+                          <strong>{item.summary || 'Sem detalhe adicional'}</strong>
+                          <small>
+                            {[item.context, item.status_code ? `Status HTTP ${item.status_code}` : ''].filter(Boolean).join(' · ') || 'Sem contexto adicional'}
+                          </small>
+                        </section>
+                      </div>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           </section>
 
