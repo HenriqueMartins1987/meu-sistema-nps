@@ -71,6 +71,11 @@ const requirePasswordChangeOnFirstLogin = String(process.env.REQUIRE_PASSWORD_CH
 const appointmentReminderLeadHours = Math.max(1, Number(process.env.APPOINTMENT_REMINDER_LEAD_HOURS || 24));
 const appointmentReminderIntervalMinutes = Math.max(5, Number(process.env.APPOINTMENT_REMINDER_INTERVAL_MINUTES || 30));
 const complaintDueReminderIntervalMinutes = Math.max(5, Number(process.env.COMPLAINT_REMINDER_INTERVAL_MINUTES || 30));
+const weeklyDemandReminderEnabled = String(process.env.WEEKLY_DEMAND_REMINDER_ENABLED || 'true').trim().toLowerCase() !== 'false';
+const weeklyDemandReminderIntervalMinutes = Math.max(5, Number(process.env.WEEKLY_DEMAND_REMINDER_INTERVAL_MINUTES || 15));
+const weeklyDemandReminderDay = Math.min(6, Math.max(0, Number(process.env.WEEKLY_DEMAND_REMINDER_DAY || 1)));
+const weeklyDemandReminderHour = Math.min(23, Math.max(0, Number(process.env.WEEKLY_DEMAND_REMINDER_HOUR || 8)));
+const weeklyDemandReminderTimeZone = String(process.env.WEEKLY_DEMAND_REMINDER_TIMEZONE || 'America/Sao_Paulo').trim() || 'America/Sao_Paulo';
 const passwordRecoveryCodeExpiresMinutes = Math.max(5, Number(process.env.PASSWORD_RECOVERY_CODE_EXPIRES_MINUTES || 15));
 const vercelApiToken = String(process.env.VERCEL_API_TOKEN || '').trim();
 const vercelProjectId = String(process.env.VERCEL_PROJECT_ID || process.env.VERCEL_PROJECT_SLUG || '').trim();
@@ -4875,6 +4880,200 @@ async function dispatchWeeklyCoordinatorReports() {
   return reports;
 }
 
+function getZonedDateParts(date = new Date(), timeZone = weeklyDemandReminderTimeZone) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23'
+  }).formatToParts(date).reduce((acc, part) => {
+    if (part.type !== 'literal') {
+      acc[part.type] = part.value;
+    }
+    return acc;
+  }, {});
+
+  const year = Number(parts.year);
+  const month = Number(parts.month);
+  const day = Number(parts.day);
+  const hour = Number(parts.hour);
+  const minute = Number(parts.minute);
+  const second = Number(parts.second);
+  const dayOfWeek = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+
+  return { year, month, day, hour, minute, second, dayOfWeek };
+}
+
+function getIsoWeekKeyFromLocalDate({ year, month, day }) {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const dayNumber = date.getUTCDay() || 7;
+
+  date.setUTCDate(date.getUTCDate() + 4 - dayNumber);
+
+  const weekYear = date.getUTCFullYear();
+  const yearStart = new Date(Date.UTC(weekYear, 0, 1));
+  const weekNumber = Math.ceil((((date - yearStart) / 86400000) + 1) / 7);
+
+  return `${weekYear}-W${String(weekNumber).padStart(2, '0')}`;
+}
+
+function buildWeeklyUserDemandReminderJobKey(now = new Date()) {
+  return `weekly_user_demand_reminder:${getIsoWeekKeyFromLocalDate(getZonedDateParts(now))}`;
+}
+
+async function shouldRunWeeklyUserDemandReminders(jobKey, now = new Date()) {
+  if (!weeklyDemandReminderEnabled) return false;
+
+  const parts = getZonedDateParts(now);
+
+  if (parts.dayOfWeek !== weeklyDemandReminderDay || parts.hour < weeklyDemandReminderHour) {
+    return false;
+  }
+
+  const [rows] = await pool.query('SELECT id FROM system_job_runs WHERE job_key = ? LIMIT 1', [jobKey]);
+  return rows.length === 0;
+}
+
+async function getOpenDemandCountForUser(user) {
+  const where = ["c.deleted_at IS NULL", "COALESCE(c.status, 'aberta') <> 'resolvida'"];
+  const params = [];
+
+  if (!isAdminUser(user)) {
+    const clinicIds = await getUserClinicIds(user.id);
+
+    if (clinicIds.length) {
+      where.push('(c.clinic_id IN (?) OR c.assigned_coordinator_user_id = ?)');
+      params.push(clinicIds, user.id);
+    } else {
+      where.push('c.assigned_coordinator_user_id = ?');
+      params.push(user.id);
+    }
+  }
+
+  const [rows] = await pool.query(
+    `SELECT COUNT(*) AS total
+       FROM complaints c
+      WHERE ${where.join(' AND ')}`,
+    params
+  );
+
+  return Number(rows[0]?.total || 0);
+}
+
+function buildWeeklyDemandReminderEmail(user, demandCount) {
+  const demandLabel = demandCount === 1 ? '1 demanda aberta' : `${demandCount} demandas abertas`;
+
+  return {
+    subject: 'Lembrete semanal: verifique suas demandas',
+    html: emailService.renderBrandedEmail({
+      eyebrow: 'Lembrete semanal',
+      title: 'Verifique suas demandas',
+      intro: `Olá, <strong>${escapeNotificationHtml(user.name || 'colaborador')}</strong>.`,
+      bodyHtml: `
+        <p style="margin:0 0 18px;">Este é o lembrete semanal para acessar o sistema NPS/Reclamações e verificar protocolos, tratativas e retornos pendentes sob sua responsabilidade.</p>
+        <div style="margin:0 0 20px;padding:16px;border:1px solid #ddcfbc;border-radius:8px;background:#ffffff;">
+          <p style="margin:0;color:#6c5a4e;font-size:13px;">Resumo atual</p>
+          <strong style="display:block;margin-top:4px;color:#2f2825;font-size:20px;">${escapeNotificationHtml(demandLabel)}</strong>
+        </div>
+        <p style="margin:0;">Acesse o painel, confira suas demandas e atualize as tratativas sempre que houver evolução.</p>
+      `,
+      actionLabel: 'Acessar sistema',
+      actionUrl: appBaseUrl,
+      footerText: 'Mensagem automática semanal do sistema Grupo Sorria.'
+    })
+  };
+}
+
+function buildWeeklyDemandReminderWhatsAppMessage(user, demandCount) {
+  const demandLabel = demandCount === 1 ? '1 demanda aberta' : `${demandCount} demandas abertas`;
+
+  return [
+    `Olá, ${user.name || 'colaborador'}.`,
+    '',
+    'Lembrete semanal: acesse o sistema NPS/Reclamações e verifique suas demandas, tratativas e retornos pendentes.',
+    `Resumo atual: ${demandLabel}.`,
+    '',
+    `Acesse: ${appBaseUrl}`
+  ].join('\n');
+}
+
+async function getActiveUsersForWeeklyDemandReminder() {
+  const [users] = await pool.query(
+    `SELECT id, name, email, phone, whatsapp, role, active
+       FROM users
+      WHERE active = 1
+        AND deleted_at IS NULL
+      ORDER BY name ASC`
+  );
+
+  return users;
+}
+
+async function dispatchWeeklyUserDemandReminders() {
+  const users = await getActiveUsersForWeeklyDemandReminder();
+  const usedEmails = new Set();
+  const usedPhones = new Set();
+  const results = [];
+
+  for (const user of users) {
+    const demandCount = await getOpenDemandCountForUser(user);
+    const email = getUserEmailTarget(user);
+    const whatsapp = getUserWhatsappTarget(user);
+    const userResult = {
+      userId: user.id,
+      email: email || null,
+      whatsapp: whatsapp || null,
+      demandCount,
+      emailStatus: 'skipped',
+      whatsappStatus: 'skipped',
+      emailError: null,
+      whatsappError: null
+    };
+
+    if (isValidNotificationEmail(email) && !usedEmails.has(email)) {
+      usedEmails.add(email);
+      const template = buildWeeklyDemandReminderEmail(user, demandCount);
+
+      try {
+        const emailResult = await sendEmail(email, template.subject, template.html);
+        userResult.emailStatus = emailResult?.skipped ? 'skipped' : 'sent';
+      } catch (error) {
+        userResult.emailStatus = 'failed';
+        userResult.emailError = error.message;
+        console.warn('Não foi possível enviar lembrete semanal por e-mail:', error.message);
+      }
+    }
+
+    if (whatsapp && isWhatsAppEnabled() && !usedPhones.has(whatsapp)) {
+      usedPhones.add(whatsapp);
+
+      try {
+        const whatsappResult = await sendWhatsappNotification({
+          event: 'weekly_user_demand_reminder',
+          to: whatsapp,
+          userId: user.id,
+          message: buildWeeklyDemandReminderWhatsAppMessage(user, demandCount),
+          relatedEntityType: 'weekly_user_demand_reminder'
+        });
+        userResult.whatsappStatus = whatsappResult?.skipped ? 'skipped' : whatsappResult?.success ? 'sent' : 'failed';
+        userResult.whatsappError = whatsappResult?.success ? null : whatsappResult?.error || null;
+      } catch (error) {
+        userResult.whatsappStatus = 'failed';
+        userResult.whatsappError = error.message;
+        console.warn('Não foi possível enviar lembrete semanal por WhatsApp:', error.message);
+      }
+    }
+
+    results.push(userResult);
+  }
+
+  return results;
+}
+
 async function recordJobRun(jobKey, payload = null) {
   await pool.query(
     `INSERT INTO system_job_runs (job_key, last_run_at, last_payload)
@@ -4910,6 +5109,27 @@ async function runScheduledCoordinatorReports() {
     await dispatchCoordinatorDelayNotifications();
   }
   await recordJobRun(jobKey, { reports: reports.length });
+}
+
+async function runScheduledUserDemandReminders(now = new Date()) {
+  const jobKey = buildWeeklyUserDemandReminderJobKey(now);
+
+  if (!(await shouldRunWeeklyUserDemandReminders(jobKey, now))) {
+    return null;
+  }
+
+  const results = await dispatchWeeklyUserDemandReminders();
+  const payload = {
+    users: results.length,
+    emailsSent: results.filter((item) => item.emailStatus === 'sent').length,
+    emailsFailed: results.filter((item) => item.emailStatus === 'failed').length,
+    whatsappsSent: results.filter((item) => item.whatsappStatus === 'sent').length,
+    whatsappsFailed: results.filter((item) => item.whatsappStatus === 'failed').length
+  };
+
+  await recordJobRun(jobKey, payload);
+
+  return payload;
 }
 
 async function notifyComplaintCreated(complaintId, protocol) {
@@ -8293,6 +8513,9 @@ async function startServer() {
     dispatchUpcomingComplaintDeadlineReminders().catch((jobError) => {
       console.warn('Não foi possível executar a rotina inicial de alertas de prazo das reclamações:', jobError.message);
     });
+    runScheduledUserDemandReminders().catch((jobError) => {
+      console.warn('Não foi possível executar a rotina inicial de lembretes semanais aos usuários:', jobError.message);
+    });
   }, 3000);
 
   setInterval(() => {
@@ -8313,6 +8536,12 @@ async function startServer() {
     });
   }, complaintDueReminderIntervalMinutes * 60 * 1000);
 
+  setInterval(() => {
+    runScheduledUserDemandReminders().catch((jobError) => {
+      console.warn('Não foi possível executar a rotina programada de lembretes semanais aos usuários:', jobError.message);
+    });
+  }, weeklyDemandReminderIntervalMinutes * 60 * 1000);
+
 }
 
 if (require.main === module) {
@@ -8325,6 +8554,7 @@ module.exports = {
   startServer,
   __testables: {
     buildAuthenticatedUser,
+    buildWeeklyUserDemandReminderJobKey,
     canChangeComplaintUnit,
     canDeleteEvidence,
     canRenotifyComplaint,
@@ -8338,6 +8568,7 @@ module.exports = {
     parseBodyWithSchema,
     persistUploadedFile,
     resolveStoredUploadFilePath,
+    shouldRunWeeklyUserDemandReminders,
     sendPasswordChangedNotifications,
     sendUserAccessNotifications,
     signUserToken

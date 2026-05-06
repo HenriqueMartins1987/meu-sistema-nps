@@ -40,6 +40,42 @@ test.afterEach(() => {
   emailService.sendEmail = originalSendEmail;
 });
 
+test('weekly demand reminder schedule runs once on Monday after configured hour', async () => {
+  const mondayAtEightSaoPaulo = new Date('2026-05-04T11:00:00.000Z');
+  const mondayBeforeEightSaoPaulo = new Date('2026-05-04T10:59:00.000Z');
+  const jobKey = serverModule.__testables.buildWeeklyUserDemandReminderJobKey(mondayAtEightSaoPaulo);
+
+  assert.equal(jobKey, 'weekly_user_demand_reminder:2026-W19');
+  assert.equal(
+    await serverModule.__testables.shouldRunWeeklyUserDemandReminders(jobKey, mondayBeforeEightSaoPaulo),
+    false
+  );
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT id FROM system_job_runs WHERE job_key = ?'),
+      reply: async () => [[]]
+    }
+  ]);
+
+  assert.equal(
+    await serverModule.__testables.shouldRunWeeklyUserDemandReminders(jobKey, mondayAtEightSaoPaulo),
+    true
+  );
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT id FROM system_job_runs WHERE job_key = ?'),
+      reply: async () => [[{ id: 1 }]]
+    }
+  ]);
+
+  assert.equal(
+    await serverModule.__testables.shouldRunWeeklyUserDemandReminders(jobKey, mondayAtEightSaoPaulo),
+    false
+  );
+});
+
 test('admin user creation keeps the user when welcome e-mail fails', async () => {
   let insertedUserParams = null;
 
