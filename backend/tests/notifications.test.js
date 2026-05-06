@@ -226,6 +226,37 @@ test('sendTemplateMessage skips safely when Twilio credentials are missing', asy
   }
 });
 
+test('complaint notification templates include the complaint link and detailed WhatsApp message', () => {
+  const complaint = {
+    id: 123,
+    protocol: 'GRC-2026-000123',
+    patient_name: 'João Paciente',
+    complaint_type: 'Atendimento',
+    description: 'Paciente relatou demora no atendimento e falta de retorno.',
+    priority: 'alta',
+    due_at: '2026-05-06T15:00:00.000Z',
+    created_at: '2026-05-06T12:00:00.000Z',
+    clinic_name: 'Unidade Centro',
+    city: 'Goiânia',
+    state: 'GO',
+    assigned_user_name: 'Maria Coordenadora',
+    assigned_user_whatsapp: '+5562999999999'
+  };
+
+  const message = __testables.buildComplaintWhatsAppMessage(complaint, complaint.protocol);
+  const email = __testables.buildComplaintNotificationEmail(complaint, complaint.protocol);
+
+  assert.match(message, /NOVA RECLAMAÇÃO REGISTRADA/);
+  assert.match(message, /Protocolo: GRC-2026-000123/);
+  assert.match(message, /Unidade: Unidade Centro/);
+  assert.match(message, /Responsável: Maria Coordenadora @5562999999999/);
+  assert.match(message, /1ª ação:/);
+  assert.match(message, /Prazo final para retorno: 7 dias úteis/);
+  assert.match(message, /\/gestao\/123/);
+  assert.match(email.html, /Link da reclamação/);
+  assert.match(email.html, /\/gestao\/123/);
+});
+
 test('buildWelcomeMessage includes login and temporary password', () => {
   const message = buildWelcomeMessage({
     name: 'Carlos',

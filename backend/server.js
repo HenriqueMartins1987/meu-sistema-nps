@@ -21,7 +21,7 @@ const { z } = require('zod');
 const { clinicSeed, legacyDefaultClinicNames } = require('./clinicSeed');
 const emailService = require('./services/emailService');
 const {
-  sendComplaintNotification: sendTwilioComplaintNotification,
+  sendGenericNotification: sendTwilioGenericNotification,
   sendNpsNotification: sendTwilioNpsNotification,
   normalizePhoneNumber: normalizeTwilioPhoneNumber,
   getTwilioConfigStatus
@@ -67,6 +67,8 @@ const defaultAdminEmail = masterAdminEmail;
 const defaultAdminPassword = process.env.MASTER_ADMIN_PASSWORD || process.env.DEFAULT_ADMIN_PASSWORD || 'Zyck1987#';
 // Numeros fixos que recebem apenas alertas de RECLAMACAO. Altere aqui se a regra de escalonamento mudar.
 const fixedComplaintWhatsAppRecipients = ['5562996807670', '556299669966'];
+// Twilio nao envia para ID de grupo do WhatsApp. Use esta lista como broadcast oficial para os participantes do grupo.
+const complaintWhatsappGroupRecipients = parsePhoneRecipientList(process.env.COMPLAINT_WHATSAPP_GROUP_RECIPIENTS || process.env.WHATSAPP_GROUP_RECIPIENTS || '');
 const requirePasswordChangeOnFirstLogin = String(process.env.REQUIRE_PASSWORD_CHANGE_ON_FIRST_LOGIN || 'true').toLowerCase() !== 'false';
 const appointmentReminderLeadHours = Math.max(1, Number(process.env.APPOINTMENT_REMINDER_LEAD_HOURS || 24));
 const appointmentReminderIntervalMinutes = Math.max(5, Number(process.env.APPOINTMENT_REMINDER_INTERVAL_MINUTES || 30));
@@ -669,6 +671,16 @@ function normalizeBrazilPhone(value) {
   if (!digits) return '';
 
   return `+${digits.startsWith('55') ? digits : `55${digits}`}`.slice(0, 14);
+}
+
+function parsePhoneRecipientList(value) {
+  return Array.from(new Set(
+    String(value || '')
+      .split(/[,\n;]+/)
+      .map((item) => normalizeTwilioPhoneNumber(item))
+      .filter(Boolean)
+      .map((item) => item.replace(/^whatsapp:/i, ''))
+  ));
 }
 
 function isCompleteBrazilPhone(value) {
@@ -2672,6 +2684,7 @@ function getRecipientRoleLabel(role) {
 
   if (normalizedRole === 'clinic_responsible') return 'Responsável da unidade';
   if (normalizedRole === 'fixed_complaint_number') return 'Número fixo de reclamação';
+  if (normalizedRole === 'complaint_whatsapp_group') return 'Broadcast do grupo WhatsApp';
   if (normalizedRole === 'master_admin') return 'Administrador Master';
 
   return accessProfiles[normalizedRole] || normalizedRole || 'Destinatário';
@@ -2778,8 +2791,12 @@ async function getComplaintNotificationContext(complaintId) {
        c.assigned_coordinator_name,
        c.patient_name,
        c.complaint_type,
+       c.description,
        c.priority,
+       c.due_at,
+       c.resolution_due_at,
        c.created_origin,
+       c.created_at,
        cl.name AS clinic_name,
        cl.city,
        cl.state,
@@ -2861,11 +2878,8 @@ async function buildComplaintNotificationRecipients(complaint) {
 }
 
 function buildComplaintNotificationEmail(complaint, protocol) {
-  const clinicLabel = complaint?.clinic_name
-    ? `${complaint.clinic_name}${complaint.city ? ` - ${complaint.city}/${complaint.state || 'UF'}` : ''}`
-    : 'Unidade não informada';
   const safeProtocol = protocol || complaint?.protocol || complaint?.id || 'sem protocolo';
-  const complaintUrl = `${frontendUrl}/gestao/${complaint?.id}`;
+  const details = buildComplaintNotificationDetails(complaint, safeProtocol);
 
   return {
     subject: `Nova demanda atribuída - protocolo ${safeProtocol}`,
@@ -2879,16 +2893,98 @@ function buildComplaintNotificationEmail(complaint, protocol) {
         </p>
         <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:0 0 8px;">
           <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Paciente</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(complaint?.patient_name || 'Não informado')}</td></tr>
-          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Unidade</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(clinicLabel)}</td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Unidade</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(details.unitLabel)}</td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Responsável</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(details.responsibleLabel)}</td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Cidade/UF</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(details.cityStateLabel)}</td></tr>
           <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Classificação</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(complaint?.complaint_type || 'Não informado')}</td></tr>
-          <tr><td style="padding:10px 0;color:#6c5a4e;">Prioridade</td><td style="padding:10px 0;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(complaint?.priority || 'Não informada')}</td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Prioridade</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(complaint?.priority || 'Não informada')}</td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">1ª ação</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(details.firstActionDueLabel)}</td></tr>
+          <tr><td style="padding:10px 0;color:#6c5a4e;">Link da reclamação</td><td style="padding:10px 0;text-align:right;font-weight:700;color:#2f2825;"><a href="${escapeNotificationHtml(details.complaintUrl)}" style="color:#8e6731;">Abrir protocolo</a></td></tr>
         </table>
+        <div style="margin:20px 0 0;padding:16px;border-radius:8px;background:#fff8ed;border:1px solid #ecd9b7;color:#4b3821;">
+          <strong style="display:block;margin:0 0 8px;color:#8e6731;">Resumo da ocorrência</strong>
+          <p style="margin:0;">${escapeNotificationHtml(details.summary)}</p>
+        </div>
       `,
       actionLabel: 'Abrir protocolo',
-      actionUrl: complaintUrl,
+      actionUrl: details.complaintUrl,
       footerText: 'Este aviso foi enviado aos responsáveis definidos para Reclamação. Falhas de e-mail e WhatsApp são registradas sem bloquear o protocolo.'
     })
   };
+}
+
+function getComplaintUrl(complaint) {
+  return `${frontendUrl}/gestao/${complaint?.id}`;
+}
+
+function truncateNotificationText(value, maxLength = 900) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return 'Resumo não informado.';
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+function buildComplaintResponsibleDetails(complaint) {
+  const directResponsiblePhone = normalizeBrazilPhone(complaint?.responsible_whatsapp || '');
+  const assignedResponsiblePhone = normalizeBrazilPhone(complaint?.assigned_user_whatsapp || complaint?.assigned_user_phone || '');
+  const phone = directResponsiblePhone || assignedResponsiblePhone;
+  const phoneDigits = phone.replace(/\D/g, '');
+  const name = directResponsiblePhone
+    ? 'Responsável da unidade'
+    : complaint?.assigned_user_name || complaint?.assigned_coordinator_name || 'Responsável não informado';
+
+  return {
+    name,
+    phone,
+    phoneDigits,
+    label: phoneDigits ? `${name} @${phoneDigits}` : name
+  };
+}
+
+function buildComplaintNotificationDetails(complaint, protocol) {
+  const responsible = buildComplaintResponsibleDetails(complaint);
+  const city = complaint?.city || 'Cidade não informada';
+  const state = complaint?.state || 'UF';
+
+  return {
+    protocol: protocol || complaint?.protocol || complaint?.id || 'sem protocolo',
+    complaintUrl: getComplaintUrl(complaint),
+    unitLabel: complaint?.clinic_name || 'Unidade não informada',
+    responsibleLabel: responsible.label,
+    responsiblePhone: responsible.phone,
+    cityStateLabel: `${city}/${state}`,
+    openedAtLabel: formatMessageDateTime(complaint?.created_at),
+    summary: truncateNotificationText(complaint?.description),
+    firstActionDueLabel: formatMessageDateTime(complaint?.due_at),
+    finalReturnLabel: '7 dias úteis'
+  };
+}
+
+function buildComplaintWhatsAppMessage(complaint, protocol) {
+  const details = buildComplaintNotificationDetails(complaint, protocol);
+
+  return [
+    '🚨 *NOVA RECLAMAÇÃO REGISTRADA*',
+    '',
+    `📌 Protocolo: ${details.protocol}`,
+    `🏥 Unidade: ${details.unitLabel}`,
+    `👤 Responsável: ${details.responsibleLabel}`,
+    `📍 Cidade/UF: ${details.cityStateLabel}`,
+    `📅 Data de abertura: ${details.openedAtLabel}`,
+    '',
+    '📝 *Resumo da ocorrência:*',
+    details.summary,
+    '',
+    '⚠️ *PRAZOS:*',
+    `• 1ª ação: ${details.firstActionDueLabel}`,
+    '• Atualização obrigatória: até 48h',
+    `• Prazo final para retorno: ${details.finalReturnLabel}`,
+    '',
+    '🔔 *Atenção:*',
+    'A ausência de atualização em até 48h implicará em escalonamento automático.',
+    '',
+    '📊 Acompanhe e registre a tratativa no sistema.',
+    `🔗 ${details.complaintUrl}`
+  ].join('\n');
 }
 
 function buildNpsNotificationEmail(nps, protocol) {
@@ -2921,7 +3017,7 @@ function buildNpsNotificationEmail(nps, protocol) {
   };
 }
 
-async function sendLoggedTwilioNotification({ eventType, protocol, recipient, sender }) {
+async function sendLoggedTwilioNotification({ eventType, protocol, recipient, sender, message }) {
   const originalPhone = recipient?.phone || '';
   const normalizedPhone = normalizeTwilioPhoneNumber(originalPhone);
 
@@ -2954,7 +3050,7 @@ async function sendLoggedTwilioNotification({ eventType, protocol, recipient, se
     return { channel: 'WHATSAPP', status: 'failed' };
   }
 
-  const result = await sender({ to: normalizedPhone, protocol });
+  const result = await sender({ to: normalizedPhone, protocol, message, recipient });
   const status = result?.success ? 'sent' : result?.skipped ? 'skipped' : 'failed';
 
   await insertNotificationLog({
@@ -3042,6 +3138,17 @@ async function sendLoggedNotificationEmail({ eventType, protocol, recipient, tem
   }
 }
 
+async function sendDetailedComplaintWhatsApp({ to, protocol, message }) {
+  // Reclamações detalhadas usam template generico Twilio com a variavel {{mensagem}}.
+  // Altere TWILIO_TEMPLATE_GENERIC_SID/TWILIO_TEMPLATE_MESSAGE_VARIABLE no Render se o template mudar.
+  return sendTwilioGenericNotification({
+    to,
+    protocol,
+    message,
+    eventType: 'COMPLAINT_CREATED'
+  });
+}
+
 function summarizeNotificationStatus(results = []) {
   const sentCount = results.filter((result) => result.status === 'sent').length;
   const problemCount = results.filter((result) => (
@@ -3054,7 +3161,7 @@ function summarizeNotificationStatus(results = []) {
   return 'failed';
 }
 
-async function deliverProtocolNotifications({ eventType, protocol, recipients, emailTemplate, whatsappSender }) {
+async function deliverProtocolNotifications({ eventType, protocol, recipients, emailTemplate, whatsappSender, whatsappMessage }) {
   const phoneTargets = new Set();
   const emailTargets = new Set();
   const tasks = [];
@@ -3065,7 +3172,13 @@ async function deliverProtocolNotifications({ eventType, protocol, recipients, e
 
     if (!phoneKey || !phoneTargets.has(phoneKey)) {
       if (phoneKey) phoneTargets.add(phoneKey);
-      tasks.push(sendLoggedTwilioNotification({ eventType, protocol, recipient, sender: whatsappSender }));
+      tasks.push(sendLoggedTwilioNotification({
+        eventType,
+        protocol,
+        recipient,
+        sender: whatsappSender,
+        message: whatsappMessage
+      }));
     }
 
     if (!emailKey || !emailTargets.has(emailKey)) {
@@ -3085,6 +3198,51 @@ async function deliverProtocolNotifications({ eventType, protocol, recipients, e
   };
 }
 
+function buildComplaintWhatsappGroupRecipients(existingRecipients = []) {
+  const existingPhones = new Set(
+    existingRecipients
+      .map((recipient) => normalizeTwilioPhoneNumber(recipient.phone))
+      .filter(Boolean)
+  );
+  const groupPhones = new Set();
+
+  return complaintWhatsappGroupRecipients.reduce((recipients, phone) => {
+    const normalized = normalizeTwilioPhoneNumber(phone);
+
+    if (!normalized || existingPhones.has(normalized) || groupPhones.has(normalized)) {
+      return recipients;
+    }
+
+    groupPhones.add(normalized);
+    recipients.push({
+      name: 'Broadcast do grupo WhatsApp',
+      role: 'complaint_whatsapp_group',
+      phone
+    });
+    return recipients;
+  }, []);
+}
+
+async function deliverWhatsAppOnlyNotifications({ eventType, protocol, recipients, whatsappSender, whatsappMessage }) {
+  if (!recipients.length) return [];
+
+  const results = await Promise.all(recipients.map((recipient) => (
+    sendLoggedTwilioNotification({
+      eventType,
+      protocol,
+      recipient,
+      sender: whatsappSender,
+      message: whatsappMessage
+    }).catch((error) => ({
+      channel: 'WHATSAPP',
+      status: 'failed',
+      error: error.message
+    }))
+  )));
+
+  return results;
+}
+
 async function dispatchComplaintCreatedNotifications(complaintId, protocol) {
   try {
     const complaint = await getComplaintNotificationContext(complaintId);
@@ -3094,14 +3252,32 @@ async function dispatchComplaintCreatedNotifications(complaintId, protocol) {
     }
 
     const recipients = await buildComplaintNotificationRecipients(complaint);
+    const safeProtocol = protocol || complaint.protocol;
+    const whatsappMessage = buildComplaintWhatsAppMessage(complaint, safeProtocol);
 
-    return deliverProtocolNotifications({
+    const directDelivery = await deliverProtocolNotifications({
       eventType: 'COMPLAINT_CREATED',
-      protocol: protocol || complaint.protocol,
+      protocol: safeProtocol,
       recipients,
-      emailTemplate: buildComplaintNotificationEmail(complaint, protocol),
-      whatsappSender: sendTwilioComplaintNotification
+      emailTemplate: buildComplaintNotificationEmail(complaint, safeProtocol),
+      whatsappSender: sendDetailedComplaintWhatsApp,
+      whatsappMessage
     });
+
+    const groupRecipients = buildComplaintWhatsappGroupRecipients(recipients);
+    const groupResults = await deliverWhatsAppOnlyNotifications({
+      eventType: 'COMPLAINT_GROUP_BROADCAST',
+      protocol: safeProtocol,
+      recipients: groupRecipients,
+      whatsappSender: sendDetailedComplaintWhatsApp,
+      whatsappMessage
+    });
+    const results = [...directDelivery.results, ...groupResults];
+
+    return {
+      notificationStatus: summarizeNotificationStatus(results),
+      results
+    };
   } catch (error) {
     console.warn('Nao foi possivel disparar notificacoes Twilio/e-mail da reclamacao:', error.message);
     return { notificationStatus: 'failed', results: [{ status: 'failed', error: error.message }] };
@@ -8556,6 +8732,8 @@ module.exports = {
   startServer,
   __testables: {
     buildAuthenticatedUser,
+    buildComplaintNotificationEmail,
+    buildComplaintWhatsAppMessage,
     buildWeeklyUserDemandReminderJobKey,
     canChangeComplaintUnit,
     canDeleteEvidence,
