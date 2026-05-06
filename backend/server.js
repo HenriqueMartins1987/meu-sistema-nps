@@ -21,6 +21,7 @@ const { z } = require('zod');
 const { clinicSeed, legacyDefaultClinicNames } = require('./clinicSeed');
 const emailService = require('./services/emailService');
 const {
+  sendComplaintNotification: sendTwilioComplaintNotification,
   sendGenericNotification: sendTwilioGenericNotification,
   sendNpsNotification: sendTwilioNpsNotification,
   normalizePhoneNumber: normalizeTwilioPhoneNumber,
@@ -3144,14 +3145,15 @@ async function sendLoggedNotificationEmail({ eventType, protocol, recipient, tem
   }
 }
 
-async function sendDetailedComplaintWhatsApp({ to, protocol, message }) {
-  // Reclamações detalhadas usam template generico Twilio com a variavel {{mensagem}}.
-  // Altere TWILIO_TEMPLATE_GENERIC_SID/TWILIO_TEMPLATE_MESSAGE_VARIABLE no Render se o template mudar.
-  return sendTwilioGenericNotification({
+async function sendDetailedComplaintWhatsApp({ to, protocol, message, recipient }) {
+  const complaintUrl = recipient?.complaintUrl || '';
+
+  // Reclamações em producao usam o template dedicado TWILIO_TEMPLATE_DEMANDA_SID.
+  // Por padrao, a Twilio recebe {{1}} = protocolo e {{2}} = link da reclamacao.
+  return sendTwilioComplaintNotification({
     to,
     protocol,
-    message,
-    eventType: 'COMPLAINT_CREATED'
+    complaintUrl
   });
 }
 
@@ -3257,7 +3259,10 @@ async function dispatchComplaintCreatedNotifications(complaintId, protocol) {
       return { notificationStatus: 'failed', results: [] };
     }
 
-    const recipients = await buildComplaintNotificationRecipients(complaint);
+    const recipients = (await buildComplaintNotificationRecipients(complaint)).map((recipient) => ({
+      ...recipient,
+      complaintUrl: getComplaintUrl(complaint)
+    }));
     const safeProtocol = protocol || complaint.protocol;
     const whatsappMessage = buildComplaintWhatsAppMessage(complaint, safeProtocol);
 

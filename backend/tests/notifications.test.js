@@ -26,6 +26,8 @@ const {
   normalizeWhatsAppPhone
 } = require('../services/whatsappService');
 const {
+  buildComplaintTemplateVariables,
+  buildProtocolTemplateVariables,
   normalizePhoneNumber: normalizeTwilioPhoneNumber,
   normalizeTwilioWhatsAppFrom,
   describeTwilioMessageError,
@@ -223,6 +225,39 @@ test('sendTemplateMessage skips safely when Twilio credentials are missing', asy
     delete process.env.TWILIO_AUTH_TOKEN;
   } else {
     process.env.TWILIO_AUTH_TOKEN = previousToken;
+  }
+});
+
+test('complaint template variables default to indexed protocol and complaint link', () => {
+  const previousProtocolVariable = process.env.TWILIO_TEMPLATE_PROTOCOL_VARIABLE;
+  const previousLinkVariable = process.env.TWILIO_TEMPLATE_COMPLAINT_LINK_VARIABLE;
+
+  delete process.env.TWILIO_TEMPLATE_PROTOCOL_VARIABLE;
+  delete process.env.TWILIO_TEMPLATE_COMPLAINT_LINK_VARIABLE;
+
+  assert.deepEqual(
+    buildComplaintTemplateVariables('GRC-2026-000001', 'https://meu-sistema-nps.vercel.app/gestao/1'),
+    {
+      1: 'GRC-2026-000001',
+      2: 'https://meu-sistema-nps.vercel.app/gestao/1'
+    }
+  );
+
+  process.env.TWILIO_TEMPLATE_PROTOCOL_VARIABLE = 'protocolo';
+  assert.deepEqual(buildProtocolTemplateVariables('GRC-2026-000002'), {
+    protocolo: 'GRC-2026-000002'
+  });
+
+  if (previousProtocolVariable === undefined) {
+    delete process.env.TWILIO_TEMPLATE_PROTOCOL_VARIABLE;
+  } else {
+    process.env.TWILIO_TEMPLATE_PROTOCOL_VARIABLE = previousProtocolVariable;
+  }
+
+  if (previousLinkVariable === undefined) {
+    delete process.env.TWILIO_TEMPLATE_COMPLAINT_LINK_VARIABLE;
+  } else {
+    process.env.TWILIO_TEMPLATE_COMPLAINT_LINK_VARIABLE = previousLinkVariable;
   }
 });
 

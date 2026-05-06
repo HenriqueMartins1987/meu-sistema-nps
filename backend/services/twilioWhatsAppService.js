@@ -140,12 +140,27 @@ async function verifyTwilioMessageStatus(config, messageSid) {
 }
 
 function buildProtocolTemplateVariables(protocol) {
-  const protocolVariableKey = String(process.env.TWILIO_TEMPLATE_PROTOCOL_VARIABLE || 'protocolo').trim() || 'protocolo';
+  const protocolVariableKey = String(process.env.TWILIO_TEMPLATE_PROTOCOL_VARIABLE || '1').trim() || '1';
 
-  // Altere TWILIO_TEMPLATE_PROTOCOL_VARIABLE para "1" se o template da Twilio usar {{1}}
-  // em vez de {{protocolo}}.
+  // Em producao, o template de demanda usa por padrao {{1}} para o protocolo.
+  // Se o Content Template da Twilio usar variavel nomeada, ajuste TWILIO_TEMPLATE_PROTOCOL_VARIABLE.
   return {
     [protocolVariableKey]: String(protocol || '')
+  };
+}
+
+function buildComplaintTemplateVariables(protocol, complaintUrl = '') {
+  const protocolVariables = buildProtocolTemplateVariables(protocol);
+  const linkVariableKey = String(process.env.TWILIO_TEMPLATE_COMPLAINT_LINK_VARIABLE || '2').trim() || '2';
+  const normalizedLink = String(complaintUrl || '').trim();
+
+  if (!normalizedLink) {
+    return protocolVariables;
+  }
+
+  return {
+    ...protocolVariables,
+    [linkVariableKey]: normalizedLink
   };
 }
 
@@ -296,15 +311,16 @@ async function sendGenericNotification({ to, message, eventType = 'GENERIC_NOTIF
   });
 }
 
-async function sendComplaintNotification({ to, protocol }) {
+async function sendComplaintNotification({ to, protocol, complaintUrl = '' }) {
   const config = getTwilioConfig();
 
   // RECLAMACAO: altere o template em TWILIO_TEMPLATE_DEMANDA_SID no Render/ambiente.
-  // Este template deve conter a variavel de protocolo configurada em buildProtocolTemplateVariables.
+  // Este template usa por padrao {{1}} para o protocolo e {{2}} para o link da reclamacao.
+  // Ajuste TWILIO_TEMPLATE_PROTOCOL_VARIABLE / TWILIO_TEMPLATE_COMPLAINT_LINK_VARIABLE se o Content Template usar outro padrao.
   return sendTemplateMessage({
     to,
     templateSid: config.complaintTemplateSid,
-    variables: buildProtocolTemplateVariables(protocol),
+    variables: buildComplaintTemplateVariables(protocol, complaintUrl),
     eventType: 'COMPLAINT_CREATED',
     protocol
   });
@@ -325,6 +341,8 @@ async function sendNpsNotification({ to, protocol }) {
 }
 
 module.exports = {
+  buildComplaintTemplateVariables,
+  buildProtocolTemplateVariables,
   sendComplaintNotification,
   sendGenericNotification,
   sendNpsNotification,
