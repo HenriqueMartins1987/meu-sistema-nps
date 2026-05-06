@@ -25,6 +25,21 @@ function buildNewUserDraft() {
   };
 }
 
+function buildBulkEmailDraft() {
+  return {
+    subject: 'Cadastro Obrigatório',
+    message: [
+      'Este comunicado substitui a mensagem anterior.',
+      '',
+      'Para visualizar e acompanhar suas demandas, é necessário acessar a plataforma e alterar sua senha de acesso.',
+      '',
+      'Após concluir a alteração, faça login novamente e verifique as pendências vinculadas ao seu usuário.',
+      '',
+      'Se você já realizou a troca de senha, basta acessar a plataforma e confirmar o andamento das suas demandas.'
+    ].join('\n')
+  };
+}
+
 function roleLabel(role) {
   if (role === 'master_admin') return 'Administrador Master';
   return accessProfiles.find((profile) => profile.value === role)?.label || role || 'Perfil não informado';
@@ -45,6 +60,8 @@ function AdminPanel() {
   const [newUser, setNewUser] = useState(buildNewUserDraft);
   const [testingChannels, setTestingChannels] = useState(false);
   const [testMenuOpen, setTestMenuOpen] = useState(false);
+  const [bulkEmailDraft, setBulkEmailDraft] = useState(buildBulkEmailDraft);
+  const [sendingBulkEmail, setSendingBulkEmail] = useState(false);
 
   const selectedUser = useMemo(() => (
     users.find((user) => String(user.id) === String(selectedUserId)) || null
@@ -62,6 +79,19 @@ function AdminPanel() {
       roleLabel(user.role)
     ].join(' ').toLowerCase().includes(term));
   }, [users, userSearch]);
+
+  const bulkEmailRecipients = useMemo(() => {
+    const seen = new Set();
+
+    return users.filter((user) => {
+      if (!user?.active) return false;
+      const email = String(user.email || '').trim().toLowerCase();
+      if (!email || seen.has(email)) return false;
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return false;
+      seen.add(email);
+      return true;
+    }).length;
+  }, [users]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -315,6 +345,42 @@ function AdminPanel() {
     }
   };
 
+  const updateBulkEmailDraft = (field, value) => {
+    setBulkEmailDraft((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const sendBulkEmail = async () => {
+    if (!bulkEmailDraft.subject || String(bulkEmailDraft.subject).trim().length < 3) {
+      setFeedback('Informe um assunto válido para o comunicado em massa.');
+      return;
+    }
+
+    if (!bulkEmailDraft.message || String(bulkEmailDraft.message).trim().length < 10) {
+      setFeedback('Escreva a mensagem que será enviada aos usuários.');
+      return;
+    }
+
+    setSendingBulkEmail(true);
+    setFeedback('');
+
+    try {
+      const response = await api.post('/api/admin/bulk-email', bulkEmailDraft);
+      const summary = response.data?.summary || {};
+      const failures = Array.isArray(response.data?.failures) ? response.data.failures : [];
+      const failureSuffix = failures.length
+        ? ` Falhas: ${failures.map((item) => item.email).join(', ')}.`
+        : '';
+
+      setFeedback(
+        `Comunicado em massa processado. ${summary.sent || 0} enviados, ${summary.skipped || 0} ignorados e ${summary.failed || 0} falhas.${failureSuffix}`
+      );
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível enviar o comunicado em massa.');
+    } finally {
+      setSendingBulkEmail(false);
+    }
+  };
+
   if (!isMasterAdmin(currentUser)) {
     return null;
   }
@@ -544,6 +610,64 @@ function AdminPanel() {
                       {clinic.name} · {clinic.city || 'Cidade'} / {clinic.state || 'UF'}
                     </label>
                   ))}
+                </div>
+              </section>
+
+              <section className="admin-check-section admin-broadcast-section">
+                <div className="admin-section-heading">
+                  <div>
+                    <p className="eyebrow">Comunicação em massa</p>
+                    <h3>Disparo administrativo por e-mail</h3>
+                    <p className="base-subtitle">Envio direto para todos os usuários ativos com e-mail válido, usando o layout oficial do sistema.</p>
+                  </div>
+                  <div className="admin-broadcast-meta">
+                    <strong>{bulkEmailRecipients}</strong>
+                    <span>destinatários ativos</span>
+                  </div>
+                </div>
+
+                <div className="admin-form-grid">
+                  <label className="admin-form-span">
+                    Assunto
+                    <input
+                      className="field"
+                      value={bulkEmailDraft.subject}
+                      onChange={(event) => updateBulkEmailDraft('subject', event.target.value)}
+                      maxLength={160}
+                    />
+                  </label>
+
+                  <label className="admin-form-span">
+                    Mensagem
+                    <textarea
+                      className="field admin-message-field"
+                      value={bulkEmailDraft.message}
+                      onChange={(event) => updateBulkEmailDraft('message', event.target.value)}
+                      rows={8}
+                    />
+                  </label>
+                </div>
+
+                <div className="admin-broadcast-footer">
+                  <p>O link da plataforma é anexado automaticamente no corpo do e-mail e no botão de acesso.</p>
+                  <div className="heading-actions">
+                    <button
+                      type="button"
+                      className="ghost-action"
+                      onClick={() => setBulkEmailDraft(buildBulkEmailDraft())}
+                      disabled={sendingBulkEmail}
+                    >
+                      Restaurar texto padrão
+                    </button>
+                    <button
+                      type="button"
+                      className="primary-action"
+                      onClick={sendBulkEmail}
+                      disabled={sendingBulkEmail || bulkEmailRecipients === 0}
+                    >
+                      {sendingBulkEmail ? 'Enviando comunicado...' : 'Enviar comunicado'}
+                    </button>
+                  </div>
                 </div>
               </section>
             </section>

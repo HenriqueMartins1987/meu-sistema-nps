@@ -1386,6 +1386,11 @@ const testEmailSchema = z.object({
   password: z.string().trim().min(8, 'A senha temporária precisa ter no mínimo 8 caracteres.').max(120).optional()
 });
 
+const bulkEmailSchema = z.object({
+  subject: z.string().trim().min(3, 'Informe um assunto com pelo menos 3 caracteres.').max(160),
+  message: z.string().trim().min(10, 'Informe a mensagem do comunicado.').max(4000)
+});
+
 const manualWhatsAppSchema = z.object({
   telefone: z.string().trim().optional(),
   mensagem: z.string().trim().optional(),
@@ -5899,6 +5904,121 @@ app.post('/api/test-email', authenticate, requireMasterAdmin, async (req, res) =
     return res.status(500).json({
       success: false,
       error: error.message || 'Erro ao enviar o e-mail de teste.'
+    });
+  }
+});
+
+app.post('/api/admin/bulk-email', authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    const parsed = parseBodyWithSchema(bulkEmailSchema, req.body);
+
+    if (parsed.error) {
+      return res.status(400).json({ error: parsed.error });
+    }
+
+    const { subject, message } = parsed.data;
+    const platformUrl = appBaseUrl;
+    const messageHtml = String(message)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+      .replace(/\n/g, '<br />');
+    const [users] = await pool.query(
+      `SELECT id, name, email
+         FROM users
+        WHERE active = 1
+          AND deleted_at IS NULL
+          AND email IS NOT NULL
+          AND TRIM(email) <> ''
+        ORDER BY name ASC`
+    );
+
+    const seenEmails = new Set();
+    const recipients = users.filter((user) => {
+      const email = getUserEmailTarget(user);
+
+      if (!email || seenEmails.has(email)) {
+        return false;
+      }
+
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        return false;
+      }
+
+      seenEmails.add(email);
+      return true;
+    });
+
+    if (!recipients.length) {
+      return res.status(400).json({ error: 'Nenhum usuário ativo com e-mail válido foi encontrado para o disparo.' });
+    }
+
+    const html = emailService.renderBrandedEmail({
+      eyebrow: 'Comunicado administrativo',
+      title: subject,
+      intro: 'Olá,',
+      bodyHtml: `
+        <p style="margin:0 0 18px;font-size:15px;color:#2f2825;">${messageHtml}</p>
+        <p style="margin:0;font-size:13px;color:#6c5a4e;word-break:break-all;">
+          <strong>Link da plataforma:</strong>
+          <a href="${platformUrl}" style="color:#8e6731;text-decoration:none;">${platformUrl}</a>
+        </p>
+      `,
+      actionLabel: 'Acessar plataforma',
+      actionUrl: platformUrl,
+      supportText: 'Portal de relacionamento e gestão de demandas',
+      footerText: 'Este é um comunicado operacional do sistema. Em caso de dúvida, procure o Administrador Master.'
+    });
+
+    const results = [];
+
+    for (const recipient of recipients) {
+      try {
+        const result = await sendEmail(recipient.email, subject, html);
+        results.push({
+          email: recipient.email,
+          status: result?.skipped ? 'skipped' : 'sent',
+          provider: result?.provider || emailService.getEmailProvider(),
+          messageId: result?.id || null
+        });
+      } catch (error) {
+        results.push({
+          email: recipient.email,
+          status: 'failed',
+          provider: error?.provider || emailService.getEmailProvider(),
+          error: error.message || 'Falha ao enviar o comunicado.'
+        });
+      }
+    }
+
+    const summary = results.reduce((accumulator, item) => {
+      accumulator[item.status] = (accumulator[item.status] || 0) + 1;
+      return accumulator;
+    }, {});
+
+    return res.json({
+      success: (summary.sent || 0) > 0,
+      subject,
+      message,
+      platformUrl,
+      recipients: recipients.length,
+      summary: {
+        sent: summary.sent || 0,
+        skipped: summary.skipped || 0,
+        failed: summary.failed || 0
+      },
+      failures: results
+        .filter((item) => item.status === 'failed')
+        .map((item) => ({ email: item.email, error: item.error || 'Falha no envio.' }))
+        .slice(0, 20)
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      success: false,
+      error: error.message || 'Erro ao processar o disparo em massa.'
     });
   }
 });
