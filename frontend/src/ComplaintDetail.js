@@ -233,7 +233,7 @@ function ComplaintDetail() {
   const canSupervisorAccept = user?.role === 'supervisor_crc' || isAdmin;
   const canSacClose = user?.role === 'sac_operator' || isAdmin;
   const canDeleteComplaint = isMasterAdmin(user) || user?.role === 'supervisor_crc';
-  const canDeleteEvidence = isMasterAdmin(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
+  const canDeleteEvidence = Boolean(user?.id || user?.email || user?.role);
   const canRenotifyComplaint = isMasterAdmin(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
   const hasTreatment = Boolean(complaint?.treatment_at);
   const isHighPriority = normalizePriority(complaint?.priority) === 'alta';
@@ -402,7 +402,7 @@ function ComplaintDetail() {
     }
 
     const label = evidence.description || evidence.original_name || 'esta evidência';
-    const confirmed = window.confirm(`Excluir ${label}? Esta ação remove o arquivo da ficha do protocolo.`);
+    const confirmed = window.confirm(`Excluir ${label}? O arquivo sai da ficha ativa, mas o histórico de exclusão fica registrado no protocolo.`);
 
     if (!confirmed) {
       return;
@@ -412,7 +412,9 @@ function ComplaintDetail() {
     setFeedback('');
 
     try {
-      await api.delete(`/complaints/${id}/evidences/${evidence.id}`);
+      await api.delete(`/complaints/${id}/evidences/${evidence.id}`, {
+        data: { reason: 'Exclusão solicitada na ficha executiva do protocolo.' }
+      });
       setFeedback('Evidência excluída com sucesso.');
       await loadComplaint();
     } catch (error) {
@@ -688,6 +690,7 @@ function ComplaintDetail() {
             </div>
             <span className="mini-badge">Max. 10 MB</span>
           </div>
+          <p className="permission-note">Exclusões ficam registradas no histórico do protocolo.</p>
 
           {canAttachEvidence ? (
             <div className="evidence-uploader">

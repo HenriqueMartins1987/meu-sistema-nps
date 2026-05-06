@@ -591,7 +591,7 @@ function canAttachEvidence(user) {
 }
 
 function canDeleteEvidence(user) {
-  return isMasterAdminUser(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
+  return Boolean(user?.id || user?.email || user?.role);
 }
 
 function canAddTreatment(user) {
@@ -1944,10 +1944,19 @@ async function ensureDatabaseSchema() {
       description TEXT NULL,
       uploaded_by_name VARCHAR(160) NULL,
       uploaded_by_role VARCHAR(80) NULL,
+      deleted_at TIMESTAMP NULL,
+      deleted_by_name VARCHAR(160) NULL,
+      deleted_by_role VARCHAR(80) NULL,
+      deletion_reason TEXT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_complaint_evidences_complaint_id (complaint_id)
     )
   `);
+
+  await ensureColumn('complaint_evidences', 'deleted_at', 'TIMESTAMP NULL');
+  await ensureColumn('complaint_evidences', 'deleted_by_name', 'VARCHAR(160) NULL');
+  await ensureColumn('complaint_evidences', 'deleted_by_role', 'VARCHAR(80) NULL');
+  await ensureColumn('complaint_evidences', 'deletion_reason', 'TEXT NULL');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS complaint_logs (
@@ -2396,6 +2405,7 @@ async function getComplaintRows(query = {}, user = null) {
         created_at
        FROM complaint_evidences
        WHERE complaint_id IN (?)
+         AND deleted_at IS NULL
        ORDER BY created_at DESC, id DESC`,
       [complaintIds]
     );
@@ -7756,7 +7766,7 @@ app.delete('/complaints/:id/evidences/:evidenceId', authenticate, async (req, re
 
     if (!canDeleteEvidence(req.user)) {
       return res.status(403).json({
-        error: 'Somente o Administrador Master, Supervisor do CRC ou Operador de SAC pode excluir evidências.'
+        error: 'Usuário não autenticado para excluir evidências.'
       });
     }
 
@@ -7767,10 +7777,11 @@ app.delete('/complaints/:id/evidences/:evidenceId', authenticate, async (req, re
     }
 
     const [evidenceRows] = await pool.query(
-      `SELECT id, complaint_id, file_url, original_name, description
+      `SELECT id, complaint_id, file_url, original_name, description, uploaded_by_name, uploaded_by_role, created_at
          FROM complaint_evidences
         WHERE id = ?
           AND complaint_id = ?
+          AND deleted_at IS NULL
         LIMIT 1`,
       [evidenceId, id]
     );
@@ -7781,15 +7792,31 @@ app.delete('/complaints/:id/evidences/:evidenceId', authenticate, async (req, re
       return res.status(404).json({ error: 'Evidência não encontrada.' });
     }
 
-    await pool.query(
-      'DELETE FROM complaint_evidences WHERE id = ? AND complaint_id = ?',
-      [evidenceId, id]
+    const actorName = getActorName(req.user);
+    const actorRole = req.user?.role || null;
+    const evidenceLabel = evidence.description || evidence.original_name || 'arquivo sem nome';
+    const deletionReason = String(req.body?.reason || 'Exclusao de evidencia pela ficha executiva.').slice(0, 500);
+
+    const [updateResult] = await pool.query(
+      `UPDATE complaint_evidences
+          SET deleted_at = NOW(),
+              deleted_by_name = ?,
+              deleted_by_role = ?,
+              deletion_reason = ?
+        WHERE id = ?
+          AND complaint_id = ?
+          AND deleted_at IS NULL`,
+      [actorName, actorRole, deletionReason, evidenceId, id]
     );
+
+    if (!updateResult.affectedRows) {
+      return res.status(404).json({ error: 'Evidência não encontrada.' });
+    }
 
     await insertComplaintLog(
       id,
       'evidence_deleted',
-      `Evidência excluída por ${getActorName(req.user)}: ${evidence.description || evidence.original_name || 'arquivo sem nome'}.`,
+      `Evidência excluída por ${actorName} (${getRecipientRoleLabel(actorRole)}). Arquivo: ${evidenceLabel}. Motivo: ${deletionReason}`,
       req.user
     );
 

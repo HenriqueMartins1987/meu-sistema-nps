@@ -330,7 +330,7 @@ test('canRenotifyComplaint only allows master admin, Supervisor do CRC and Opera
   }), false);
 });
 
-test('canDeleteEvidence only allows master admin, Supervisor do CRC and Operador de SAC', () => {
+test('canDeleteEvidence allows every authenticated system user', () => {
   assert.equal(__testables.canDeleteEvidence({
     role: 'master_admin',
     email: 'henrique.martins@grcconsultoria.net.br'
@@ -349,12 +349,19 @@ test('canDeleteEvidence only allows master admin, Supervisor do CRC and Operador
   assert.equal(__testables.canDeleteEvidence({
     role: 'admin',
     email: 'admin@example.com'
-  }), false);
+  }), true);
 
   assert.equal(__testables.canDeleteEvidence({
     role: 'coordinator',
     email: 'coordinator@example.com'
-  }), false);
+  }), true);
+
+  assert.equal(__testables.canDeleteEvidence({
+    role: 'viewer',
+    email: 'viewer@example.com'
+  }), true);
+
+  assert.equal(__testables.canDeleteEvidence(null), false);
 });
 
 test('normalizeStoredUploadUrl rewrites localhost upload links to the current public API host', () => {

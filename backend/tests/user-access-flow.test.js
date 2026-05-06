@@ -402,6 +402,104 @@ test('test WhatsApp route sends the fixed management message', async () => {
   assert.equal(whatsappLogParams[6], 'Envio de mensagem teste');
 });
 
+test('any authenticated user can delete complaint evidence with audit trail', async () => {
+  let updateEvidenceParams = null;
+  let complaintLogParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes('WHERE c.id = ?'),
+      reply: async () => [[{
+        id: 45,
+        protocol: 'GRC-2026-000045',
+        attachment_url: null,
+        deleted_at: null,
+        created_at: new Date(),
+        updated_at: new Date()
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_evidences') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_logs') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_evidences') && sql.includes('WHERE id = ?') && sql.includes('deleted_at IS NULL'),
+      reply: async () => [[{
+        id: 22,
+        complaint_id: 45,
+        file_url: '/uploads/evidencia-inexistente.txt',
+        original_name: 'comprovante.pdf',
+        description: 'Comprovante da tratativa',
+        uploaded_by_name: 'Ana',
+        uploaded_by_role: 'viewer',
+        created_at: new Date()
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE complaint_evidences') && sql.includes('deleted_at = NOW()'),
+      reply: async (_sql, params) => {
+        updateEvidenceParams = params;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO complaint_logs'),
+      reply: async (_sql, params) => {
+        complaintLogParams = params;
+        return [{ insertId: 2 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('CREATE TABLE IF NOT EXISTS uploaded_files'),
+      reply: async () => [{ affectedRows: 0 }]
+    },
+    {
+      match: (sql) => sql.includes('DELETE FROM uploaded_files WHERE filename = ?'),
+      reply: async () => [{ affectedRows: 1 }]
+    }
+  ]);
+
+  const response = await request(app)
+    .delete('/complaints/45/evidences/22')
+    .set('Authorization', `Bearer ${signToken({
+      id: 9,
+      email: 'viewer@example.com',
+      role: 'viewer',
+      name: 'Viewer Teste',
+      permissions: ['complaints_management'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({ reason: 'Arquivo anexado incorretamente.' });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.message, 'Evidência excluída com sucesso.');
+  assert.deepEqual(updateEvidenceParams.slice(0, 3), [
+    'Viewer Teste',
+    'viewer',
+    'Arquivo anexado incorretamente.'
+  ]);
+  assert.equal(updateEvidenceParams[3], '22');
+  assert.equal(updateEvidenceParams[4], '45');
+  assert.equal(complaintLogParams[1], 'evidence_deleted');
+  assert.match(complaintLogParams[2], /Comprovante da tratativa/);
+  assert.match(complaintLogParams[2], /Arquivo anexado incorretamente/);
+  assert.equal(complaintLogParams[3], 'Viewer Teste');
+  assert.equal(complaintLogParams[4], 'viewer');
+});
+
 test('uploaded file route serves persisted database fallback when disk file is missing', async () => {
   const content = Buffer.from('arquivo persistido');
 
