@@ -136,7 +136,7 @@ export function getUserDisplayName(user) {
 
 export function isMasterAdmin(user) {
   const email = String(user?.email || '').toLowerCase();
-  return email === masterAdminEmail;
+  return user?.role === 'master_admin' || email === masterAdminEmail;
 }
 
 export function isAdmin(user) {

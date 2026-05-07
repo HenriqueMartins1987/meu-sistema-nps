@@ -576,7 +576,7 @@ function isAdminUser(user) {
 
 function isMasterAdminUser(user) {
   const email = String(user?.email || '').toLowerCase();
-  return email === masterAdminEmail;
+  return user?.role === 'master_admin' || email === masterAdminEmail;
 }
 
 function defaultPermissionsForRole(role) {
