@@ -2359,7 +2359,7 @@ async function getComplaintRows(query = {}, user = null) {
     filters.clause += filters.clause ? ' AND c.deleted_at IS NULL' : 'WHERE c.deleted_at IS NULL';
   }
 
-  if (user && !isAdminUser(user) && user?.role !== 'sac_operator') {
+  if (user && !isAdminUser(user) && !['sac_operator', 'supervisor_crc'].includes(user?.role)) {
     filters.clause += filters.clause ? ' AND c.assigned_responsible_user_id = ?' : 'WHERE c.assigned_responsible_user_id = ?';
     filters.params.push(user.id);
   }
@@ -5776,7 +5776,7 @@ async function getNpsRows(query = {}, user = null) {
     params.push(query.clinic_id);
   }
 
-  if (user && !isAdminUser(user)) {
+  if (user && !isAdminUser(user) && user?.role !== 'supervisor_crc') {
     const clinicIds = await getUserClinicIds(user.id);
 
     if (clinicIds.length) {
