@@ -4870,13 +4870,13 @@ a {
 }
 
 .notification-center-modal {
-    width: min(440px, calc(100vw - 24px));
-    display: grid;
-    gap: 12px;
-    max-height: min(78vh, 680px);
-    padding: 18px;
-    overflow: hidden;
-  }
+  width: min(440px, calc(100vw - 24px));
+  display: grid;
+  gap: 12px;
+  max-height: min(78vh, 680px);
+  padding: 18px;
+  overflow: hidden;
+}
 
 .notification-head-actions {
   display: flex;
@@ -4896,7 +4896,10 @@ a {
   align-content: start;
   gap: 12px;
   min-height: 0;
+  max-height: calc(min(78vh, 680px) - 88px);
   overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
   padding-right: 4px;
 }
 

@@ -748,8 +748,8 @@ function AdminPanel() {
       )}
 
       {createOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <section className="modal-panel create-user-modal">
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => { setCreateOpen(false); setNewUser(buildNewUserDraft()); }}>
+          <section className="modal-panel create-user-modal" onClick={(event) => event.stopPropagation()}>
             <div>
               <p className="eyebrow">Novo usuário</p>
               <h2>Cadastrar colaborador</h2>

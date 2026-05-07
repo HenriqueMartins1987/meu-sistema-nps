@@ -656,8 +656,8 @@ function NpsManagement() {
       </section>
 
       {selectedNps && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <section className="modal-panel nps-treatment-modal">
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={closeTreatment}>
+          <section className="modal-panel nps-treatment-modal" onClick={(event) => event.stopPropagation()}>
             <div className="nps-modal-title">
               <div>
                 <p className="eyebrow">Tratativa NPS</p>
@@ -796,8 +796,8 @@ function NpsManagement() {
       )}
 
       {showDeleteModal && selectedNps && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirmar exclusão do NPS">
-          <section className="modal-panel modal-confirm-panel">
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirmar exclusão do NPS" onClick={() => setShowDeleteModal(false)}>
+          <section className="modal-panel modal-confirm-panel" onClick={(event) => event.stopPropagation()}>
             <p className="eyebrow">Excluir NPS</p>
             <h2>Tem certeza que deseja excluir?</h2>
             <div className="row-actions">

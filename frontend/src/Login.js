@@ -274,9 +274,10 @@ function Login() {
       </section>
 
       {recoveryOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={closeRecovery}>
           <form
             className="modal-panel password-recovery-modal"
+            onClick={(event) => event.stopPropagation()}
             onSubmit={recoveryStep === 'request' ? handleRequestRecovery : handleConfirmRecovery}
           >
             <p className="eyebrow">Recuperação de senha</p>

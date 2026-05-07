@@ -1081,8 +1081,8 @@ function ComplaintDetail() {
       </section>
 
       {showForwardModal && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Encaminhar para tratativa">
-          <div className="modal-panel">
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Encaminhar para tratativa" onClick={() => setShowForwardModal(false)}>
+          <div className="modal-panel" onClick={(event) => event.stopPropagation()}>
             <p className="eyebrow">Primeiro atendimento</p>
             <h2>Enviar protocolo para tratativa</h2>
             <p>
@@ -1112,8 +1112,8 @@ function ComplaintDetail() {
       )}
 
       {assetPreview && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Visualizar arquivo do protocolo">
-          <div className="modal-panel attachment-preview-modal">
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Visualizar arquivo do protocolo" onClick={() => setAssetPreview(null)}>
+          <div className="modal-panel attachment-preview-modal" onClick={(event) => event.stopPropagation()}>
             <div className="detail-title-row">
               <div>
                 <p className="eyebrow">Arquivo do protocolo</p>
@@ -1141,8 +1141,8 @@ function ComplaintDetail() {
       )}
 
       {showDeleteModal && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirmar exclusão do protocolo">
-          <div className="modal-panel modal-confirm-panel">
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirmar exclusão do protocolo" onClick={() => setShowDeleteModal(false)}>
+          <div className="modal-panel modal-confirm-panel" onClick={(event) => event.stopPropagation()}>
             <p className="eyebrow">Excluir protocolo</p>
             <h2>Tem certeza que deseja excluir?</h2>
             <div className="row-actions">

@@ -843,8 +843,8 @@ function PatientManagementPage() {
       </section>
 
       {selectedRecord && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <section className="modal-panel patient-modal">
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => { setSelectedRecord(null); setShowCancelModal(false); }}>
+          <section className="modal-panel patient-modal" onClick={(event) => event.stopPropagation()}>
             <div className="nps-modal-title">
               <div>
                 <p className="eyebrow">Ficha do paciente</p>
@@ -928,8 +928,8 @@ function PatientManagementPage() {
       )}
 
       {showCancelModal && selectedRecord && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <section className="modal-panel modal-confirm-panel">
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setShowCancelModal(false)}>
+          <section className="modal-panel modal-confirm-panel" onClick={(event) => event.stopPropagation()}>
             <p className="eyebrow">Cancelar agendamento</p>
             <h2>Tem certeza que deseja excluir?</h2>
             <div className="row-actions">

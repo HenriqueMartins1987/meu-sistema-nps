@@ -685,8 +685,8 @@ function HomeShellFixed() {
       )}
 
       {selectedNotification && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <section className="modal-panel notification-detail-modal">
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setSelectedNotification(null)}>
+          <section className="modal-panel notification-detail-modal" onClick={(event) => event.stopPropagation()}>
             <div className="notification-item-top">
               <span>{notificationBadge(selectedNotification)}</span>
               <small>{formatNotificationDate(selectedNotification.read_at || selectedNotification.created_at)}</small>
@@ -721,8 +721,8 @@ function HomeShellFixed() {
       )}
 
       {notificationsOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <section className="modal-panel notification-center-modal">
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={closeNotificationsModal}>
+          <section className="modal-panel notification-center-modal" onClick={(event) => event.stopPropagation()}>
             <div className="notification-head">
               <strong>Notificações</strong>
               <div className="notification-head-actions">
@@ -788,8 +788,8 @@ function HomeShellFixed() {
       )}
 
       {shareOpen && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <section className="modal-panel share-modal">
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={closeShareModal}>
+          <section className="modal-panel share-modal" onClick={(event) => event.stopPropagation()}>
             <div className="panel-heading">
               <div>
                 <p className="eyebrow">Compartilhar</p>
@@ -973,8 +973,8 @@ function HomeShellFixed() {
       </section>
 
       {agendaAlertOpen && agendaAlerts.length > 0 && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true">
-          <section className="modal-panel agenda-alert-modal">
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setAgendaAlertOpen(false)}>
+          <section className="modal-panel agenda-alert-modal" onClick={(event) => event.stopPropagation()}>
             <p className="eyebrow">Alertas do dia</p>
             <h2>Existem protocolos com prazo vencido ou próximo do vencimento.</h2>
 
