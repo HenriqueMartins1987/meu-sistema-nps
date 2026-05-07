@@ -2135,6 +2135,26 @@ a {
   font-weight: 800;
 }
 
+.pagination-summary {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  color: var(--muted);
+}
+
+.pagination-page-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.pagination-page-size .field {
+  min-width: 92px;
+}
+
 .pagination-actions {
   display: flex;
   align-items: center;

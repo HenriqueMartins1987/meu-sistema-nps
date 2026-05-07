@@ -10,7 +10,7 @@ import {
   statusOptions
 } from './constants';
 
-const pageSize = 50;
+const pageSizeOptions = [10, 25, 50, 100];
 
 function normalizeText(value) {
   return String(value || '').toLowerCase();
@@ -238,6 +238,7 @@ function DashboardManagement() {
     search: ''
   });
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState('');
 
@@ -269,7 +270,7 @@ function DashboardManagement() {
 
   useEffect(() => {
     setPage(1);
-  }, [filters, viewMode]);
+  }, [filters, viewMode, pageSize]);
 
   const operationalComplaints = useMemo(() => complaints.filter((item) => !item.deleted_at), [complaints]);
   const activeComplaints = useMemo(() => (
@@ -618,9 +619,23 @@ function DashboardManagement() {
             </div>
 
             <div className="pagination-bar">
-              <span>
-                Mostrando {pageStart + 1} a {Math.min(pageStart + pageSize, filteredComplaints.length)} de {filteredComplaints.length}
-              </span>
+              <div className="pagination-summary">
+                <label className="pagination-page-size">
+                  <span>Por página</span>
+                  <select
+                    className="field"
+                    value={pageSize}
+                    onChange={(event) => setPageSize(Number(event.target.value) || 10)}
+                  >
+                    {pageSizeOptions.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </label>
+                <span>
+                  Mostrando {pageStart + 1} a {Math.min(pageStart + pageSize, filteredComplaints.length)} de {filteredComplaints.length}
+                </span>
+              </div>
               <div className="pagination-actions">
                 <button className="outline-action" onClick={() => setPage((prev) => Math.max(1, prev - 1))} disabled={currentPage === 1}>
                   Anterior
