@@ -336,7 +336,9 @@ function ComplaintDetail() {
   const canRegisterFirstAttendance = canRegisterAttendanceFlow
     && complaint?.status !== 'resolvida'
     && !hasFirstAttendance;
-  const closeBlockedReason = !canOperationalClose
+  const closeBlockedReason = isMasterUser
+    ? ''
+    : !canOperationalClose
     ? 'Apenas o Administrador Master, Supervisor do CRC ou Operador de SAC podem fechar este protocolo.'
     : !hasTreatment
       ? 'Aguarde a tratativa de Coordenador, Gerente ou Supervisor do CRC.'

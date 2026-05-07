@@ -9136,6 +9136,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
     }
 
     if (nextStatus === 'resolvida') {
+      const isMasterRequest = isMasterAdminUser(req.user);
       const hasTreatment = Boolean(complaint.treatment_at) || (cleanedComment && canAddTreatment(req.user));
       const treatmentRole = complaint.treatment_by_role || (canAddTreatment(req.user) ? req.user.role : null);
       const hasManagementTreatment = hasTreatment && (
@@ -9150,13 +9151,13 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         return res.status(403).json({ error: 'Somente Administrador Master, Supervisor do CRC ou Operador de SAC podem fechar uma reclamacao.' });
       }
 
-      if (!hasManagementTreatment) {
+      if (!isMasterRequest && !hasManagementTreatment) {
         return res.status(409).json({
           error: 'Antes do fechamento, a reclamacao precisa ter tratativa registrada por Coordenador, Gerente ou Supervisor do CRC.'
         });
       }
 
-      if (normalizePriority(nextPriority) === 'alta' && !hasSupervisorApproval) {
+      if (!isMasterRequest && normalizePriority(nextPriority) === 'alta' && !hasSupervisorApproval) {
         return res.status(409).json({
           error: 'Reclamacoes de prioridade alta exigem aceite do Supervisor do CRC antes do fechamento pelo SAC.'
         });
