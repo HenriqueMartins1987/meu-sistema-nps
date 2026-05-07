@@ -32,6 +32,21 @@ function formatShortDate(value) {
   }).format(new Date(value));
 }
 
+function formatFullDateTime(value) {
+  if (!value) return 'Nao informado';
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return 'Nao informado';
+
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(date);
+}
+
 function formatCurrency(value) {
   const number = Number(value || 0);
 
@@ -344,10 +359,13 @@ function DashboardManagement() {
     return {
       protocolo: formatProtocol(item),
       paciente: item.patient_name || 'Não informado',
+      data_cadastro: formatFullDateTime(item.created_at),
       clinica: item.clinic_name || 'Não informado',
       cidade: item.city || 'Não informado',
       estado: item.state || 'Não informado',
       regiao: item.region || 'Não informado',
+      coordenador_responsavel: item.coordinator_name || 'Não informado',
+      gerente_responsavel: item.manager_name || 'Não informado',
       tipo: item.complaint_type || 'Não informado',
       origem: item.created_origin || 'Interno',
       status: statusLabels[item.status] || item.status || 'Aberta',
@@ -365,10 +383,13 @@ function DashboardManagement() {
     const headers = Object.keys(summaryRows[0] || {
       protocolo: '',
       paciente: '',
+      data_cadastro: '',
       clinica: '',
       cidade: '',
       estado: '',
       regiao: '',
+      coordenador_responsavel: '',
+      gerente_responsavel: '',
       tipo: '',
       origem: '',
       status: '',
@@ -400,18 +421,32 @@ function DashboardManagement() {
   };
 
   const exportSyntheticPdf = () => {
-    const headers = ['Protocolo', 'Paciente', 'Clínica', 'Origem', 'Status', 'Financeiro', 'Valor', 'SLA', 'Parado com', 'Dias'];
+    const printDate = new Date();
+    const headers = [
+      'Protocolo',
+      'Data de cadastro',
+      'Paciente',
+      'Clínica',
+      'Coordenador responsável',
+      'Gerente responsável',
+      'Origem',
+      'Status',
+      'Prioridade',
+      'SLA',
+      'Parado com'
+    ];
     const rows = summaryRows.map((row) => [
       row.protocolo,
+      row.data_cadastro,
       row.paciente,
       row.clinica,
+      row.coordenador_responsavel,
+      row.gerente_responsavel,
       row.origem,
       row.status,
-      row.financeiro,
-      row.valor_financeiro,
+      row.prioridade,
       row.sla,
-      row.parado_com,
-      row.dias_parado
+      row.parado_com
     ]);
     const reportWindow = window.open('', '_blank');
 
@@ -425,21 +460,171 @@ function DashboardManagement() {
         <head>
           <title>Relatório sintético de protocolos</title>
           <style>
-            body { font-family: Arial, sans-serif; color: #102033; padding: 24px; }
-            h1 { margin: 0 0 6px; font-size: 22px; }
-            p { margin: 0 0 18px; color: #64748b; }
-            table { width: 100%; border-collapse: collapse; font-size: 11px; }
-            th, td { border: 1px solid #d8e3df; padding: 7px; text-align: left; }
-            th { background: #f4f8f6; }
+            @page { size: A4 landscape; margin: 12mm; }
+            * { box-sizing: border-box; }
+            body {
+              margin: 0;
+              font-family: Inter, Arial, sans-serif;
+              color: #1f2937;
+              background: #ffffff;
+            }
+            .report-shell {
+              display: flex;
+              flex-direction: column;
+              gap: 18px;
+            }
+            .report-header {
+              border: 1px solid #d9c4a0;
+              border-radius: 14px;
+              background: linear-gradient(135deg, #fffaf2 0%, #f6eddd 100%);
+              padding: 20px 24px;
+            }
+            .report-header-top {
+              display: flex;
+              justify-content: space-between;
+              gap: 24px;
+              align-items: flex-start;
+            }
+            .report-kicker {
+              margin: 0 0 8px;
+              color: #9a6b22;
+              font-size: 11px;
+              font-weight: 800;
+              text-transform: uppercase;
+              letter-spacing: 0.08em;
+            }
+            h1 {
+              margin: 0 0 6px;
+              font-size: 26px;
+              line-height: 1.12;
+              color: #111827;
+            }
+            .report-subtitle {
+              margin: 0;
+              color: #5b6472;
+              font-size: 13px;
+            }
+            .report-meta {
+              min-width: 250px;
+              border: 1px solid #e6d6bd;
+              border-radius: 12px;
+              background: rgba(255, 255, 255, 0.9);
+              padding: 14px 16px;
+            }
+            .report-meta strong,
+            .summary-card strong {
+              display: block;
+              margin-bottom: 4px;
+              color: #8a632d;
+              font-size: 11px;
+              font-weight: 800;
+              text-transform: uppercase;
+              letter-spacing: 0.04em;
+            }
+            .report-meta span,
+            .summary-card span {
+              display: block;
+              color: #111827;
+              font-size: 14px;
+              font-weight: 700;
+            }
+            .summary-grid {
+              display: grid;
+              grid-template-columns: repeat(4, minmax(0, 1fr));
+              gap: 12px;
+            }
+            .summary-card {
+              border: 1px solid #e5e7eb;
+              border-radius: 12px;
+              background: #ffffff;
+              padding: 14px 16px;
+            }
+            .report-table-wrap {
+              border: 1px solid #e5e7eb;
+              border-radius: 14px;
+              overflow: hidden;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              table-layout: fixed;
+              font-size: 10px;
+            }
+            thead th {
+              background: #132238;
+              color: #f8fafc;
+              padding: 10px 8px;
+              text-align: left;
+              font-size: 9px;
+              text-transform: uppercase;
+              letter-spacing: 0.04em;
+            }
+            tbody td {
+              border-top: 1px solid #e5e7eb;
+              padding: 9px 8px;
+              vertical-align: top;
+              color: #1f2937;
+              word-break: break-word;
+            }
+            tbody tr:nth-child(even) td {
+              background: #faf7f2;
+            }
+            .report-footer {
+              display: flex;
+              justify-content: space-between;
+              gap: 18px;
+              color: #6b7280;
+              font-size: 11px;
+            }
           </style>
         </head>
         <body>
-          <h1>Relatório sintético de protocolos</h1>
-          <p>${summaryRows.length} registros filtrados em ${new Date().toLocaleString('pt-BR')}</p>
-          <table>
-            <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead>
-            <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
-          </table>
+          <main class="report-shell">
+            <section class="report-header">
+              <div class="report-header-top">
+                <div>
+                  <p class="report-kicker">Grupo Sorria · Gestão de Reclamações</p>
+                  <h1>Relatório sintético de protocolos</h1>
+                  <p class="report-subtitle">Visão consolidada para acompanhamento executivo das reclamações filtradas no painel.</p>
+                </div>
+                <div class="report-meta">
+                  <strong>Emitido em</strong>
+                  <span>${escapeHtml(printDate.toLocaleString('pt-BR'))}</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="summary-grid">
+              <article class="summary-card">
+                <strong>Total de registros</strong>
+                <span>${escapeHtml(String(summaryRows.length))}</span>
+              </article>
+              <article class="summary-card">
+                <strong>Status da visão</strong>
+                <span>${escapeHtml(viewMode === 'deleted' ? 'Excluídos' : viewMode === 'finished' ? 'Finalizados' : 'Ativos')}</span>
+              </article>
+              <article class="summary-card">
+                <strong>Filtro textual</strong>
+                <span>${escapeHtml(filters.search || 'Sem filtro textual')}</span>
+              </article>
+              <article class="summary-card">
+                <strong>Clínica filtrada</strong>
+                <span>${escapeHtml(filters.clinic || 'Todas as unidades')}</span>
+              </article>
+            </section>
+
+            <section class="report-table-wrap">
+              <table>
+                <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead>
+                <tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
+              </table>
+            </section>
+
+            <footer class="report-footer">
+              <span>O relatório destaca a data inicial do cadastro da reclamação no sistema, além do coordenador e do gerente responsáveis pela unidade.</span>
+              <span>Documento gerado automaticamente pelo sistema.</span>
+            </footer>
+          </main>
         </body>
       </html>
     `);
