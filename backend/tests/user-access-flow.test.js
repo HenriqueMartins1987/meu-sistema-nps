@@ -831,9 +831,11 @@ test('SAC operator can change complaint unit with audit trail', async () => {
   assert.match(updateComplaintSql, /clinic_snapshot_name = \?/);
   assert.match(updateComplaintSql, /assigned_coordinator_user_id = \?/);
   assert.match(updateComplaintSql, /forwarded_to_label = \?/);
-  assert.deepEqual(updateComplaintParams.slice(3, 8), [
+  assert.deepEqual(updateComplaintParams.slice(3, 10), [
     2,
     'Unidade Nova',
+    81,
+    'Coordenadora Nova',
     81,
     'Coordenadora Nova',
     'Coordenadora Nova'

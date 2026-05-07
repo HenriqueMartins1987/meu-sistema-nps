@@ -2269,16 +2269,48 @@ async function backfillComplaintDeadlines() {
 
 async function backfillComplaintAssignments() {
   const [rows] = await pool.query(
-    `SELECT id, clinic_id, assigned_coordinator_user_id, assigned_coordinator_name, assigned_responsible_user_id, assigned_responsible_name, assigned_responsible_role, clinic_snapshot_name
+    `SELECT id, clinic_id, first_attendance_at, forwarded_to_role, forwarded_to_label, forwarded_at, forwarded_by, assigned_coordinator_user_id, assigned_coordinator_name, assigned_responsible_user_id, assigned_responsible_name, assigned_responsible_role, clinic_snapshot_name
        FROM complaints`
   );
 
   await Promise.all(rows.map(async (row) => {
-    if (row.assigned_coordinator_name && row.clinic_snapshot_name && row.assigned_responsible_role) {
+    if (!row.first_attendance_at && (row.forwarded_to_role || row.assigned_responsible_user_id || row.assigned_responsible_role)) {
+      await pool.query(
+        `UPDATE complaints
+            SET forwarded_to_role = NULL,
+                forwarded_to_label = NULL,
+                forwarded_at = NULL,
+                forwarded_by = NULL,
+                assigned_responsible_user_id = NULL,
+                assigned_responsible_name = NULL,
+                assigned_responsible_role = NULL
+          WHERE id = ?`,
+        [row.id]
+      );
+      row.forwarded_to_role = null;
+      row.assigned_responsible_user_id = null;
+      row.assigned_responsible_name = null;
+      row.assigned_responsible_role = null;
+    }
+
+    if (
+      row.assigned_coordinator_name
+      && row.clinic_snapshot_name
+      && (row.assigned_responsible_role || !row.forwarded_to_role)
+    ) {
       return null;
     }
 
     const assignment = await resolveCoordinatorAssignment(row.clinic_id);
+    const shouldBackfillResponsible = ['coordinator', 'manager', 'supervisor_crc'].includes(
+      String(row.forwarded_to_role || '').toLowerCase()
+    );
+    const responsibleAssignment = shouldBackfillResponsible
+      ? await resolveComplaintResponsibleAssignment(
+          row.clinic_id,
+          String(row.forwarded_to_role || '').toLowerCase()
+        )
+      : null;
 
     return pool.query(
       `UPDATE complaints
@@ -2286,14 +2318,15 @@ async function backfillComplaintAssignments() {
                assigned_coordinator_name = COALESCE(assigned_coordinator_name, ?),
                assigned_responsible_user_id = COALESCE(assigned_responsible_user_id, ?),
                assigned_responsible_name = COALESCE(assigned_responsible_name, ?),
-               assigned_responsible_role = COALESCE(assigned_responsible_role, 'coordinator'),
+               assigned_responsible_role = COALESCE(assigned_responsible_role, ?),
                clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)
         WHERE id = ?`,
       [
         assignment.coordinatorUserId,
         assignment.coordinatorName || null,
-        assignment.coordinatorUserId,
-        assignment.coordinatorName || null,
+        shouldBackfillResponsible ? responsibleAssignment?.userId || null : null,
+        shouldBackfillResponsible ? responsibleAssignment?.name || null : null,
+        shouldBackfillResponsible ? row.forwarded_to_role || 'coordinator' : null,
         assignment.clinicSnapshotName || null,
         row.id
       ]
@@ -2857,6 +2890,7 @@ async function getComplaintNotificationContext(complaintId) {
        c.id,
        c.protocol,
        c.clinic_id,
+       c.forwarded_to_role,
        c.assigned_coordinator_user_id,
        c.assigned_coordinator_name,
        c.assigned_responsible_user_id,
@@ -2915,11 +2949,17 @@ async function getNpsNotificationContext(npsId) {
   return rows[0] || null;
 }
 
-async function buildComplaintNotificationRecipients(complaint) {
-  const recipientMap = new Map();
-  const adminAndSupervisorRecipients = await getAdminAndSupervisorNotificationRecipients();
+function shouldNotifyAssignedComplaintAudience(complaint) {
+  const assignedRole = String(
+    complaint?.assigned_responsible_role || complaint?.forwarded_to_role || ''
+  ).toLowerCase();
 
-  // Responsavel da unidade: altere os campos responsible_whatsapp/responsible_email no cadastro da unidade.
+  return Boolean(complaint?.assigned_user_id) && ['coordinator', 'manager'].includes(assignedRole);
+}
+
+function buildComplaintAssignedAudienceRecipients(complaint) {
+  const recipientMap = new Map();
+
   addNotificationRecipient(recipientMap, {
     name: 'Responsável da unidade',
     role: 'clinic_responsible',
@@ -2927,14 +2967,20 @@ async function buildComplaintNotificationRecipients(complaint) {
     whatsapp: complaint?.responsible_whatsapp
   });
 
-  // Fallback para sistemas antigos: usa o coordenador atribuido enquanto a unidade nao tiver responsavel direto.
   addNotificationRecipient(recipientMap, {
     userId: complaint?.assigned_user_id,
     name: complaint?.assigned_user_name || complaint?.assigned_coordinator_name,
-    role: complaint?.assigned_user_role || 'clinic_responsible',
+    role: complaint?.assigned_user_role || complaint?.assigned_responsible_role || 'clinic_responsible',
     email: complaint?.assigned_user_email,
     whatsapp: complaint?.assigned_user_whatsapp || complaint?.assigned_user_phone
   });
+
+  return Array.from(recipientMap.values());
+}
+
+async function buildComplaintNotificationRecipients(complaint) {
+  const recipientMap = new Map();
+  const adminAndSupervisorRecipients = await getAdminAndSupervisorNotificationRecipients();
 
   // Numeros fixos: altere fixedComplaintWhatsAppRecipients no topo deste arquivo se a regra mudar.
   fixedComplaintWhatsAppRecipients.forEach((phone) => {
@@ -2946,6 +2992,10 @@ async function buildComplaintNotificationRecipients(complaint) {
   });
 
   adminAndSupervisorRecipients.forEach((recipient) => addNotificationRecipient(recipientMap, recipient));
+
+  if (shouldNotifyAssignedComplaintAudience(complaint)) {
+    buildComplaintAssignedAudienceRecipients(complaint).forEach((recipient) => addNotificationRecipient(recipientMap, recipient));
+  }
 
   return Array.from(recipientMap.values());
 }
@@ -3357,6 +3407,40 @@ async function dispatchComplaintCreatedNotifications(complaintId, protocol) {
     };
   } catch (error) {
     console.warn('Nao foi possivel disparar notificacoes Twilio/e-mail da reclamacao:', error.message);
+    return { notificationStatus: 'failed', results: [{ status: 'failed', error: error.message }] };
+  }
+}
+
+async function dispatchComplaintAssignedNotifications(complaintId, protocol) {
+  try {
+    const complaint = await getComplaintNotificationContext(complaintId);
+
+    if (!complaint || !shouldNotifyAssignedComplaintAudience(complaint)) {
+      return { notificationStatus: 'failed', results: [] };
+    }
+
+    const recipients = buildComplaintAssignedAudienceRecipients(complaint).map((recipient) => ({
+      ...recipient,
+      complaintUrl: getComplaintUrl(complaint)
+    }));
+    const safeProtocol = protocol || complaint.protocol;
+    const whatsappMessage = buildComplaintWhatsAppMessage(complaint, safeProtocol);
+
+    const directDelivery = await deliverProtocolNotifications({
+      eventType: 'COMPLAINT_ASSIGNED',
+      protocol: safeProtocol,
+      recipients,
+      emailTemplate: buildComplaintNotificationEmail(complaint, safeProtocol),
+      whatsappSender: sendDetailedComplaintWhatsApp,
+      whatsappMessage
+    });
+
+    return {
+      notificationStatus: summarizeNotificationStatus(directDelivery.results),
+      results: directDelivery.results
+    };
+  } catch (error) {
+    console.warn('Nao foi possivel disparar notificacoes de atribuicao da reclamacao:', error.message);
     return { notificationStatus: 'failed', results: [{ status: 'failed', error: error.message }] };
   }
 }
@@ -5648,26 +5732,7 @@ async function runScheduledUserDemandReminders(now = new Date()) {
 }
 
 async function notifyComplaintCreated(complaintId, protocol) {
-  const [rows] = await pool.query(
-    `SELECT
-       c.id,
-       c.protocol,
-       c.clinic_id,
-       c.assigned_coordinator_user_id,
-       c.assigned_responsible_user_id,
-       c.patient_name,
-       c.complaint_type,
-       c.priority,
-       c.created_origin,
-       cl.name AS clinic_name,
-       cl.city,
-       cl.state
-     FROM complaints c
-     LEFT JOIN clinics cl ON cl.id = c.clinic_id
-     WHERE c.id = ?`,
-    [complaintId]
-  );
-  const complaint = rows[0] || {};
+  const complaint = await getComplaintNotificationContext(complaintId) || {};
   const clinic = complaint.clinic_name
     ? `${complaint.clinic_name}${complaint.city ? ` - ${complaint.city}/${complaint.state || 'UF'}` : ''}`
     : 'Unidade não informada';
@@ -5714,18 +5779,50 @@ async function notifyComplaintCreated(complaintId, protocol) {
     console.warn('Nao foi possivel registrar notificacao do Supervisor CRC:', error.message);
   }
 
+  if (shouldNotifyAssignedComplaintAudience(complaint)) {
+    try {
+      await notifyComplaintAudienceByScope(
+        complaint.clinic_id,
+        complaint.assigned_responsible_user_id || null,
+        title,
+        detailedMessage,
+        link,
+        payload,
+        notifiedUserIds
+      );
+    } catch (error) {
+      console.warn('Nao foi possivel registrar notificacoes da reclamacao para a audiencia da unidade:', error.message);
+    }
+  }
+}
+
+async function notifyComplaintAssigned(complaintId, protocol) {
+  const complaint = await getComplaintNotificationContext(complaintId);
+
+  if (!complaint || !shouldNotifyAssignedComplaintAudience(complaint)) {
+    return;
+  }
+
+  const title = `Demanda atribuída - protocolo ${protocol || complaint.protocol || complaintId}`;
+  const link = `${frontendUrl}/gestao/${complaintId}`;
+  const message = [
+    `O protocolo ${protocol || complaint.protocol || complaintId} foi encaminhado para sua tratativa.`,
+    `Paciente: ${complaint.patient_name || 'Não informado'}`,
+    `Unidade: ${complaint.clinic_name || complaint.clinic_snapshot_name || 'Não informada'}`
+  ].join('\n');
+
   try {
     await notifyComplaintAudienceByScope(
       complaint.clinic_id,
-        complaint.assigned_responsible_user_id || complaint.assigned_coordinator_user_id,
+      complaint.assigned_responsible_user_id || null,
       title,
-      detailedMessage,
+      `${message}\n\nAcesse a ficha e registre a tratativa.`,
       link,
-      payload,
-      notifiedUserIds
+      { complaintId, protocol: protocol || complaint.protocol || complaintId },
+      []
     );
   } catch (error) {
-    console.warn('Nao foi possivel registrar notificacoes da reclamacao para a audiencia da unidade:', error.message);
+    console.warn('Nao foi possivel registrar notificacao interna de atribuicao da reclamacao:', error.message);
   }
 }
 
@@ -5939,28 +6036,14 @@ async function convertNpsToComplaint(npsId, user) {
   const protocol = `GRC-${new Date().getFullYear()}-${String(result.insertId).padStart(6, '0')}`;
   await pool.query('UPDATE complaints SET protocol = ? WHERE id = ?', [protocol, result.insertId]);
   await pool.query(
-    'UPDATE complaints SET assigned_coordinator_user_id = ?, assigned_coordinator_name = ?, assigned_responsible_user_id = ?, assigned_responsible_name = ?, assigned_responsible_role = ?, clinic_snapshot_name = ? WHERE id = ?',
-    [assignment.coordinatorUserId, assignment.coordinatorName, assignment.coordinatorUserId, assignment.coordinatorName, 'coordinator', assignment.clinicSnapshotName, result.insertId]
-  );
-  const coordinatorLabel = assignment.coordinatorName || 'Coordenador da unidade';
-  await pool.query(
-    `UPDATE complaints
-        SET forwarded_to_role = 'coordinator',
-            forwarded_to_label = ?,
-            forwarded_at = NOW(),
-            forwarded_by = ?
-      WHERE id = ?`,
-    [coordinatorLabel, getActorName(user), result.insertId]
+    'UPDATE complaints SET assigned_coordinator_user_id = ?, assigned_coordinator_name = ?, clinic_snapshot_name = ? WHERE id = ?',
+    [assignment.coordinatorUserId, assignment.coordinatorName, assignment.clinicSnapshotName, result.insertId]
   );
   await pool.query(
     'UPDATE nps_responses SET converted_complaint_id = ?, converted_at = NOW(), converted_by = ? WHERE id = ?',
     [result.insertId, getActorName(user), npsId]
   );
   await insertComplaintLog(result.insertId, 'nps_reclassified', `Pesquisa NPS ${npsId} reclassificada como reclamação para tratativa.`, user);
-  await insertComplaintLog(result.insertId, 'assigned_to_coordinator', `Protocolo vinculado ao responsável ${coordinatorLabel}.`, {
-    name: 'Sistema GRC',
-    role: 'sistema'
-  });
   await insertNpsLog(npsId, 'migrado_para_reclamacao', `Detrator migrado para reclamação ${protocol}.`, user);
   await notifyComplaintCreated(result.insertId, protocol);
   const notificationResult = await dispatchComplaintCreatedNotifications(result.insertId, protocol);
@@ -8588,26 +8671,12 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
     const protocol = `GRC-${new Date().getFullYear()}-${String(result.insertId).padStart(6, '0')}`;
     await pool.query('UPDATE complaints SET protocol = ? WHERE id = ?', [protocol, result.insertId]);
     await pool.query(
-      'UPDATE complaints SET assigned_coordinator_user_id = ?, assigned_coordinator_name = ?, assigned_responsible_user_id = ?, assigned_responsible_name = ?, assigned_responsible_role = ?, clinic_snapshot_name = ? WHERE id = ?',
-      [assignment.coordinatorUserId, assignment.coordinatorName, assignment.coordinatorUserId, assignment.coordinatorName, 'coordinator', assignment.clinicSnapshotName, result.insertId]
-    );
-    const coordinatorLabel = assignment.coordinatorName || 'Coordenador da unidade';
-    await pool.query(
-      `UPDATE complaints
-          SET forwarded_to_role = 'coordinator',
-              forwarded_to_label = ?,
-              forwarded_at = NOW(),
-              forwarded_by = ?
-        WHERE id = ?`,
-      [coordinatorLabel, normalizedOrigin === 'Interno' ? 'Cadastro interno' : normalizedOrigin, result.insertId]
+      'UPDATE complaints SET assigned_coordinator_user_id = ?, assigned_coordinator_name = ?, clinic_snapshot_name = ? WHERE id = ?',
+      [assignment.coordinatorUserId, assignment.coordinatorName, assignment.clinicSnapshotName, result.insertId]
     );
     await insertComplaintLog(result.insertId, 'created', `Protocolo ${protocol} cadastrado com origem ${normalizedOrigin}.`, {
       name: normalizedOrigin === 'Interno' ? 'Usuário interno' : normalizedOrigin,
       role: normalizedOrigin.toLowerCase()
-    });
-    await insertComplaintLog(result.insertId, 'assigned_to_coordinator', `Protocolo vinculado ao responsável ${coordinatorLabel}.`, {
-      name: 'Sistema GRC',
-      role: 'sistema'
     });
     let notificationResult = { notificationStatus: 'failed' };
 
@@ -8711,8 +8780,16 @@ app.post('/complaints/:id/renotify', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'Protocolo não encontrado.' });
     }
 
-    await notifyComplaintCreated(complaint.id, complaint.protocol);
-    const notificationResult = await dispatchComplaintCreatedNotifications(complaint.id, complaint.protocol);
+    let notificationResult;
+
+    if (shouldNotifyAssignedComplaintAudience(complaint)) {
+      await notifyComplaintAssigned(complaint.id, complaint.protocol);
+      notificationResult = await dispatchComplaintAssignedNotifications(complaint.id, complaint.protocol);
+    } else {
+      await notifyComplaintCreated(complaint.id, complaint.protocol);
+      notificationResult = await dispatchComplaintCreatedNotifications(complaint.id, complaint.protocol);
+    }
+
     await insertComplaintLog(complaint.id, 'renotificado', `Notificações reenviadas por ${getActorName(req.user)}.`, req.user);
 
     return res.json({
@@ -8906,6 +8983,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
     const nextPriority = priority ? normalizePriority(priority) : normalizePriority(complaint.priority);
     const nextStatus = status || (cleanedComment && canAddTreatment(req.user) ? 'em_andamento' : complaint.status || 'aberta');
     const actorName = getActorName(req.user);
+    let assignmentNotificationResult = null;
     const logEntries = [];
     const updates = [
       'status = ?',
@@ -8977,12 +9055,16 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         updates.push('assigned_coordinator_name = ?');
         values.push(nextCoordinatorName);
 
-        if (!complaint.forwarded_to_role || complaint.forwarded_to_role === 'coordinator') {
+        if (complaint.forwarded_to_role === 'coordinator') {
           updates.push('assigned_responsible_user_id = ?');
           values.push(assignment?.coordinatorUserId || null);
           updates.push('assigned_responsible_name = ?');
           values.push(nextCoordinatorName || 'Coordenador da unidade');
           updates.push("assigned_responsible_role = 'coordinator'");
+        } else if (!complaint.forwarded_to_role) {
+          updates.push('assigned_responsible_user_id = NULL');
+          updates.push('assigned_responsible_name = NULL');
+          updates.push('assigned_responsible_role = NULL');
         } else if (complaint.forwarded_to_role === 'manager') {
           const managerAssignment = await resolveComplaintResponsibleAssignment(nextClinicId, 'manager');
           updates.push('assigned_responsible_user_id = ?');
@@ -9191,7 +9273,20 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       insertComplaintLog(id, entry.action, entry.message, req.user)
     )));
 
-    res.json({ message: 'Reclamação atualizada com sucesso' });
+    if (first_attendance && ['coordinator', 'manager'].includes(String(forward_to_role || '').toLowerCase())) {
+      try {
+        await notifyComplaintAssigned(id, complaint.protocol);
+      } catch (error) {
+        console.warn('Nao foi possivel concluir notificacao interna de atribuicao:', error.message);
+      }
+
+      assignmentNotificationResult = await dispatchComplaintAssignedNotifications(id, complaint.protocol);
+    }
+
+    res.json({
+      message: 'Reclamação atualizada com sucesso',
+      notificationStatus: assignmentNotificationResult?.notificationStatus
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao atualizar reclamação' });

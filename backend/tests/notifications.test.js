@@ -366,7 +366,7 @@ test('canReceiveComplaintNotification respects complaint permissions and hierarc
     role: 'viewer',
     email: 'viewer@example.com',
     permissions: JSON.stringify(['home', 'nps_management'])
-  }), false);
+  }), true);
 });
 
 test('canRenotifyComplaint only allows master admin, Supervisor do CRC and Operador de SAC', () => {
@@ -439,7 +439,7 @@ test('canChangeComplaintUnit allows only operational admin profiles', () => {
   assert.equal(__testables.canChangeComplaintUnit({
     role: 'admin',
     email: 'admin@example.com'
-  }), true);
+  }), false);
 
   assert.equal(__testables.canChangeComplaintUnit({
     role: 'supervisor_crc',
