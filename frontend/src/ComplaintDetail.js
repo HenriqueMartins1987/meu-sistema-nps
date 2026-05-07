@@ -304,17 +304,18 @@ function ComplaintDetail() {
   );
 
   const isAdmin = isAdminUser(user);
-  const canOperationalClose = ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
-  const canRegisterAttendanceFlow = ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
+  const isMasterUser = isMasterAdmin(user);
+  const canOperationalClose = isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
+  const canRegisterAttendanceFlow = isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
   const canFormalTreatment = treatmentRoles.includes(user?.role) || isAdmin;
   const canRecordTreatment = Boolean(user?.role);
   const canAttachEvidence = evidenceRoles.includes(user?.role) || isAdmin;
   const canSupervisorAccept = user?.role === 'supervisor_crc' || isAdmin;
-  const canDeleteComplaint = isMasterAdmin(user) || user?.role === 'supervisor_crc';
+  const canDeleteComplaint = isMasterUser || user?.role === 'supervisor_crc';
   const canDeleteEvidence = Boolean(user?.id || user?.email || user?.role);
-  const canChangeComplaintUnit = ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
-  const canEditPatientPhone = ['sac_operator', 'supervisor_crc', 'master_admin'].includes(user?.role);
-  const canRenotifyComplaint = user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
+  const canChangeComplaintUnit = isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
+  const canEditPatientPhone = isMasterUser || ['sac_operator', 'supervisor_crc', 'master_admin'].includes(user?.role);
+  const canRenotifyComplaint = isMasterUser || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
   const activeUnitOptions = useMemo(() => (
     unitOptions
       .filter((unit) => unit?.name && String(unit.active ?? 1) !== '0')

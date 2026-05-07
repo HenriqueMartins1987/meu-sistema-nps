@@ -604,11 +604,11 @@ function canDeleteEvidence(user) {
 }
 
 function canChangeComplaintUnit(user) {
-  return complaintUnitChangeRoles.has(user?.role);
+  return complaintUnitChangeRoles.has(user?.role) || isMasterAdminUser(user);
 }
 
 function canEditComplaintPatientPhone(user) {
-  return ['sac_operator', 'supervisor_crc', 'master_admin'].includes(user?.role);
+  return ['sac_operator', 'supervisor_crc', 'master_admin'].includes(user?.role) || isMasterAdminUser(user);
 }
 
 function canAddTreatment(user) {
@@ -616,7 +616,7 @@ function canAddTreatment(user) {
 }
 
 function canCloseComplaint(user) {
-  return ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
+  return ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role) || isMasterAdminUser(user);
 }
 
 function canSupervisorApprove(user) {
@@ -624,11 +624,11 @@ function canSupervisorApprove(user) {
 }
 
 function canMarkPatientContact(user) {
-  return ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
+  return ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role) || isMasterAdminUser(user);
 }
 
 function canRegisterFirstAttendance(user) {
-  return ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
+  return ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role) || isMasterAdminUser(user);
 }
 
 function canDeleteRecords(user) {
@@ -636,7 +636,7 @@ function canDeleteRecords(user) {
 }
 
 function canRenotifyComplaint(user) {
-  return user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
+  return isMasterAdminUser(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
 }
 
 function canViewDeletedRecords(user) {
