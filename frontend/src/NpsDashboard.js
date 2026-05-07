@@ -107,6 +107,15 @@ function formatShortDate(value) {
   }).format(new Date(value));
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function lastNpsActor(item) {
   return item?.logs?.[0]?.actor_name
     || item?.nps_treatment_by
@@ -220,9 +229,143 @@ function NpsDashboard() {
   const byCoordinator = useMemo(() => groupCount(filteredRows, (item) => item.coordinator_name).slice(0, 10), [filteredRows]);
   const byTreatmentStatus = useMemo(() => groupCount(filteredRows, (item) => npsStatusLabels[getNpsStatus(item)]), [filteredRows]);
   const baseRows = useMemo(() => filteredRows.slice(0, 100), [filteredRows]);
+  const baseExportRows = useMemo(() => baseRows.map((item) => {
+    const profile = item.nps_profile || profileFromScore(item.score);
+    const status = getNpsStatus(item);
+
+    return {
+      paciente: item.patient_name || 'Não informado',
+      telefone: item.patient_phone || 'Telefone não informado',
+      unidade: item.clinic_name || 'Não informado',
+      localizacao: `${item.state || 'UF'} - ${item.region || 'Região não informada'}`,
+      nota: item.score,
+      perfil: profileLabel(profile),
+      status_nps: npsStatusLabels[status] || status,
+      protocolo: protocolLabel(item),
+      responsavel: item.coordinator_name || 'Não vinculado',
+      fluxo: item.converted_complaint_protocol || 'Fluxo NPS',
+      ultima_tratativa: lastNpsActor(item),
+      relato: item.nps_treatment_comment || item.improvement_comment || item.detractor_feedback || 'Sem relato complementar',
+      cadastro: formatShortDate(item.created_at)
+    };
+  }), [baseRows]);
 
   const updateFilter = (field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const exportBaseExcel = () => {
+    const headers = Object.keys(baseExportRows[0] || {
+      paciente: '',
+      telefone: '',
+      unidade: '',
+      localizacao: '',
+      nota: '',
+      perfil: '',
+      status_nps: '',
+      protocolo: '',
+      responsavel: '',
+      fluxo: '',
+      ultima_tratativa: '',
+      relato: '',
+      cadastro: ''
+    });
+    const html = `
+      <table>
+        <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead>
+        <tbody>${baseExportRows.map((row) => `<tr>${headers.map((header) => `<td>${escapeHtml(row[header])}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table>
+    `;
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `dashboard-nps-${new Date().toISOString().slice(0, 10)}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const exportBasePdf = () => {
+    const reportWindow = window.open('', '_blank');
+
+    if (!reportWindow) {
+      setFeedback('Permita pop-ups para gerar o PDF.');
+      return;
+    }
+
+    const printDate = new Date();
+    const headers = ['Paciente', 'Unidade', 'Nota e perfil', 'Status NPS', 'Protocolo', 'Responsável', 'Cadastro'];
+    const rowsToPrint = baseExportRows.map((row) => [
+      `${row.paciente} | ${row.telefone}`,
+      `${row.unidade} | ${row.localizacao}`,
+      `${row.nota} | ${row.perfil}`,
+      row.status_nps,
+      row.protocolo,
+      `${row.responsavel} | ${row.fluxo}`,
+      row.cadastro
+    ]);
+
+    reportWindow.document.write(`
+      <html>
+        <head>
+          <title>Dashboard NPS</title>
+          <style>
+            @page { size: A4 landscape; margin: 12mm; }
+            * { box-sizing: border-box; }
+            body { margin: 0; font-family: Inter, Arial, sans-serif; color: #1f2937; background: #fff; }
+            .report-shell { display: flex; flex-direction: column; gap: 18px; }
+            .report-header { border: 1px solid #d9c4a0; border-radius: 14px; background: linear-gradient(135deg, #fffaf2 0%, #f6eddd 100%); padding: 20px 24px; }
+            .report-header-top { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
+            .report-kicker { margin: 0 0 8px; color: #9a6b22; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; }
+            h1 { margin: 0 0 6px; font-size: 26px; line-height: 1.12; color: #111827; }
+            .report-subtitle { margin: 0; color: #5b6472; font-size: 13px; }
+            .report-meta, .summary-card { border: 1px solid #e6d6bd; border-radius: 12px; background: rgba(255,255,255,.92); padding: 14px 16px; }
+            .report-meta strong, .summary-card strong { display: block; margin-bottom: 4px; color: #8a632d; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+            .report-meta span, .summary-card span { display: block; color: #111827; font-size: 14px; font-weight: 700; }
+            .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; }
+            .report-table-wrap { border: 1px solid #e5e7eb; border-radius: 14px; overflow: hidden; }
+            table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10px; }
+            thead th { background: #132238; color: #f8fafc; padding: 10px 8px; text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: .04em; }
+            tbody td { border-top: 1px solid #e5e7eb; padding: 9px 8px; vertical-align: top; word-break: break-word; }
+            tbody tr:nth-child(even) td { background: #faf7f2; }
+          </style>
+        </head>
+        <body>
+          <main class="report-shell">
+            <section class="report-header">
+              <div class="report-header-top">
+                <div>
+                  <p class="report-kicker">Grupo Sorria · Dashboard NPS</p>
+                  <h1>Relação analítica filtrada</h1>
+                  <p class="report-subtitle">Exportação da base operacional exibida na parte inferior do dashboard NPS.</p>
+                </div>
+                <div class="report-meta">
+                  <strong>Emitido em</strong>
+                  <span>${escapeHtml(printDate.toLocaleString('pt-BR'))}</span>
+                </div>
+              </div>
+            </section>
+            <section class="summary-grid">
+              <article class="summary-card"><strong>Registros exportados</strong><span>${escapeHtml(String(baseExportRows.length))}</span></article>
+              <article class="summary-card"><strong>Base filtrada</strong><span>${escapeHtml(String(filteredRows.length))}</span></article>
+              <article class="summary-card"><strong>Clínica</strong><span>${escapeHtml(filters.clinic || 'Todas')}</span></article>
+              <article class="summary-card"><strong>Perfil</strong><span>${escapeHtml(filters.profile || 'Todos')}</span></article>
+            </section>
+            <section class="report-table-wrap">
+              <table>
+                <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead>
+                <tbody>${rowsToPrint.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
+              </table>
+            </section>
+          </main>
+        </body>
+      </html>
+    `);
+    reportWindow.document.close();
+    reportWindow.focus();
+    reportWindow.print();
   };
 
   return (
@@ -389,6 +532,16 @@ function NpsDashboard() {
                   </span>
                 </h2>
                 <p className="base-subtitle">{filteredRows.length} respostas na seleção atual.</p>
+              </div>
+              <div className="export-actions">
+                <button className="outline-action" onClick={exportBaseExcel} disabled={!baseExportRows.length}>
+                  <span className="export-badge excel">XLS</span>
+                  <span>Baixar Excel</span>
+                </button>
+                <button className="outline-action" onClick={exportBasePdf} disabled={!baseExportRows.length}>
+                  <span className="export-badge pdf">PDF</span>
+                  <span>Baixar PDF</span>
+                </button>
               </div>
             </div>
 

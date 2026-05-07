@@ -86,6 +86,15 @@ function formatDateTime(value) {
   }).format(new Date(value));
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function PatientManagement() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -147,9 +156,95 @@ function PatientManagement() {
     .slice()
     .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt))
     .slice(0, 10), [records]);
+  const nextExportRows = useMemo(() => nextRecords.map((record) => ({
+    paciente: record.patient,
+    tipo: typeLabels[record.type] || record.type,
+    canal: channelLabels[record.channel] || record.channel,
+    unidade: record.clinic,
+    status: record.status,
+    data: formatDateTime(record.scheduledAt)
+  })), [nextRecords]);
 
   const updateForm = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const exportDashboardExcel = () => {
+    const headers = Object.keys(nextExportRows[0] || {
+      paciente: '',
+      tipo: '',
+      canal: '',
+      unidade: '',
+      status: '',
+      data: ''
+    });
+    const html = `
+      <table>
+        <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead>
+        <tbody>${nextExportRows.map((row) => `<tr>${headers.map((header) => `<td>${escapeHtml(row[header])}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table>
+    `;
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `dashboard-paciente-resumo-${new Date().toISOString().slice(0, 10)}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const exportDashboardPdf = () => {
+    const reportWindow = window.open('', '_blank');
+
+    if (!reportWindow) {
+      setFeedback('Permita pop-ups para gerar o PDF.');
+      return;
+    }
+
+    const headers = ['Paciente', 'Tipo', 'Canal', 'Unidade', 'Status', 'Data'];
+    const printDate = new Date();
+    const rowsToPrint = nextExportRows.map((row) => [
+      row.paciente,
+      row.tipo,
+      row.canal,
+      row.unidade,
+      row.status,
+      row.data
+    ]);
+
+    reportWindow.document.write(`
+      <html>
+        <head>
+          <title>Dashboard do Paciente</title>
+          <style>
+            @page { size: A4 landscape; margin: 12mm; }
+            body { margin: 0; font-family: Inter, Arial, sans-serif; color: #1f2937; }
+            .report-header { border: 1px solid #d9c4a0; border-radius: 14px; background: linear-gradient(135deg, #fffaf2 0%, #f6eddd 100%); padding: 20px 24px; margin-bottom: 16px; }
+            .report-header h1 { margin: 0 0 6px; font-size: 24px; }
+            .report-header p { margin: 0; color: #5b6472; }
+            table { width: 100%; border-collapse: collapse; font-size: 10px; }
+            th { background: #132238; color: #f8fafc; text-align: left; padding: 10px 8px; font-size: 9px; text-transform: uppercase; }
+            td { border-top: 1px solid #e5e7eb; padding: 9px 8px; vertical-align: top; }
+            tbody tr:nth-child(even) td { background: #faf7f2; }
+          </style>
+        </head>
+        <body>
+          <section class="report-header">
+            <h1>Próximos movimentos do paciente</h1>
+            <p>Emitido em ${escapeHtml(printDate.toLocaleString('pt-BR'))}</p>
+          </section>
+          <table>
+            <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead>
+            <tbody>${rowsToPrint.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
+          </table>
+        </body>
+      </html>
+    `);
+    reportWindow.document.close();
+    reportWindow.focus();
+    reportWindow.print();
   };
 
   const handleChannelChange = (value) => {
@@ -289,6 +384,16 @@ function PatientManagement() {
                 <div>
                   <p className="eyebrow">Base filtrada</p>
                   <h2>Próximos movimentos do paciente</h2>
+                </div>
+                <div className="export-actions">
+                  <button className="outline-action" onClick={exportDashboardExcel} disabled={!nextExportRows.length}>
+                    <span className="export-badge excel">XLS</span>
+                    <span>Baixar Excel</span>
+                  </button>
+                  <button className="outline-action" onClick={exportDashboardPdf} disabled={!nextExportRows.length}>
+                    <span className="export-badge pdf">PDF</span>
+                    <span>Baixar PDF</span>
+                  </button>
                 </div>
               </div>
 

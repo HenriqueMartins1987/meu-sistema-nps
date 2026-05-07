@@ -114,6 +114,15 @@ function formatDateTime(value) {
   }).format(new Date(value));
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function PatientManagementPage() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -256,6 +265,18 @@ function PatientManagementPage() {
     .slice()
     .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt))
     .slice(0, 50), [activeRecords, filters]);
+  const dashboardExportRows = useMemo(() => upcomingRecords.map((record) => ({
+    protocolo: record.protocol,
+    paciente: record.patient,
+    telefone: record.phone || 'Telefone não informado',
+    unidade: record.clinic,
+    canal: channelLabels[record.channel] || record.channel || 'Canal não informado',
+    tipo: typeLabels[record.type] || record.type,
+    status: record.status,
+    data_horario: formatDateTime(record.scheduledAt),
+    ultima_tratativa: record.lastActorName || 'Sem tratativa',
+    perfil_ultima_tratativa: record.lastActorRole || 'Perfil não informado'
+  })), [upcomingRecords]);
 
   const updateForm = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -263,6 +284,116 @@ function PatientManagementPage() {
 
   const updateFilter = (field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const exportDashboardExcel = () => {
+    const headers = Object.keys(dashboardExportRows[0] || {
+      protocolo: '',
+      paciente: '',
+      telefone: '',
+      unidade: '',
+      canal: '',
+      tipo: '',
+      status: '',
+      data_horario: '',
+      ultima_tratativa: '',
+      perfil_ultima_tratativa: ''
+    });
+    const html = `
+      <table>
+        <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead>
+        <tbody>${dashboardExportRows.map((row) => `<tr>${headers.map((header) => `<td>${escapeHtml(row[header])}</td>`).join('')}</tr>`).join('')}</tbody>
+      </table>
+    `;
+    const blob = new Blob([html], { type: 'application/vnd.ms-excel;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `dashboard-pacientes-${new Date().toISOString().slice(0, 10)}.xls`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const exportDashboardPdf = () => {
+    const reportWindow = window.open('', '_blank');
+
+    if (!reportWindow) {
+      setFeedback('Permita pop-ups para gerar o PDF.');
+      return;
+    }
+
+    const printDate = new Date();
+    const headers = ['Protocolo', 'Paciente', 'Unidade e canal', 'Tipo e status', 'Data e horário', 'Última tratativa'];
+    const rowsToPrint = dashboardExportRows.map((row) => [
+      row.protocolo,
+      `${row.paciente} | ${row.telefone}`,
+      `${row.unidade} | ${row.canal}`,
+      `${row.tipo} | ${row.status}`,
+      row.data_horario,
+      `${row.ultima_tratativa} | ${row.perfil_ultima_tratativa}`
+    ]);
+
+    reportWindow.document.write(`
+      <html>
+        <head>
+          <title>Dashboard de Pacientes</title>
+          <style>
+            @page { size: A4 landscape; margin: 12mm; }
+            * { box-sizing: border-box; }
+            body { margin: 0; font-family: Inter, Arial, sans-serif; color: #1f2937; background: #fff; }
+            .report-shell { display: flex; flex-direction: column; gap: 18px; }
+            .report-header { border: 1px solid #d9c4a0; border-radius: 14px; background: linear-gradient(135deg, #fffaf2 0%, #f6eddd 100%); padding: 20px 24px; }
+            .report-header-top { display: flex; justify-content: space-between; gap: 24px; align-items: flex-start; }
+            .report-kicker { margin: 0 0 8px; color: #9a6b22; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.08em; }
+            h1 { margin: 0 0 6px; font-size: 26px; line-height: 1.12; color: #111827; }
+            .report-subtitle { margin: 0; color: #5b6472; font-size: 13px; }
+            .report-meta, .summary-card { border: 1px solid #e6d6bd; border-radius: 12px; background: rgba(255,255,255,.92); padding: 14px 16px; }
+            .report-meta strong, .summary-card strong { display: block; margin-bottom: 4px; color: #8a632d; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em; }
+            .report-meta span, .summary-card span { display: block; color: #111827; font-size: 14px; font-weight: 700; }
+            .summary-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; }
+            .report-table-wrap { border: 1px solid #e5e7eb; border-radius: 14px; overflow: hidden; }
+            table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10px; }
+            thead th { background: #132238; color: #f8fafc; padding: 10px 8px; text-align: left; font-size: 9px; text-transform: uppercase; letter-spacing: .04em; }
+            tbody td { border-top: 1px solid #e5e7eb; padding: 9px 8px; vertical-align: top; word-break: break-word; }
+            tbody tr:nth-child(even) td { background: #faf7f2; }
+          </style>
+        </head>
+        <body>
+          <main class="report-shell">
+            <section class="report-header">
+              <div class="report-header-top">
+                <div>
+                  <p class="report-kicker">Grupo Sorria · Dashboard de Pacientes</p>
+                  <h1>Agenda operacional filtrada</h1>
+                  <p class="report-subtitle">Exportação da relação exibida na parte inferior do dashboard de pacientes.</p>
+                </div>
+                <div class="report-meta">
+                  <strong>Emitido em</strong>
+                  <span>${escapeHtml(printDate.toLocaleString('pt-BR'))}</span>
+                </div>
+              </div>
+            </section>
+            <section class="summary-grid">
+              <article class="summary-card"><strong>Registros exportados</strong><span>${escapeHtml(String(dashboardExportRows.length))}</span></article>
+              <article class="summary-card"><strong>Ativos</strong><span>${escapeHtml(String(activeRecords.length))}</span></article>
+              <article class="summary-card"><strong>Clínica</strong><span>${escapeHtml(filters.clinic || 'Todas')}</span></article>
+              <article class="summary-card"><strong>Canal</strong><span>${escapeHtml(filters.channel || 'Todos')}</span></article>
+            </section>
+            <section class="report-table-wrap">
+              <table>
+                <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead>
+                <tbody>${rowsToPrint.map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}</tr>`).join('')}</tbody>
+              </table>
+            </section>
+          </main>
+        </body>
+      </html>
+    `);
+    reportWindow.document.close();
+    reportWindow.focus();
+    reportWindow.print();
   };
 
   const handlePhoneChange = (value) => {
@@ -631,6 +762,16 @@ function PatientManagementPage() {
                     </span>
                   </h2>
                   <p className="base-subtitle">Exibindo {upcomingRecords.length} pacientes da agenda operacional.</p>
+                </div>
+                <div className="export-actions">
+                  <button className="outline-action" onClick={exportDashboardExcel} disabled={!dashboardExportRows.length}>
+                    <span className="export-badge excel">XLS</span>
+                    <span>Baixar Excel</span>
+                  </button>
+                  <button className="outline-action" onClick={exportDashboardPdf} disabled={!dashboardExportRows.length}>
+                    <span className="export-badge pdf">PDF</span>
+                    <span>Baixar PDF</span>
+                  </button>
                 </div>
               </div>
 
