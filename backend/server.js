@@ -4068,15 +4068,19 @@ async function fetchResendMonitoring(emailMonitoring) {
 
 function parsePermissionsFromUser(user) {
   const role = user?.role || 'viewer';
-  let permissions = defaultPermissionsForRole(role);
+  const defaultPermissions = defaultPermissionsForRole(role);
+  let permissions = defaultPermissions;
 
   try {
     permissions = user?.permissions ? JSON.parse(user.permissions) : permissions;
   } catch (error) {
-    permissions = defaultPermissionsForRole(role);
+    permissions = defaultPermissions;
   }
 
-  return permissions;
+  return Array.from(new Set([
+    ...defaultPermissions,
+    ...(Array.isArray(permissions) ? permissions : [])
+  ]));
 }
 
 function canReceiveComplaintNotification(user) {

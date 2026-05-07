@@ -152,9 +152,14 @@ export function hasPermission(user, permission) {
   if (isMasterAdmin(user)) return true;
 
   const permissions = Array.isArray(user.permissions) ? user.permissions : [];
+  const supervisorDefaults = ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management'];
 
   if (permission === 'admin_panel') {
     return false;
+  }
+
+  if (user.role === 'supervisor_crc') {
+    return supervisorDefaults.includes(permission) || permissions.includes(permission);
   }
 
   if (permission === 'patient_management') {
