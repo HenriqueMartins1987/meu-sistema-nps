@@ -265,7 +265,41 @@ function PatientManagementPage() {
     .slice()
     .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt))
     .slice(0, 50), [activeRecords, filters]);
-  const dashboardExportRows = useMemo(() => upcomingRecords.map((record) => ({
+  const dashboardReportRecords = useMemo(() => records
+    .filter((record) => {
+      if (record.status === 'Cancelado') return false;
+
+      const searchable = [
+        record.protocol,
+        record.patient,
+        record.phone,
+        record.note,
+        record.clinic,
+        record.channel,
+        record.type,
+        record.status
+      ].map((value) => String(value || '').toLowerCase()).join(' ');
+      const scheduledAt = record.scheduledAt ? new Date(record.scheduledAt) : null;
+      const startDate = filters.startDate ? new Date(`${filters.startDate}T00:00:00`) : null;
+      const endDate = filters.endDate ? new Date(`${filters.endDate}T23:59:59`) : null;
+
+      return (
+        (!filters.search || searchable.includes(String(filters.search || '').toLowerCase()))
+        && (!filters.clinic || record.clinic === filters.clinic)
+        && (!filters.channel || record.channel === filters.channel)
+        && (!filters.type || record.type === filters.type)
+        && (!filters.status || record.status === filters.status)
+        && (!startDate || (scheduledAt && scheduledAt >= startDate))
+        && (!endDate || (scheduledAt && scheduledAt <= endDate))
+      );
+    })
+    .slice()
+    .sort((a, b) => {
+      const aTime = a.scheduledAt ? new Date(a.scheduledAt).getTime() : Number.MAX_SAFE_INTEGER;
+      const bTime = b.scheduledAt ? new Date(b.scheduledAt).getTime() : Number.MAX_SAFE_INTEGER;
+      return aTime - bTime;
+    }), [records, filters]);
+  const dashboardExportRows = useMemo(() => dashboardReportRecords.map((record) => ({
     protocolo: record.protocol,
     paciente: record.patient,
     telefone: record.phone || 'Telefone não informado',
@@ -276,7 +310,7 @@ function PatientManagementPage() {
     data_horario: formatDateTime(record.scheduledAt),
     ultima_tratativa: record.lastActorName || 'Sem tratativa',
     perfil_ultima_tratativa: record.lastActorRole || 'Perfil não informado'
-  })), [upcomingRecords]);
+  })), [dashboardReportRecords]);
 
   const updateForm = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
