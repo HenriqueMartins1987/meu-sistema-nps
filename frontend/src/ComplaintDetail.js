@@ -163,6 +163,59 @@ function daysSince(value) {
   return Math.max(0, Math.floor((Date.now() - date.getTime()) / (1000 * 60 * 60 * 24)));
 }
 
+function buildBriefText(value, maxLength = 220) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trimEnd()}...`;
+}
+
+function buildComplaintNextAction({
+  complaint,
+  hasTreatment,
+  hasPatientContact,
+  hasFirstAttendance,
+  hasSupervisorApproval,
+  isHighPriority
+}) {
+  if (!complaint) return 'Validar o protocolo e definir o próximo responsável.';
+  if (complaint.status === 'resolvida') return 'Protocolo finalizado. Validar apenas se toda a devolutiva foi registrada.';
+  if (!hasFirstAttendance) return 'Registrar o primeiro atendimento e encaminhar a demanda para o responsável da tratativa.';
+  if (!hasTreatment) return 'Salvar uma tratativa com evidência objetiva para liberar o avanço do fluxo.';
+  if (isHighPriority && !hasSupervisorApproval) return 'Registrar o aceite do Supervisor do CRC antes do fechamento.';
+  if (!hasPatientContact) return 'Registrar o contato com o paciente e documentar o retorno dado.';
+  return 'Conferir se a tratativa está completa e, estando tudo validado, seguir para o fechamento do protocolo.';
+}
+
+function buildComplaintExecutiveSummary(complaint, options = {}) {
+  if (!complaint) return [];
+
+  const {
+    stage,
+    priority,
+    deadline,
+    hasTreatment,
+    hasPatientContact,
+    hasFirstAttendance,
+    hasSupervisorApproval,
+    isHighPriority
+  } = options;
+  const lastLog = Array.isArray(complaint.logs) && complaint.logs.length ? complaint.logs[0] : null;
+  const evidenceCount = Array.isArray(complaint.evidences) ? complaint.evidences.length : 0;
+  const baseOccurrence = buildBriefText(complaint.description, 240) || 'Sem descrição detalhada registrada.';
+  const lastMovement = lastLog
+    ? `${formatDate(lastLog.created_at)} · ${lastLog.actor_name || 'Usuário do sistema'} · ${buildBriefText(lastLog.message, 180)}`
+    : 'Sem movimentações adicionais registradas até o momento.';
+
+  return [
+    `Demanda ${formatProtocol(complaint)} registrada para ${complaint.patient_name || 'paciente não informado'} na unidade ${complaint.clinic_name || 'não informada'}, via ${complaint.channel || 'canal não informado'}, com classificação ${complaint.complaint_type || 'não informada'} e prioridade ${priority?.label || 'não informada'}.`,
+    `Relato principal: ${baseOccurrence}`,
+    `Situação atual: ${statusLabels[complaint.status] || 'Aberta'}, ${stage?.label || 'sem etapa definida'}, ${deadline?.label || 'prazo sem cálculo'}${deadline?.detail ? ` (${deadline.detail})` : ''}.`,
+    `Última movimentação: ${lastMovement}`,
+    `Evidências anexadas: ${evidenceCount}. Próxima ação recomendada: ${buildComplaintNextAction({ complaint, hasTreatment, hasPatientContact, hasFirstAttendance, hasSupervisorApproval, isHighPriority })}`
+  ];
+}
+
 function buildOperationalStage(complaint) {
   if (!complaint) {
     return {
@@ -232,6 +285,7 @@ function ComplaintDetail() {
   const [editablePatientPhone, setEditablePatientPhone] = useState('');
   const [showForwardModal, setShowForwardModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showExecutiveSummary, setShowExecutiveSummary] = useState(false);
   const [forwardToRole, setForwardToRole] = useState('');
   const [assetPreview, setAssetPreview] = useState(null);
 
@@ -289,6 +343,26 @@ function ComplaintDetail() {
         ? 'Prioridade alta exige aceite do Supervisor do CRC.'
         : '';
   const canCloseNow = canOperationalClose && !closeBlockedReason && complaint?.status !== 'resolvida';
+  const executiveSummary = useMemo(() => buildComplaintExecutiveSummary(complaint, {
+    stage,
+    priority,
+    deadline,
+    hasTreatment,
+    hasPatientContact,
+    hasFirstAttendance,
+    hasSupervisorApproval,
+    isHighPriority
+  }), [
+    complaint,
+    stage,
+    priority,
+    deadline,
+    hasTreatment,
+    hasPatientContact,
+    hasFirstAttendance,
+    hasSupervisorApproval,
+    isHighPriority
+  ]);
 
   const loadComplaint = useCallback(async () => {
     setLoading(true);
@@ -301,6 +375,7 @@ function ComplaintDetail() {
       setSelectedClinicId(data?.clinic_id ? String(data.clinic_id) : '');
       setEditablePatientPhone(data?.patient_phone || '');
       setComment('');
+      setShowExecutiveSummary(false);
     } catch (error) {
       setFeedback('Não foi possível carregar este protocolo.');
     } finally {
@@ -628,6 +703,9 @@ function ComplaintDetail() {
           <button className="outline-action" onClick={() => navigate('/gestao')}>
             Voltar para gestão
           </button>
+          <button className="outline-action" onClick={() => setShowExecutiveSummary((prev) => !prev)}>
+            {showExecutiveSummary ? 'Ocultar resumo' : 'Resumo rápido'}
+          </button>
           {canRenotifyComplaint && !isDeletedRecord && (
             <button className="outline-action" onClick={handleRenotify} disabled={saving}>
               Notificar responsáveis
@@ -690,6 +768,26 @@ function ComplaintDetail() {
           <p>{stage.label} há {daysSince(stage.since)} {daysSince(stage.since) === 1 ? 'dia' : 'dias'}.</p>
         </article>
       </section>
+
+      {showExecutiveSummary && (
+        <section className="management-panel summary-panel">
+          <div className="detail-title-row">
+            <div>
+              <p className="eyebrow">Resumo executivo</p>
+              <h2>Leitura rápida da reclamação</h2>
+              <p className="history-note">Síntese automática da demanda para agilizar o atendimento.</p>
+            </div>
+          </div>
+          <div className="executive-summary-list">
+            {executiveSummary.map((item, index) => (
+              <article className="executive-summary-item" key={`complaint-summary-${index}`}>
+                <span>{index + 1}</span>
+                <p>{item}</p>
+              </article>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="complaint-detail-grid executive-detail-grid">
         <article className="detail-card">

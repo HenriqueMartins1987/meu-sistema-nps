@@ -79,6 +79,49 @@ function uniqueList(values) {
     .sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'));
 }
 
+function buildBriefText(value, maxLength = 220) {
+  const text = String(value || '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trimEnd()}...`;
+}
+
+function buildNpsNextAction(item) {
+  if (!item) return 'Validar o registro e direcionar o atendimento.';
+  const profile = item.nps_profile || profileFromScore(item.score);
+  const status = getNpsStatus(item);
+
+  if (item.deleted_at) return 'Registro excluído da operação ativa. Consultar apenas para histórico.';
+  if (status === 'tratado') return 'Tratativa concluída. Confirmar se o retorno final ficou devidamente registrado.';
+  if (profile === 'detrator' && !String(item.nps_treatment_comment || '').trim()) return 'Registrar a tratativa do detrator com objetividade e evidência do contato.';
+  if (profile === 'detrator') return 'Concluir o retorno ao paciente e finalizar a tratativa quando o caso estiver resolvido.';
+  if (profile === 'neutro') return 'Avaliar oportunidade de melhoria operacional e registrar eventual ação preventiva.';
+  return 'Manter o registro para acompanhamento de satisfação e relacionamento.';
+}
+
+function buildNpsExecutiveSummary(item) {
+  if (!item) return [];
+
+  const profile = item.nps_profile || profileFromScore(item.score);
+  const lastLog = Array.isArray(item.logs) && item.logs.length ? item.logs[0] : null;
+  const mainFeedback = buildBriefText(
+    item.detractor_feedback || item.improvement_comment || item.comment,
+    220
+  ) || 'Sem comentário detalhado na pesquisa.';
+  const reasons = parseReasons(item.detractor_reasons);
+  const lastMovement = lastLog
+    ? `${formatDate(lastLog.created_at)} · ${lastLog.actor_name || 'Usuário'} · ${buildBriefText(lastLog.message, 170)}`
+    : 'Sem movimentações de tratativa registradas até o momento.';
+
+  return [
+    `Pesquisa ${protocolLabel(item)} registrada para ${item.patient_name || 'paciente não informado'} na unidade ${item.clinic_name || 'não informada'}, com nota ${item.score || 'não informada'} e perfil ${profileLabels[profile] || profile}.`,
+    `Percepção principal do paciente: ${mainFeedback}`,
+    reasons.length ? `Motivos sinalizados pelo paciente: ${reasons.join(', ')}.` : 'O paciente não informou motivos estruturados adicionais na resposta.',
+    `Situação atual: ${statusLabels[getNpsStatus(item)] || getNpsStatus(item)}. Última movimentação: ${lastMovement}`,
+    `Próxima ação recomendada: ${buildNpsNextAction(item)}`
+  ];
+}
+
 function NpsManagement() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -107,6 +150,7 @@ function NpsManagement() {
   const [savingId, setSavingId] = useState(null);
   const [selectedNps, setSelectedNps] = useState(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showExecutiveSummary, setShowExecutiveSummary] = useState(false);
   const [treatmentText, setTreatmentText] = useState('');
   const [treatmentStatus, setTreatmentStatus] = useState('em_tratativa');
   const [bulkFile, setBulkFile] = useState(null);
@@ -238,6 +282,10 @@ function NpsManagement() {
 
     return { total, promoters, neutrals, detractors, inTreatment, treated, pendingDetractors, nps };
   }, [activeRows, finishedRows, operationalRows]);
+  const selectedNpsExecutiveSummary = useMemo(
+    () => buildNpsExecutiveSummary(selectedNps),
+    [selectedNps]
+  );
 
   const updateFilter = (field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value }));
@@ -292,6 +340,7 @@ function NpsManagement() {
     setTreatmentText('');
     setTreatmentStatus(getNpsStatus(item) === 'tratado' ? 'tratado' : 'em_tratativa');
     setFeedback('');
+    setShowExecutiveSummary(false);
   };
 
   const closeTreatment = () => {
@@ -299,6 +348,7 @@ function NpsManagement() {
     setShowDeleteModal(false);
     setTreatmentText('');
     setTreatmentStatus('em_tratativa');
+    setShowExecutiveSummary(false);
   };
 
   const handleSaveTreatment = async () => {
@@ -686,6 +736,26 @@ function NpsManagement() {
                 <strong>{selectedNps.score}</strong>
               </div>
             </div>
+
+            <div className="heading-actions inline-summary-actions">
+              <button className="outline-action" type="button" onClick={() => setShowExecutiveSummary((prev) => !prev)}>
+                {showExecutiveSummary ? 'Ocultar resumo' : 'Resumo rápido'}
+              </button>
+            </div>
+
+            {showExecutiveSummary && (
+              <div className="nps-executive-summary">
+                <strong>Resumo executivo do NPS</strong>
+                <div className="executive-summary-list">
+                  {selectedNpsExecutiveSummary.map((item, index) => (
+                    <article className="executive-summary-item" key={`nps-summary-${index}`}>
+                      <span>{index + 1}</span>
+                      <p>{item}</p>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="nps-treatment-relato">
               <strong>Relato do cliente</strong>

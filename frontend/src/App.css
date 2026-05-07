@@ -2647,6 +2647,66 @@ a {
   line-height: 1.6;
 }
 
+.summary-panel {
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
+  margin: 0 auto 20px;
+  display: grid;
+  gap: 16px;
+}
+
+.executive-summary-list {
+  display: grid;
+  gap: 12px;
+}
+
+.executive-summary-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 14px 16px;
+  border: 1px solid rgba(200, 154, 87, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.executive-summary-item span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: rgba(11, 111, 95, 0.12);
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.executive-summary-item p {
+  margin: 0;
+  color: var(--ink);
+  line-height: 1.65;
+}
+
+.inline-summary-actions {
+  justify-content: flex-start;
+  margin: 0;
+}
+
+.nps-executive-summary {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.96);
+}
+
+.nps-executive-summary > strong {
+  color: var(--ink);
+}
+
 .priority-options {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
