@@ -74,6 +74,7 @@ const requirePasswordChangeOnFirstLogin = String(process.env.REQUIRE_PASSWORD_CH
 const appointmentReminderLeadHours = Math.max(1, Number(process.env.APPOINTMENT_REMINDER_LEAD_HOURS || 24));
 const appointmentReminderIntervalMinutes = Math.max(5, Number(process.env.APPOINTMENT_REMINDER_INTERVAL_MINUTES || 30));
 const complaintDueReminderIntervalMinutes = Math.max(5, Number(process.env.COMPLAINT_REMINDER_INTERVAL_MINUTES || 30));
+const complaintExpiredReminderIntervalHours = Math.max(1, Number(process.env.COMPLAINT_EXPIRED_REMINDER_INTERVAL_HOURS || 6));
 const weeklyDemandReminderEnabled = String(process.env.WEEKLY_DEMAND_REMINDER_ENABLED || 'true').trim().toLowerCase() !== 'false';
 const weeklyDemandReminderIntervalMinutes = Math.max(5, Number(process.env.WEEKLY_DEMAND_REMINDER_INTERVAL_MINUTES || 15));
 const weeklyDemandReminderDay = Math.min(6, Math.max(0, Number(process.env.WEEKLY_DEMAND_REMINDER_DAY || 1)));
@@ -4989,6 +4990,195 @@ function buildExpiredComplaintManagerEmail(complaint) {
   };
 }
 
+function buildComplaintExpiredResponsibleReminderWindowKey(now = new Date()) {
+  const intervalMs = complaintExpiredReminderIntervalHours * 60 * 60 * 1000;
+  return Math.floor(now.getTime() / intervalMs);
+}
+
+function buildComplaintExpiredResponsibleReminderJobKey(complaintId, now = new Date()) {
+  return `complaint_expired_responsible:${complaintId}:${buildComplaintExpiredResponsibleReminderWindowKey(now)}`;
+}
+
+function buildExpiredComplaintResponsibleReminder(complaint) {
+  const protocol = complaint?.protocol || `GRC-${complaint?.id || ''}`;
+  const clinic = complaint?.clinic_name
+    ? `${complaint.clinic_name}${complaint.city ? ` - ${complaint.city}/${complaint.state || 'UF'}` : ''}`
+    : 'Unidade não informada';
+  const complaintUrl = `${frontendUrl}/gestao/${complaint?.id}`;
+  const responsibleName = complaint?.responsible_name || 'Responsável não informado';
+  const overdueSince = formatMessageDateTime(complaint?.due_at);
+  const subject = `Demanda vencida - protocolo ${protocol}`;
+  const title = `Demanda vencida - ${protocol}`;
+  const message = [
+    `${title}`,
+    `Paciente: ${complaint?.patient_name || 'Não informado'}`,
+    `Unidade: ${clinic}`,
+    `Responsável atual: ${responsibleName}`,
+    `Prazo expirado em: ${overdueSince}`,
+    '',
+    'Acesse o protocolo e atualize a tratativa com urgência.',
+    complaintUrl
+  ].join('\n');
+
+  return {
+    protocol,
+    complaintUrl,
+    subject,
+    title,
+    message,
+    html: emailService.renderBrandedEmail({
+      eyebrow: 'Demanda vencida',
+      title: `Protocolo vencido ${protocol}`,
+      intro: `Olá, <strong>${escapeNotificationHtml(responsibleName)}</strong>.`,
+      bodyHtml: `
+        <p style="margin:0 0 18px;">A demanda abaixo segue vencida e requer atualização imediata no sistema.</p>
+        <table role="presentation" cellpadding="0" cellspacing="0" style="width:100%;border-collapse:collapse;margin:0 0 8px;">
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Paciente</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(complaint?.patient_name || 'Não informado')}</td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Unidade</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(clinic)}</td></tr>
+          <tr><td style="padding:10px 0;border-bottom:1px solid #eadcca;color:#6c5a4e;">Responsável atual</td><td style="padding:10px 0;border-bottom:1px solid #eadcca;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(responsibleName)}</td></tr>
+          <tr><td style="padding:10px 0;color:#6c5a4e;">Prazo expirado em</td><td style="padding:10px 0;text-align:right;font-weight:700;color:#2f2825;">${escapeNotificationHtml(overdueSince)}</td></tr>
+        </table>
+      `,
+      actionLabel: 'Abrir protocolo',
+      actionUrl: complaintUrl,
+      footerText: `Lembrete automático reenviado a cada ${complaintExpiredReminderIntervalHours} horas enquanto a demanda permanecer vencida.`
+    })
+  };
+}
+
+async function dispatchExpiredComplaintResponsibleReminders(now = new Date()) {
+  const [rows] = await pool.query(
+    `SELECT
+       c.id,
+       c.protocol,
+       c.patient_name,
+       c.complaint_type,
+       c.due_at,
+       c.assigned_responsible_user_id,
+       c.assigned_responsible_name,
+       c.assigned_responsible_role,
+       c.assigned_coordinator_user_id,
+       c.assigned_coordinator_name,
+       cl.name AS clinic_name,
+       cl.city,
+       cl.state,
+       u.id AS responsible_user_id,
+       u.name AS responsible_name,
+       u.email AS responsible_email,
+       u.whatsapp AS responsible_whatsapp,
+       u.phone AS responsible_phone,
+       u.role AS responsible_role
+     FROM complaints c
+     LEFT JOIN clinics cl ON cl.id = c.clinic_id
+     LEFT JOIN users u ON u.id = COALESCE(c.assigned_responsible_user_id, c.assigned_coordinator_user_id)
+     WHERE c.deleted_at IS NULL
+       AND c.status <> 'resolvida'
+       AND c.due_at IS NOT NULL
+       AND c.due_at < NOW()
+       AND u.id IS NOT NULL
+       AND u.active = 1
+       AND u.deleted_at IS NULL`
+  );
+
+  const results = [];
+
+  for (const complaint of rows) {
+    const jobKey = buildComplaintExpiredResponsibleReminderJobKey(complaint.id, now);
+    const [existingJobRows] = await pool.query(
+      'SELECT id FROM system_job_runs WHERE job_key = ? LIMIT 1',
+      [jobKey]
+    );
+
+    if (existingJobRows.length) {
+      continue;
+    }
+
+    const reminder = buildExpiredComplaintResponsibleReminder(complaint);
+    const recipient = {
+      userId: complaint.responsible_user_id,
+      name: complaint.responsible_name || complaint.assigned_responsible_name || complaint.assigned_coordinator_name || 'Responsável',
+      role: complaint.responsible_role || complaint.assigned_responsible_role || 'responsible',
+      email: complaint.responsible_email,
+      phone: complaint.responsible_whatsapp || complaint.responsible_phone
+    };
+
+    try {
+      await createNotification(
+        recipient.userId,
+        'complaint_overdue_responsible',
+        reminder.title,
+        reminder.message,
+        reminder.complaintUrl,
+        {
+          complaintId: complaint.id,
+          protocol: reminder.protocol,
+          dueAt: complaint.due_at,
+          intervalHours: complaintExpiredReminderIntervalHours
+        }
+      );
+    } catch (error) {
+      console.warn('Não foi possível criar notificação interna de demanda vencida:', error.message);
+    }
+
+    const emailResult = await sendLoggedNotificationEmail({
+      eventType: 'COMPLAINT_OVERDUE_RESPONSIBLE',
+      protocol: reminder.protocol,
+      recipient,
+      template: {
+        subject: reminder.subject,
+        html: reminder.html
+      }
+    });
+
+    const whatsappResult = isWhatsAppEnabled()
+      ? await sendLoggedTwilioNotification({
+        eventType: 'COMPLAINT_OVERDUE_RESPONSIBLE',
+        protocol: reminder.protocol,
+        recipient,
+        message: reminder.message,
+        sender: ({ to, protocol, message }) => sendTwilioGenericNotification({
+          to,
+          protocol,
+          message,
+          eventType: 'complaint_overdue_responsible',
+          verifyFinalStatus: true
+        })
+      })
+      : await (async () => {
+        await insertNotificationLog({
+          eventType: 'COMPLAINT_OVERDUE_RESPONSIBLE',
+          protocol: reminder.protocol,
+          channel: 'WHATSAPP',
+          recipientPhone: recipient.phone || null,
+          recipientUserId: recipient.userId,
+          recipientRole: recipient.role,
+          status: 'skipped',
+          errorMessage: 'WhatsApp desabilitado por configuração.'
+        });
+
+        return { channel: 'WHATSAPP', status: 'skipped', reason: 'disabled' };
+      })();
+
+    await recordJobRun(jobKey, {
+      complaintId: complaint.id,
+      protocol: reminder.protocol,
+      recipientUserId: recipient.userId,
+      emailStatus: emailResult?.status || 'skipped',
+      whatsappStatus: whatsappResult?.status || 'skipped'
+    });
+
+    results.push({
+      complaintId: complaint.id,
+      protocol: reminder.protocol,
+      recipientUserId: recipient.userId,
+      emailStatus: emailResult?.status || 'skipped',
+      whatsappStatus: whatsappResult?.status || 'skipped'
+    });
+  }
+
+  return results;
+}
+
 async function dispatchExpiredComplaintManagerAlerts() {
   const [rows] = await pool.query(
     `SELECT
@@ -9496,6 +9686,9 @@ async function startServer() {
     dispatchExpiredComplaintManagerAlerts().catch((jobError) => {
       console.warn('Não foi possível executar a rotina inicial de expiração de reclamações para gerência:', jobError.message);
     });
+    dispatchExpiredComplaintResponsibleReminders().catch((jobError) => {
+      console.warn('Não foi possível executar a rotina inicial de expiração de reclamações para responsáveis:', jobError.message);
+    });
     runScheduledUserDemandReminders().catch((jobError) => {
       console.warn('Não foi possível executar a rotina inicial de lembretes semanais aos usuários:', jobError.message);
     });
@@ -9526,6 +9719,12 @@ async function startServer() {
   }, complaintDueReminderIntervalMinutes * 60 * 1000);
 
   setInterval(() => {
+    dispatchExpiredComplaintResponsibleReminders().catch((jobError) => {
+      console.warn('Não foi possível executar a rotina programada de expiração de reclamações para responsáveis:', jobError.message);
+    });
+  }, complaintExpiredReminderIntervalHours * 60 * 60 * 1000);
+
+  setInterval(() => {
     runScheduledUserDemandReminders().catch((jobError) => {
       console.warn('Não foi possível executar a rotina programada de lembretes semanais aos usuários:', jobError.message);
     });
@@ -9544,6 +9743,8 @@ module.exports = {
   __testables: {
     buildAuthenticatedUser,
     buildComplaintNotificationEmail,
+    buildComplaintExpiredResponsibleReminderJobKey,
+    buildComplaintExpiredResponsibleReminderWindowKey,
     buildComplaintWhatsAppMessage,
     buildWeeklyUserDemandReminderJobKey,
     canChangeComplaintUnit,

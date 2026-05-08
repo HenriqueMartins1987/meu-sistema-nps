@@ -261,6 +261,29 @@ test('complaint template variables default to indexed protocol and complaint lin
   }
 });
 
+test('complaint overdue reminder job key stays stable within the same 6-hour window', () => {
+  const first = new Date('2026-05-08T00:15:00.000Z');
+  const second = new Date('2026-05-08T05:59:59.000Z');
+  const third = new Date('2026-05-08T06:00:00.000Z');
+
+  assert.equal(
+    __testables.buildComplaintExpiredResponsibleReminderWindowKey(first),
+    __testables.buildComplaintExpiredResponsibleReminderWindowKey(second)
+  );
+  assert.notEqual(
+    __testables.buildComplaintExpiredResponsibleReminderWindowKey(first),
+    __testables.buildComplaintExpiredResponsibleReminderWindowKey(third)
+  );
+  assert.equal(
+    __testables.buildComplaintExpiredResponsibleReminderJobKey(99, first),
+    __testables.buildComplaintExpiredResponsibleReminderJobKey(99, second)
+  );
+  assert.notEqual(
+    __testables.buildComplaintExpiredResponsibleReminderJobKey(99, second),
+    __testables.buildComplaintExpiredResponsibleReminderJobKey(99, third)
+  );
+});
+
 test('complaint notification templates include the complaint link and detailed WhatsApp message', () => {
   const complaint = {
     id: 123,
@@ -366,7 +389,7 @@ test('canReceiveComplaintNotification respects complaint permissions and hierarc
     role: 'viewer',
     email: 'viewer@example.com',
     permissions: JSON.stringify(['home', 'nps_management'])
-  }), true);
+  }), false);
 });
 
 test('canRenotifyComplaint only allows master admin, Supervisor do CRC and Operador de SAC', () => {
