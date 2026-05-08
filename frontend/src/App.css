@@ -5170,11 +5170,17 @@ a {
 .dashboard-coordinator-card {
   display: grid;
   gap: 16px;
+  grid-column: span 2;
 }
 
 .dashboard-coordinator-list {
   display: grid;
   gap: 12px;
+  max-height: 360px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 6px;
+  scrollbar-gutter: stable;
 }
 
 .dashboard-coordinator-item {
@@ -5246,6 +5252,15 @@ a {
   white-space: nowrap;
 }
 
+.dashboard-coordinator-list::-webkit-scrollbar {
+  width: 8px;
+}
+
+.dashboard-coordinator-list::-webkit-scrollbar-thumb {
+  background: rgba(138, 99, 45, 0.35);
+  border-radius: 999px;
+}
+
 .complaints-dashboard-page .page-heading,
 .nps-dashboard-page .page-heading,
 .patient-dashboard-page .page-heading {
@@ -5284,6 +5299,10 @@ a {
 
   .dashboard-inner-grid {
     grid-template-columns: 1fr;
+  }
+
+  .dashboard-coordinator-card {
+    grid-column: span 1;
   }
 
   .dashboard-type-highlight-grid,

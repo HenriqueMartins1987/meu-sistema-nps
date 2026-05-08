@@ -173,7 +173,7 @@ function priorityLabel(value) {
 }
 
 function serviceLabel(value) {
-  return serviceTypes.find((option) => option.value === value)?.label || value || 'N?o informado';
+  return serviceTypes.find((option) => option.value === value)?.label || value || 'Não informado';
 }
 
 function lastComplaintActor(item) {
@@ -433,7 +433,7 @@ function Dashboard() {
     }
 
     const printDate = new Date();
-    const headers = ['Protocolo', 'Paciente', 'Unidade', 'Classificação', 'Status', 'Prazo', 'Responsável', 'Cadastro'];
+    const headers = ['Protocolo', 'Paciente', 'Unidade', 'Classifica??o', 'Status', 'Prazo', 'Responsável', 'Cadastro'];
     const rowsToPrint = baseExportRows.map((row) => [
       row.protocolo,
       `${row.paciente} | ${row.telefone}`,
@@ -639,9 +639,9 @@ function Dashboard() {
             <article className="chart-card dashboard-type-intelligence-card large">
               <div className="dashboard-section-head">
                 <div>
-                  <p className="eyebrow">Servi?o envolvido</p>
-                  <h2>Radar dos servi?os envolvidos</h2>
-                  <p className="base-subtitle">Resumo executivo por servi?o, com participa??o na carteira, volume em andamento e press?o de atraso.</p>
+                  <p className="eyebrow">Serviço envolvido</p>
+                  <h2>Radar dos serviços envolvidos</h2>
+                  <p className="base-subtitle">Resumo executivo por serviço, com participação na carteira, volume em andamento e pressão de atraso.</p>
                 </div>
               </div>
 
@@ -654,7 +654,7 @@ function Dashboard() {
                     <small>{item.inProgress} em andamento · {item.overdue} vencidas</small>
                   </article>
                 )) : (
-                  <p className="empty-state">Sem volume suficiente para leitura por servi?o.</p>
+                  <p className="empty-state">Sem volume suficiente para leitura por serviço.</p>
                 )}
               </div>
 
@@ -676,7 +676,7 @@ function Dashboard() {
             </article>
 
             <article className="chart-card">
-              <h2>Classifica??o da ocorr?ncia</h2>
+              <h2>Classifica??o da ocorrência</h2>
               <div className="chart-box">
                 <Bar data={buildBarData(byType)} options={chartOptions} />
               </div>
@@ -732,39 +732,6 @@ function Dashboard() {
                     <Bar data={buildBarData(byCoordinator, '#8a4f7d')} options={chartOptions} />
                   </div>
                 </article>
-
-                <article className="chart-card dashboard-coordinator-card">
-                  <div className="dashboard-section-head">
-                    <div>
-                      <p className="eyebrow">Colaboradores</p>
-                      <h2>Colaboradores com mais reclama??es</h2>
-                      <p className="base-subtitle">Clique no nome do colaborador para filtrar a carteira e aprofundar a an?lise do respons?vel.</p>
-                    </div>
-                  </div>
-                  <div className="dashboard-coordinator-list">
-                    {coordinatorHighlights.length ? coordinatorHighlights.map((item, index) => (
-                      <article className="dashboard-coordinator-item" key={item.label}>
-                        <div className="dashboard-coordinator-rank">{String(index + 1).padStart(2, '0')}</div>
-                        <div className="dashboard-coordinator-copy">
-                          <button
-                            className="dashboard-inline-filter"
-                            type="button"
-                            onClick={() => applyFilters({ coordinator: item.label })}
-                          >
-                            {item.label}
-                          </button>
-                          <span>{item.total} reclama??es ? {item.share}% da carteira filtrada</span>
-                        </div>
-                        <div className="dashboard-coordinator-meta">
-                          <span>{item.inProgress} em andamento</span>
-                          <span>{item.overdue} vencidas</span>
-                        </div>
-                      </article>
-                    )) : (
-                      <p className="empty-state">Sem colaboradores vinculados na base filtrada.</p>
-                    )}
-                  </div>
-                </article>
               </>
             )}
             <article className="chart-card">
@@ -773,6 +740,41 @@ function Dashboard() {
                 <Doughnut data={buildDoughnutData(bySla)} options={chartOptions} />
               </div>
             </article>
+
+            {canViewCollaboratorWorkload && (
+              <article className="chart-card dashboard-coordinator-card">
+                <div className="dashboard-section-head">
+                  <div>
+                    <p className="eyebrow">Colaboradores</p>
+                    <h2>Colaboradores com mais reclamações</h2>
+                    <p className="base-subtitle">Clique no nome do colaborador para filtrar a carteira e aprofundar a análise do responsável.</p>
+                  </div>
+                </div>
+                <div className="dashboard-coordinator-list">
+                  {coordinatorHighlights.length ? coordinatorHighlights.map((item, index) => (
+                    <article className="dashboard-coordinator-item" key={item.label}>
+                      <div className="dashboard-coordinator-rank">{String(index + 1).padStart(2, '0')}</div>
+                      <div className="dashboard-coordinator-copy">
+                        <button
+                          className="dashboard-inline-filter"
+                          type="button"
+                          onClick={() => applyFilters({ coordinator: item.label })}
+                        >
+                          {item.label}
+                        </button>
+                        <span>{item.total} reclamações · {item.share}% da carteira filtrada</span>
+                      </div>
+                      <div className="dashboard-coordinator-meta">
+                        <span>{item.inProgress} em andamento</span>
+                        <span>{item.overdue} vencidas</span>
+                      </div>
+                    </article>
+                  )) : (
+                    <p className="empty-state">Sem colaboradores vinculados na base filtrada.</p>
+                  )}
+                </div>
+              </article>
+            )}
           </section>
 
           <section className="management-panel dashboard-base-panel">
