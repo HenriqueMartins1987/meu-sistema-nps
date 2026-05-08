@@ -5091,6 +5091,64 @@ a {
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
 }
 
+.dashboard-type-intelligence-card {
+  display: grid;
+  gap: 18px;
+}
+
+.dashboard-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.dashboard-type-highlight-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.dashboard-type-highlight-card {
+  border: 1px solid rgba(200, 154, 87, 0.2);
+  border-radius: 8px;
+  background: rgba(255, 250, 242, 0.9);
+  padding: 16px;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.dashboard-type-highlight-card span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.dashboard-type-highlight-card strong {
+  color: var(--ink);
+  font-size: 30px;
+  line-height: 1;
+}
+
+.dashboard-type-highlight-card p,
+.dashboard-type-highlight-card small {
+  margin: 0;
+  color: var(--muted);
+}
+
+.dashboard-inner-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  min-width: 0;
+}
+
+.dashboard-inner-grid > * {
+  min-width: 0;
+}
+
 .complaints-dashboard-page .page-heading,
 .nps-dashboard-page .page-heading,
 .patient-dashboard-page .page-heading {
@@ -5108,6 +5166,10 @@ a {
 .nps-dashboard-page .dashboard-base-summary,
 .patient-dashboard-page .dashboard-base-summary {
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.complaints-dashboard-page .dashboard-type-highlight-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .complaints-dashboard-page .dashboard-summary-card,
@@ -5487,6 +5549,11 @@ a {
   .complaints-dashboard-page .dashboard-chart-grid,
   .nps-dashboard-page .dashboard-chart-grid,
   .patient-dashboard-page .dashboard-chart-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-type-highlight-grid,
+  .dashboard-inner-grid {
     grid-template-columns: 1fr;
   }
 }

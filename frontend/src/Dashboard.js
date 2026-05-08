@@ -110,6 +110,21 @@ function percentOf(total, value) {
   return total ? formatPercent((value / total) * 100) : '0%';
 }
 
+function slaLabel(value) {
+  switch (value) {
+    case 'overdue':
+      return 'Vencidas';
+    case 'warning':
+      return 'Prazo crítico';
+    case 'ontime':
+      return 'No prazo';
+    case 'closed':
+      return 'Fechadas';
+    default:
+      return 'Sem SLA';
+  }
+}
+
 function formatShortDate(value) {
   if (!value) return 'Sem data';
   return new Intl.DateTimeFormat('pt-BR', {
@@ -282,6 +297,8 @@ function Dashboard() {
   const byRegion = useMemo(() => groupCount(filteredRows, (item) => item.region), [filteredRows]);
   const byPriority = useMemo(() => groupCount(filteredRows, (item) => priorityLabel(item.priority)), [filteredRows]);
   const byChannel = useMemo(() => groupCount(filteredRows, (item) => item.channel).slice(0, 10), [filteredRows]);
+  const byCoordinator = useMemo(() => groupCount(filteredRows, (item) => item.coordinator_name).slice(0, 10), [filteredRows]);
+  const bySla = useMemo(() => groupCount(filteredRows, (item) => slaLabel(buildDeadlineInfo(item))), [filteredRows]);
   const baseRows = useMemo(() => filteredRows.slice(0, 100), [filteredRows]);
   const baseExportRows = useMemo(() => baseRows.map((item) => {
     const deadline = buildDeadlineInfo(item);
@@ -317,6 +334,20 @@ function Dashboard() {
       { label: 'Vencidos', value: overdue }
     ];
   }, [filteredRows]);
+
+  const complaintTypeHighlights = useMemo(() => {
+    const total = filteredRows.length || 1;
+
+    return byType.slice(0, 4).map((item) => {
+      const matchingRows = filteredRows.filter((row) => (row.complaint_type || 'NÃ£o informado') === item.label);
+      return {
+        ...item,
+        share: Math.round((item.total / total) * 100),
+        overdue: matchingRows.filter((row) => buildDeadlineInfo(row) === 'overdue').length,
+        inProgress: matchingRows.filter((row) => row.status === 'em_andamento').length
+      };
+    });
+  }, [byType, filteredRows]);
 
   const updateFilter = (field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value }));
@@ -568,6 +599,38 @@ function Dashboard() {
       ) : (
         <>
           <section className="chart-grid dashboard-chart-grid">
+            <article className="chart-card dashboard-type-intelligence-card large">
+              <div className="dashboard-section-head">
+                <div>
+                  <p className="eyebrow">Leitura por tipo</p>
+                  <h2>Radar das classificações</h2>
+                  <p className="base-subtitle">Resumo executivo das reclamações por tipo, com participação na carteira, volume em andamento e pressão de atraso.</p>
+                </div>
+              </div>
+
+              <div className="dashboard-type-highlight-grid">
+                {complaintTypeHighlights.length ? complaintTypeHighlights.map((item) => (
+                  <article className="dashboard-type-highlight-card" key={item.label}>
+                    <span>{item.label}</span>
+                    <strong>{item.total}</strong>
+                    <p>{item.share}% da carteira filtrada</p>
+                    <small>{item.inProgress} em andamento · {item.overdue} vencidas</small>
+                  </article>
+                )) : (
+                  <p className="empty-state">Sem volume suficiente para leitura por classificação.</p>
+                )}
+              </div>
+
+              <div className="dashboard-inner-grid">
+                <div className="chart-box">
+                  <Bar data={buildBarData(byType)} options={chartOptions} />
+                </div>
+                <div className="chart-box">
+                  <Doughnut data={buildDoughnutData(bySla)} options={chartOptions} />
+                </div>
+              </div>
+            </article>
+
             <article className="chart-card status-chart-card">
               <h2>Status das reclamações</h2>
               <div className="chart-box">
@@ -621,6 +684,20 @@ function Dashboard() {
               <h2>Canal de entrada</h2>
               <div className="chart-box">
                 <Bar data={buildBarData(byChannel, '#5d6d7e')} options={chartOptions} />
+              </div>
+            </article>
+
+            <article className="chart-card">
+              <h2>Carteira por coordenador</h2>
+              <div className="chart-box">
+                <Bar data={buildBarData(byCoordinator, '#8a4f7d')} options={chartOptions} />
+              </div>
+            </article>
+
+            <article className="chart-card">
+              <h2>Leitura de SLA</h2>
+              <div className="chart-box">
+                <Doughnut data={buildDoughnutData(bySla)} options={chartOptions} />
               </div>
             </article>
           </section>
