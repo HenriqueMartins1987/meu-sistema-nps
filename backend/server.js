@@ -8860,6 +8860,12 @@ app.post('/complaints/:id/reactivate', authenticate, async (req, res) => {
       return res.status(409).json({ error: 'Este protocolo já está habilitado para tratativa.' });
     }
 
+    const reactivateReason = String(req.body?.reason || '').trim();
+
+    if (!reactivateReason) {
+      return res.status(400).json({ error: 'Informe o motivo da reabertura para re-habilitar a reclamação.' });
+    }
+
     const restoredStatus = complaint.treatment_at || complaint.first_attendance_at || complaint.patient_contacted_at
       ? 'em_andamento'
       : 'aberta';
@@ -8883,7 +8889,7 @@ app.post('/complaints/:id/reactivate', authenticate, async (req, res) => {
     await insertComplaintLog(
       req.params.id,
       'reactivated',
-      `Protocolo reabilitado por ${actorName}. Status retomado para ${restoredStatus}.`,
+      `Protocolo reabilitado por ${actorName}. Status retomado para ${restoredStatus}. Motivo: ${reactivateReason}`,
       req.user
     );
 

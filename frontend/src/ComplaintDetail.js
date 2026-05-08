@@ -285,8 +285,10 @@ function ComplaintDetail() {
   const [editablePatientPhone, setEditablePatientPhone] = useState('');
   const [showForwardModal, setShowForwardModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showReactivateModal, setShowReactivateModal] = useState(false);
   const [showExecutiveSummary, setShowExecutiveSummary] = useState(false);
   const [forwardToRole, setForwardToRole] = useState('');
+  const [reactivateReason, setReactivateReason] = useState('');
   const [assetPreview, setAssetPreview] = useState(null);
 
   const protocol = useMemo(() => formatProtocol(complaint), [complaint]);
@@ -669,12 +671,21 @@ function ComplaintDetail() {
   const handleReactivateComplaint = async () => {
     if (!canReactivateComplaint) return;
 
+    if (!reactivateReason.trim()) {
+      setFeedback('Informe o motivo da reabertura antes de re-habilitar a reclamação.');
+      return;
+    }
+
     setSaving(true);
     setFeedback('');
 
     try {
-      const response = await api.post(`/complaints/${id}/reactivate`);
+      const response = await api.post(`/complaints/${id}/reactivate`, {
+        reason: reactivateReason.trim()
+      });
       setFeedback(response.data?.message || 'Reclamação reabilitada com sucesso.');
+      setShowReactivateModal(false);
+      setReactivateReason('');
       await loadComplaint();
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível reabilitar esta reclamação.');
@@ -744,15 +755,6 @@ function ComplaintDetail() {
               disabled={saving}
             >
               Excluir protocolo
-            </button>
-          )}
-          {canReactivateComplaint && (isDeletedRecord || complaint.status === 'resolvida') && (
-            <button
-              className="secondary-action"
-              onClick={handleReactivateComplaint}
-              disabled={saving}
-            >
-              {saving ? 'Reabilitando...' : 'Re-habilitar reclamação'}
             </button>
           )}
         </div>
@@ -1200,6 +1202,18 @@ function ComplaintDetail() {
                 {saving ? 'Fechando...' : 'Fechar protocolo'}
               </button>
             )}
+            {canReactivateComplaint && (isDeletedRecord || complaint.status === 'resolvida') && (
+              <button
+                className="secondary-action"
+                onClick={() => {
+                  setFeedback('');
+                  setShowReactivateModal(true);
+                }}
+                disabled={saving}
+              >
+                Re-habilitar reclamação
+              </button>
+            )}
           </div>
 
           {closeBlockedReason && complaint.status !== 'resolvida' && (
@@ -1262,6 +1276,46 @@ function ComplaintDetail() {
               </button>
               <button type="button" className="primary-action" onClick={() => window.open(assetPreview.url, '_blank', 'noopener,noreferrer')}>
                 Abrir em nova janela
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showReactivateModal && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Informar motivo da reabertura" onClick={() => setShowReactivateModal(false)}>
+          <div className="modal-panel modal-confirm-panel" onClick={(event) => event.stopPropagation()}>
+            <p className="eyebrow">Re-habilitar reclamação</p>
+            <h2>Informe o motivo da reabertura</h2>
+            <label>
+              Motivo obrigatório
+              <textarea
+                className="field textarea"
+                value={reactivateReason}
+                onChange={(event) => setReactivateReason(event.target.value)}
+                placeholder="Descreva por que este protocolo está sendo reaberto."
+                rows={4}
+              />
+            </label>
+            <div className="row-actions">
+              <button
+                className="outline-action"
+                type="button"
+                onClick={() => {
+                  setShowReactivateModal(false);
+                  setReactivateReason('');
+                }}
+                disabled={saving}
+              >
+                Cancelar
+              </button>
+              <button
+                className="primary-action"
+                type="button"
+                onClick={handleReactivateComplaint}
+                disabled={saving || !reactivateReason.trim()}
+              >
+                {saving ? 'Reabilitando...' : 'Confirmar reabertura'}
               </button>
             </div>
           </div>
