@@ -291,6 +291,21 @@ function NpsManagement() {
     setFilters((prev) => ({ ...prev, [field]: value }));
   };
 
+  const applyQuickFilter = (nextViewMode, nextFilters = {}) => {
+    setViewMode(nextViewMode);
+    setFilters((prev) => ({
+      ...prev,
+      profile: '',
+      state: '',
+      region: '',
+      coordinator: '',
+      status: '',
+      clinic: prev.clinic,
+      search: prev.search,
+      ...nextFilters
+    }));
+  };
+
   const handleDownloadTemplate = async () => {
     try {
       const response = await api.get('/nps/bulk-template', { responseType: 'blob' });
@@ -488,36 +503,36 @@ function NpsManagement() {
       </header>
 
       <section className="kpi-grid management-kpi-grid" aria-label="Resumo NPS">
-        <article className="kpi-card">
+        <button type="button" className="kpi-card kpi-button" onClick={() => applyQuickFilter('active')}>
           <span>NPS</span>
           <strong>{metrics.nps}</strong>
           <p>ÍNDICE ATUAL</p>
-        </article>
-        <article className="kpi-card success">
+        </button>
+        <button type="button" className="kpi-card success kpi-button" onClick={() => applyQuickFilter('active', { profile: 'promotor' })}>
           <span>Promotores</span>
           <strong>{metrics.promoters}</strong>
           <p>NOTAS 9 E 10</p>
-        </article>
-        <article className="kpi-card progress">
+        </button>
+        <button type="button" className="kpi-card progress kpi-button" onClick={() => applyQuickFilter('active', { profile: 'neutro' })}>
           <span>Neutros</span>
           <strong>{metrics.neutrals}</strong>
           <p>NOTAS 7 E 8</p>
-        </article>
-        <article className="kpi-card danger">
+        </button>
+        <button type="button" className="kpi-card danger kpi-button" onClick={() => applyQuickFilter('active', { profile: 'detrator' })}>
           <span>Detratores</span>
           <strong>{metrics.detractors}</strong>
           <p>NOTAS 1 A 6</p>
-        </article>
-        <article className="kpi-card warning">
+        </button>
+        <button type="button" className="kpi-card warning kpi-button" onClick={() => applyQuickFilter('active', { profile: 'detrator' })}>
           <span>Pendentes</span>
           <strong>{metrics.pendingDetractors}</strong>
           <p>DETRATORES EM ABERTO</p>
-        </article>
-        <article className="kpi-card">
+        </button>
+        <button type="button" className="kpi-card kpi-button" onClick={() => applyQuickFilter('finished', { status: 'tratado' })}>
           <span>Tratados</span>
           <strong>{metrics.treated}</strong>
           <p>PROTOCOLOS NPS</p>
-        </article>
+        </button>
       </section>
 
       <section className="management-panel bulk-dispatch-panel">

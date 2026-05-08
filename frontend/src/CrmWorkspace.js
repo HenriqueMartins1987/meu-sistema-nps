@@ -22,7 +22,8 @@ const initialFilters = {
   clinic: '',
   source: '',
   stage: '',
-  coordinator: ''
+  coordinator: '',
+  priority: ''
 };
 
 function formatDateTime(value) {
@@ -330,6 +331,7 @@ function CrmWorkspace() {
         && (!filters.source || item.source === filters.source)
         && (!filters.stage || item.stage === filters.stage)
         && (!filters.coordinator || item.coordinatorName === filters.coordinator)
+        && (!filters.priority || item.priority === filters.priority)
       );
     })
     .slice()
@@ -384,6 +386,19 @@ function CrmWorkspace() {
 
   const updateFilter = (field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const applyQuickFilter = (nextFilters = {}) => {
+    setFilters((prev) => ({
+      ...prev,
+      source: '',
+      stage: '',
+      coordinator: '',
+      priority: '',
+      clinic: prev.clinic,
+      search: prev.search,
+      ...nextFilters
+    }));
   };
 
   return (
@@ -458,36 +473,36 @@ function CrmWorkspace() {
       {feedback && <p className="form-feedback page-form-feedback">{feedback}</p>}
 
       <section className="kpi-grid crm-kpi-grid" aria-label="Resumo do CRM">
-        <article className="kpi-card">
+        <button type="button" className="kpi-card kpi-button" onClick={() => applyQuickFilter()}>
           <span>Carteira</span>
           <strong>{metrics.total}</strong>
           <p>REGISTROS CONSOLIDADOS</p>
-        </article>
-        <article className="kpi-card danger">
+        </button>
+        <button type="button" className="kpi-card danger kpi-button" onClick={() => applyQuickFilter({ stage: 'Recuperação ativa' })}>
           <span>Recuperação</span>
           <strong>{metrics.activeRecovery}</strong>
           <p>CASOS CRÍTICOS</p>
-        </article>
-        <article className="kpi-card warning">
+        </button>
+        <button type="button" className="kpi-card warning kpi-button" onClick={() => applyQuickFilter({ stage: 'Primeiro atendimento' })}>
           <span>Primeiro contato</span>
           <strong>{metrics.firstAttendance}</strong>
           <p>ABORDAGENS PENDENTES</p>
-        </article>
-        <article className="kpi-card progress">
+        </button>
+        <button type="button" className="kpi-card progress kpi-button" onClick={() => applyQuickFilter({ stage: 'Agenda do dia' })}>
           <span>Agenda do dia</span>
           <strong>{metrics.todayAgenda}</strong>
           <p>ATENDIMENTOS PROGRAMADOS</p>
-        </article>
-        <article className="kpi-card success">
+        </button>
+        <button type="button" className="kpi-card success kpi-button" onClick={() => applyQuickFilter({ stage: 'Encerrado' })}>
           <span>Encerrados</span>
           <strong>{metrics.closed}</strong>
           <p>HISTÓRICOS CONCLUÍDOS</p>
-        </article>
-        <article className="kpi-card">
+        </button>
+        <button type="button" className="kpi-card kpi-button" onClick={() => applyQuickFilter({ priority: 'alta' })}>
           <span>Alta prioridade</span>
           <strong>{metrics.highPriority}</strong>
           <p>TRATATIVAS SENSÍVEIS</p>
-        </article>
+        </button>
       </section>
 
       <section className="crm-stage-grid" aria-label="Estágios do CRM">

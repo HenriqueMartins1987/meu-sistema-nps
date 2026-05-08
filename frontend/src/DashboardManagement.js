@@ -377,6 +377,19 @@ function DashboardManagement() {
     return { total, open, inProgress, resolved, overdue, warning };
   }, [activeComplaints, finishedComplaints, operationalComplaints]);
 
+  const applyQuickFilter = (nextViewMode, nextFilters = {}) => {
+    setViewMode(nextViewMode);
+    setFilters((prev) => ({
+      ...prev,
+      status: '',
+      type: '',
+      sla: '',
+      clinic: prev.clinic,
+      search: prev.search,
+      ...nextFilters
+    }));
+  };
+
   const totalPages = Math.max(1, Math.ceil(filteredComplaints.length / pageSize));
   const currentPage = Math.min(page, totalPages);
   const pageStart = (currentPage - 1) * pageSize;
@@ -681,36 +694,36 @@ function DashboardManagement() {
       </header>
 
       <section className="kpi-grid management-kpi-grid" aria-label="Resumo operacional">
-        <article className="kpi-card">
+        <button type="button" className="kpi-card kpi-button" onClick={() => applyQuickFilter('active')}>
           <span>Total</span>
           <strong>{metrics.total}</strong>
           <p>PROTOCOLOS REGISTRADOS</p>
-        </article>
-        <article className="kpi-card warning">
+        </button>
+        <button type="button" className="kpi-card warning kpi-button" onClick={() => applyQuickFilter('active', { status: 'aberta' })}>
           <span>Abertas</span>
           <strong>{metrics.open}</strong>
           <p>AGUARDANDO TRATATIVA</p>
-        </article>
-        <article className="kpi-card progress">
+        </button>
+        <button type="button" className="kpi-card progress kpi-button" onClick={() => applyQuickFilter('active', { status: 'em_andamento' })}>
           <span>Em andamento</span>
           <strong>{metrics.inProgress}</strong>
           <p>COM ACOMPANHAMENTO</p>
-        </article>
-        <article className="kpi-card danger">
+        </button>
+        <button type="button" className="kpi-card danger kpi-button" onClick={() => applyQuickFilter('active', { sla: 'overdue' })}>
           <span>Vencidas</span>
           <strong>{metrics.overdue}</strong>
           <p>FORA DO SLA</p>
-        </article>
-        <article className="kpi-card warning">
+        </button>
+        <button type="button" className="kpi-card warning kpi-button" onClick={() => applyQuickFilter('active', { sla: 'warning' })}>
           <span>Perto de vencer</span>
           <strong>{metrics.warning}</strong>
           <p>RETORNO CRÍTICO</p>
-        </article>
-        <article className="kpi-card success">
+        </button>
+        <button type="button" className="kpi-card success kpi-button" onClick={() => applyQuickFilter('finished')}>
           <span>Fechadas</span>
           <strong>{metrics.resolved}</strong>
           <p>PROTOCOLOS ENCERRADOS</p>
-        </article>
+        </button>
       </section>
 
       <section className="management-panel">
