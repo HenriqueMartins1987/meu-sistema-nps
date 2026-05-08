@@ -308,7 +308,6 @@ function ComplaintDetail() {
   const isAdmin = isAdminUser(user);
   const isMasterUser = isMasterAdmin(user);
   const canOperationalClose = isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
-  const canRegisterAttendanceFlow = isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
   const canFormalTreatment = treatmentRoles.includes(user?.role) || isAdmin;
   const canRecordTreatment = Boolean(user?.role);
   const canAttachEvidence = evidenceRoles.includes(user?.role) || isAdmin;
@@ -336,9 +335,6 @@ function ComplaintDetail() {
     && !hasPatientContact
     && hasTreatment;
   const hasFirstAttendance = Boolean(complaint?.first_attendance_at);
-  const canRegisterFirstAttendance = canRegisterAttendanceFlow
-    && complaint?.status !== 'resolvida'
-    && !hasFirstAttendance;
   const closeBlockedReason = isMasterUser
     ? ''
     : !canOperationalClose
@@ -473,21 +469,12 @@ function ComplaintDetail() {
   };
 
   const handlePatientContact = async () => {
-    setSaving(true);
-    setFeedback('');
-
-    try {
-      await api.patch(`/complaints/${id}`, {
-        status: 'em_andamento',
-        patient_contacted: true
-      });
-      setFeedback('Contato Realizado');
-      await loadComplaint();
-    } catch (error) {
-      setFeedback(error.response?.data?.error || 'Erro ao registrar contato com o paciente.');
-    } finally {
-      setSaving(false);
+    if (!canMarkPatientContact) {
+      return;
     }
+
+    setFeedback('');
+    setShowForwardModal(true);
   };
 
   const handleUnitChange = async () => {
@@ -532,9 +519,9 @@ function ComplaintDetail() {
     }
   };
 
-  const handleFirstAttendanceForward = async () => {
+  const handleContactForward = async () => {
     if (!forwardToRole) {
-      setFeedback('Selecione para quem o protocolo será enviado para tratativa.');
+      setFeedback('Selecione para quem a reclamação será encaminhada.');
       return;
     }
 
@@ -544,15 +531,16 @@ function ComplaintDetail() {
     try {
       await api.patch(`/complaints/${id}`, {
         status: 'em_andamento',
+        patient_contacted: true,
         first_attendance: true,
         forward_to_role: forwardToRole
       });
       setShowForwardModal(false);
       setForwardToRole('');
-      setFeedback('Primeiro atendimento registrado, deadline travado e protocolo encaminhado para tratativa.');
+      setFeedback('Contato com o paciente registrado e reclamação encaminhada para tratativa.');
       await loadComplaint();
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Erro ao registrar primeiro atendimento.');
+      setFeedback(error.response?.data?.error || 'Erro ao registrar contato com o paciente.');
     } finally {
       setSaving(false);
     }
@@ -1192,11 +1180,6 @@ function ComplaintDetail() {
                 {hasPatientContact ? 'Contato já registrado' : 'Registrar contato com paciente'}
               </button>
             )}
-            {canRegisterAttendanceFlow && complaint.status !== 'resolvida' && (
-              <button className="outline-action" onClick={() => setShowForwardModal(true)} disabled={saving || !canRegisterFirstAttendance || isDeletedRecord}>
-                {hasFirstAttendance ? 'Primeiro atendimento registrado' : 'Registrar primeiro atendimento'}
-              </button>
-            )}
             {canOperationalClose && (
               <button className="primary-action" onClick={handleClose} disabled={saving || !canCloseNow || isDeletedRecord}>
                 {saving ? 'Fechando...' : 'Fechar protocolo'}
@@ -1225,10 +1208,10 @@ function ComplaintDetail() {
       {showForwardModal && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Encaminhar para tratativa" onClick={() => setShowForwardModal(false)}>
           <div className="modal-panel" onClick={(event) => event.stopPropagation()}>
-            <p className="eyebrow">Primeiro atendimento</p>
-            <h2>Enviar protocolo para tratativa</h2>
+            <p className="eyebrow">Encaminhamento da reclamação</p>
+            <h2>Selecionar próximo responsável</h2>
             <p>
-              Ao confirmar, o primeiro atendimento será registrado, o deadline ficará travado e o log será criado para auditoria.
+              Ao confirmar, o contato com o paciente será registrado e a reclamação será encaminhada para o responsável escolhido.
             </p>
 
             <label>
@@ -1245,7 +1228,7 @@ function ComplaintDetail() {
               <button className="outline-action" type="button" onClick={() => setShowForwardModal(false)} disabled={saving}>
                 Cancelar
               </button>
-              <button className="primary-action" type="button" onClick={handleFirstAttendanceForward} disabled={saving || !forwardToRole}>
+              <button className="primary-action" type="button" onClick={handleContactForward} disabled={saving || !forwardToRole}>
                 {saving ? 'Salvando...' : 'Confirmar encaminhamento'}
               </button>
             </div>

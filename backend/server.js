@@ -9245,6 +9245,14 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         return res.status(409).json({ error: 'Registre e salve uma tratativa antes de liberar o contato com o paciente.' });
       }
 
+      const requiresForwardSelection = !Boolean(complaint.patient_contacted_at)
+        && !Boolean(complaint.first_attendance_at)
+        && canRegisterFirstAttendance(req.user);
+
+      if (requiresForwardSelection && !forward_to_role) {
+        return res.status(400).json({ error: 'Selecione o responsável que receberá a reclamação após o contato com o paciente.' });
+      }
+
       updates.push('patient_contacted_at = COALESCE(patient_contacted_at, NOW())');
       updates.push('patient_contacted_by = COALESCE(patient_contacted_by, ?)');
       values.push(actorName);
