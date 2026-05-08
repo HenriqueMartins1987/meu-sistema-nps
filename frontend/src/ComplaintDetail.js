@@ -325,6 +325,8 @@ function ComplaintDetail() {
   ), [unitOptions]);
   const hasUnitChange = String(selectedClinicId || '') !== String(complaint?.clinic_id || '');
   const hasTreatment = Boolean(complaint?.treatment_at);
+  const hasCoordinatorOrManagerTreatment = hasTreatment
+    && ['coordinator', 'manager'].includes(String(complaint?.treatment_by_role || '').toLowerCase());
   const isHighPriority = normalizePriority(complaint?.priority) === 'alta';
   const hasSupervisorApproval = Boolean(complaint?.supervisor_approval_at);
   const hasSacApproval = Boolean(complaint?.sac_approval_at);
@@ -339,8 +341,8 @@ function ComplaintDetail() {
     ? ''
     : !canOperationalClose
     ? 'Apenas o Administrador Master, Supervisor do CRC ou Operador de SAC podem fechar este protocolo.'
-    : !hasTreatment
-      ? 'Aguarde a tratativa de Coordenador, Gerente ou Supervisor do CRC.'
+    : !hasCoordinatorOrManagerTreatment
+      ? 'Aguarde a tratativa registrada por Coordenador ou Gerente para liberar o fechamento.'
       : isHighPriority && !hasSupervisorApproval
         ? 'Prioridade alta exige aceite do Supervisor do CRC.'
         : '';

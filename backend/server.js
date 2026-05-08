@@ -9328,11 +9328,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       const isMasterRequest = isMasterAdminUser(req.user);
       const hasTreatment = Boolean(complaint.treatment_at) || (cleanedComment && canAddTreatment(req.user));
       const treatmentRole = complaint.treatment_by_role || (canAddTreatment(req.user) ? req.user.role : null);
-      const hasManagementTreatment = hasTreatment && (
-        treatmentRoles.has(treatmentRole)
-        || treatmentRole === 'admin'
-        || treatmentRole === 'master_admin'
-      );
+      const hasCoordinatorOrManagerTreatment = hasTreatment && ['coordinator', 'manager'].includes(String(treatmentRole || '').toLowerCase());
       const hasSupervisorApproval = Boolean(complaint.supervisor_approval_at)
         || (supervisor_accept && canSupervisorApprove(req.user));
 
@@ -9340,9 +9336,9 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         return res.status(403).json({ error: 'Somente Administrador Master, Supervisor do CRC ou Operador de SAC podem fechar uma reclamacao.' });
       }
 
-      if (!isMasterRequest && !hasManagementTreatment) {
+      if (!isMasterRequest && !hasCoordinatorOrManagerTreatment) {
         return res.status(409).json({
-          error: 'Antes do fechamento, a reclamacao precisa ter tratativa registrada por Coordenador, Gerente ou Supervisor do CRC.'
+          error: 'Antes do fechamento, a reclamacao precisa ter tratativa registrada por Coordenador ou Gerente.'
         });
       }
 
