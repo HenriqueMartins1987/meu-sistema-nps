@@ -175,11 +175,24 @@ function buildOperationalStage(item) {
   };
 }
 
+function buildTreatmentBalloon(item) {
+  if (!item?.treatment_at) {
+    return null;
+  }
+
+  const summary = String(item.operator_comment || item.treatment_comment || '').trim() || 'Tratativa registrada sem resumo descritivo.';
+  const actor = item.treatment_by_name || item.treatment_by_role || 'Usuário não informado';
+  const date = formatFullDateTime(item.treatment_at);
+
+  return { summary, actor, date };
+}
+
 function ComplaintListItem({ item, onOpen }) {
   const deadline = buildDeadlineInfo(item);
   const stage = buildOperationalStage(item);
   const stoppedDays = daysSince(stage.since);
   const isDeleted = Boolean(item.deleted_at);
+  const treatmentBalloon = buildTreatmentBalloon(item);
 
   return (
     <button
@@ -230,6 +243,22 @@ function ComplaintListItem({ item, onOpen }) {
               Parada com {stage.owner} há {stoppedDays} {stoppedDays === 1 ? 'dia' : 'dias'}
             </span>
             <small>{stage.label}</small>
+            {treatmentBalloon && (
+              <span
+                className="treatment-balloon-trigger"
+                tabIndex={0}
+                onClick={(event) => event.stopPropagation()}
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                Última tratativa
+                <span className="treatment-balloon">
+                  <strong>Resumo tratado</strong>
+                  <span>{treatmentBalloon.summary}</span>
+                  <small>Por {treatmentBalloon.actor}</small>
+                  <small>Em {treatmentBalloon.date}</small>
+                </span>
+              </span>
+            )}
           </>
         )}
       </div>

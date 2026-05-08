@@ -5102,6 +5102,75 @@ a {
   gap: 6px;
 }
 
+.treatment-balloon-trigger {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 7px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(200, 154, 87, 0.28);
+  background: rgba(255, 248, 237, 0.94);
+  color: #8a632d;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.2;
+  cursor: help;
+}
+
+.treatment-balloon {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 12px);
+  z-index: 20;
+  width: min(320px, calc(100vw - 56px));
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(200, 154, 87, 0.3);
+  background: #fffdf8;
+  box-shadow: 0 18px 40px rgba(17, 24, 39, 0.18);
+  color: #2f2825;
+  display: grid;
+  gap: 6px;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(8px);
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0.18s ease;
+  pointer-events: none;
+  text-align: left;
+}
+
+.treatment-balloon strong {
+  color: #8a632d;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.treatment-balloon span {
+  color: #1f2937;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+}
+
+.treatment-balloon small {
+  color: #6b7280;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.treatment-balloon-trigger:hover .treatment-balloon,
+.treatment-balloon-trigger:focus-visible .treatment-balloon,
+.treatment-balloon-trigger:focus .treatment-balloon {
+  opacity: 1;
+  visibility: visible;
+  transform: translateY(0);
+}
+
 .complaints-dashboard-page .dashboard-table-wrap,
 .nps-dashboard-page .dashboard-table-wrap,
 .patient-dashboard-page .dashboard-table-wrap {
