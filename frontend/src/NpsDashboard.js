@@ -254,6 +254,10 @@ function NpsDashboard() {
     setFilters((prev) => ({ ...prev, [field]: value }));
   };
 
+  const applyFilters = (updates = {}) => {
+    setFilters((prev) => ({ ...prev, ...updates }));
+  };
+
   const exportBaseExcel = () => {
     const headers = Object.keys(baseExportRows[0] || {
       paciente: '',
@@ -552,12 +556,21 @@ function NpsDashboard() {
                 { label: 'Detratores', value: metrics.detractors },
                 { label: 'Em tratamento', value: filteredRows.filter((item) => getNpsStatus(item) === 'em_tratativa').length },
                 { label: 'Tratados', value: metrics.treated }
-              ].map((item) => (
-                <article className="dashboard-summary-card" key={item.label}>
+              ].map((item) => {
+                let onClick = () => {};
+                if (item.label === 'Respostas') onClick = () => applyFilters({ profile: '', status: '' });
+                if (item.label === 'Promotores') onClick = () => applyFilters({ profile: 'promotor' });
+                if (item.label === 'Detratores') onClick = () => applyFilters({ profile: 'detrator' });
+                if (item.label === 'Em tratamento') onClick = () => applyFilters({ status: 'em_tratativa' });
+                if (item.label === 'Tratados') onClick = () => applyFilters({ status: 'tratado' });
+
+                return (
+                <button className="dashboard-summary-card dashboard-summary-button" key={item.label} type="button" onClick={onClick}>
                   <span>{item.label}</span>
                   <strong>{item.value}</strong>
-                </article>
-              ))}
+                </button>
+                );
+              })}
             </div>
 
             <div className="data-table-wrap dashboard-table-wrap">

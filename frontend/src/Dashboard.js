@@ -367,6 +367,10 @@ function Dashboard() {
     setFilters((prev) => ({ ...prev, [field]: value }));
   };
 
+  const applyFilters = (updates = {}) => {
+    setFilters((prev) => ({ ...prev, ...updates }));
+  };
+
   const exportBaseExcel = () => {
     const headers = Object.keys(baseExportRows[0] || {
       protocolo: '',
@@ -718,7 +722,12 @@ function Dashboard() {
               </div>
               <div className="dashboard-coordinator-list">
                 {coordinatorHighlights.length ? coordinatorHighlights.map((item, index) => (
-                  <article className="dashboard-coordinator-item" key={item.label}>
+                  <button
+                    className="dashboard-coordinator-item dashboard-card-button"
+                    key={item.label}
+                    type="button"
+                    onClick={() => applyFilters({ coordinator: item.label })}
+                  >
                     <div className="dashboard-coordinator-rank">{String(index + 1).padStart(2, '0')}</div>
                     <div className="dashboard-coordinator-copy">
                       <strong>{item.label}</strong>
@@ -728,7 +737,7 @@ function Dashboard() {
                       <span>{item.inProgress} em andamento</span>
                       <span>{item.overdue} vencidas</span>
                     </div>
-                  </article>
+                  </button>
                 )) : (
                   <p className="empty-state">Sem coordenadores vinculados na base filtrada.</p>
                 )}
@@ -769,12 +778,21 @@ function Dashboard() {
             </div>
 
             <div className="dashboard-base-summary">
-              {baseTableHighlights.map((item) => (
-                <article className="dashboard-summary-card" key={item.label}>
+              {baseTableHighlights.map((item) => {
+                let onClick = () => {};
+                if (item.label === 'Protocolos') onClick = () => applyFilters({ status: '', sla: '' });
+                if (item.label === 'Unidades') onClick = () => applyFilters({ clinic: '' });
+                if (item.label === 'Coordenadores') onClick = () => applyFilters({ coordinator: '' });
+                if (item.label === 'Alta prioridade') onClick = () => applyFilters({ priority: 'alta' });
+                if (item.label === 'Vencidos') onClick = () => applyFilters({ sla: 'overdue' });
+
+                return (
+                <button className="dashboard-summary-card dashboard-summary-button" key={item.label} type="button" onClick={onClick}>
                   <span>{item.label}</span>
                   <strong>{item.value}</strong>
-                </article>
-              ))}
+                </button>
+                );
+              })}
             </div>
 
             <div className="data-table-wrap dashboard-table-wrap">

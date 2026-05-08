@@ -2344,6 +2344,20 @@ a {
   box-shadow: var(--shadow-sm);
 }
 
+.dashboard-summary-button,
+.dashboard-card-button {
+  appearance: none;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dashboard-summary-button:hover:not(:disabled),
+.dashboard-card-button:hover:not(:disabled) {
+  border-color: var(--brand);
+  box-shadow: var(--shadow-md);
+}
+
 .dashboard-summary-card span {
   color: var(--muted);
   font-size: 12px;

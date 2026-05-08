@@ -235,8 +235,13 @@ function PatientManagementPage() {
   const byChannel = useMemo(() => groupCount(activeRecords, (record) => channelLabels[record.channel] || record.channel), [activeRecords]);
   const byClinic = useMemo(() => groupCount(activeRecords, (record) => record.clinic).slice(0, 10), [activeRecords]);
   const byStatus = useMemo(() => groupCount(records, (record) => record.status), [records]);
+  const dashboardSourceRecords = useMemo(() => {
+    if (filters.status === 'Encerrado') return finishedRecords;
+    if (filters.status === 'Cancelado' && canViewDeleted) return deletedRecords;
+    return activeRecords;
+  }, [activeRecords, canViewDeleted, deletedRecords, filters.status, finishedRecords]);
 
-  const upcomingRecords = useMemo(() => activeRecords
+  const upcomingRecords = useMemo(() => dashboardSourceRecords
     .filter((record) => {
       const searchable = [
         record.protocol,
@@ -264,7 +269,7 @@ function PatientManagementPage() {
     })
     .slice()
     .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt))
-    .slice(0, 50), [activeRecords, filters]);
+    .slice(0, 50), [dashboardSourceRecords, filters]);
   const dashboardReportRecords = useMemo(() => records
     .filter((record) => {
       if (record.status === 'Cancelado') return false;
@@ -318,6 +323,10 @@ function PatientManagementPage() {
 
   const updateFilter = (field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const applyFilters = (updates = {}) => {
+    setFilters((prev) => ({ ...prev, ...updates }));
   };
 
   const exportDashboardExcel = () => {
@@ -717,37 +726,37 @@ function PatientManagementPage() {
         {feedback && <p className="form-feedback">{feedback}</p>}
 
         <section className="kpi-grid dashboard-kpi-grid patient-dashboard-kpis" aria-label="Resumo do paciente">
-          <article className="kpi-card">
+          <button className="kpi-card kpi-button" type="button" onClick={() => setFilters(initialFilters)}>
             <span>Total</span>
             <strong>{records.length}</strong>
             <p>REGISTROS</p>
-          </article>
-          <article className="kpi-card success">
+          </button>
+          <button className="kpi-card success kpi-button" type="button" onClick={() => applyFilters({ type: 'confirmacao', status: '' })}>
             <span>Confirmações</span>
             <strong>{grouped.confirmacao || 0}</strong>
             <p>CONTATOS</p>
-          </article>
-          <article className="kpi-card progress">
+          </button>
+          <button className="kpi-card progress kpi-button" type="button" onClick={() => applyFilters({ type: 'agendamento', status: '' })}>
             <span>Agendamentos</span>
             <strong>{grouped.agendamento || 0}</strong>
             <p>NOVOS HORÁRIOS</p>
-          </article>
-          <article className="kpi-card warning">
+          </button>
+          <button className="kpi-card warning kpi-button" type="button" onClick={() => applyFilters({ type: 'reagendamento', status: '' })}>
             <span>Reagendamentos</span>
             <strong>{grouped.reagendamento || 0}</strong>
             <p>ALTERAÇÕES</p>
-          </article>
-          <article className="kpi-card success">
+          </button>
+          <button className="kpi-card success kpi-button" type="button" onClick={() => applyFilters({ status: 'Encerrado', type: '' })}>
             <span>Finalizados</span>
             <strong>{finishedRecords.length}</strong>
             <p>REGISTROS ENCERRADOS</p>
-          </article>
+          </button>
           {canViewDeleted && (
-            <article className="kpi-card danger">
+            <button className="kpi-card danger kpi-button" type="button" onClick={() => applyFilters({ status: 'Cancelado', type: '' })}>
               <span>Excluídos</span>
               <strong>{statusGrouped.Cancelado || 0}</strong>
               <p>LASTRO PRESERVADO</p>
-            </article>
+            </button>
           )}
         </section>
 
@@ -817,12 +826,22 @@ function PatientManagementPage() {
                   ...(canViewDeleted ? [{ label: 'Excluídos', value: deletedRecords.length }] : []),
                   { label: 'Confirmações', value: grouped.confirmacao || 0 },
                   { label: 'Agendamentos', value: grouped.agendamento || 0 }
-                ].map((item) => (
-                  <article className="dashboard-summary-card" key={item.label}>
+                ].map((item) => {
+                  let onClick = () => {};
+                  if (item.label === 'Agenda filtrada') onClick = () => setFilters(initialFilters);
+                  if (item.label === 'Ativos') onClick = () => applyFilters({ status: '', type: '' });
+                  if (item.label === 'Finalizados') onClick = () => applyFilters({ status: 'Encerrado', type: '' });
+                  if (item.label === 'Excluídos') onClick = () => applyFilters({ status: 'Cancelado', type: '' });
+                  if (item.label === 'Confirmações') onClick = () => applyFilters({ type: 'confirmacao', status: '' });
+                  if (item.label === 'Agendamentos') onClick = () => applyFilters({ type: 'agendamento', status: '' });
+
+                  return (
+                  <button className="dashboard-summary-card dashboard-summary-button" key={item.label} type="button" onClick={onClick}>
                     <span>{item.label}</span>
                     <strong>{item.value}</strong>
-                  </article>
-                ))}
+                  </button>
+                  );
+                })}
               </div>
 
               <div className="data-table-wrap dashboard-table-wrap">
