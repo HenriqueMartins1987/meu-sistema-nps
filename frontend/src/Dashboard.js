@@ -8,6 +8,7 @@ import {
   complaintTypes,
   priorityOptions,
   readUser,
+  serviceTypes,
   statusLabels,
   statusOptions,
   isAdmin,
@@ -171,6 +172,10 @@ function priorityLabel(value) {
   return priorityOptions.find((option) => option.value === value)?.label || value || 'Não informado';
 }
 
+function serviceLabel(value) {
+  return serviceTypes.find((option) => option.value === value)?.label || value || 'N?o informado';
+}
+
 function lastComplaintActor(item) {
   return item?.logs?.[0]?.actor_name
     || item?.treatment_by_name
@@ -304,6 +309,7 @@ function Dashboard() {
 
   const byStatus = useMemo(() => groupCount(filteredRows, (item) => statusLabels[item.status] || item.status), [filteredRows]);
   const byType = useMemo(() => groupCount(filteredRows, (item) => item.complaint_type).slice(0, 10), [filteredRows]);
+  const byService = useMemo(() => groupCount(filteredRows, (item) => serviceLabel(item.service_type)).slice(0, 10), [filteredRows]);
   const byClinic = useMemo(() => groupCount(filteredRows, (item) => item.clinic_name).slice(0, 10), [filteredRows]);
   const byCity = useMemo(() => groupCount(filteredRows, (item) => item.city).slice(0, 10), [filteredRows]);
   const byState = useMemo(() => groupCount(filteredRows, (item) => item.state).slice(0, 10), [filteredRows]);
@@ -348,11 +354,11 @@ function Dashboard() {
     ];
   }, [filteredRows]);
 
-  const complaintTypeHighlights = useMemo(() => {
+  const serviceHighlights = useMemo(() => {
     const total = filteredRows.length || 1;
 
-    return byType.slice(0, 4).map((item) => {
-      const matchingRows = filteredRows.filter((row) => (row.complaint_type || 'NÃ£o informado') === item.label);
+    return byService.slice(0, 4).map((item) => {
+      const matchingRows = filteredRows.filter((row) => serviceLabel(row.service_type) === item.label);
       return {
         ...item,
         share: Math.round((item.total / total) * 100),
@@ -360,7 +366,7 @@ function Dashboard() {
         inProgress: matchingRows.filter((row) => row.status === 'em_andamento').length
       };
     });
-  }, [byType, filteredRows]);
+  }, [byService, filteredRows]);
 
   const coordinatorHighlights = useMemo(() => {
     const total = filteredRows.length || 1;
@@ -633,14 +639,14 @@ function Dashboard() {
             <article className="chart-card dashboard-type-intelligence-card large">
               <div className="dashboard-section-head">
                 <div>
-                  <p className="eyebrow">Leitura por tipo</p>
-                  <h2>Radar das classificações</h2>
-                  <p className="base-subtitle">Resumo executivo das reclamações por tipo, com participação na carteira, volume em andamento e pressão de atraso.</p>
+                  <p className="eyebrow">Servi?o envolvido</p>
+                  <h2>Radar dos servi?os envolvidos</h2>
+                  <p className="base-subtitle">Resumo executivo por servi?o, com participa??o na carteira, volume em andamento e press?o de atraso.</p>
                 </div>
               </div>
 
               <div className="dashboard-type-highlight-grid">
-                {complaintTypeHighlights.length ? complaintTypeHighlights.map((item) => (
+                {serviceHighlights.length ? serviceHighlights.map((item) => (
                   <article className="dashboard-type-highlight-card" key={item.label}>
                     <span>{item.label}</span>
                     <strong>{item.total}</strong>
@@ -648,13 +654,13 @@ function Dashboard() {
                     <small>{item.inProgress} em andamento · {item.overdue} vencidas</small>
                   </article>
                 )) : (
-                  <p className="empty-state">Sem volume suficiente para leitura por classificação.</p>
+                  <p className="empty-state">Sem volume suficiente para leitura por servi?o.</p>
                 )}
               </div>
 
               <div className="dashboard-inner-grid">
                 <div className="chart-box">
-                  <Bar data={buildBarData(byType)} options={chartOptions} />
+                  <Bar data={buildBarData(byService)} options={chartOptions} />
                 </div>
                 <div className="chart-box">
                   <Doughnut data={buildDoughnutData(bySla)} options={chartOptions} />
@@ -670,7 +676,7 @@ function Dashboard() {
             </article>
 
             <article className="chart-card">
-              <h2>Reclamações por tipo</h2>
+              <h2>Classifica??o da ocorr?ncia</h2>
               <div className="chart-box">
                 <Bar data={buildBarData(byType)} options={chartOptions} />
               </div>
@@ -774,13 +780,13 @@ function Dashboard() {
               <div>
                 <p className="eyebrow">Base filtrada</p>
                 <h2 className="table-title-with-help">
-                  Registros do cenário selecionado
+                  Registros do cen?rio selecionado
                   <span className="tooltip-help inline-help" tabIndex="0" aria-label="Horário de Brasília">
                     ?
                     <span>O horário exibido segue o horário oficial de Brasília.</span>
                   </span>
                 </h2>
-                <p className="base-subtitle">{filteredRows.length} protocolos na seleção atual.</p>
+                <p className="base-subtitle">{filteredRows.length} protocolos na sele??o atual.</p>
               </div>
               <div className="export-actions">
                 <button className="outline-action" onClick={exportBaseExcel} disabled={!baseExportRows.length}>
@@ -818,11 +824,11 @@ function Dashboard() {
                   <tr>
                     <th>Protocolo</th>
                     <th>Paciente</th>
-                    <th>Unidade e localizacao</th>
-                    <th>Classificação</th>
+                    <th>Unidade e localiza??o</th>
+                    <th>Classifica??o</th>
                     <th>Status e prazo</th>
                     <th>Responsável</th>
-                    <th>Última tratativa por</th>
+                    <th>?ltima tratativa por</th>
                     <th>Cadastro</th>
                   </tr>
                 </thead>

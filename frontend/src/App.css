@@ -5110,6 +5110,10 @@ a {
   gap: 18px;
 }
 
+.dashboard-type-intelligence-card.large {
+  grid-column: span 2;
+}
+
 .dashboard-section-head {
   display: flex;
   align-items: flex-start;
@@ -5154,7 +5158,7 @@ a {
 
 .dashboard-inner-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
   gap: 16px;
   min-width: 0;
 }
@@ -5263,6 +5267,29 @@ a {
 
 .complaints-dashboard-page .dashboard-type-highlight-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.complaints-dashboard-page .dashboard-type-intelligence-card .chart-box:first-child {
+  min-height: 320px;
+}
+
+.complaints-dashboard-page .dashboard-type-intelligence-card .chart-box:last-child {
+  min-height: 260px;
+}
+
+@media (max-width: 1100px) {
+  .dashboard-type-intelligence-card.large {
+    grid-column: span 1;
+  }
+
+  .dashboard-inner-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-type-highlight-grid,
+  .complaints-dashboard-page .dashboard-type-highlight-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .complaints-dashboard-page .dashboard-summary-card,
