@@ -676,7 +676,7 @@ function Dashboard() {
             </article>
 
             <article className="chart-card">
-              <h2>Classifica??o da ocorrência</h2>
+              <h2>Classificação da ocorrência</h2>
               <div className="chart-box">
                 <Bar data={buildBarData(byType)} options={chartOptions} />
               </div>
@@ -782,13 +782,13 @@ function Dashboard() {
               <div>
                 <p className="eyebrow">Base filtrada</p>
                 <h2 className="table-title-with-help">
-                  Registros do cen?rio selecionado
+                  Registros do cenário selecionado
                   <span className="tooltip-help inline-help" tabIndex="0" aria-label="Horário de Brasília">
                     ?
                     <span>O horário exibido segue o horário oficial de Brasília.</span>
                   </span>
                 </h2>
-                <p className="base-subtitle">{filteredRows.length} protocolos na sele??o atual.</p>
+                <p className="base-subtitle">{filteredRows.length} protocolos na seleção atual.</p>
               </div>
               <div className="export-actions">
                 <button className="outline-action" onClick={exportBaseExcel} disabled={!baseExportRows.length}>
@@ -826,11 +826,11 @@ function Dashboard() {
                   <tr>
                     <th>Protocolo</th>
                     <th>Paciente</th>
-                    <th>Unidade e localiza??o</th>
-                    <th>Classifica??o</th>
+                    <th>Unidade e localização</th>
+                    <th>Classificação</th>
                     <th>Status e prazo</th>
                     <th>Responsável</th>
-                    <th>?ltima tratativa por</th>
+                    <th>Última tratativa por</th>
                     <th>Cadastro</th>
                   </tr>
                 </thead>

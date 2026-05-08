@@ -5170,13 +5170,13 @@ a {
 .dashboard-coordinator-card {
   display: grid;
   gap: 16px;
-  grid-column: span 2;
+  min-height: 380px;
 }
 
 .dashboard-coordinator-list {
   display: grid;
   gap: 12px;
-  max-height: 360px;
+  max-height: 280px;
   overflow-y: auto;
   overscroll-behavior: contain;
   padding-right: 6px;
@@ -5299,10 +5299,6 @@ a {
 
   .dashboard-inner-grid {
     grid-template-columns: 1fr;
-  }
-
-  .dashboard-coordinator-card {
-    grid-column: span 1;
   }
 
   .dashboard-type-highlight-grid,
