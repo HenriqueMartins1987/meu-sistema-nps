@@ -5208,6 +5208,26 @@ a {
   line-height: 1.35;
 }
 
+.dashboard-inline-filter {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.35;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.dashboard-inline-filter:hover,
+.dashboard-inline-filter:focus-visible {
+  color: var(--brand);
+  outline: none;
+  text-decoration: underline;
+}
+
 .dashboard-coordinator-copy span,
 .dashboard-coordinator-meta span {
   color: var(--muted);

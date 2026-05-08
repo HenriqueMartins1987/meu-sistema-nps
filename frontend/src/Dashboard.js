@@ -3,7 +3,16 @@ import { useNavigate } from 'react-router-dom';
 import { Bar, Doughnut } from 'react-chartjs-2';
 import 'chart.js/auto';
 import api from './api';
-import { channels, complaintTypes, priorityOptions, statusLabels, statusOptions } from './constants';
+import {
+  channels,
+  complaintTypes,
+  priorityOptions,
+  readUser,
+  statusLabels,
+  statusOptions,
+  isAdmin,
+  isMasterAdmin
+} from './constants';
 
 const chartColors = ['#0b6f5f', '#1f7a8c', '#4c956c', '#d08c31', '#8a4f7d', '#5d6d7e', '#c44536', '#247ba0'];
 
@@ -185,6 +194,10 @@ const chartOptions = {
 
 function Dashboard() {
   const navigate = useNavigate();
+  const currentUser = useMemo(() => readUser(), []);
+  const canViewCollaboratorWorkload = isMasterAdmin(currentUser)
+    || isAdmin(currentUser)
+    || ['manager', 'sac_operator', 'supervisor_crc'].includes(String(currentUser?.role || '').trim().toLowerCase());
   const [rows, setRows] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [filters, setFilters] = useState(initialFilters);
@@ -705,45 +718,49 @@ function Dashboard() {
               </div>
             </article>
 
-            <article className="chart-card">
-              <h2>Carteira por coordenador</h2>
-              <div className="chart-box">
-                <Bar data={buildBarData(byCoordinator, '#8a4f7d')} options={chartOptions} />
-              </div>
-            </article>
+            {canViewCollaboratorWorkload && (
+              <>
+                <article className="chart-card">
+                  <h2>Carteira por colaborador</h2>
+                  <div className="chart-box">
+                    <Bar data={buildBarData(byCoordinator, '#8a4f7d')} options={chartOptions} />
+                  </div>
+                </article>
 
-            <article className="chart-card dashboard-coordinator-card">
-              <div className="dashboard-section-head">
-                <div>
-                  <p className="eyebrow">Coordenadores</p>
-                  <h2>Responsáveis com mais reclamações</h2>
-                  <p className="base-subtitle">Leitura rápida da carteira filtrada por coordenador, com quantidade de reclamações e pressão operacional.</p>
-                </div>
-              </div>
-              <div className="dashboard-coordinator-list">
-                {coordinatorHighlights.length ? coordinatorHighlights.map((item, index) => (
-                  <button
-                    className="dashboard-coordinator-item dashboard-card-button"
-                    key={item.label}
-                    type="button"
-                    onClick={() => applyFilters({ coordinator: item.label })}
-                  >
-                    <div className="dashboard-coordinator-rank">{String(index + 1).padStart(2, '0')}</div>
-                    <div className="dashboard-coordinator-copy">
-                      <strong>{item.label}</strong>
-                      <span>{item.total} reclamações · {item.share}% da carteira filtrada</span>
+                <article className="chart-card dashboard-coordinator-card">
+                  <div className="dashboard-section-head">
+                    <div>
+                      <p className="eyebrow">Colaboradores</p>
+                      <h2>Colaboradores com mais reclama??es</h2>
+                      <p className="base-subtitle">Clique no nome do colaborador para filtrar a carteira e aprofundar a an?lise do respons?vel.</p>
                     </div>
-                    <div className="dashboard-coordinator-meta">
-                      <span>{item.inProgress} em andamento</span>
-                      <span>{item.overdue} vencidas</span>
-                    </div>
-                  </button>
-                )) : (
-                  <p className="empty-state">Sem coordenadores vinculados na base filtrada.</p>
-                )}
-              </div>
-            </article>
-
+                  </div>
+                  <div className="dashboard-coordinator-list">
+                    {coordinatorHighlights.length ? coordinatorHighlights.map((item, index) => (
+                      <article className="dashboard-coordinator-item" key={item.label}>
+                        <div className="dashboard-coordinator-rank">{String(index + 1).padStart(2, '0')}</div>
+                        <div className="dashboard-coordinator-copy">
+                          <button
+                            className="dashboard-inline-filter"
+                            type="button"
+                            onClick={() => applyFilters({ coordinator: item.label })}
+                          >
+                            {item.label}
+                          </button>
+                          <span>{item.total} reclama??es ? {item.share}% da carteira filtrada</span>
+                        </div>
+                        <div className="dashboard-coordinator-meta">
+                          <span>{item.inProgress} em andamento</span>
+                          <span>{item.overdue} vencidas</span>
+                        </div>
+                      </article>
+                    )) : (
+                      <p className="empty-state">Sem colaboradores vinculados na base filtrada.</p>
+                    )}
+                  </div>
+                </article>
+              </>
+            )}
             <article className="chart-card">
               <h2>Leitura de SLA</h2>
               <div className="chart-box">
