@@ -316,6 +316,7 @@ function ComplaintDetail() {
   const canChangeComplaintUnit = isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
   const canEditPatientPhone = isMasterUser || ['sac_operator', 'supervisor_crc', 'master_admin'].includes(user?.role);
   const canRenotifyComplaint = isMasterUser || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
+  const canReactivateComplaint = isMasterUser || user?.role === 'supervisor_crc';
   const activeUnitOptions = useMemo(() => (
     unitOptions
       .filter((unit) => unit?.name && String(unit.active ?? 1) !== '0')
@@ -665,6 +666,23 @@ function ComplaintDetail() {
     }
   };
 
+  const handleReactivateComplaint = async () => {
+    if (!canReactivateComplaint) return;
+
+    setSaving(true);
+    setFeedback('');
+
+    try {
+      const response = await api.post(`/complaints/${id}/reactivate`);
+      setFeedback(response.data?.message || 'Reclamação reabilitada com sucesso.');
+      await loadComplaint();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível reabilitar esta reclamação.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   if (loading) {
     return (
       <main className="app-page">
@@ -726,6 +744,15 @@ function ComplaintDetail() {
               disabled={saving}
             >
               Excluir protocolo
+            </button>
+          )}
+          {canReactivateComplaint && (isDeletedRecord || complaint.status === 'resolvida') && (
+            <button
+              className="secondary-action"
+              onClick={handleReactivateComplaint}
+              disabled={saving}
+            >
+              {saving ? 'Reabilitando...' : 'Re-habilitar reclamação'}
             </button>
           )}
         </div>

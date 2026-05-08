@@ -635,6 +635,10 @@ function canDeleteRecords(user) {
   return isMasterAdminUser(user) || user?.role === 'supervisor_crc';
 }
 
+function canReactivateComplaint(user) {
+  return isMasterAdminUser(user) || user?.role === 'supervisor_crc';
+}
+
 function canRenotifyComplaint(user) {
   return isMasterAdminUser(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
 }
@@ -8378,6 +8382,36 @@ app.delete('/nps/responses/:id', authenticate, async (req, res) => {
 app.get('/patient-interactions', authenticate, async (req, res) => {
   try {
     const includeDeleted = Boolean(req.query.include_deleted) && canViewDeletedRecords(req.user);
+    const where = [];
+    const params = [];
+
+    if (!includeDeleted) {
+      where.push("status <> 'Cancelado'");
+    }
+
+    if (!isAdminUser(req.user) && !['sac_operator', 'supervisor_crc'].includes(req.user?.role)) {
+      const clinicIds = await getUserClinicIds(req.user.id);
+
+      if (clinicIds.length) {
+        const [clinicRows] = await pool.query(
+          'SELECT name FROM clinics WHERE id IN (?) AND active = 1',
+          [clinicIds]
+        );
+        const clinicNames = clinicRows
+          .map((row) => String(row.name || '').trim())
+          .filter(Boolean);
+
+        if (clinicNames.length) {
+          where.push('clinic_name IN (?)');
+          params.push(clinicNames);
+        } else {
+          where.push('1 = 0');
+        }
+      } else {
+        where.push('1 = 0');
+      }
+    }
+
     const [rows] = await pool.query(
       `SELECT
         id,
@@ -8398,8 +8432,9 @@ app.get('/patient-interactions', authenticate, async (req, res) => {
         created_at,
         updated_at
        FROM patient_interactions
-       ${includeDeleted ? '' : "WHERE status <> 'Cancelado'"}
-       ORDER BY COALESCE(cancelled_at, created_at) DESC, id DESC`
+       ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
+       ORDER BY COALESCE(cancelled_at, created_at) DESC, id DESC`,
+      params
     );
 
     if (!rows.length) {
@@ -8799,6 +8834,66 @@ app.post('/complaints/:id/renotify', authenticate, async (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Não foi possível reenviar as notificações do protocolo.' });
+  }
+});
+
+app.post('/complaints/:id/reactivate', authenticate, async (req, res) => {
+  try {
+    if (!canReactivateComplaint(req.user)) {
+      return res.status(403).json({
+        error: 'Somente o Administrador Master ou Supervisor do CRC podem reabilitar este protocolo.'
+      });
+    }
+
+    const rows = await getComplaintRows({
+      id: req.params.id,
+      user: req.user,
+      include_deleted: 1
+    }, req.user);
+    const complaint = rows[0];
+
+    if (!complaint) {
+      return res.status(404).json({ error: 'Protocolo não encontrado.' });
+    }
+
+    if (!complaint.deleted_at && complaint.status !== 'resolvida') {
+      return res.status(409).json({ error: 'Este protocolo já está habilitado para tratativa.' });
+    }
+
+    const restoredStatus = complaint.treatment_at || complaint.first_attendance_at || complaint.patient_contacted_at
+      ? 'em_andamento'
+      : 'aberta';
+    const actorName = getActorName(req.user);
+
+    await pool.query(
+      `UPDATE complaints
+          SET status = ?,
+              deleted_at = NULL,
+              deleted_by = NULL,
+              deletion_reason = NULL,
+              closed_at = NULL,
+              closed_by_role = NULL,
+              sac_approval_at = NULL,
+              sac_approval_by = NULL,
+              updated_at = NOW()
+        WHERE id = ?`,
+      [restoredStatus, req.params.id]
+    );
+
+    await insertComplaintLog(
+      req.params.id,
+      'reactivated',
+      `Protocolo reabilitado por ${actorName}. Status retomado para ${restoredStatus}.`,
+      req.user
+    );
+
+    return res.json({
+      message: 'Reclamação reabilitada com sucesso.',
+      status: restoredStatus
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Não foi possível reabilitar o protocolo.' });
   }
 });
 
