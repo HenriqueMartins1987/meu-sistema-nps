@@ -390,6 +390,13 @@ function Dashboard() {
     setFilters((prev) => ({ ...prev, ...updates }));
   };
 
+  const toggleCoordinatorFilter = (label) => {
+    setFilters((prev) => ({
+      ...prev,
+      coordinator: prev.coordinator === label ? '' : label
+    }));
+  };
+
   const exportBaseExcel = () => {
     const headers = Object.keys(baseExportRows[0] || {
       protocolo: '',
@@ -433,7 +440,7 @@ function Dashboard() {
     }
 
     const printDate = new Date();
-    const headers = ['Protocolo', 'Paciente', 'Unidade', 'Classifica??o', 'Status', 'Prazo', 'Responsável', 'Cadastro'];
+    const headers = ['Protocolo', 'Paciente', 'Unidade', 'Classificação', 'Status', 'Prazo', 'Responsável', 'Cadastro'];
     const rowsToPrint = baseExportRows.map((row) => [
       row.protocolo,
       `${row.paciente} | ${row.telefone}`,
@@ -758,7 +765,7 @@ function Dashboard() {
                         <button
                           className="dashboard-inline-filter"
                           type="button"
-                          onClick={() => applyFilters({ coordinator: item.label })}
+                          onClick={() => toggleCoordinatorFilter(item.label)}
                         >
                           {item.label}
                         </button>
