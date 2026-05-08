@@ -84,6 +84,7 @@ export const screenPermissions = [
   { value: 'nps_management', label: 'Painel de gestão NPS' },
   { value: 'nps_dashboard', label: 'Dashboard NPS' },
   { value: 'patient_management', label: 'Gestão do paciente' },
+  { value: 'crm_relationship', label: 'CRM de relacionamento' },
   { value: 'admin_panel', label: 'Painel gerencial' }
 ];
 
@@ -152,18 +153,13 @@ export function hasPermission(user, permission) {
   if (isMasterAdmin(user)) return true;
 
   const permissions = Array.isArray(user.permissions) ? user.permissions : [];
-  const supervisorDefaults = ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management'];
 
   if (permission === 'admin_panel') {
     return false;
   }
 
-  if (user.role === 'supervisor_crc') {
-    return supervisorDefaults.includes(permission) || permissions.includes(permission);
-  }
-
-  if (permission === 'patient_management') {
-    return permissions.includes(permission);
+  if (permission === 'home') {
+    return true;
   }
 
   if (user.role === 'admin') {

@@ -3487,6 +3487,24 @@ a {
   grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
+.crm-filter-panel {
+  position: static;
+}
+
+.crm-filter-panel .dashboard-filters {
+  grid-template-columns: minmax(220px, 1.3fr) repeat(4, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+.crm-chart-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: stretch;
+}
+
+.crm-chart-grid > * {
+  min-width: 0;
+}
+
 .crm-stage-grid {
   width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
   margin: 0 auto 18px;
@@ -3555,6 +3573,11 @@ a {
 .crm-base-panel {
   margin-bottom: 18px;
   padding-bottom: 18px;
+}
+
+.crm-base-panel .panel-heading,
+.crm-filter-panel .dashboard-filter-heading {
+  align-items: flex-start;
 }
 
 .crm-table td,
@@ -4721,6 +4744,11 @@ a {
 
   .crm-kpi-grid,
   .crm-stage-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .crm-filter-panel .dashboard-filters,
+  .crm-chart-grid {
     grid-template-columns: 1fr;
   }
 

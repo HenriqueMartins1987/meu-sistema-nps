@@ -198,7 +198,7 @@ function HomeShellFixed() {
     {
       title: 'Relacionamento',
       items: [
-        { label: 'CRM de Relacionamento', path: '/crm', permission: 'home' }
+        { label: 'CRM de Relacionamento', path: '/crm', permission: 'crm_relationship' }
       ]
     },
     {

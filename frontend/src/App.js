@@ -32,16 +32,30 @@ function App() {
       <Route path="/registro-marketing" element={<MarketingIntake />} />
       <Route path="/pesquisa-nps" element={<NpsSurveyPage />} />
       <Route element={<ProtectedRoute />}>
-        <Route path="/home" element={<Home />} />
-        <Route path="/cadastro" element={<Cadastro />} />
-        <Route path="/gestao" element={<DashboardManagement />} />
-        <Route path="/gestao/:id" element={<ComplaintDetail />} />
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/bi" element={<BI />} />
-        <Route path="/perfil" element={<Profile />} />
-        <Route path="/gestao-nps" element={<NpsManagement />} />
-        <Route path="/dashboard-nps" element={<NpsDashboard />} />
-        <Route path="/crm" element={<CrmWorkspace />} />
+        <Route element={<PermissionRoute permission="home" />}>
+          <Route path="/home" element={<Home />} />
+          <Route path="/perfil" element={<Profile />} />
+        </Route>
+        <Route element={<PermissionRoute permission="complaints_register" />}>
+          <Route path="/cadastro" element={<Cadastro />} />
+        </Route>
+        <Route element={<PermissionRoute permission="complaints_management" />}>
+          <Route path="/gestao" element={<DashboardManagement />} />
+          <Route path="/gestao/:id" element={<ComplaintDetail />} />
+        </Route>
+        <Route element={<PermissionRoute permission="complaints_dashboard" />}>
+          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/bi" element={<BI />} />
+        </Route>
+        <Route element={<PermissionRoute permission="nps_management" />}>
+          <Route path="/gestao-nps" element={<NpsManagement />} />
+        </Route>
+        <Route element={<PermissionRoute permission="nps_dashboard" />}>
+          <Route path="/dashboard-nps" element={<NpsDashboard />} />
+        </Route>
+        <Route element={<PermissionRoute permission="crm_relationship" />}>
+          <Route path="/crm" element={<CrmWorkspace />} />
+        </Route>
         <Route element={<PermissionRoute masterOnly />}>
           <Route path="/admin" element={<AdminPanel />} />
           <Route path="/admin/monitoria" element={<MasterMonitoring />} />

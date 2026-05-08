@@ -241,6 +241,7 @@ const screenPermissions = {
   nps_management: 'Painel de gestão NPS',
   nps_dashboard: 'Dashboard NPS',
   patient_management: 'Gestão do paciente',
+  crm_relationship: 'CRM de relacionamento',
   admin_panel: 'Painel gerencial'
 };
 
@@ -585,11 +586,11 @@ function defaultPermissionsForRole(role) {
   }
 
   if (role === 'sac_operator') {
-    return ['home', 'complaints_register', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard'];
+    return ['home', 'complaints_register', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'crm_relationship'];
   }
 
   if (['supervisor_crc', 'coordinator', 'manager'].includes(role)) {
-    return ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management'];
+    return ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship'];
   }
 
   return ['home', 'complaints_management', 'nps_management'];
@@ -4165,10 +4166,7 @@ function parsePermissionsFromUser(user) {
     permissions = defaultPermissions;
   }
 
-  return Array.from(new Set([
-    ...defaultPermissions,
-    ...(Array.isArray(permissions) ? permissions : [])
-  ]));
+  return Array.from(new Set(Array.isArray(permissions) ? permissions : defaultPermissions));
 }
 
 function canReceiveComplaintNotification(user) {
