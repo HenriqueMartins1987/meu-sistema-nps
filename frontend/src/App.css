@@ -5149,6 +5149,65 @@ a {
   min-width: 0;
 }
 
+.dashboard-coordinator-card {
+  display: grid;
+  gap: 16px;
+}
+
+.dashboard-coordinator-list {
+  display: grid;
+  gap: 12px;
+}
+
+.dashboard-coordinator-item {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  padding: 14px 16px;
+  border: 1px solid rgba(200, 154, 87, 0.2);
+  border-radius: 10px;
+  background: rgba(255, 250, 242, 0.92);
+}
+
+.dashboard-coordinator-rank {
+  width: 52px;
+  height: 52px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, rgba(142, 103, 49, 0.14), rgba(11, 111, 95, 0.12));
+  color: #8a632d;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.dashboard-coordinator-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.dashboard-coordinator-copy strong {
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.dashboard-coordinator-copy span,
+.dashboard-coordinator-meta span {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.dashboard-coordinator-meta {
+  display: grid;
+  gap: 4px;
+  text-align: right;
+  white-space: nowrap;
+}
+
 .complaints-dashboard-page .page-heading,
 .nps-dashboard-page .page-heading,
 .patient-dashboard-page .page-heading {
@@ -5184,6 +5243,19 @@ a {
 .nps-dashboard-page .dashboard-clean-table td,
 .patient-dashboard-page .dashboard-clean-table td {
   vertical-align: top;
+}
+
+@media (max-width: 960px) {
+  .dashboard-coordinator-item {
+    grid-template-columns: 48px minmax(0, 1fr);
+  }
+
+  .dashboard-coordinator-meta {
+    grid-column: 1 / -1;
+    text-align: left;
+    white-space: normal;
+    padding-left: 62px;
+  }
 }
 
 .complaints-dashboard-page .dashboard-clean-table .table-cell-stack,

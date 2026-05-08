@@ -349,6 +349,20 @@ function Dashboard() {
     });
   }, [byType, filteredRows]);
 
+  const coordinatorHighlights = useMemo(() => {
+    const total = filteredRows.length || 1;
+
+    return byCoordinator.slice(0, 8).map((item) => {
+      const matchingRows = filteredRows.filter((row) => (row.coordinator_name || 'Não informado') === item.label);
+      return {
+        ...item,
+        share: Math.round((item.total / total) * 100),
+        overdue: matchingRows.filter((row) => buildDeadlineInfo(row) === 'overdue').length,
+        inProgress: matchingRows.filter((row) => row.status === 'em_andamento').length
+      };
+    });
+  }, [byCoordinator, filteredRows]);
+
   const updateFilter = (field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value }));
   };
@@ -691,6 +705,33 @@ function Dashboard() {
               <h2>Carteira por coordenador</h2>
               <div className="chart-box">
                 <Bar data={buildBarData(byCoordinator, '#8a4f7d')} options={chartOptions} />
+              </div>
+            </article>
+
+            <article className="chart-card dashboard-coordinator-card">
+              <div className="dashboard-section-head">
+                <div>
+                  <p className="eyebrow">Coordenadores</p>
+                  <h2>Responsáveis com mais reclamações</h2>
+                  <p className="base-subtitle">Leitura rápida da carteira filtrada por coordenador, com quantidade de reclamações e pressão operacional.</p>
+                </div>
+              </div>
+              <div className="dashboard-coordinator-list">
+                {coordinatorHighlights.length ? coordinatorHighlights.map((item, index) => (
+                  <article className="dashboard-coordinator-item" key={item.label}>
+                    <div className="dashboard-coordinator-rank">{String(index + 1).padStart(2, '0')}</div>
+                    <div className="dashboard-coordinator-copy">
+                      <strong>{item.label}</strong>
+                      <span>{item.total} reclamações · {item.share}% da carteira filtrada</span>
+                    </div>
+                    <div className="dashboard-coordinator-meta">
+                      <span>{item.inProgress} em andamento</span>
+                      <span>{item.overdue} vencidas</span>
+                    </div>
+                  </article>
+                )) : (
+                  <p className="empty-state">Sem coordenadores vinculados na base filtrada.</p>
+                )}
               </div>
             </article>
 
