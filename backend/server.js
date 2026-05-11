@@ -633,6 +633,10 @@ function canRegisterFirstAttendance(user) {
   return ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role) || isMasterAdminUser(user);
 }
 
+function canReassignComplaint(user) {
+  return ['master_admin', 'supervisor_crc', 'sac_operator', 'admin'].includes(user?.role) || isMasterAdminUser(user) || isAdminUser(user);
+}
+
 function canDeleteRecords(user) {
   return isMasterAdminUser(user) || user?.role === 'supervisor_crc';
 }
@@ -2399,8 +2403,20 @@ async function getComplaintRows(query = {}, user = null) {
   }
 
   if (user && !isAdminUser(user) && !['sac_operator', 'supervisor_crc'].includes(user?.role)) {
-    filters.clause += filters.clause ? ' AND c.assigned_responsible_user_id = ?' : 'WHERE c.assigned_responsible_user_id = ?';
-    filters.params.push(user.id);
+    if (user?.role === 'manager') {
+      const clinicIds = await getUserClinicIds(user.id);
+
+      if (clinicIds.length) {
+        filters.clause += filters.clause ? ' AND c.clinic_id IN (?)' : 'WHERE c.clinic_id IN (?)';
+        filters.params.push(clinicIds);
+      } else {
+        filters.clause += filters.clause ? ' AND c.assigned_responsible_user_id = ?' : 'WHERE c.assigned_responsible_user_id = ?';
+        filters.params.push(user.id);
+      }
+    } else {
+      filters.clause += filters.clause ? ' AND c.assigned_responsible_user_id = ?' : 'WHERE c.assigned_responsible_user_id = ?';
+      filters.params.push(user.id);
+    }
   }
 
   const [rows] = await pool.query(
@@ -9258,7 +9274,8 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       sac_accept,
       patient_contacted,
       first_attendance,
-      forward_to_role
+      forward_to_role,
+      reassign_forward
     } = req.body;
     const rows = await getComplaintRows({ id }, req.user);
 
@@ -9514,6 +9531,52 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       });
     }
 
+    if (reassign_forward) {
+      if (!canReassignComplaint(req.user)) {
+        return res.status(403).json({ error: 'Seu perfil não pode reencaminhar a reclamação.' });
+      }
+
+      const allowedReassignRoles = {
+        coordinator: 'Coordenador',
+        manager: 'Gerente'
+      };
+
+      if (!allowedReassignRoles[forward_to_role]) {
+        return res.status(400).json({ error: 'Selecione Coordenador ou Gerente para reencaminhar a demanda.' });
+      }
+
+      const assignment = await resolveComplaintResponsibleAssignment(complaint.clinic_id, forward_to_role);
+      const forwardedLabel = forward_to_role === 'coordinator'
+        ? complaint.assigned_coordinator_name || assignment.name || allowedReassignRoles[forward_to_role]
+        : assignment.label || allowedReassignRoles[forward_to_role];
+
+      updates.push('forwarded_to_role = ?');
+      values.push(forward_to_role);
+      updates.push('forwarded_to_label = ?');
+      values.push(forwardedLabel);
+      updates.push('forwarded_at = NOW()');
+      updates.push('forwarded_by = ?');
+      values.push(actorName);
+      updates.push('assigned_responsible_user_id = ?');
+      values.push(assignment?.userId || null);
+      updates.push('assigned_responsible_name = ?');
+      values.push(assignment?.name || forwardedLabel);
+      updates.push('assigned_responsible_role = ?');
+      values.push(assignment?.role || forward_to_role);
+
+      if (forward_to_role === 'coordinator') {
+        updates.push('assigned_coordinator_user_id = ?');
+        values.push(assignment?.userId || null);
+        updates.push('assigned_coordinator_name = ?');
+        values.push(assignment?.name || forwardedLabel);
+      }
+
+      logEntries.push({
+        action: 'reassigned_forward',
+        message: `Demanda reencaminhada para ${forwardedLabel}.`
+      });
+    }
+
     if (nextStatus === 'resolvida') {
       const isMasterRequest = isMasterAdminUser(req.user);
       const hasTreatment = Boolean(complaint.treatment_at) || (cleanedComment && canAddTreatment(req.user));
@@ -9566,7 +9629,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       insertComplaintLog(id, entry.action, entry.message, req.user)
     )));
 
-    if (first_attendance && ['coordinator', 'manager'].includes(String(forward_to_role || '').toLowerCase())) {
+    if ((first_attendance || reassign_forward) && ['coordinator', 'manager'].includes(String(forward_to_role || '').toLowerCase())) {
       try {
         await notifyComplaintAssigned(id, complaint.protocol);
       } catch (error) {

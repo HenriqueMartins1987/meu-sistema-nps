@@ -24,6 +24,8 @@ const forwardingOptions = [
   { value: 'supervisor_crc', label: 'Supervisor do CRC' }
 ];
 
+const reassignForwardingOptions = forwardingOptions.filter((option) => ['coordinator', 'manager'].includes(option.value));
+
 function formatProtocol(complaint) {
   if (complaint?.protocol) return complaint.protocol;
   const year = complaint?.created_at ? new Date(complaint.created_at).getFullYear() : new Date().getFullYear();
@@ -284,6 +286,7 @@ function ComplaintDetail() {
   const [selectedClinicId, setSelectedClinicId] = useState('');
   const [editablePatientPhone, setEditablePatientPhone] = useState('');
   const [showForwardModal, setShowForwardModal] = useState(false);
+  const [forwardModalMode, setForwardModalMode] = useState('contact');
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showReactivateModal, setShowReactivateModal] = useState(false);
   const [showExecutiveSummary, setShowExecutiveSummary] = useState(false);
@@ -318,6 +321,7 @@ function ComplaintDetail() {
   const canEditPatientPhone = isMasterUser || ['sac_operator', 'supervisor_crc', 'master_admin'].includes(user?.role);
   const canRenotifyComplaint = isMasterUser || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
   const canReactivateComplaint = isMasterUser || user?.role === 'supervisor_crc';
+  const canReassignForward = isAdmin || isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
   const activeUnitOptions = useMemo(() => (
     unitOptions
       .filter((unit) => unit?.name && String(unit.active ?? 1) !== '0')
@@ -476,6 +480,19 @@ function ComplaintDetail() {
     }
 
     setFeedback('');
+    setForwardModalMode('contact');
+    setForwardToRole('');
+    setShowForwardModal(true);
+  };
+
+  const handleOpenReassignForward = () => {
+    if (!canReassignForward || complaint?.status === 'resolvida') {
+      return;
+    }
+
+    setFeedback('');
+    setForwardModalMode('reassign');
+    setForwardToRole('');
     setShowForwardModal(true);
   };
 
@@ -523,7 +540,7 @@ function ComplaintDetail() {
 
   const handleContactForward = async () => {
     if (!forwardToRole) {
-      setFeedback('Selecione para quem a reclamação será encaminhada.');
+      setFeedback('Selecione para quem a reclamacao sera encaminhada.');
       return;
     }
 
@@ -531,18 +548,36 @@ function ComplaintDetail() {
     setFeedback('');
 
     try {
-      await api.patch(`/complaints/${id}`, {
-        status: 'em_andamento',
-        patient_contacted: true,
-        first_attendance: true,
-        forward_to_role: forwardToRole
-      });
+      const payload = forwardModalMode === 'reassign'
+        ? {
+            status: complaint?.status === 'aberta' ? 'em_andamento' : complaint?.status,
+            reassign_forward: true,
+            forward_to_role: forwardToRole
+          }
+        : {
+            status: 'em_andamento',
+            patient_contacted: true,
+            first_attendance: true,
+            forward_to_role: forwardToRole
+          };
+
+      await api.patch(`/complaints/${id}`, payload);
       setShowForwardModal(false);
+      setForwardModalMode('contact');
       setForwardToRole('');
-      setFeedback('Contato com o paciente registrado e reclamação encaminhada para tratativa.');
+      setFeedback(
+        forwardModalMode === 'reassign'
+          ? 'Demanda reencaminhada com sucesso para a unidade.'
+          : 'Contato com o paciente registrado e reclamacao encaminhada para tratativa.'
+      );
       await loadComplaint();
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Erro ao registrar contato com o paciente.');
+      setFeedback(
+        error.response?.data?.error
+        || (forwardModalMode === 'reassign'
+          ? 'Erro ao reencaminhar a reclamacao.'
+          : 'Erro ao registrar contato com o paciente.')
+      );
     } finally {
       setSaving(false);
     }
@@ -1179,7 +1214,12 @@ function ComplaintDetail() {
             )}
             {canOperationalClose && complaint.status !== 'resolvida' && (
               <button className="outline-action" onClick={handlePatientContact} disabled={saving || !canMarkPatientContact || isDeletedRecord}>
-                {hasPatientContact ? 'Contato já registrado' : 'Registrar contato com paciente'}
+                {hasPatientContact ? 'Contato ja registrado' : 'Registrar contato com paciente'}
+              </button>
+            )}
+            {canReassignForward && complaint.status !== 'resolvida' && !isDeletedRecord && (
+              <button className="outline-action" onClick={handleOpenReassignForward} disabled={saving}>
+                Encaminhar para unidade
               </button>
             )}
             {canOperationalClose && (
@@ -1210,17 +1250,19 @@ function ComplaintDetail() {
       {showForwardModal && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Encaminhar para tratativa" onClick={() => setShowForwardModal(false)}>
           <div className="modal-panel" onClick={(event) => event.stopPropagation()}>
-            <p className="eyebrow">Encaminhamento da reclamação</p>
-            <h2>Selecionar próximo responsável</h2>
+            <p className="eyebrow">Encaminhamento da reclamacao</p>
+            <h2>{forwardModalMode === 'reassign' ? 'Reencaminhar demanda' : 'Selecionar proximo responsavel'}</h2>
             <p>
-              Ao confirmar, o contato com o paciente será registrado e a reclamação será encaminhada para o responsável escolhido.
+              {forwardModalMode === 'reassign'
+                ? 'Ao confirmar, a reclamacao sera enviada novamente para o coordenador ou gerente da unidade e o historico ficara registrado.'
+                : 'Ao confirmar, o contato com o paciente sera registrado e a reclamacao sera encaminhada para o responsavel escolhido.'}
             </p>
 
             <label>
-              Responsável pela tratativa
+              Responsavel pela tratativa
               <select className="field" value={forwardToRole} onChange={(event) => setForwardToRole(event.target.value)} required>
                 <option value="">Selecione o destino</option>
-                {forwardingOptions.map((option) => (
+                {(forwardModalMode === 'reassign' ? reassignForwardingOptions : forwardingOptions).map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>
