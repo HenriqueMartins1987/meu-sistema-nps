@@ -12,6 +12,7 @@ import {
 } from './constants';
 
 const chartColors = ['#0b6f5f', '#d08c31', '#c44536', '#1f7a8c', '#4c956c', '#8a4f7d'];
+const pageSizeOptions = [10, 25, 50, 100];
 
 const chartOptions = {
   responsive: true,
@@ -140,6 +141,8 @@ function PatientManagementPage() {
   const [records, setRecords] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [filters, setFilters] = useState(initialFilters);
+  const [dashboardTablePage, setDashboardTablePage] = useState(1);
+  const [dashboardTablePageSize, setDashboardTablePageSize] = useState(10);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [activeTab, setActiveTab] = useState('ativos');
   const [feedback, setFeedback] = useState('');
@@ -268,8 +271,7 @@ function PatientManagementPage() {
       );
     })
     .slice()
-    .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt))
-    .slice(0, 50), [dashboardSourceRecords, filters]);
+    .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt)), [dashboardSourceRecords, filters]);
   const dashboardReportRecords = useMemo(() => records
     .filter((record) => {
       if (record.status === 'Cancelado') return false;
@@ -316,6 +318,19 @@ function PatientManagementPage() {
     ultima_tratativa: record.lastActorName || 'Sem tratativa',
     perfil_ultima_tratativa: record.lastActorRole || 'Perfil não informado'
   })), [dashboardReportRecords]);
+
+  useEffect(() => {
+    setDashboardTablePage(1);
+  }, [upcomingRecords]);
+
+  const totalDashboardTablePages = Math.max(1, Math.ceil(upcomingRecords.length / dashboardTablePageSize));
+  const currentDashboardTablePage = Math.min(dashboardTablePage, totalDashboardTablePages);
+  const paginatedUpcomingRecords = useMemo(() => {
+    const start = (currentDashboardTablePage - 1) * dashboardTablePageSize;
+    return upcomingRecords.slice(start, start + dashboardTablePageSize);
+  }, [currentDashboardTablePage, dashboardTablePageSize, upcomingRecords]);
+  const dashboardTableStart = upcomingRecords.length ? (currentDashboardTablePage - 1) * dashboardTablePageSize + 1 : 0;
+  const dashboardTableEnd = upcomingRecords.length ? Math.min(currentDashboardTablePage * dashboardTablePageSize, upcomingRecords.length) : 0;
 
   const updateForm = (field, value) => {
     setForm((prev) => ({ ...prev, [field]: value }));
@@ -857,7 +872,7 @@ function PatientManagementPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {upcomingRecords.map((record) => (
+                    {paginatedUpcomingRecords.map((record) => (
                       <tr key={record.id}>
                         <td>
                           <div className="table-cell-stack">
@@ -894,6 +909,47 @@ function PatientManagementPage() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+
+              <div className="pagination-bar">
+                <div className="pagination-summary">
+                  <label className="pagination-page-size">
+                    <span>Por pagina</span>
+                    <select
+                      className="field"
+                      value={dashboardTablePageSize}
+                      onChange={(event) => {
+                        setDashboardTablePageSize(Number(event.target.value));
+                        setDashboardTablePage(1);
+                      }}
+                    >
+                      {pageSizeOptions.map((option) => (
+                        <option key={option} value={option}>{option}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <span>Mostrando {dashboardTableStart} a {dashboardTableEnd} de {upcomingRecords.length} registros</span>
+                </div>
+
+                <div className="pagination-actions">
+                  <button
+                    className="outline-action"
+                    type="button"
+                    onClick={() => setDashboardTablePage((prev) => Math.max(1, prev - 1))}
+                    disabled={currentDashboardTablePage <= 1}
+                  >
+                    Anterior
+                  </button>
+                  <strong>Página {currentDashboardTablePage} de {totalDashboardTablePages}</strong>
+                  <button
+                    className="outline-action"
+                    type="button"
+                    onClick={() => setDashboardTablePage((prev) => Math.min(totalDashboardTablePages, prev + 1))}
+                    disabled={currentDashboardTablePage >= totalDashboardTablePages}
+                  >
+                    Proxima
+                  </button>
+                </div>
               </div>
             </section>
           </>

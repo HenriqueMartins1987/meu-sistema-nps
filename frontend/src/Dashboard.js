@@ -16,6 +16,7 @@ import {
 } from './constants';
 
 const chartColors = ['#0b6f5f', '#1f7a8c', '#4c956c', '#d08c31', '#8a4f7d', '#5d6d7e', '#c44536', '#247ba0'];
+const pageSizeOptions = [10, 25, 50, 100];
 
 const initialFilters = {
   clinic: '',
@@ -206,6 +207,8 @@ function Dashboard() {
   const [rows, setRows] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [filters, setFilters] = useState(initialFilters);
+  const [tablePage, setTablePage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState(10);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState('');
 
@@ -318,7 +321,7 @@ function Dashboard() {
   const byChannel = useMemo(() => groupCount(filteredRows, (item) => item.channel).slice(0, 10), [filteredRows]);
   const byCoordinator = useMemo(() => groupCount(filteredRows, (item) => item.coordinator_name).slice(0, 10), [filteredRows]);
   const bySla = useMemo(() => groupCount(filteredRows, (item) => slaLabel(buildDeadlineInfo(item))), [filteredRows]);
-  const baseRows = useMemo(() => filteredRows.slice(0, 100), [filteredRows]);
+  const baseRows = useMemo(() => filteredRows, [filteredRows]);
   const baseExportRows = useMemo(() => baseRows.map((item) => {
     const deadline = buildDeadlineInfo(item);
 
@@ -381,6 +384,19 @@ function Dashboard() {
       };
     });
   }, [byCoordinator, filteredRows]);
+
+  useEffect(() => {
+    setTablePage(1);
+  }, [filteredRows]);
+
+  const totalTablePages = Math.max(1, Math.ceil(baseRows.length / tablePageSize));
+  const currentTablePage = Math.min(tablePage, totalTablePages);
+  const paginatedBaseRows = useMemo(() => {
+    const start = (currentTablePage - 1) * tablePageSize;
+    return baseRows.slice(start, start + tablePageSize);
+  }, [baseRows, currentTablePage, tablePageSize]);
+  const tableStart = baseRows.length ? (currentTablePage - 1) * tablePageSize + 1 : 0;
+  const tableEnd = baseRows.length ? Math.min(currentTablePage * tablePageSize, baseRows.length) : 0;
 
   const updateFilter = (field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value }));
@@ -842,7 +858,7 @@ function Dashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {baseRows.map((item) => {
+                  {paginatedBaseRows.map((item) => {
                     const deadline = buildDeadlineInfo(item);
 
                     return (
@@ -904,6 +920,47 @@ function Dashboard() {
                   })}
                 </tbody>
               </table>
+            </div>
+
+            <div className="pagination-bar">
+              <div className="pagination-summary">
+                <label className="pagination-page-size">
+                  <span>Por pagina</span>
+                  <select
+                    className="field"
+                    value={tablePageSize}
+                    onChange={(event) => {
+                      setTablePageSize(Number(event.target.value));
+                      setTablePage(1);
+                    }}
+                  >
+                    {pageSizeOptions.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </label>
+                <span>Mostrando {tableStart} a {tableEnd} de {baseRows.length} registros</span>
+              </div>
+
+              <div className="pagination-actions">
+                <button
+                  className="outline-action"
+                  type="button"
+                  onClick={() => setTablePage((prev) => Math.max(1, prev - 1))}
+                  disabled={currentTablePage <= 1}
+                >
+                  Anterior
+                </button>
+                <strong>Página {currentTablePage} de {totalTablePages}</strong>
+                <button
+                  className="outline-action"
+                  type="button"
+                  onClick={() => setTablePage((prev) => Math.min(totalTablePages, prev + 1))}
+                  disabled={currentTablePage >= totalTablePages}
+                >
+                  Proxima
+                </button>
+              </div>
             </div>
           </section>
         </>

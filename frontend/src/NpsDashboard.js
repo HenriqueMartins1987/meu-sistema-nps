@@ -5,6 +5,7 @@ import 'chart.js/auto';
 import api from './api';
 
 const chartColors = ['#0b6f5f', '#d08c31', '#c44536', '#1f7a8c', '#4c956c', '#8a4f7d'];
+const pageSizeOptions = [10, 25, 50, 100];
 
 const initialFilters = {
   clinic: '',
@@ -138,6 +139,8 @@ function NpsDashboard() {
   const [rows, setRows] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [filters, setFilters] = useState(initialFilters);
+  const [tablePage, setTablePage] = useState(1);
+  const [tablePageSize, setTablePageSize] = useState(10);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState('');
 
@@ -228,7 +231,7 @@ function NpsDashboard() {
   const byRegion = useMemo(() => groupCount(filteredRows, (item) => item.region), [filteredRows]);
   const byCoordinator = useMemo(() => groupCount(filteredRows, (item) => item.coordinator_name).slice(0, 10), [filteredRows]);
   const byTreatmentStatus = useMemo(() => groupCount(filteredRows, (item) => npsStatusLabels[getNpsStatus(item)]), [filteredRows]);
-  const baseRows = useMemo(() => filteredRows.slice(0, 100), [filteredRows]);
+  const baseRows = useMemo(() => filteredRows, [filteredRows]);
   const baseExportRows = useMemo(() => baseRows.map((item) => {
     const profile = item.nps_profile || profileFromScore(item.score);
     const status = getNpsStatus(item);
@@ -249,6 +252,19 @@ function NpsDashboard() {
       cadastro: formatShortDate(item.created_at)
     };
   }), [baseRows]);
+
+  useEffect(() => {
+    setTablePage(1);
+  }, [filteredRows]);
+
+  const totalTablePages = Math.max(1, Math.ceil(baseRows.length / tablePageSize));
+  const currentTablePage = Math.min(tablePage, totalTablePages);
+  const paginatedBaseRows = useMemo(() => {
+    const start = (currentTablePage - 1) * tablePageSize;
+    return baseRows.slice(start, start + tablePageSize);
+  }, [baseRows, currentTablePage, tablePageSize]);
+  const tableStart = baseRows.length ? (currentTablePage - 1) * tablePageSize + 1 : 0;
+  const tableEnd = baseRows.length ? Math.min(currentTablePage * tablePageSize, baseRows.length) : 0;
 
   const updateFilter = (field, value) => {
     setFilters((prev) => ({ ...prev, [field]: value }));
@@ -588,7 +604,7 @@ function NpsDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {baseRows.map((item) => {
+                  {paginatedBaseRows.map((item) => {
                     const profile = item.nps_profile || profileFromScore(item.score);
                     const status = getNpsStatus(item);
 
@@ -642,6 +658,47 @@ function NpsDashboard() {
                   })}
                 </tbody>
               </table>
+            </div>
+
+            <div className="pagination-bar">
+              <div className="pagination-summary">
+                <label className="pagination-page-size">
+                  <span>Por pagina</span>
+                  <select
+                    className="field"
+                    value={tablePageSize}
+                    onChange={(event) => {
+                      setTablePageSize(Number(event.target.value));
+                      setTablePage(1);
+                    }}
+                  >
+                    {pageSizeOptions.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                </label>
+                <span>Mostrando {tableStart} a {tableEnd} de {baseRows.length} registros</span>
+              </div>
+
+              <div className="pagination-actions">
+                <button
+                  className="outline-action"
+                  type="button"
+                  onClick={() => setTablePage((prev) => Math.max(1, prev - 1))}
+                  disabled={currentTablePage <= 1}
+                >
+                  Anterior
+                </button>
+                <strong>Página {currentTablePage} de {totalTablePages}</strong>
+                <button
+                  className="outline-action"
+                  type="button"
+                  onClick={() => setTablePage((prev) => Math.min(totalTablePages, prev + 1))}
+                  disabled={currentTablePage >= totalTablePages}
+                >
+                  Proxima
+                </button>
+              </div>
             </div>
           </section>
         </>
