@@ -869,6 +869,9 @@ function HomeShellFixed() {
           {hasPermission(user, 'complaints_management') && (
             <button className="secondary-action" onClick={() => navigate('/gestao')}>Painel de Gestão de Reclamações</button>
           )}
+          {canAccessWeeklyComplaintReport(user) && hasPermission(user, 'complaints_management') && (
+            <button className="secondary-action" onClick={() => navigate('/gestao/relatorio-semanal')}>Relatório semanal</button>
+          )}
           {hasPermission(user, 'complaints_dashboard') && (
             <button className="secondary-action" onClick={() => navigate('/dashboard')}>Dashboard de Reclamações</button>
           )}
