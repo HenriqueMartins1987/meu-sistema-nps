@@ -278,6 +278,8 @@ function DashboardManagement() {
   const navigate = useNavigate();
   const currentUser = readUser();
   const canViewDeleted = isMasterAdmin(currentUser);
+  const canFilterByLeadership = isMasterAdmin(currentUser)
+    || ['admin', 'supervisor_crc', 'manager'].includes(String(currentUser?.role || ''));
   const [complaints, setComplaints] = useState([]);
   const [viewMode, setViewMode] = useState('active');
   const [filters, setFilters] = useState({
@@ -319,6 +321,16 @@ function DashboardManagement() {
       setViewMode('active');
     }
   }, [canViewDeleted, viewMode]);
+
+  useEffect(() => {
+    if (canFilterByLeadership) return;
+
+    setFilters((prev) => (
+      prev.coordinator || prev.manager
+        ? { ...prev, coordinator: '', manager: '' }
+        : prev
+    ));
+  }, [canFilterByLeadership]);
 
   useEffect(() => {
     setPage(1);
@@ -841,26 +853,30 @@ function DashboardManagement() {
               <option value="ontime">No prazo</option>
               <option value="closed">Fechadas</option>
             </select>
-            <select
-              className="field"
-              value={filters.coordinator}
-              onChange={(event) => setFilters({ ...filters, coordinator: event.target.value })}
-            >
-              <option value="">Todos os coordenadores</option>
-              {coordinatorOptions.map((coordinator) => (
-                <option key={coordinator} value={coordinator}>{coordinator}</option>
-              ))}
-            </select>
-            <select
-              className="field"
-              value={filters.manager}
-              onChange={(event) => setFilters({ ...filters, manager: event.target.value })}
-            >
-              <option value="">Todos os gerentes</option>
-              {managerOptions.map((manager) => (
-                <option key={manager} value={manager}>{manager}</option>
-              ))}
-            </select>
+            {canFilterByLeadership && (
+              <>
+                <select
+                  className="field"
+                  value={filters.coordinator}
+                  onChange={(event) => setFilters({ ...filters, coordinator: event.target.value })}
+                >
+                  <option value="">Todos os coordenadores</option>
+                  {coordinatorOptions.map((coordinator) => (
+                    <option key={coordinator} value={coordinator}>{coordinator}</option>
+                  ))}
+                </select>
+                <select
+                  className="field"
+                  value={filters.manager}
+                  onChange={(event) => setFilters({ ...filters, manager: event.target.value })}
+                >
+                  <option value="">Todos os gerentes</option>
+                  {managerOptions.map((manager) => (
+                    <option key={manager} value={manager}>{manager}</option>
+                  ))}
+                </select>
+              </>
+            )}
             <select
               className="field"
               value={filters.type}
