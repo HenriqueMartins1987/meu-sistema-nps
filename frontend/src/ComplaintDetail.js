@@ -330,6 +330,7 @@ function ComplaintDetail() {
   const [assetPreview, setAssetPreview] = useState(null);
 
   const protocol = useMemo(() => formatProtocol(complaint), [complaint]);
+  const normalizedUserRole = String(user?.role || '').trim().toLowerCase();
   const deadline = useMemo(() => buildDeadlineInfo(complaint), [complaint]);
   const stage = useMemo(() => buildOperationalStage(complaint), [complaint]);
   const priority = useMemo(() => getPriorityOption(complaint?.priority), [complaint]);
@@ -345,19 +346,19 @@ function ComplaintDetail() {
 
   const isAdmin = isAdminUser(user);
   const isMasterUser = isMasterAdmin(user);
-  const canOperationalClose = isMasterUser || ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
+  const canOperationalClose = isMasterUser || ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole);
   const canFormalTreatment = treatmentRoles.includes(user?.role) || isAdmin;
   const canRecordTreatment = Boolean(user?.role);
   const canAttachEvidence = evidenceRoles.includes(user?.role) || isAdmin;
-  const canSupervisorAccept = user?.role === 'supervisor_crc' || isAdmin;
+  const canSupervisorAccept = normalizedUserRole === 'supervisor_crc' || isAdmin;
   const canDeleteComplaint = isMasterUser || user?.role === 'supervisor_crc';
   const canDeleteEvidence = Boolean(user?.id || user?.email || user?.role);
-  const canChangeComplaintUnit = isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
-  const canEditPatientPhone = isMasterUser || ['sac_operator', 'supervisor_crc', 'master_admin'].includes(user?.role);
-  const canRenotifyComplaint = isMasterUser || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
-  const canReactivateComplaint = isMasterUser || user?.role === 'supervisor_crc';
+  const canChangeComplaintUnit = isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole);
+  const canEditPatientPhone = isMasterUser || ['sac_operator', 'supervisor_crc', 'master_admin'].includes(normalizedUserRole);
+  const canRenotifyComplaint = isMasterUser || normalizedUserRole === 'supervisor_crc' || normalizedUserRole === 'sac_operator';
+  const canReactivateComplaint = isMasterUser || normalizedUserRole === 'supervisor_crc';
   const canReturnToSac = ['coordinator', 'manager'].includes(String(user?.role || '').toLowerCase());
-  const canReassignForward = canReturnToSac || isAdmin || isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
+  const canReassignForward = canReturnToSac || isAdmin || isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole);
   const reassignOptions = canReturnToSac ? returnToSacOption : reassignForwardingOptions;
   const activeUnitOptions = useMemo(() => (
     unitOptions

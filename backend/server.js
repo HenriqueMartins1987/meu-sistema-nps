@@ -606,11 +606,13 @@ function canDeleteEvidence(user) {
 }
 
 function canChangeComplaintUnit(user) {
-  return complaintUnitChangeRoles.has(user?.role) || isMasterAdminUser(user);
+  const normalizedRole = String(user?.role || '').trim().toLowerCase();
+  return complaintUnitChangeRoles.has(normalizedRole) || isMasterAdminUser(user);
 }
 
 function canEditComplaintPatientPhone(user) {
-  return ['sac_operator', 'supervisor_crc', 'master_admin'].includes(user?.role) || isMasterAdminUser(user);
+  const normalizedRole = String(user?.role || '').trim().toLowerCase();
+  return ['sac_operator', 'supervisor_crc', 'master_admin'].includes(normalizedRole) || isMasterAdminUser(user);
 }
 
 function canAddTreatment(user) {
