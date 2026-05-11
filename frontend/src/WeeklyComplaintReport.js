@@ -62,6 +62,16 @@ function getWeeklyReasonLabel(item) {
   return formatShortText(item.description || item.complaint_type || 'Nao informado');
 }
 
+function getCurrentResponsibleLabel(item) {
+  return (
+    item.assigned_responsible_name
+    || item.assigned_coordinator_name
+    || item.coordinator_name
+    || item.manager_name
+    || 'Nao informado'
+  );
+}
+
 function getComplaintStatusLabel(item) {
   return statusLabels[item.status] || item.status || 'Aberta';
 }
@@ -140,6 +150,7 @@ function WeeklyComplaintReport() {
     data_cadastro: formatFullDateTime(item.created_at),
     paciente: item.patient_name || 'Nao informado',
     clinica: item.clinic_name || 'Nao informado',
+    responsavel_atual: getCurrentResponsibleLabel(item),
     profissional_envolvido: getWeeklyProfessionalLabel(item),
     motivo: getWeeklyReasonLabel(item),
     status: getComplaintStatusLabel(item)
@@ -175,6 +186,7 @@ function WeeklyComplaintReport() {
       data_cadastro: '',
       paciente: '',
       clinica: '',
+      responsavel_atual: '',
       profissional_envolvido: '',
       motivo: '',
       status: ''
@@ -205,6 +217,7 @@ function WeeklyComplaintReport() {
       row.data_cadastro,
       row.paciente,
       row.clinica,
+      row.responsavel_atual,
       row.profissional_envolvido,
       row.motivo,
       row.status
@@ -282,6 +295,7 @@ function WeeklyComplaintReport() {
                     <th>Data de cadastro</th>
                     <th>Paciente</th>
                     <th>Clinica</th>
+                    <th>Responsavel atual</th>
                     <th>Profissional envolvido</th>
                     <th>Motivo</th>
                     <th>Status</th>
@@ -392,6 +406,7 @@ function WeeklyComplaintReport() {
                 <th>Data de cadastro</th>
                 <th>Paciente</th>
                 <th>Clinica</th>
+                <th>Responsavel atual</th>
                 <th>Profissional envolvido</th>
                 <th>Motivo</th>
                 <th>Status</th>
@@ -400,7 +415,7 @@ function WeeklyComplaintReport() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="7">Carregando relatorio semanal...</td>
+                  <td colSpan="8">Carregando relatorio semanal...</td>
                 </tr>
               ) : summaryRows.length ? (
                 summaryRows.map((row) => (
@@ -409,6 +424,7 @@ function WeeklyComplaintReport() {
                     <td>{row.data_cadastro}</td>
                     <td>{row.paciente}</td>
                     <td>{row.clinica}</td>
+                    <td>{row.responsavel_atual}</td>
                     <td>{row.profissional_envolvido}</td>
                     <td>{row.motivo}</td>
                     <td>{row.status}</td>
@@ -416,7 +432,7 @@ function WeeklyComplaintReport() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="7">Nenhuma reclamacao registrada nos ultimos 7 dias.</td>
+                  <td colSpan="8">Nenhuma reclamacao registrada nos ultimos 7 dias.</td>
                 </tr>
               )}
             </tbody>
