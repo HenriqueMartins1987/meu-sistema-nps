@@ -2760,6 +2760,12 @@ a {
   font-weight: 800;
 }
 
+.channel-display {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .detail-subsection {
   margin-top: 20px;
   padding-top: 18px;

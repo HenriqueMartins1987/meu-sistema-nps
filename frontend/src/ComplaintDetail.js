@@ -26,6 +26,17 @@ const forwardingOptions = [
 
 const reassignForwardingOptions = forwardingOptions.filter((option) => ['coordinator', 'manager'].includes(option.value));
 const returnToSacOption = [{ value: 'sac_operator', label: 'Operador de SAC' }];
+const channelIconMap = {
+  whatsapp: '💬',
+  telefone: '📞',
+  email: '✉️',
+  google: '🔎',
+  facebook: 'Ⓕ',
+  instagram: '📷',
+  reclame_aqui: '📢',
+  nps: '📊',
+  presencial: '📍'
+};
 
 function formatProtocol(complaint) {
   if (complaint?.protocol) return complaint.protocol;
@@ -84,6 +95,29 @@ function formatPhoneDisplay(phone) {
   }
 
   return `+${normalized}`;
+}
+
+function normalizeChannelKey(channel) {
+  return String(channel || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+}
+
+function renderChannelLabel(channel) {
+  const label = String(channel || '').trim();
+
+  if (!label) return 'Não informado';
+
+  const normalizedKey = normalizeChannelKey(label);
+  const icon = channelIconMap[normalizedKey];
+
+  if (!icon || normalizedKey === 'outros') {
+    return label;
+  }
+
+  return `${icon} ${label}`;
 }
 
 function resolveUploadedFileUrl(value) {
@@ -949,7 +983,7 @@ function ComplaintDetail() {
             </div>
             <div>
               <dt>Canal</dt>
-              <dd>{complaint.channel || 'Não informado'}</dd>
+              <dd className="channel-display">{renderChannelLabel(complaint.channel)}</dd>
             </div>
             <div>
               <dt>Origem do cadastro</dt>
