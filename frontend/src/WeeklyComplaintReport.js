@@ -62,6 +62,36 @@ function getWeeklyReasonLabel(item) {
   return formatShortText(item.description || item.complaint_type || 'Nao informado');
 }
 
+function getComplaintStatusLabel(item) {
+  return statusLabels[item.status] || item.status || 'Aberta';
+}
+
+function deadlineTone(item) {
+  if (item.status === 'resolvida') return 'closed';
+  if (!item.due_at) return 'neutral';
+
+  const dueAt = new Date(item.due_at);
+  if (Number.isNaN(dueAt.getTime())) return 'neutral';
+
+  const diffMs = dueAt.getTime() - Date.now();
+  if (diffMs < 0) return 'overdue';
+  if (diffMs <= 24 * 60 * 60 * 1000) return 'warning';
+  return 'ontime';
+}
+
+function buildTopLabel(items) {
+  if (!items.length) return 'Nao informado';
+
+  const counts = items.reduce((acc, item) => {
+    acc[item] = (acc[item] || 0) + 1;
+    return acc;
+  }, {});
+
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], 'pt-BR'))
+    .map(([label, total]) => ({ label, total }))[0];
+}
+
 function WeeklyComplaintReport() {
   const navigate = useNavigate();
   const currentUser = readUser();
@@ -112,12 +142,16 @@ function WeeklyComplaintReport() {
     clinica: item.clinic_name || 'Nao informado',
     profissional_envolvido: getWeeklyProfessionalLabel(item),
     motivo: getWeeklyReasonLabel(item),
-    status: statusLabels[item.status] || item.status || 'Aberta'
+    status: getComplaintStatusLabel(item)
   })), [weeklyComplaints]);
 
   const highlights = useMemo(() => {
     const clinics = new Set();
     const professionals = new Set();
+    const openCount = weeklyComplaints.filter((item) => item.status !== 'resolvida').length;
+    const overdueCount = weeklyComplaints.filter((item) => deadlineTone(item) === 'overdue').length;
+    const topClinic = buildTopLabel(weeklyComplaints.map((item) => item.clinic_name).filter(Boolean));
+    const topReason = buildTopLabel(weeklyComplaints.map((item) => item.complaint_type || item.description).filter(Boolean));
 
     weeklyComplaints.forEach((item) => {
       if (item.clinic_name) clinics.add(item.clinic_name);
@@ -127,7 +161,11 @@ function WeeklyComplaintReport() {
     return {
       total: weeklyComplaints.length,
       clinics: clinics.size,
-      professionals: professionals.size
+      professionals: professionals.size,
+      openCount,
+      overdueCount,
+      topClinic,
+      topReason
     };
   }, [weeklyComplaints]);
 
@@ -325,9 +363,27 @@ function WeeklyComplaintReport() {
             <p>Servicos ou responsaveis citados</p>
           </article>
           <article className="weekly-report-card">
-            <span>Status da tela</span>
-            <strong>{loading ? 'Carregando' : 'Atualizado'}</strong>
-            <p>Base refletindo a visibilidade do usuario logado</p>
+            <span>Demandas abertas</span>
+            <strong>{highlights.openCount}</strong>
+            <p>Protocolos da semana que ainda exigem acompanhamento</p>
+          </article>
+        </div>
+
+        <div className="weekly-report-insights">
+          <article className="weekly-report-insight-card">
+            <span>Unidade com maior volume</span>
+            <strong>{highlights.topClinic?.label || 'Nao informado'}</strong>
+            <p>{highlights.topClinic ? `${highlights.topClinic.total} registro(s) na semana atual` : 'Nenhuma unidade com registros na janela atual.'}</p>
+          </article>
+          <article className="weekly-report-insight-card">
+            <span>Motivo mais recorrente</span>
+            <strong>{formatShortText(highlights.topReason?.label || 'Nao informado', 72)}</strong>
+            <p>{highlights.topReason ? `${highlights.topReason.total} ocorrencia(s) concentradas nesse tema` : 'Nenhum motivo recorrente identificado na semana atual.'}</p>
+          </article>
+          <article className="weekly-report-insight-card">
+            <span>Prazos vencidos</span>
+            <strong>{highlights.overdueCount}</strong>
+            <p>Demandas da semana que ja ultrapassaram o prazo de retorno</p>
           </article>
         </div>
 
