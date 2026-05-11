@@ -285,6 +285,8 @@ function DashboardManagement() {
     type: '',
     sla: '',
     clinic: '',
+    coordinator: '',
+    manager: '',
     search: ''
   });
   const [page, setPage] = useState(1);
@@ -340,6 +342,8 @@ function DashboardManagement() {
     const matchesStatus = !filters.status || item.status === filters.status;
     const matchesType = !filters.type || item.complaint_type === filters.type;
     const matchesClinic = !filters.clinic || item.clinic_name === filters.clinic;
+    const matchesCoordinator = !filters.coordinator || item.coordinator_name === filters.coordinator;
+    const matchesManager = !filters.manager || item.manager_name === filters.manager;
     const deadline = buildDeadlineInfo(item);
     const matchesSla = !filters.sla || deadline.state === filters.sla;
     const searchable = [
@@ -354,7 +358,7 @@ function DashboardManagement() {
     ].map(normalizeText).join(' ');
     const matchesSearch = !filters.search || searchable.includes(normalizeText(filters.search));
 
-    return matchesStatus && matchesType && matchesClinic && matchesSla && matchesSearch;
+    return matchesStatus && matchesType && matchesClinic && matchesCoordinator && matchesManager && matchesSla && matchesSearch;
   }).sort((a, b) => {
     const rankDiff = deadlineRank(a) - deadlineRank(b);
 
@@ -370,6 +374,16 @@ function DashboardManagement() {
 
   const clinicOptions = useMemo(() => (
     Array.from(new Set(complaints.map((item) => item.clinic_name).filter(Boolean)))
+      .sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'))
+  ), [complaints]);
+
+  const coordinatorOptions = useMemo(() => (
+    Array.from(new Set(complaints.map((item) => item.coordinator_name).filter(Boolean)))
+      .sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'))
+  ), [complaints]);
+
+  const managerOptions = useMemo(() => (
+    Array.from(new Set(complaints.map((item) => item.manager_name).filter(Boolean)))
       .sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'))
   ), [complaints]);
 
@@ -391,6 +405,8 @@ function DashboardManagement() {
       type: '',
       sla: '',
       clinic: prev.clinic,
+      coordinator: prev.coordinator,
+      manager: prev.manager,
       search: prev.search,
       ...nextFilters
     }));
@@ -824,6 +840,26 @@ function DashboardManagement() {
               <option value="warning">Perto de vencer</option>
               <option value="ontime">No prazo</option>
               <option value="closed">Fechadas</option>
+            </select>
+            <select
+              className="field"
+              value={filters.coordinator}
+              onChange={(event) => setFilters({ ...filters, coordinator: event.target.value })}
+            >
+              <option value="">Todos os coordenadores</option>
+              {coordinatorOptions.map((coordinator) => (
+                <option key={coordinator} value={coordinator}>{coordinator}</option>
+              ))}
+            </select>
+            <select
+              className="field"
+              value={filters.manager}
+              onChange={(event) => setFilters({ ...filters, manager: event.target.value })}
+            >
+              <option value="">Todos os gerentes</option>
+              {managerOptions.map((manager) => (
+                <option key={manager} value={manager}>{manager}</option>
+              ))}
             </select>
             <select
               className="field"

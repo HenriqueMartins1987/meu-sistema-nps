@@ -1582,8 +1582,8 @@ a {
 }
 
 .management-filters {
-  grid-template-columns: minmax(230px, 1fr) 220px 170px 180px 220px;
-  width: min(100%, 1120px);
+  grid-template-columns: minmax(230px, 1.2fr) repeat(6, minmax(150px, 1fr));
+  width: min(100%, 1540px);
 }
 
 .nps-management-filters {
