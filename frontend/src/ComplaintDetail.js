@@ -25,6 +25,7 @@ const forwardingOptions = [
 ];
 
 const reassignForwardingOptions = forwardingOptions.filter((option) => ['coordinator', 'manager'].includes(option.value));
+const returnToSacOption = [{ value: 'sac_operator', label: 'Operador de SAC' }];
 
 function formatProtocol(complaint) {
   if (complaint?.protocol) return complaint.protocol;
@@ -310,7 +311,7 @@ function ComplaintDetail() {
 
   const isAdmin = isAdminUser(user);
   const isMasterUser = isMasterAdmin(user);
-  const canOperationalClose = isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
+  const canOperationalClose = isMasterUser || ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
   const canFormalTreatment = treatmentRoles.includes(user?.role) || isAdmin;
   const canRecordTreatment = Boolean(user?.role);
   const canAttachEvidence = evidenceRoles.includes(user?.role) || isAdmin;
@@ -321,7 +322,9 @@ function ComplaintDetail() {
   const canEditPatientPhone = isMasterUser || ['sac_operator', 'supervisor_crc', 'master_admin'].includes(user?.role);
   const canRenotifyComplaint = isMasterUser || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
   const canReactivateComplaint = isMasterUser || user?.role === 'supervisor_crc';
-  const canReassignForward = isAdmin || isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
+  const canReturnToSac = ['coordinator', 'manager'].includes(String(user?.role || '').toLowerCase());
+  const canReassignForward = canReturnToSac || isAdmin || isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role);
+  const reassignOptions = canReturnToSac ? returnToSacOption : reassignForwardingOptions;
   const activeUnitOptions = useMemo(() => (
     unitOptions
       .filter((unit) => unit?.name && String(unit.active ?? 1) !== '0')
@@ -344,7 +347,7 @@ function ComplaintDetail() {
   const closeBlockedReason = isMasterUser
     ? ''
     : !canOperationalClose
-    ? 'Apenas o Administrador Master, Supervisor do CRC ou Operador de SAC podem fechar este protocolo.'
+    ? 'Apenas Administrador, Administrador Master, Supervisor do CRC ou Operador de SAC podem fechar este protocolo.'
     : !hasCoordinatorOrManagerTreatment
       ? 'Aguarde a tratativa registrada por Coordenador ou Gerente para liberar o fechamento.'
       : isHighPriority && !hasSupervisorApproval
@@ -1219,7 +1222,7 @@ function ComplaintDetail() {
             )}
             {canReassignForward && complaint.status !== 'resolvida' && !isDeletedRecord && (
               <button className="outline-action" onClick={handleOpenReassignForward} disabled={saving}>
-                Encaminhar para unidade
+                {canReturnToSac ? 'Devolver para Operador de SAC' : 'Encaminhar para unidade'}
               </button>
             )}
             {canOperationalClose && (
@@ -1251,10 +1254,18 @@ function ComplaintDetail() {
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Encaminhar para tratativa" onClick={() => setShowForwardModal(false)}>
           <div className="modal-panel" onClick={(event) => event.stopPropagation()}>
             <p className="eyebrow">Encaminhamento da reclamacao</p>
-            <h2>{forwardModalMode === 'reassign' ? 'Reencaminhar demanda' : 'Selecionar proximo responsavel'}</h2>
+            <h2>
+              {forwardModalMode === 'reassign'
+                ? canReturnToSac
+                  ? 'Devolver para o Operador de SAC'
+                  : 'Reencaminhar demanda'
+                : 'Selecionar proximo responsavel'}
+            </h2>
             <p>
               {forwardModalMode === 'reassign'
-                ? 'Ao confirmar, a reclamacao sera enviada novamente para o coordenador ou gerente da unidade e o historico ficara registrado.'
+                ? canReturnToSac
+                  ? 'Ao confirmar, a demanda voltara para o Operador de SAC e o historico da tratativa ficara registrado.'
+                  : 'Ao confirmar, a reclamacao sera enviada novamente para o coordenador ou gerente da unidade e o historico ficara registrado.'
                 : 'Ao confirmar, o contato com o paciente sera registrado e a reclamacao sera encaminhada para o responsavel escolhido.'}
             </p>
 
@@ -1262,7 +1273,7 @@ function ComplaintDetail() {
               Responsavel pela tratativa
               <select className="field" value={forwardToRole} onChange={(event) => setForwardToRole(event.target.value)} required>
                 <option value="">Selecione o destino</option>
-                {(forwardModalMode === 'reassign' ? reassignForwardingOptions : forwardingOptions).map((option) => (
+                {(forwardModalMode === 'reassign' ? reassignOptions : forwardingOptions).map((option) => (
                   <option key={option.value} value={option.value}>{option.label}</option>
                 ))}
               </select>

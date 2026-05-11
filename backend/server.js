@@ -618,7 +618,7 @@ function canAddTreatment(user) {
 }
 
 function canCloseComplaint(user) {
-  return ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role) || isMasterAdminUser(user);
+  return ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role) || isMasterAdminUser(user);
 }
 
 function canSupervisorApprove(user) {
@@ -634,7 +634,9 @@ function canRegisterFirstAttendance(user) {
 }
 
 function canReassignComplaint(user) {
-  return ['master_admin', 'supervisor_crc', 'sac_operator', 'admin'].includes(user?.role) || isMasterAdminUser(user) || isAdminUser(user);
+  return ['admin', 'master_admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager'].includes(user?.role)
+    || isMasterAdminUser(user)
+    || isAdminUser(user);
 }
 
 function canDeleteRecords(user) {
@@ -5413,6 +5415,26 @@ async function resolveComplaintResponsibleAssignment(clinicId, forwardRole) {
     };
   }
 
+  if (forwardRole === 'sac_operator') {
+    const [rows] = await pool.query(
+      `SELECT id, name
+         FROM users
+        WHERE deleted_at IS NULL
+          AND active = 1
+          AND role = 'sac_operator'
+        ORDER BY name ASC
+        LIMIT 1`
+    );
+
+    return {
+      userId: rows[0]?.id || null,
+      name: rows[0]?.name || 'Operador de SAC',
+      role: 'sac_operator',
+      label: rows[0]?.name || 'Operador de SAC',
+      clinicSnapshotName: null
+    };
+  }
+
   return {
     userId: null,
     name: null,
@@ -9536,13 +9558,27 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         return res.status(403).json({ error: 'Seu perfil não pode reencaminhar a reclamação.' });
       }
 
-      const allowedReassignRoles = {
-        coordinator: 'Coordenador',
-        manager: 'Gerente'
-      };
+      const requesterRole = String(req.user?.role || '').toLowerCase();
+      const requesterIsOperational = ['coordinator', 'manager'].includes(requesterRole);
+      const allowedReassignRoles = requesterIsOperational
+        ? { sac_operator: 'Operador de SAC' }
+        : {
+            coordinator: 'Coordenador',
+            manager: 'Gerente'
+          };
 
       if (!allowedReassignRoles[forward_to_role]) {
-        return res.status(400).json({ error: 'Selecione Coordenador ou Gerente para reencaminhar a demanda.' });
+        return res.status(400).json({
+          error: requesterIsOperational
+            ? 'Selecione o Operador de SAC para devolver a demanda.'
+            : 'Selecione Coordenador ou Gerente para reencaminhar a demanda.'
+        });
+      }
+
+      if (requesterIsOperational && !cleanedComment) {
+        return res.status(400).json({
+          error: 'Coordenador e Gerente precisam registrar a tratativa antes de devolver a demanda ao Operador de SAC.'
+        });
       }
 
       const assignment = await resolveComplaintResponsibleAssignment(complaint.clinic_id, forward_to_role);
@@ -9586,7 +9622,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         || (supervisor_accept && canSupervisorApprove(req.user));
 
       if (!canCloseComplaint(req.user)) {
-        return res.status(403).json({ error: 'Somente Administrador Master, Supervisor do CRC ou Operador de SAC podem fechar uma reclamacao.' });
+        return res.status(403).json({ error: 'Somente Administrador, Administrador Master, Supervisor do CRC ou Operador de SAC podem fechar uma reclamacao.' });
       }
 
       if (!isMasterRequest && !hasCoordinatorOrManagerTreatment) {
