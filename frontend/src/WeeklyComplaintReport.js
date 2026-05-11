@@ -172,8 +172,7 @@ function WeeklyComplaintReport() {
     profissional_envolvido: getWeeklyProfessionalLabel(item),
     motivo: getWeeklyReasonLabel(item),
     status: getComplaintStatusLabel(item),
-    status_tone: getComplaintStatusTone(item),
-    cidade_uf: [item.city, item.state].filter(Boolean).join(' / ') || 'Nao informado'
+    status_tone: getComplaintStatusTone(item)
   })), [weeklyComplaints]);
 
   const highlights = useMemo(() => {
@@ -245,7 +244,6 @@ function WeeklyComplaintReport() {
       row.data_cadastro,
       row.paciente,
       row.clinica,
-      row.cidade_uf,
       row.responsavel_atual,
       row.profissional_envolvido,
       row.motivo,
@@ -324,7 +322,6 @@ function WeeklyComplaintReport() {
                     <th>Data de cadastro</th>
                     <th>Paciente</th>
                     <th>Clinica</th>
-                    <th>Cidade / UF</th>
                     <th>Responsavel atual</th>
                     <th>Profissional envolvido</th>
                     <th>Motivo</th>
@@ -441,7 +438,7 @@ function WeeklyComplaintReport() {
             <span className="eyebrow">Base detalhada</span>
             <strong>{summaryRows.length} protocolo(s) no periodo analisado</strong>
           </div>
-          <p>Tabela organizada para leitura rapida de paciente, unidade, responsabilidade e motivo.</p>
+          <p>Leitura rapida de paciente, unidade, responsabilidade atual, profissional envolvido e motivo.</p>
         </div>
 
         <div className="data-table-wrap weekly-report-table-wrap">
@@ -452,7 +449,6 @@ function WeeklyComplaintReport() {
                 <th>Data de cadastro</th>
                 <th>Paciente</th>
                 <th>Clinica</th>
-                <th>Cidade / UF</th>
                 <th>Responsavel atual</th>
                 <th>Profissional envolvido</th>
                 <th>Motivo</th>
@@ -462,7 +458,7 @@ function WeeklyComplaintReport() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="9">Carregando relatorio semanal...</td>
+                  <td colSpan="8">Carregando relatorio semanal...</td>
                 </tr>
               ) : paginatedRows.length ? (
                 paginatedRows.map((row) => (
@@ -484,7 +480,6 @@ function WeeklyComplaintReport() {
                         <strong>{row.clinica}</strong>
                       </div>
                     </td>
-                    <td>{row.cidade_uf}</td>
                     <td>
                       <div className="weekly-report-primary-cell">
                         <strong>{row.responsavel_atual}</strong>
@@ -500,7 +495,7 @@ function WeeklyComplaintReport() {
                 ))
               ) : (
                 <tr>
-                  <td colSpan="9">Nenhuma reclamacao registrada nos ultimos 7 dias.</td>
+                  <td colSpan="8">Nenhuma reclamacao registrada nos ultimos 7 dias.</td>
                 </tr>
               )}
             </tbody>

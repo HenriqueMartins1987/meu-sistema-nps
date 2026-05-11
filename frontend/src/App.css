@@ -1730,10 +1730,10 @@ a {
 }
 
 .weekly-report-table-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: end;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
   gap: 16px;
+  align-items: end;
   padding: 0 2px;
 }
 
@@ -1747,13 +1747,14 @@ a {
 .weekly-report-table-toolbar p {
   margin: 0;
   color: var(--muted);
-  max-width: 540px;
+  max-width: 420px;
+  justify-self: end;
   text-align: right;
   line-height: 1.55;
 }
 
 .weekly-report-table {
-  min-width: 1280px;
+  min-width: 1180px;
 }
 
 .weekly-report-table th {
@@ -1785,7 +1786,7 @@ a {
 }
 
 .weekly-report-reason-cell {
-  min-width: 340px;
+  min-width: 380px;
   color: var(--teal);
   line-height: 1.55;
 }
