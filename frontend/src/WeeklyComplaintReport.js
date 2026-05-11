@@ -329,9 +329,6 @@ function WeeklyComplaintReport() {
           <div>
             <p className="eyebrow">Ultimos 7 dias</p>
             <h2>Reclamacoes registradas na semana atual</h2>
-            <p className="panel-supporting-copy">
-              Tela disponivel apenas para Administrador Master, Administrador, Supervisor de CRC, Operador de SAC e Gerente.
-            </p>
           </div>
 
           <div className="export-actions">
