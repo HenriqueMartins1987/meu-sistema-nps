@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Routes, Route } from 'react-router-dom';
 
 import Login from './Login';
@@ -22,7 +22,55 @@ import CrmWorkspace from './CrmWorkspace';
 import { PermissionRoute, ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
 import './App.css';
 
+function enablePortugueseSpellcheck(root = document) {
+  const textSelectors = 'textarea, input[type="text"], input:not([type])';
+  const textInputs = root.querySelectorAll ? root.querySelectorAll(textSelectors) : [];
+
+  textInputs.forEach((field) => {
+    if (!(field instanceof HTMLElement)) return;
+    if (field.hasAttribute('disabled') || field.hasAttribute('readonly')) return;
+    if (field.dataset.spellcheckManaged === 'true') return;
+
+    field.setAttribute('lang', 'pt-BR');
+    field.setAttribute('spellcheck', 'true');
+    field.setAttribute('autocapitalize', 'sentences');
+    field.dataset.spellcheckManaged = 'true';
+
+    const currentTitle = String(field.getAttribute('title') || '').trim();
+    if (!currentTitle) {
+      field.setAttribute('title', 'O navegador sinaliza palavras possivelmente escritas de forma incorreta.');
+    }
+  });
+}
+
 function App() {
+  useEffect(() => {
+    document.documentElement.lang = 'pt-BR';
+    enablePortugueseSpellcheck(document);
+
+    const observer = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        mutation.addedNodes.forEach((node) => {
+          if (!(node instanceof HTMLElement)) return;
+
+          if (node.matches?.('textarea, input[type="text"], input:not([type])')) {
+            enablePortugueseSpellcheck(node.parentElement || document);
+            return;
+          }
+
+          enablePortugueseSpellcheck(node);
+        });
+      });
+    });
+
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <Routes>
       <Route element={<PublicOnlyRoute />}>
