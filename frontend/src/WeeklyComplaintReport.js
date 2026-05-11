@@ -3,6 +3,8 @@ import { Navigate, useNavigate } from 'react-router-dom';
 import api from './api';
 import { hasPermission, isMasterAdmin, readUser, statusLabels } from './constants';
 
+const pageSizeOptions = [10, 25, 50, 100];
+
 function formatProtocol(item) {
   if (item.protocol) return item.protocol;
   const year = item.created_at ? new Date(item.created_at).getFullYear() : new Date().getFullYear();
@@ -118,6 +120,8 @@ function WeeklyComplaintReport() {
   const [complaints, setComplaints] = useState([]);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState('');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     if (!canAccess) return undefined;
@@ -139,6 +143,10 @@ function WeeklyComplaintReport() {
     loadComplaints();
     return undefined;
   }, [canAccess]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [pageSize]);
 
   const weeklyComplaints = useMemo(() => {
     const start = new Date();
@@ -193,6 +201,11 @@ function WeeklyComplaintReport() {
       topReason
     };
   }, [weeklyComplaints]);
+
+  const totalPages = Math.max(1, Math.ceil(summaryRows.length / pageSize));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * pageSize;
+  const paginatedRows = summaryRows.slice(pageStart, pageStart + pageSize);
 
   const exportWeeklyExcel = () => {
     const headers = Object.keys(summaryRows[0] || {
@@ -450,8 +463,8 @@ function WeeklyComplaintReport() {
                 <tr>
                   <td colSpan="9">Carregando relatorio semanal...</td>
                 </tr>
-              ) : summaryRows.length ? (
-                summaryRows.map((row) => (
+              ) : paginatedRows.length ? (
+                paginatedRows.map((row) => (
                   <tr key={row.id || row.protocolo}>
                     <td>
                       <div className="weekly-report-primary-cell">
@@ -492,6 +505,37 @@ function WeeklyComplaintReport() {
             </tbody>
           </table>
         </div>
+
+        {!loading && summaryRows.length > 0 && (
+          <div className="pagination-bar">
+            <div className="pagination-summary">
+              <label className="pagination-page-size">
+                <span>Por pagina</span>
+                <select
+                  className="field"
+                  value={pageSize}
+                  onChange={(event) => setPageSize(Number(event.target.value) || 10)}
+                >
+                  {pageSizeOptions.map((option) => (
+                    <option key={option} value={option}>{option}</option>
+                  ))}
+                </select>
+              </label>
+              <span>
+                Mostrando {pageStart + 1} a {Math.min(pageStart + pageSize, summaryRows.length)} de {summaryRows.length}
+              </span>
+            </div>
+            <div className="pagination-actions">
+              <button className="outline-action" onClick={() => setPage((prev) => Math.max(1, prev - 1))} disabled={currentPage === 1}>
+                Anterior
+              </button>
+              <strong>Pagina {currentPage} de {totalPages}</strong>
+              <button className="outline-action" onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))} disabled={currentPage === totalPages}>
+                Proxima
+              </button>
+            </div>
+          </div>
+        )}
       </section>
     </main>
   );
