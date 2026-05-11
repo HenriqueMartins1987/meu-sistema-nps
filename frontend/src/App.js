@@ -6,6 +6,7 @@ import Home from './HomeShellFixed';
 import Cadastro from './Cadastro';
 import Dashboard from './Dashboard';
 import DashboardManagement from './DashboardManagement';
+import WeeklyComplaintReport from './WeeklyComplaintReport';
 import BI from './BI';
 import Register from './Register';
 import Profile from './Profile';
@@ -41,6 +42,7 @@ function App() {
         </Route>
         <Route element={<PermissionRoute permission="complaints_management" />}>
           <Route path="/gestao" element={<DashboardManagement />} />
+          <Route path="/gestao/relatorio-semanal" element={<WeeklyComplaintReport />} />
           <Route path="/gestao/:id" element={<ComplaintDetail />} />
         </Route>
         <Route element={<PermissionRoute permission="complaints_dashboard" />}>

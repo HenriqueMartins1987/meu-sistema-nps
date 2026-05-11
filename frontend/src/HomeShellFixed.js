@@ -143,6 +143,12 @@ function complaintAgendaTone(item) {
   return 'brand';
 }
 
+function canAccessWeeklyComplaintReport(user) {
+  if (isMasterAdmin(user)) return true;
+
+  return ['admin', 'supervisor_crc', 'sac_operator', 'manager'].includes(String(user?.role || ''));
+}
+
 function HomeShellFixed() {
   const navigate = useNavigate();
   const user = useMemo(() => readUser(), []);
@@ -177,6 +183,7 @@ function HomeShellFixed() {
       items: [
         { label: 'Novo Protocolo', path: '/cadastro', permission: 'complaints_register' },
         { label: 'Painel de Gestão de Reclamações', path: '/gestao', permission: 'complaints_management' },
+        { label: 'Relatório semanal de Reclamações', path: '/gestao/relatorio-semanal', permission: 'complaints_management', weeklyReportOnly: true },
         { label: 'Dashboard de Reclamações', path: '/dashboard', permission: 'complaints_dashboard' }
       ]
     },
@@ -214,7 +221,13 @@ function HomeShellFixed() {
   const visibleSections = menuSections
     .map((section) => ({
       ...section,
-      items: section.items.filter((item) => (!item.adminOnly || masterUser) && hasPermission(user, item.permission))
+      items: section.items.filter((item) => {
+        if (item.weeklyReportOnly && !canAccessWeeklyComplaintReport(user)) {
+          return false;
+        }
+
+        return (!item.adminOnly || masterUser) && hasPermission(user, item.permission);
+      })
     }))
     .filter((section) => section.items.length);
 
