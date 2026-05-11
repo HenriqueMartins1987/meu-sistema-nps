@@ -564,6 +564,24 @@ function HomeShellFixed() {
     }
   };
 
+  const handleClearReadNotifications = async () => {
+    if (!notificationGroups.read.length) {
+      setFeedback('Não há notificações lidas para limpar.');
+      return;
+    }
+
+    try {
+      await Promise.all(notificationGroups.read.map((notification) => api.delete(`/notifications/${notification.id}`)));
+      setNotificationGroups((prev) => ({
+        unread: prev.unread,
+        read: []
+      }));
+      setFeedback('Histórico de notificações lidas limpo com sucesso.');
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível limpar as notificações lidas.');
+    }
+  };
+
   const updatePasswordField = (field, value) => {
     setPasswordForm((prev) => ({ ...prev, [field]: value }));
   };
@@ -753,6 +771,14 @@ function HomeShellFixed() {
                 Lidas ({notificationGroups.read.length})
               </button>
               </div>
+
+            {notificationTab === 'read' && notificationGroups.read.length > 0 && (
+              <div className="notification-read-actions">
+                <button type="button" className="outline-action subtle-action" onClick={handleClearReadNotifications}>
+                  Limpar lidas
+                </button>
+              </div>
+            )}
 
             {feedback && <p className="form-feedback">{feedback}</p>}
 

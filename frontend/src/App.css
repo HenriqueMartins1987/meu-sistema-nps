@@ -1299,6 +1299,12 @@ a {
   color: var(--brand-strong);
 }
 
+.notification-read-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
 .subtle-action {
   background: #fff;
 }
