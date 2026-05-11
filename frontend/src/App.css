@@ -1656,7 +1656,7 @@ a {
 
 .weekly-report-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
 }
 
@@ -1726,10 +1726,106 @@ a {
 
 .weekly-report-table-wrap {
   margin-top: 2px;
+  border: 1px solid rgba(200, 169, 120, 0.26);
 }
 
-.weekly-report-table td:nth-child(6) {
-  min-width: 320px;
+.weekly-report-table-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: end;
+  gap: 16px;
+  padding: 0 2px;
+}
+
+.weekly-report-table-toolbar strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.weekly-report-table-toolbar p {
+  margin: 0;
+  color: var(--muted);
+  max-width: 540px;
+  text-align: right;
+  line-height: 1.55;
+}
+
+.weekly-report-table {
+  min-width: 1280px;
+}
+
+.weekly-report-table th {
+  background: linear-gradient(180deg, rgba(248, 243, 235, 0.98), rgba(240, 228, 211, 0.94));
+  color: var(--brand-strong);
+  font-size: 11px;
+  letter-spacing: 0.03em;
+}
+
+.weekly-report-table td {
+  padding: 16px 14px;
+}
+
+.weekly-report-primary-cell {
+  display: grid;
+  gap: 4px;
+}
+
+.weekly-report-primary-cell strong {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.weekly-report-primary-cell small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.weekly-report-reason-cell {
+  min-width: 340px;
+  color: var(--teal);
+  line-height: 1.55;
+}
+
+.weekly-report-status-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.weekly-report-status-badge.active {
+  background: rgba(200, 154, 87, 0.14);
+  color: var(--brand-strong);
+  border-color: rgba(200, 154, 87, 0.28);
+}
+
+.weekly-report-status-badge.warning {
+  background: rgba(212, 167, 100, 0.18);
+  color: #8e6731;
+  border-color: rgba(212, 167, 100, 0.36);
+}
+
+.weekly-report-status-badge.overdue {
+  background: rgba(196, 69, 54, 0.12);
+  color: var(--danger);
+  border-color: rgba(196, 69, 54, 0.26);
+}
+
+.weekly-report-status-badge.closed {
+  background: rgba(109, 87, 59, 0.12);
+  color: var(--leaf);
+  border-color: rgba(109, 87, 59, 0.24);
 }
 
 .weekly-report-table th,

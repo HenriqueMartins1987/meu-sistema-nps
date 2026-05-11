@@ -76,6 +76,15 @@ function getComplaintStatusLabel(item) {
   return statusLabels[item.status] || item.status || 'Aberta';
 }
 
+function getComplaintStatusTone(item) {
+  if (item.status === 'resolvida') return 'closed';
+
+  const deadlineState = deadlineTone(item);
+  if (deadlineState === 'overdue') return 'overdue';
+  if (deadlineState === 'warning') return 'warning';
+  return 'active';
+}
+
 function deadlineTone(item) {
   if (item.status === 'resolvida') return 'closed';
   if (!item.due_at) return 'neutral';
@@ -146,6 +155,7 @@ function WeeklyComplaintReport() {
   }, [complaints]);
 
   const summaryRows = useMemo(() => weeklyComplaints.map((item) => ({
+    id: item.id,
     protocolo: formatProtocol(item),
     data_cadastro: formatFullDateTime(item.created_at),
     paciente: item.patient_name || 'Nao informado',
@@ -153,13 +163,16 @@ function WeeklyComplaintReport() {
     responsavel_atual: getCurrentResponsibleLabel(item),
     profissional_envolvido: getWeeklyProfessionalLabel(item),
     motivo: getWeeklyReasonLabel(item),
-    status: getComplaintStatusLabel(item)
+    status: getComplaintStatusLabel(item),
+    status_tone: getComplaintStatusTone(item),
+    cidade_uf: [item.city, item.state].filter(Boolean).join(' / ') || 'Nao informado'
   })), [weeklyComplaints]);
 
   const highlights = useMemo(() => {
     const clinics = new Set();
     const professionals = new Set();
     const openCount = weeklyComplaints.filter((item) => item.status !== 'resolvida').length;
+    const resolvedCount = weeklyComplaints.filter((item) => item.status === 'resolvida').length;
     const overdueCount = weeklyComplaints.filter((item) => deadlineTone(item) === 'overdue').length;
     const topClinic = buildTopLabel(weeklyComplaints.map((item) => item.clinic_name).filter(Boolean));
     const topReason = buildTopLabel(weeklyComplaints.map((item) => item.complaint_type || item.description).filter(Boolean));
@@ -174,6 +187,7 @@ function WeeklyComplaintReport() {
       clinics: clinics.size,
       professionals: professionals.size,
       openCount,
+      resolvedCount,
       overdueCount,
       topClinic,
       topReason
@@ -217,6 +231,7 @@ function WeeklyComplaintReport() {
       row.data_cadastro,
       row.paciente,
       row.clinica,
+      row.cidade_uf,
       row.responsavel_atual,
       row.profissional_envolvido,
       row.motivo,
@@ -295,6 +310,7 @@ function WeeklyComplaintReport() {
                     <th>Data de cadastro</th>
                     <th>Paciente</th>
                     <th>Clinica</th>
+                    <th>Cidade / UF</th>
                     <th>Responsavel atual</th>
                     <th>Profissional envolvido</th>
                     <th>Motivo</th>
@@ -343,6 +359,9 @@ function WeeklyComplaintReport() {
           <div>
             <p className="eyebrow">Ultimos 7 dias</p>
             <h2>Reclamacoes registradas na semana atual</h2>
+            <p className="panel-supporting-copy">
+              Leitura consolidada da carteira semanal com foco em unidade, responsável atual e motivo central de cada protocolo.
+            </p>
           </div>
 
           <div className="export-actions">
@@ -378,6 +397,11 @@ function WeeklyComplaintReport() {
             <strong>{highlights.openCount}</strong>
             <p>Protocolos da semana que ainda exigem acompanhamento</p>
           </article>
+          <article className="weekly-report-card">
+            <span>Demandas finalizadas</span>
+            <strong>{highlights.resolvedCount}</strong>
+            <p>Protocolos da semana que ja tiveram encerramento registrado</p>
+          </article>
         </div>
 
         <div className="weekly-report-insights">
@@ -398,6 +422,14 @@ function WeeklyComplaintReport() {
           </article>
         </div>
 
+        <div className="weekly-report-table-toolbar">
+          <div>
+            <span className="eyebrow">Base detalhada</span>
+            <strong>{summaryRows.length} protocolo(s) no periodo analisado</strong>
+          </div>
+          <p>Tabela organizada para leitura rapida de paciente, unidade, responsabilidade e motivo.</p>
+        </div>
+
         <div className="data-table-wrap weekly-report-table-wrap">
           <table className="data-table weekly-report-table">
             <thead>
@@ -406,6 +438,7 @@ function WeeklyComplaintReport() {
                 <th>Data de cadastro</th>
                 <th>Paciente</th>
                 <th>Clinica</th>
+                <th>Cidade / UF</th>
                 <th>Responsavel atual</th>
                 <th>Profissional envolvido</th>
                 <th>Motivo</th>
@@ -415,24 +448,45 @@ function WeeklyComplaintReport() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="8">Carregando relatorio semanal...</td>
+                  <td colSpan="9">Carregando relatorio semanal...</td>
                 </tr>
               ) : summaryRows.length ? (
                 summaryRows.map((row) => (
-                  <tr key={row.protocolo}>
-                    <td>{row.protocolo}</td>
+                  <tr key={row.id || row.protocolo}>
+                    <td>
+                      <div className="weekly-report-primary-cell">
+                        <strong>{row.protocolo}</strong>
+                        <small>Cadastro semanal</small>
+                      </div>
+                    </td>
                     <td>{row.data_cadastro}</td>
-                    <td>{row.paciente}</td>
-                    <td>{row.clinica}</td>
-                    <td>{row.responsavel_atual}</td>
+                    <td>
+                      <div className="weekly-report-primary-cell">
+                        <strong>{row.paciente}</strong>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="weekly-report-primary-cell">
+                        <strong>{row.clinica}</strong>
+                      </div>
+                    </td>
+                    <td>{row.cidade_uf}</td>
+                    <td>
+                      <div className="weekly-report-primary-cell">
+                        <strong>{row.responsavel_atual}</strong>
+                        <small>Dono atual da demanda</small>
+                      </div>
+                    </td>
                     <td>{row.profissional_envolvido}</td>
-                    <td>{row.motivo}</td>
-                    <td>{row.status}</td>
+                    <td className="weekly-report-reason-cell">{row.motivo}</td>
+                    <td>
+                      <span className={`weekly-report-status-badge ${row.status_tone}`}>{row.status}</span>
+                    </td>
                   </tr>
                 ))
               ) : (
                 <tr>
-                  <td colSpan="8">Nenhuma reclamacao registrada nos ultimos 7 dias.</td>
+                  <td colSpan="9">Nenhuma reclamacao registrada nos ultimos 7 dias.</td>
                 </tr>
               )}
             </tbody>
