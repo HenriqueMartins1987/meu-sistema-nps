@@ -208,7 +208,8 @@ function WeeklyComplaintReport() {
   const paginatedRows = summaryRows.slice(pageStart, pageStart + pageSize);
 
   const exportWeeklyExcel = () => {
-    const headers = Object.keys(summaryRows[0] || {
+    const excelRows = summaryRows.map(({ cidade_uf, ...row }) => row);
+    const headers = Object.keys(excelRows[0] || {
       protocolo: '',
       data_cadastro: '',
       paciente: '',
@@ -222,7 +223,7 @@ function WeeklyComplaintReport() {
       <table>
         <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join('')}</tr></thead>
         <tbody>
-          ${summaryRows.map((row) => `<tr>${headers.map((header) => `<td>${escapeHtml(row[header])}</td>`).join('')}</tr>`).join('')}
+          ${excelRows.map((row) => `<tr>${headers.map((header) => `<td>${escapeHtml(row[header])}</td>`).join('')}</tr>`).join('')}
         </tbody>
       </table>
     `;
