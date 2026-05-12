@@ -1096,10 +1096,14 @@ function ComplaintDetail() {
   return (
     <main className="app-page">
       <header className="page-heading complaint-heading">
-        <div>
+        <div className="complaint-heading-copy">
           <p className="eyebrow">Ficha executiva do protocolo</p>
           <h1>{protocol}</h1>
-          <p>{complaint.clinic_name || 'Clínica não informada'} · {complaint.city || 'Cidade'} / {complaint.state || 'UF'}</p>
+          <div className="complaint-heading-meta" aria-label="Dados resumidos do protocolo">
+            <span>{complaint.clinic_name || 'Clínica não informada'}</span>
+            <span>{complaint.city || 'Cidade'} / {complaint.state || 'UF'}</span>
+            <span>{statusLabels[complaint.status] || 'Aberta'}</span>
+          </div>
         </div>
 
         <div className="heading-actions">
@@ -1624,47 +1628,6 @@ function ComplaintDetail() {
             <p className="empty-mini">Nenhuma evidência complementar anexada.</p>
           )}
 
-          <div className="evidence-list legacy-list-hidden" aria-hidden="true">
-            {complaint.evidences?.length ? complaint.evidences.map((evidence) => {
-              const evidenceUrl = resolveUploadedFileUrl(evidence.file_url);
-
-              return (
-                <article className="evidence-item" key={evidence.id}>
-                  <button
-                    type="button"
-                    className="evidence-open-button"
-                    onClick={() => openUploadedItem(evidenceUrl, evidence.description || evidence.original_name || 'Evidência anexada')}
-                  >
-                    {isPreviewableImage(evidenceUrl) && (
-                      <img
-                        className="evidence-preview"
-                        src={evidenceUrl}
-                        alt={evidence.description || evidence.original_name || 'Evidência anexada'}
-                        loading="lazy"
-                      />
-                    )}
-                    <span>{evidence.description || evidence.original_name || 'Evidência anexada'}</span>
-                    <small>
-                      {formatDate(evidence.created_at)}
-                      {evidence.uploaded_by_name ? ` · ${evidence.uploaded_by_name}` : ''}
-                    </small>
-                  </button>
-                  {canDeleteEvidence && (
-                    <button
-                      type="button"
-                      className="evidence-delete-button"
-                      onClick={() => handleDeleteEvidence(evidence)}
-                      disabled={deletingEvidenceId === evidence.id}
-                    >
-                      {deletingEvidenceId === evidence.id ? 'Excluindo...' : 'Excluir evidência'}
-                    </button>
-                  )}
-                </article>
-              );
-            }) : (
-              <p className="empty-mini">Nenhuma evidência complementar anexada.</p>
-            )}
-          </div>
         </article>
 
         <article className="detail-card timeline-card">
@@ -1718,25 +1681,16 @@ function ComplaintDetail() {
             <p className="empty-mini">Ainda não existem registros complementares na linha do tempo.</p>
           )}
 
-          <div className="history-list legacy-list-hidden" aria-hidden="true">
-            {complaint.logs?.length ? complaint.logs.map((log) => (
-              <article className="history-item" key={log.id}>
-                <div className="history-item-head">
-                  <strong>{formatDate(log.created_at)}</strong>
-                  <span>{roleLabels[log.actor_role] || log.actor_role || 'Atualização'}</span>
-                </div>
-                <p>{log.message || 'Atualização registrada no protocolo.'}</p>
-                <small>{log.actor_name || 'Usuário do sistema'}</small>
-              </article>
-            )) : (
-              <p className="empty-mini">Ainda não existem registros complementares na linha do tempo.</p>
-            )}
-          </div>
         </article>
 
         <article className="detail-card detail-actions-card command-center-card">
-          <p className="eyebrow">Tratativa e fechamento</p>
-          <h2>Centro de decisão</h2>
+          <div className="command-center-header">
+            <div>
+              <p className="eyebrow">Tratativa e fechamento</p>
+              <h2>Centro de decisão</h2>
+            </div>
+            <span className="mini-badge">{statusLabels[complaint.status] || 'Aberta'}</span>
+          </div>
 
           <div className="approval-grid">
             <div className={`approval-card ${hasTreatment ? 'done' : 'pending'}`}>
