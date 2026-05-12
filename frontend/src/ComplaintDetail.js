@@ -1851,12 +1851,19 @@ function ComplaintDetail() {
       {assetPreview && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Visualizar arquivo do protocolo" onClick={closeAssetPreview}>
           <div className="modal-panel attachment-preview-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="detail-title-row">
-              <div>
+            <div className="attachment-preview-header">
+              <div className="attachment-preview-title">
                 <p className="eyebrow">Arquivo do protocolo</p>
                 <h2>{assetPreview.label}</h2>
+                <span>Visualização segura do anexo vinculado à ficha executiva.</span>
               </div>
-              <div className="attachment-preview-toolbar" aria-label="Controles da imagem">
+              <button type="button" className="outline-action compact-action attachment-preview-close" onClick={closeAssetPreview}>
+                Fechar
+              </button>
+            </div>
+
+            <div className="attachment-preview-commandbar">
+              <div className="attachment-preview-toolbar" aria-label="Controles de zoom da imagem">
                 <button type="button" className="outline-action compact-action" onClick={() => changeAssetPreviewZoom(-0.25)} disabled={assetPreviewZoom <= 0.75}>
                   Reduzir
                 </button>
@@ -1867,10 +1874,10 @@ function ComplaintDetail() {
                 <button type="button" className="outline-action compact-action" onClick={resetAssetPreviewZoom} disabled={assetPreviewZoom === 1}>
                   Restaurar
                 </button>
-                <button type="button" className="outline-action compact-action" onClick={closeAssetPreview}>
-                  Fechar
-                </button>
               </div>
+              <button type="button" className="primary-action compact-action" onClick={() => window.open(assetPreview.url, '_blank', 'noopener,noreferrer')}>
+                Abrir em nova janela
+              </button>
             </div>
 
             <div className="attachment-preview-modal-body">
@@ -1886,14 +1893,12 @@ function ComplaintDetail() {
               </div>
             </div>
 
-            <div className="row-actions">
-              <button type="button" className="outline-action" onClick={closeAssetPreview}>
-                Voltar
+            <footer className="attachment-preview-footer">
+              <span>Use os controles de zoom para conferir detalhes do arquivo.</span>
+              <button type="button" className="outline-action compact-action" onClick={closeAssetPreview}>
+                Voltar para a ficha
               </button>
-              <button type="button" className="primary-action" onClick={() => window.open(assetPreview.url, '_blank', 'noopener,noreferrer')}>
-                Abrir em nova janela
-              </button>
-            </div>
+            </footer>
           </div>
         </div>
       )}
