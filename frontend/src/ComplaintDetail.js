@@ -928,6 +928,32 @@ function ComplaintDetail() {
         </tr>
       `).join('')
       : '<tr><td colspan="4">Sem evidências complementares anexadas.</td></tr>';
+    const evidenceCards = evidenceRecords.length
+      ? evidenceRecords.map((evidence, index) => {
+        const evidenceUrl = resolveUploadedFileUrl(evidence.file_url);
+        const evidenceLabel = evidence.description || evidence.original_name || `Evidência ${index + 1}`;
+        const evidenceFile = evidence.original_name || evidence.file_url || 'Arquivo vinculado ao protocolo';
+        const evidenceLink = evidenceUrl
+          ? `<small class="evidence-url">${escapeHtml(evidenceUrl)}</small>`
+          : '';
+        const imagePreview = evidenceUrl && isPreviewableImage(evidenceUrl)
+          ? `<img src="${escapeHtml(evidenceUrl)}" alt="${escapeHtml(evidenceLabel)}" />`
+          : '<div class="file-placeholder">Arquivo anexado</div>';
+
+        return `
+          <article class="evidence-preview-card">
+            <div class="evidence-preview-media">${imagePreview}</div>
+            <div>
+              <strong>${escapeHtml(evidenceLabel)}</strong>
+              <span>${escapeHtml(formatDate(evidence.created_at))}</span>
+              <span>${escapeHtml(evidence.uploaded_by_name || 'Responsável não informado')}</span>
+              <small>${escapeHtml(evidenceFile)}</small>
+              ${evidenceLink}
+            </div>
+          </article>
+        `;
+      }).join('')
+      : '<p class="muted">Sem evidências complementares anexadas.</p>';
     const treatmentRows = linkedPatientTreatments.length
       ? linkedPatientTreatments.map((item) => `
         <tr>
@@ -965,6 +991,16 @@ function ComplaintDetail() {
             td { padding: 8px 7px; border-top: 1px solid #e5e7eb; vertical-align: top; word-break: break-word; }
             tr:nth-child(even) td { background: #faf7f2; }
             .description { padding: 12px; border: 1px solid #eadcc7; border-radius: 10px; background: #fffaf2; }
+            .evidence-preview-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+            .evidence-preview-card { break-inside: avoid; display: grid; grid-template-columns: 96px 1fr; gap: 10px; padding: 10px; border: 1px solid #eadcc7; border-radius: 10px; background: #fffaf2; }
+            .evidence-preview-media { width: 96px; min-height: 76px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff; display: grid; place-items: center; overflow: hidden; }
+            .evidence-preview-media img { width: 100%; height: 100%; object-fit: contain; display: block; background: #fff; }
+            .file-placeholder { color: #8a632d; font-size: 10px; font-weight: 800; text-transform: uppercase; text-align: center; padding: 8px; }
+            .evidence-preview-card strong, .evidence-preview-card span, .evidence-preview-card small { display: block; line-height: 1.4; }
+            .evidence-preview-card strong { color: #111827; font-size: 11px; }
+            .evidence-preview-card span { color: #4b5563; font-size: 10px; }
+            .evidence-preview-card small { margin-top: 4px; color: #667085; font-size: 9px; word-break: break-word; overflow-wrap: anywhere; }
+            .evidence-preview-card .evidence-url { color: #8a632d; }
           </style>
         </head>
         <body>
@@ -1009,6 +1045,7 @@ function ComplaintDetail() {
 
             <section class="section">
               <h2>Evidências</h2>
+              <div class="evidence-preview-grid">${evidenceCards}</div>
               <table>
                 <thead><tr><th>Descrição</th><th>Data</th><th>Responsável</th><th>Arquivo</th></tr></thead>
                 <tbody>${evidenceRows}</tbody>
@@ -1028,7 +1065,7 @@ function ComplaintDetail() {
     `);
     reportWindow.document.close();
     reportWindow.focus();
-    setTimeout(() => reportWindow.print(), 250);
+    setTimeout(() => reportWindow.print(), 900);
   };
 
   if (loading) {
