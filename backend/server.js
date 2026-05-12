@@ -7728,6 +7728,84 @@ app.delete('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res
   }
 });
 
+app.post('/admin/users/restore', authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    const lookupEmail = String(req.body.current_email || req.body.email || '').trim().toLowerCase();
+    const nextEmail = String(req.body.new_email || req.body.email || '').trim().toLowerCase();
+
+    if (!lookupEmail) {
+      return res.status(400).json({ error: 'Informe o e-mail atual do usuário para reabilitação.' });
+    }
+
+    const parsedEmail = z.string().trim().email('Informe um e-mail válido.');
+    const lookupResult = parsedEmail.safeParse(lookupEmail);
+    const nextEmailResult = parsedEmail.safeParse(nextEmail);
+
+    if (!lookupResult.success || !nextEmailResult.success) {
+      return res.status(400).json({ error: 'Informe e-mails válidos para reabilitação.' });
+    }
+
+    const [rows] = await pool.query(
+      `SELECT id, name, email, role
+         FROM users
+        WHERE LOWER(email) = ?
+        LIMIT 1`,
+      [lookupEmail]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Usuário não encontrado para reabilitação.' });
+    }
+
+    const targetUser = rows[0];
+    const currentEmail = String(targetUser.email || '').toLowerCase();
+
+    if (currentEmail === masterAdminEmail || targetUser.role === 'master_admin') {
+      return res.status(403).json({ error: 'O Administrador Master não pode ser reabilitado por esta rota.' });
+    }
+
+    if (nextEmail !== currentEmail) {
+      const [duplicates] = await pool.query(
+        `SELECT id
+           FROM users
+          WHERE LOWER(email) = ?
+            AND id <> ?
+            AND deleted_at IS NULL
+          LIMIT 1`,
+        [nextEmail, targetUser.id]
+      );
+
+      if (duplicates.length) {
+        return res.status(409).json({ error: 'Já existe outro usuário ativo com o e-mail informado.' });
+      }
+    }
+
+    await pool.query(
+      `UPDATE users
+          SET email = ?,
+              active = 1,
+              deleted_at = NULL,
+              deleted_by = NULL
+        WHERE id = ?`,
+      [nextEmail, targetUser.id]
+    );
+
+    res.json({
+      message: 'Usuário reabilitado com sucesso.',
+      user: {
+        id: targetUser.id,
+        name: targetUser.name,
+        email: nextEmail,
+        role: targetUser.role,
+        active: 1
+      }
+    });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao reabilitar usuário.' });
+  }
+});
+
 app.get('/notifications', authenticate, async (req, res) => {
   try {
     const requestedStatus = String(req.query.status || 'unread').toLowerCase();
