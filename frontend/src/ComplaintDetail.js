@@ -1226,7 +1226,12 @@ function ComplaintDetail() {
             </div>
           )}
 
-          <dl className="meta-grid">
+          <div className="meta-section-head executive-section-title">
+            <p className="eyebrow">Dados operacionais</p>
+            <h3>Controle da tratativa</h3>
+          </div>
+
+          <dl className="meta-grid operational-meta-grid">
             <div>
               <dt>Unidade</dt>
               <dd>{complaint.clinic_name || 'Não informada'}</dd>
@@ -1314,7 +1319,10 @@ function ComplaintDetail() {
           </dl>
 
           <div className="detail-subsection responsibles-section">
-            <p className="eyebrow">Responsáveis da unidade</p>
+            <div className="meta-section-head">
+              <p className="eyebrow">Responsáveis da unidade</p>
+              <h3>Coordenação e gerência</h3>
+            </div>
             <dl className="meta-grid responsibles-grid">
               <div>
                 <dt>Coordenador responsável</dt>

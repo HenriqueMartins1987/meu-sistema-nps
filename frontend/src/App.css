@@ -2692,10 +2692,6 @@ a {
   background: linear-gradient(90deg, rgba(11, 111, 95, 0.96), rgba(31, 122, 140, 0.82));
 }
 
-.detail-card:nth-child(2) {
-  grid-column: 1;
-}
-
 .detail-actions-card {
   grid-column: 2;
   grid-row: 1 / span 2;
@@ -2753,8 +2749,10 @@ a {
 }
 
 .executive-patient-card {
+  grid-column: 1 / -1;
+  grid-row: 1;
   display: grid;
-  gap: 18px;
+  gap: 20px;
 }
 
 .summary-chip-grid {
@@ -2791,6 +2789,12 @@ a {
   line-height: 1.45;
 }
 
+.executive-section-title {
+  margin-top: 2px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(200, 154, 87, 0.18);
+}
+
 .meta-grid dt {
   color: var(--muted);
   text-transform: uppercase;
@@ -2805,11 +2809,29 @@ a {
 }
 
 .meta-grid > div {
-  min-height: 96px;
+  min-height: 92px;
   padding: 14px 15px;
   border: 1px solid rgba(200, 154, 87, 0.16);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.9);
+}
+
+.operational-meta-grid > div:nth-child(1),
+.operational-meta-grid > div:nth-child(6),
+.operational-meta-grid > div:nth-child(7),
+.operational-meta-grid > div:nth-child(8),
+.operational-meta-grid > div:nth-child(9),
+.operational-meta-grid > div:nth-child(10),
+.operational-meta-grid > div:nth-child(11),
+.operational-meta-grid > div:nth-child(12),
+.operational-meta-grid > div:nth-child(14),
+.operational-meta-grid > div:nth-child(15) {
+  display: none;
+}
+
+.operational-meta-grid .unit-change-inline {
+  grid-template-columns: 1fr;
+  margin: 0;
 }
 
 .channel-display {
@@ -2853,10 +2875,15 @@ a {
 }
 
 .responsibles-section {
+  margin-top: 0;
   padding: 18px;
   border: 1px solid rgba(200, 154, 87, 0.18);
   border-radius: 8px;
   background: linear-gradient(135deg, rgba(250, 246, 239, 0.9), rgba(255, 255, 255, 0.98));
+}
+
+.responsibles-section > .eyebrow {
+  display: none;
 }
 
 .narrative-card {
@@ -3088,14 +3115,16 @@ a {
 
 .complaint-heading .heading-actions {
   flex: 0 0 auto;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   gap: 10px;
   margin-left: auto;
+  justify-content: flex-end;
+  max-width: 720px;
 }
 
 .complaint-heading .heading-actions > button,
 .complaint-heading .heading-actions > a {
-  min-height: 50px;
+  min-height: 44px;
   white-space: nowrap;
   flex: 0 0 auto;
 }
@@ -3192,8 +3221,9 @@ a {
 }
 
 .executive-detail-grid {
-  grid-template-columns: minmax(0, 0.92fr) minmax(380px, 0.78fr);
-  gap: 20px;
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.42fr);
+  gap: 22px;
+  align-items: start;
 }
 
 .executive-detail-grid .detail-card {
@@ -3203,6 +3233,33 @@ a {
 
 .executive-detail-grid .detail-actions-card {
   border-top-color: var(--gold);
+}
+
+.executive-detail-grid .narrative-card {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.executive-detail-grid .patient-treatment-card {
+  grid-column: 1;
+  grid-row: 3;
+}
+
+.executive-detail-grid .evidence-card {
+  grid-column: 1;
+  grid-row: 4;
+}
+
+.executive-detail-grid .timeline-card {
+  grid-column: 1 / -1;
+  grid-row: 5;
+}
+
+.executive-detail-grid .detail-actions-card {
+  grid-column: 2;
+  grid-row: 2 / span 3;
+  position: sticky;
+  top: 18px;
 }
 
 .attachment-stack,
@@ -3280,6 +3337,33 @@ a {
   margin-top: 4px;
   color: var(--muted);
   font-weight: 700;
+}
+
+.evidence-card .detail-data-table th:nth-child(1),
+.evidence-card .detail-data-table td:nth-child(1) {
+  width: 150px;
+}
+
+.evidence-card .detail-data-table th:nth-child(3),
+.evidence-card .detail-data-table td:nth-child(3) {
+  width: 170px;
+}
+
+.evidence-card .detail-data-table th:nth-child(4),
+.evidence-card .detail-data-table td:nth-child(4) {
+  width: 190px;
+}
+
+.timeline-card .detail-data-table th:nth-child(1),
+.timeline-card .detail-data-table td:nth-child(1) {
+  width: 160px;
+}
+
+.timeline-card .detail-data-table th:nth-child(2),
+.timeline-card .detail-data-table td:nth-child(2),
+.timeline-card .detail-data-table th:nth-child(3),
+.timeline-card .detail-data-table td:nth-child(3) {
+  width: 190px;
 }
 
 .table-link-button {
@@ -5303,9 +5387,18 @@ a {
   }
 
   .detail-card:nth-child(2),
+  .executive-patient-card,
+  .executive-detail-grid .narrative-card,
+  .executive-detail-grid .patient-treatment-card,
+  .executive-detail-grid .evidence-card,
+  .executive-detail-grid .timeline-card,
   .detail-actions-card {
     grid-column: auto;
     grid-row: auto;
+  }
+
+  .executive-detail-grid .detail-actions-card {
+    position: static;
   }
 
   .home-actions {
