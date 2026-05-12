@@ -2752,6 +2752,45 @@ a {
   margin: 0;
 }
 
+.executive-patient-card {
+  display: grid;
+  gap: 18px;
+}
+
+.summary-chip-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.summary-chip {
+  display: grid;
+  gap: 6px;
+  padding: 14px 15px;
+  border: 1px solid rgba(200, 154, 87, 0.18);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(246, 235, 218, 0.48), rgba(255, 255, 255, 0.98));
+}
+
+.summary-chip span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.summary-chip strong {
+  color: var(--ink);
+  font-size: 16px;
+  line-height: 1.35;
+}
+
+.summary-chip small {
+  color: var(--muted);
+  font-weight: 700;
+  line-height: 1.45;
+}
+
 .meta-grid dt {
   color: var(--muted);
   text-transform: uppercase;
@@ -2763,6 +2802,14 @@ a {
   margin: 4px 0 0;
   color: var(--ink);
   font-weight: 800;
+}
+
+.meta-grid > div {
+  min-height: 96px;
+  padding: 14px 15px;
+  border: 1px solid rgba(200, 154, 87, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.9);
 }
 
 .channel-display {
@@ -2779,6 +2826,21 @@ a {
   gap: 14px;
 }
 
+.meta-section-head {
+  display: grid;
+  gap: 4px;
+}
+
+.meta-section-head h3 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 20px;
+}
+
+.compact-inline {
+  margin: 0;
+}
+
 .responsibles-grid {
   margin-top: 0;
 }
@@ -2788,6 +2850,18 @@ a {
 .executive-detail-grid .detail-card:first-child .meta-grid > div:nth-child(8),
 .executive-detail-grid .detail-card:first-child .meta-grid > div:nth-child(9) {
   display: none;
+}
+
+.responsibles-section {
+  padding: 18px;
+  border: 1px solid rgba(200, 154, 87, 0.18);
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(250, 246, 239, 0.9), rgba(255, 255, 255, 0.98));
+}
+
+.narrative-card {
+  display: grid;
+  gap: 14px;
 }
 
 .priority-selector {
@@ -4998,8 +5072,10 @@ a {
   .form-grid.three,
   .complaint-summary dl,
   .complaint-list-item,
+  .summary-chip-grid,
   .meta-grid,
   .unit-change-inline,
+  .patient-treatment-form,
   .priority-options,
   .checkbox-grid {
     grid-template-columns: 1fr;

@@ -946,15 +946,39 @@ function ComplaintDetail() {
       )}
 
       <section className="complaint-detail-grid executive-detail-grid">
-        <article className="detail-card">
+        <article className="detail-card executive-patient-card">
           <div className="detail-title-row">
             <div>
               <p className="eyebrow">Paciente</p>
               <h2>{complaint.patient_name || 'Não informado'}</h2>
+              <p className="history-note">Visão consolidada do protocolo com paciente, operação e responsáveis da unidade.</p>
             </div>
             <span className={`status-pill ${complaint.status || 'aberta'}`}>
               {statusLabels[complaint.status] || 'Aberta'}
             </span>
+          </div>
+
+          <div className="summary-chip-grid">
+            <article className="summary-chip">
+              <span>Protocolo</span>
+              <strong>{protocol}</strong>
+              <small>Identificador oficial da demanda.</small>
+            </article>
+            <article className="summary-chip">
+              <span>Unidade</span>
+              <strong>{complaint.clinic_name || 'Não informada'}</strong>
+              <small>{complaint.region || 'Região não informada'}</small>
+            </article>
+            <article className="summary-chip">
+              <span>Canal</span>
+              <strong>{renderChannelLabel(complaint.channel)}</strong>
+              <small>{complaint.created_origin || 'Interno'}</small>
+            </article>
+            <article className="summary-chip">
+              <span>Serviço</span>
+              <strong>{complaint.service_type || 'Não informado'}</strong>
+              <small>{complaint.complaint_type || 'Tipo não informado'}</small>
+            </article>
           </div>
 
           {canChangeComplaintUnit && (
@@ -1096,8 +1120,14 @@ function ComplaintDetail() {
           </div>
         </article>
 
-        <article className="detail-card">
-          <p className="eyebrow">Relato original</p>
+        <article className="detail-card narrative-card">
+          <div className="detail-title-row">
+            <div>
+              <p className="eyebrow">Relato original</p>
+              <h2>Contexto da ocorrência</h2>
+              <p className="history-note">Descrição oficial do caso com o material anexado no cadastro inicial.</p>
+            </div>
+          </div>
           <p className="complaint-description">{complaint.description || 'Sem descrição registrada.'}</p>
 
           {Boolean(complaint.financial_involved) && (
