@@ -328,6 +328,13 @@ function ComplaintDetail() {
   const [forwardToRole, setForwardToRole] = useState('');
   const [reactivateReason, setReactivateReason] = useState('');
   const [assetPreview, setAssetPreview] = useState(null);
+  const [linkedPatientTreatments, setLinkedPatientTreatments] = useState([]);
+  const [savingPatientTreatment, setSavingPatientTreatment] = useState(false);
+  const [patientTreatmentDraft, setPatientTreatmentDraft] = useState({
+    procedure_name: '',
+    scheduled_at: '',
+    note: ''
+  });
 
   const protocol = useMemo(() => formatProtocol(complaint), [complaint]);
   const normalizedUserRole = String(user?.role || '').trim().toLowerCase();
@@ -357,6 +364,7 @@ function ComplaintDetail() {
   const canEditPatientPhone = isMasterUser || ['sac_operator', 'supervisor_crc', 'master_admin'].includes(normalizedUserRole);
   const canRenotifyComplaint = isMasterUser || normalizedUserRole === 'supervisor_crc' || normalizedUserRole === 'sac_operator';
   const canReactivateComplaint = isMasterUser || normalizedUserRole === 'supervisor_crc';
+  const canCreatePatientTreatment = isMasterUser || ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole);
   const canReturnToSac = ['coordinator', 'manager'].includes(String(user?.role || '').toLowerCase());
   const canReassignForward = canReturnToSac || isAdmin || isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole);
   const reassignOptions = canReturnToSac ? returnToSacOption : reassignForwardingOptions;
@@ -429,6 +437,17 @@ function ComplaintDetail() {
     }
   }, [id, includeDeleted]);
 
+  const loadLinkedPatientTreatments = useCallback(async () => {
+    try {
+      const res = await api.get('/patient-interactions', {
+        params: { complaint_id: id }
+      });
+      setLinkedPatientTreatments(Array.isArray(res.data) ? res.data : []);
+    } catch (error) {
+      setLinkedPatientTreatments([]);
+    }
+  }, [id]);
+
   const openUploadedItem = useCallback((url, label = 'Arquivo do protocolo') => {
     if (!url) return;
 
@@ -443,6 +462,10 @@ function ComplaintDetail() {
   useEffect(() => {
     loadComplaint();
   }, [loadComplaint]);
+
+  useEffect(() => {
+    loadLinkedPatientTreatments();
+  }, [loadLinkedPatientTreatments]);
 
   useEffect(() => {
     if (!canChangeComplaintUnit) {
@@ -754,6 +777,44 @@ function ComplaintDetail() {
       setFeedback(error.response?.data?.error || 'Não foi possível reabilitar esta reclamação.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handlePatientTreatmentDraft = (field, value) => {
+    setPatientTreatmentDraft((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSavePatientTreatment = async () => {
+    if (!canCreatePatientTreatment) {
+      return;
+    }
+
+    if (!patientTreatmentDraft.procedure_name.trim() || !patientTreatmentDraft.scheduled_at.trim()) {
+      setFeedback('Informe o procedimento e a data agendada do paciente.');
+      return;
+    }
+
+    setSavingPatientTreatment(true);
+    setFeedback('');
+
+    try {
+      const response = await api.post(`/complaints/${id}/patient-treatment`, {
+        procedure_name: patientTreatmentDraft.procedure_name.trim(),
+        scheduled_at: patientTreatmentDraft.scheduled_at,
+        note: patientTreatmentDraft.note.trim()
+      });
+
+      setPatientTreatmentDraft({
+        procedure_name: '',
+        scheduled_at: '',
+        note: ''
+      });
+      setFeedback(response.data?.message || 'Tratamento do paciente registrado com sucesso.');
+      await loadLinkedPatientTreatments();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível registrar o tratamento do paciente.');
+    } finally {
+      setSavingPatientTreatment(false);
     }
   };
 
@@ -1073,6 +1134,85 @@ function ComplaintDetail() {
               </>
             ) : (
               <p className="empty-mini">Sem anexo inicial.</p>
+            )}
+          </div>
+        </article>
+
+        <article className="detail-card patient-treatment-card">
+          <div className="detail-title-row">
+            <div>
+              <p className="eyebrow">Tratamento do paciente</p>
+              <h2>Agenda vinculada a reclamacao</h2>
+              <p className="history-note">Ao salvar, o paciente entra automaticamente na Gestao de Pacientes como oriundo de reclamacao.</p>
+            </div>
+            <span className="mini-badge">{linkedPatientTreatments.length} registro(s)</span>
+          </div>
+
+          {canCreatePatientTreatment && !isDeletedRecord ? (
+            <div className="patient-treatment-form">
+              <label>
+                Procedimento
+                <input
+                  className="field"
+                  value={patientTreatmentDraft.procedure_name}
+                  onChange={(event) => handlePatientTreatmentDraft('procedure_name', event.target.value)}
+                  placeholder="Ex.: Implante, avaliacao, retorno clinico"
+                />
+              </label>
+              <label>
+                Data e hora agendada
+                <input
+                  className="field"
+                  type="datetime-local"
+                  value={patientTreatmentDraft.scheduled_at}
+                  onChange={(event) => handlePatientTreatmentDraft('scheduled_at', event.target.value)}
+                />
+              </label>
+              <label className="patient-treatment-full">
+                Observacoes
+                <textarea
+                  className="field textarea"
+                  value={patientTreatmentDraft.note}
+                  onChange={(event) => handlePatientTreatmentDraft('note', event.target.value)}
+                  placeholder="Registre informacoes relevantes para o tratamento do paciente."
+                  rows={4}
+                />
+              </label>
+              <div className="row-actions patient-treatment-actions">
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={handleSavePatientTreatment}
+                  disabled={savingPatientTreatment || !patientTreatmentDraft.procedure_name.trim() || !patientTreatmentDraft.scheduled_at.trim()}
+                >
+                  {savingPatientTreatment ? 'Salvando...' : 'Salvar na gestao de pacientes'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <p className="permission-note">Este cadastro fica disponivel apenas para Operador de SAC, Supervisor do CRC, Administrador e Administrador Master.</p>
+          )}
+
+          <div className="patient-treatment-linked-list">
+            {linkedPatientTreatments.length ? linkedPatientTreatments.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="patient-treatment-linked-item"
+                onClick={() => navigate(`/pacientes?abrir=${item.id}`)}
+              >
+                <div className="patient-treatment-linked-head">
+                  <strong>{item.protocol || `PAC-${item.id}`}</strong>
+                  <span>{item.status || 'Em tratamento'}</span>
+                </div>
+                <p>{item.procedureName || 'Procedimento nao informado'}</p>
+                <small>
+                  {item.scheduledAt ? `Agendado para ${formatDate(item.scheduledAt)}` : 'Data nao informada'}
+                  {item.note ? ` · ${item.note}` : ''}
+                </small>
+              </button>
+            )) : (
+              <p className="empty-mini">Nenhum tratamento do paciente foi vinculado a esta reclamacao ate o momento.</p>
             )}
           </div>
         </article>

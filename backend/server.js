@@ -615,6 +615,11 @@ function canEditComplaintPatientPhone(user) {
   return ['sac_operator', 'supervisor_crc', 'master_admin'].includes(normalizedRole) || isMasterAdminUser(user);
 }
 
+function canManageComplaintPatientTreatment(user) {
+  const normalizedRole = String(user?.role || '').trim().toLowerCase();
+  return ['sac_operator', 'supervisor_crc', 'admin', 'master_admin'].includes(normalizedRole) || isMasterAdminUser(user);
+}
+
 function canAddTreatment(user) {
   return treatmentRoles.has(user?.role) || isAdminUser(user);
 }
@@ -1753,11 +1758,13 @@ async function ensureDatabaseSchema() {
     CREATE TABLE IF NOT EXISTS patient_interactions (
       id INT AUTO_INCREMENT PRIMARY KEY,
       protocol VARCHAR(40) NULL,
+      complaint_id INT NULL,
       patient_name VARCHAR(160) NOT NULL,
       patient_phone VARCHAR(40) NOT NULL,
       channel VARCHAR(80) NOT NULL,
       clinic_name VARCHAR(180) NOT NULL,
       interaction_type VARCHAR(80) NOT NULL,
+      procedure_name VARCHAR(180) NULL,
       scheduled_at DATETIME NULL,
       note TEXT NULL,
       status VARCHAR(60) NOT NULL DEFAULT 'Registrado',
@@ -1770,6 +1777,8 @@ async function ensureDatabaseSchema() {
     )
   `);
   await ensureColumn('patient_interactions', 'protocol', 'VARCHAR(40) NULL');
+  await ensureColumn('patient_interactions', 'complaint_id', 'INT NULL');
+  await ensureColumn('patient_interactions', 'procedure_name', 'VARCHAR(180) NULL');
   await ensureColumn('patient_interactions', 'cancelled_at', 'TIMESTAMP NULL');
   await ensureColumn('patient_interactions', 'cancelled_by_name', 'VARCHAR(160) NULL');
   await ensureColumn('patient_interactions', 'cancelled_by_role', 'VARCHAR(80) NULL');
@@ -8688,11 +8697,17 @@ app.delete('/nps/responses/:id', authenticate, async (req, res) => {
 app.get('/patient-interactions', authenticate, async (req, res) => {
   try {
     const includeDeleted = Boolean(req.query.include_deleted) && canViewDeletedRecords(req.user);
+    const complaintId = Number(req.query.complaint_id || 0);
     const where = [];
     const params = [];
 
     if (!includeDeleted) {
       where.push("status <> 'Cancelado'");
+    }
+
+    if (complaintId > 0) {
+      where.push('complaint_id = ?');
+      params.push(complaintId);
     }
 
     if (!isAdminUser(req.user) && !['sac_operator', 'supervisor_crc'].includes(req.user?.role)) {
@@ -8722,11 +8737,13 @@ app.get('/patient-interactions', authenticate, async (req, res) => {
       `SELECT
         id,
         protocol,
+        complaint_id,
         patient_name,
         patient_phone,
         channel,
         clinic_name,
         interaction_type,
+        procedure_name,
         scheduled_at,
         note,
         status,
@@ -8770,11 +8787,13 @@ app.get('/patient-interactions', authenticate, async (req, res) => {
     res.json(rows.map((row) => ({
       id: row.id,
       protocol: row.protocol || formatPatientProtocol(row.id, row.created_at),
+      complaintId: row.complaint_id,
       patient: row.patient_name,
       phone: row.patient_phone,
       channel: row.channel,
       clinic: row.clinic_name,
       type: row.interaction_type,
+      procedureName: row.procedure_name,
       scheduledAt: row.scheduled_at,
       note: row.note,
       status: row.status,
@@ -8804,6 +8823,7 @@ app.post('/patient-interactions', authenticate, async (req, res) => {
       channel,
       clinic,
       type,
+      procedureName,
       scheduledAt,
       note
     } = req.body;
@@ -8828,14 +8848,15 @@ app.post('/patient-interactions', authenticate, async (req, res) => {
 
     const [result] = await pool.query(
       `INSERT INTO patient_interactions
-       (patient_name, patient_phone, channel, clinic_name, interaction_type, scheduled_at, note, status, created_by_name, created_by_role)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'Registrado', ?, ?)`,
+       (patient_name, patient_phone, channel, clinic_name, interaction_type, procedure_name, scheduled_at, note, status, created_by_name, created_by_role)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Registrado', ?, ?)`,
       [
         patient,
         phone,
         channel,
         clinic,
         type,
+        String(procedureName || '').trim() || null,
         toMysqlDateTime(scheduledDate),
         note || null,
         getActorName(req.user),
@@ -8890,6 +8911,89 @@ app.patch('/patient-interactions/:id', authenticate, async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao atualizar gestão do paciente.' });
+  }
+});
+
+app.post('/complaints/:id/patient-treatment', authenticate, async (req, res) => {
+  try {
+    if (!canManageComplaintPatientTreatment(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode cadastrar tratamento do paciente pela ficha executiva.' });
+    }
+
+    const procedureName = String(req.body?.procedure_name || '').trim();
+    const scheduledAt = String(req.body?.scheduled_at || '').trim();
+    const note = String(req.body?.note || '').trim();
+
+    if (!procedureName || !scheduledAt) {
+      return res.status(400).json({ error: 'Informe o procedimento e a data agendada do paciente.' });
+    }
+
+    const complaintRows = await getComplaintRows({ id: req.params.id }, req.user);
+    const complaint = complaintRows[0];
+
+    if (!complaint) {
+      return res.status(404).json({ error: 'Reclamação não encontrada.' });
+    }
+
+    let scheduledDate;
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(scheduledAt)) {
+      scheduledDate = new Date(`${scheduledAt}T00:00:00`);
+      const now = new Date();
+      scheduledDate.setHours(now.getHours(), now.getMinutes(), 0, 0);
+    } else {
+      scheduledDate = new Date(scheduledAt);
+    }
+
+    if (Number.isNaN(scheduledDate.getTime())) {
+      return res.status(400).json({ error: 'Informe uma data válida para o agendamento.' });
+    }
+
+    const [result] = await pool.query(
+      `INSERT INTO patient_interactions
+       (protocol, complaint_id, patient_name, patient_phone, channel, clinic_name, interaction_type, procedure_name, scheduled_at, note, status, created_by_name, created_by_role)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Em tratamento', ?, ?)`,
+      [
+        null,
+        Number(req.params.id),
+        complaint.patient_name || 'Paciente não informado',
+        complaint.patient_phone || '',
+        'reclamacao',
+        complaint.clinic_name || 'Unidade não informada',
+        'agendamento',
+        procedureName,
+        toMysqlDateTime(scheduledDate),
+        note || `Acompanhamento de tratamento vinculado ao protocolo ${complaint.protocol || complaint.id}.`,
+        getActorName(req.user),
+        req.user?.role || null
+      ]
+    );
+
+    const protocol = formatPatientProtocol(result.insertId, scheduledDate);
+    await pool.query('UPDATE patient_interactions SET protocol = ? WHERE id = ?', [protocol, result.insertId]);
+
+    await insertPatientInteractionLog(
+      result.insertId,
+      'Tratamento criado pela ficha executiva',
+      `Procedimento ${procedureName} agendado para ${formatMessageDateTime(scheduledDate)}. ${note || ''}`.trim(),
+      req.user
+    );
+
+    await insertComplaintLog(
+      req.params.id,
+      'patient_treatment_created',
+      `Tratamento do paciente registrado na gestão de pacientes. Procedimento: ${procedureName}. Agenda: ${formatMessageDateTime(scheduledDate)}. Protocolo paciente: ${protocol}.`,
+      req.user
+    );
+
+    return res.status(201).json({
+      message: 'Tratamento do paciente registrado com sucesso na gestão de pacientes.',
+      interactionId: result.insertId,
+      protocol
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao registrar tratamento do paciente pela ficha executiva.' });
   }
 });
 

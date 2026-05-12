@@ -36,6 +36,7 @@ const channelLabels = {
   email: 'E-mail',
   presencial: 'Presencial',
   site: 'Site',
+  reclamacao: 'Reclamacao',
   outros: 'Outros'
 };
 
@@ -251,6 +252,7 @@ function PatientManagementPage() {
         record.patient,
         record.phone,
         record.note,
+        record.procedureName,
         record.clinic,
         record.channel,
         record.type,
@@ -281,6 +283,7 @@ function PatientManagementPage() {
         record.patient,
         record.phone,
         record.note,
+        record.procedureName,
         record.clinic,
         record.channel,
         record.type,
@@ -313,6 +316,7 @@ function PatientManagementPage() {
     unidade: record.clinic,
     canal: channelLabels[record.channel] || record.channel || 'Canal não informado',
     tipo: typeLabels[record.type] || record.type,
+    procedimento: record.procedureName || 'Nao informado',
     status: record.status,
     data_horario: formatDateTime(record.scheduledAt),
     ultima_tratativa: record.lastActorName || 'Sem tratativa',
@@ -352,6 +356,7 @@ function PatientManagementPage() {
       unidade: '',
       canal: '',
       tipo: '',
+      procedimento: '',
       status: '',
       data_horario: '',
       ultima_tratativa: '',
@@ -383,12 +388,12 @@ function PatientManagementPage() {
     }
 
     const printDate = new Date();
-    const headers = ['Protocolo', 'Paciente', 'Unidade e canal', 'Tipo e status', 'Data e horário', 'Última tratativa'];
+    const headers = ['Protocolo', 'Paciente', 'Unidade e canal', 'Tipo, procedimento e status', 'Data e horário', 'Última tratativa'];
     const rowsToPrint = dashboardExportRows.map((row) => [
       row.protocolo,
       `${row.paciente} | ${row.telefone}`,
       `${row.unidade} | ${row.canal}`,
-      `${row.tipo} | ${row.status}`,
+      `${row.tipo} | ${row.procedimento} | ${row.status}`,
       row.data_horario,
       `${row.ultima_tratativa} | ${row.perfil_ultima_tratativa}`
     ]);
@@ -866,7 +871,7 @@ function PatientManagementPage() {
                       <th>Protocolo</th>
                       <th>Paciente</th>
                       <th>Unidade e canal</th>
-                      <th>Tipo e status</th>
+                      <th>Tipo, procedimento e status</th>
                       <th>Data e horario</th>
                       <th>Última tratativa por</th>
                     </tr>
@@ -895,7 +900,7 @@ function PatientManagementPage() {
                         <td>
                           <div className="table-cell-stack">
                             <span className="cell-primary">{typeLabels[record.type] || record.type}</span>
-                            <span className="cell-secondary">{record.status}</span>
+                            <span className="cell-secondary">{record.procedureName || 'Procedimento nao informado'} | {record.status}</span>
                           </div>
                         </td>
                         <td>{formatDateTime(record.scheduledAt)}</td>
@@ -1059,7 +1064,12 @@ function PatientManagementPage() {
                   <tr key={record.id}>
                     <td>{record.protocol}</td>
                     <td>{record.patient}</td>
-                    <td>{typeLabels[record.type] || record.type}</td>
+                    <td>
+                      <div className="table-cell-stack">
+                        <span className="cell-primary">{typeLabels[record.type] || record.type}</span>
+                        <span className="cell-secondary">{record.procedureName || 'Procedimento nao informado'}</span>
+                      </div>
+                    </td>
                     <td>{record.clinic}</td>
                     <td>{formatDateTime(record.scheduledAt)}</td>
                     <td>

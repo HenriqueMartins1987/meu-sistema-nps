@@ -165,6 +165,7 @@ function HomeShellFixed() {
   const [feedback, setFeedback] = useState('');
   const [mustChangePassword, setMustChangePassword] = useState(Boolean(user?.mustChangePassword));
   const [agendaItems, setAgendaItems] = useState([]);
+  const [complaintTreatmentItems, setComplaintTreatmentItems] = useState([]);
   const [agendaAlerts, setAgendaAlerts] = useState([]);
   const [agendaLoading, setAgendaLoading] = useState(false);
   const [agendaAlertOpen, setAgendaAlertOpen] = useState(false);
@@ -292,6 +293,7 @@ function HomeShellFixed() {
   const loadAgenda = useCallback(async () => {
     if (!canManageComplaints && !canManagePatients) {
       setAgendaItems([]);
+      setComplaintTreatmentItems([]);
       setAgendaAlerts([]);
       return;
     }
@@ -358,6 +360,27 @@ function HomeShellFixed() {
         })
         .filter(Boolean);
 
+      const complaintTreatmentAgenda = patientInteractions
+        .filter((item) => item.complaintId && String(item.status || '').toLowerCase() === 'em tratamento' && item.scheduledAt)
+        .map((item) => {
+          const scheduledAt = new Date(item.scheduledAt);
+
+          if (Number.isNaN(scheduledAt.getTime())) return null;
+
+          return {
+            key: `complaint-treatment-${item.id}`,
+            title: item.patient || 'Paciente',
+            protocol: item.protocol || `PAC-${item.id}`,
+            description: `${item.clinic || 'Unidade nÃ£o informada'} Â· ${item.procedureName || 'Procedimento nÃ£o informado'}`,
+            detail: `${item.status || 'Em tratamento'} Â· ${formatDateTime(item.scheduledAt)}`,
+            when: scheduledAt.getTime(),
+            link: `/pacientes?abrir=${item.id}`
+          };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.when - b.when)
+        .slice(0, 8);
+
       const nextAgenda = [...complaintAgenda, ...patientAgenda]
         .sort((a, b) => {
           const priorityA = a.urgent ? 0 : 1;
@@ -370,9 +393,11 @@ function HomeShellFixed() {
       const nextAlerts = complaintAgenda.filter((item) => item.urgent).slice(0, 4);
 
       setAgendaItems(nextAgenda);
+      setComplaintTreatmentItems(complaintTreatmentAgenda);
       setAgendaAlerts(nextAlerts);
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível carregar a agenda operacional.');
+      setComplaintTreatmentItems([]);
     } finally {
       setAgendaLoading(false);
     }
@@ -964,6 +989,45 @@ function HomeShellFixed() {
           </div>
         )}
       </section>
+
+      {canManagePatients && (
+        <section className="management-panel home-agenda-panel home-treatment-panel" aria-label="Pacientes em tratamento oriundos de reclamações">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Tratamentos vinculados</p>
+              <h2>Pacientes oriundos de reclamações em tratamento</h2>
+              <p className="base-subtitle">Pacientes lançados pela ficha executiva com acompanhamento ativo na gestão de pacientes.</p>
+            </div>
+            <button className="outline-action" type="button" onClick={() => navigate('/pacientes')}>
+              Abrir gestão de pacientes
+            </button>
+          </div>
+
+          {agendaLoading ? (
+            <p className="empty-state">Carregando pacientes em tratamento...</p>
+          ) : complaintTreatmentItems.length === 0 ? (
+            <p className="empty-state">Nenhum paciente oriundo de reclamação está em tratamento no momento.</p>
+          ) : (
+            <div className="home-agenda-list">
+              {complaintTreatmentItems.map((item) => (
+                <button
+                  key={item.key}
+                  type="button"
+                  className="home-agenda-item treatment"
+                  onClick={() => navigate(item.link)}
+                >
+                  <div className="home-agenda-item-top">
+                    <span>Tratamento</span>
+                    <strong>{item.title}</strong>
+                  </div>
+                  <p>{item.description}</p>
+                  <small>{item.protocol} | {item.detail}</small>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="quick-grid" aria-label="Atalhos operacionais">
         <article className="quick-card accent-brand">
