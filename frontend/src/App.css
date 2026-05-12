@@ -3229,6 +3229,92 @@ a {
   gap: 16px;
 }
 
+.detail-table-scroll {
+  max-height: 560px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.history-table-scroll {
+  max-height: 620px;
+}
+
+.detail-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  min-width: 720px;
+}
+
+.detail-data-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 12px 13px;
+  background: #2f2924;
+  color: #fff;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.detail-data-table td {
+  padding: 13px;
+  border-top: 1px solid rgba(221, 207, 188, 0.78);
+  color: var(--ink);
+  font-weight: 700;
+  line-height: 1.55;
+  vertical-align: top;
+  word-break: break-word;
+}
+
+.detail-data-table tbody tr:nth-child(even) td {
+  background: rgba(250, 246, 239, 0.72);
+}
+
+.detail-data-table td small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.table-link-button {
+  display: inline;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--brand-strong);
+  font-weight: 900;
+  text-align: left;
+  cursor: pointer;
+}
+
+.table-action-stack {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.compact-action,
+.compact-pagination .outline-action,
+.table-action-stack .evidence-delete-button {
+  min-height: 34px;
+  padding: 7px 10px;
+  font-size: 12px;
+}
+
+.compact-pagination {
+  margin-top: 10px;
+}
+
+.legacy-list-hidden {
+  display: none;
+}
+
 .history-list {
   display: grid;
   gap: 12px;

@@ -4,9 +4,49 @@ import api, { apiBaseUrl } from './api';
 import { isAdmin as isAdminUser, isMasterAdmin, priorityOptions, readUser, statusLabels } from './constants';
 
 const maxUploadSizeBytes = 10 * 1024 * 1024;
+const detailTablePageSize = 10;
 const treatmentRoles = ['coordinator', 'manager', 'supervisor_crc'];
 const evidenceRoles = ['coordinator', 'manager', 'supervisor_crc', 'sac_operator', 'admin'];
 const previewableImagePattern = /\.(avif|bmp|gif|jpe?g|png|svg|webp)(\?.*)?$/i;
+
+const dentalProcedureOptions = [
+  'Avaliação odontológica',
+  'Consulta de retorno',
+  'Profilaxia / limpeza',
+  'Raspagem periodontal',
+  'Aplicação de flúor',
+  'Restauração em resina',
+  'Restauração em amálgama',
+  'Clareamento dental',
+  'Tratamento de canal',
+  'Retratamento de canal',
+  'Extração simples',
+  'Extração de siso',
+  'Cirurgia periodontal',
+  'Enxerto ósseo',
+  'Implante dentário',
+  'Prótese sobre implante',
+  'Prótese total',
+  'Prótese parcial removível',
+  'Coroa dentária',
+  'Lente de contato dental',
+  'Faceta em resina',
+  'Faceta em porcelana',
+  'Aparelho ortodôntico',
+  'Manutenção ortodôntica',
+  'Alinhadores transparentes',
+  'Placa de bruxismo',
+  'Tratamento de DTM',
+  'Odontopediatria',
+  'Radiografia odontológica',
+  'Tomografia odontológica',
+  'Biópsia oral',
+  'Urgência odontológica',
+  'Reparo de prótese',
+  'Ajuste oclusal',
+  'Remoção de tártaro',
+  'Outro procedimento odontológico'
+];
 
 const roleLabels = {
   master_admin: 'Administrador Master',
@@ -207,6 +247,15 @@ function buildBriefText(value, maxLength = 220) {
   return `${text.slice(0, maxLength).trimEnd()}...`;
 }
 
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
 function buildComplaintNextAction({
   complaint,
   hasTreatment,
@@ -330,6 +379,8 @@ function ComplaintDetail() {
   const [assetPreview, setAssetPreview] = useState(null);
   const [linkedPatientTreatments, setLinkedPatientTreatments] = useState([]);
   const [savingPatientTreatment, setSavingPatientTreatment] = useState(false);
+  const [historyPage, setHistoryPage] = useState(1);
+  const [evidencePage, setEvidencePage] = useState(1);
   const [patientTreatmentDraft, setPatientTreatmentDraft] = useState({
     procedure_name: '',
     scheduled_at: '',
@@ -417,6 +468,28 @@ function ComplaintDetail() {
     hasSupervisorApproval,
     isHighPriority
   ]);
+  const historyRecords = useMemo(() => (
+    Array.isArray(complaint?.logs) ? complaint.logs : []
+  ), [complaint?.logs]);
+  const evidenceRecords = useMemo(() => (
+    Array.isArray(complaint?.evidences) ? complaint.evidences : []
+  ), [complaint?.evidences]);
+  const totalHistoryPages = Math.max(1, Math.ceil(historyRecords.length / detailTablePageSize));
+  const currentHistoryPage = Math.min(historyPage, totalHistoryPages);
+  const paginatedHistoryRecords = useMemo(() => {
+    const start = (currentHistoryPage - 1) * detailTablePageSize;
+    return historyRecords.slice(start, start + detailTablePageSize);
+  }, [currentHistoryPage, historyRecords]);
+  const historyStart = historyRecords.length ? (currentHistoryPage - 1) * detailTablePageSize + 1 : 0;
+  const historyEnd = historyRecords.length ? Math.min(currentHistoryPage * detailTablePageSize, historyRecords.length) : 0;
+  const totalEvidencePages = Math.max(1, Math.ceil(evidenceRecords.length / detailTablePageSize));
+  const currentEvidencePage = Math.min(evidencePage, totalEvidencePages);
+  const paginatedEvidenceRecords = useMemo(() => {
+    const start = (currentEvidencePage - 1) * detailTablePageSize;
+    return evidenceRecords.slice(start, start + detailTablePageSize);
+  }, [currentEvidencePage, evidenceRecords]);
+  const evidenceStart = evidenceRecords.length ? (currentEvidencePage - 1) * detailTablePageSize + 1 : 0;
+  const evidenceEnd = evidenceRecords.length ? Math.min(currentEvidencePage * detailTablePageSize, evidenceRecords.length) : 0;
 
   const loadComplaint = useCallback(async () => {
     setLoading(true);
@@ -466,6 +539,14 @@ function ComplaintDetail() {
   useEffect(() => {
     loadLinkedPatientTreatments();
   }, [loadLinkedPatientTreatments]);
+
+  useEffect(() => {
+    setHistoryPage(1);
+  }, [id, historyRecords.length]);
+
+  useEffect(() => {
+    setEvidencePage(1);
+  }, [id, evidenceRecords.length]);
 
   useEffect(() => {
     if (!canChangeComplaintUnit) {
@@ -601,7 +682,7 @@ function ComplaintDetail() {
 
   const handleContactForward = async () => {
     if (!forwardToRole) {
-      setFeedback('Selecione para quem a reclamacao sera encaminhada.');
+      setFeedback('Selecione para quem a reclamação será encaminhada.');
       return;
     }
 
@@ -629,14 +710,14 @@ function ComplaintDetail() {
       setFeedback(
         forwardModalMode === 'reassign'
           ? 'Demanda reencaminhada com sucesso para a unidade.'
-          : 'Contato com o paciente registrado e reclamacao encaminhada para tratativa.'
+          : 'Contato com o paciente registrado e reclamação encaminhada para tratativa.'
       );
       await loadComplaint();
     } catch (error) {
       setFeedback(
         error.response?.data?.error
         || (forwardModalMode === 'reassign'
-          ? 'Erro ao reencaminhar a reclamacao.'
+          ? 'Erro ao reencaminhar a reclamação.'
           : 'Erro ao registrar contato com o paciente.')
       );
     } finally {
@@ -818,6 +899,138 @@ function ComplaintDetail() {
     }
   };
 
+  const handleExportComplaintPdf = () => {
+    const reportWindow = window.open('', '_blank');
+
+    if (!reportWindow) {
+      setFeedback('Permita pop-ups para exportar a ficha em PDF.');
+      return;
+    }
+
+    const printDate = new Date();
+    const historyRows = historyRecords.length
+      ? historyRecords.map((log) => `
+        <tr>
+          <td>${escapeHtml(formatDate(log.created_at))}</td>
+          <td>${escapeHtml(log.actor_name || 'Usuário do sistema')}</td>
+          <td>${escapeHtml(roleLabels[log.actor_role] || log.actor_role || 'Atualização')}</td>
+          <td>${escapeHtml(log.message || 'Atualização registrada no protocolo.')}</td>
+        </tr>
+      `).join('')
+      : '<tr><td colspan="4">Sem histórico complementar registrado.</td></tr>';
+    const evidenceRows = evidenceRecords.length
+      ? evidenceRecords.map((evidence) => `
+        <tr>
+          <td>${escapeHtml(evidence.description || evidence.original_name || 'Evidência anexada')}</td>
+          <td>${escapeHtml(formatDate(evidence.created_at))}</td>
+          <td>${escapeHtml(evidence.uploaded_by_name || 'Não informado')}</td>
+          <td>${escapeHtml(evidence.original_name || evidence.file_url || 'Arquivo vinculado')}</td>
+        </tr>
+      `).join('')
+      : '<tr><td colspan="4">Sem evidências complementares anexadas.</td></tr>';
+    const treatmentRows = linkedPatientTreatments.length
+      ? linkedPatientTreatments.map((item) => `
+        <tr>
+          <td>${escapeHtml(item.protocol || `PAC-${item.id}`)}</td>
+          <td>${escapeHtml(item.procedureName || 'Procedimento não informado')}</td>
+          <td>${escapeHtml(item.scheduledAt ? formatDate(item.scheduledAt) : 'Data não informada')}</td>
+          <td>${escapeHtml(item.status || 'Em tratamento')}</td>
+          <td>${escapeHtml(item.note || 'Sem observações')}</td>
+        </tr>
+      `).join('')
+      : '<tr><td colspan="5">Sem tratamento do paciente vinculado.</td></tr>';
+
+    reportWindow.document.write(`
+      <html>
+        <head>
+          <title>Ficha executiva ${escapeHtml(protocol)}</title>
+          <style>
+            @page { size: A4; margin: 14mm; }
+            * { box-sizing: border-box; }
+            body { margin: 0; font-family: Arial, sans-serif; color: #1f2937; background: #fff; }
+            .report-shell { display: grid; gap: 18px; }
+            .report-header { padding: 20px 22px; border: 1px solid #d9c4a0; border-radius: 12px; background: #fffaf2; }
+            .report-kicker { margin: 0 0 8px; color: #9a6b22; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+            h1 { margin: 0 0 6px; font-size: 25px; color: #111827; }
+            h2 { margin: 0 0 10px; font-size: 17px; color: #111827; }
+            p { margin: 0; line-height: 1.55; }
+            .muted { color: #667085; font-size: 12px; }
+            .summary-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+            .summary-card { border: 1px solid #eadcc7; border-radius: 10px; padding: 12px; background: #fff; }
+            .summary-card span { display: block; margin-bottom: 4px; color: #8a632d; font-size: 10px; font-weight: 800; text-transform: uppercase; }
+            .summary-card strong { display: block; color: #111827; font-size: 13px; line-height: 1.35; }
+            .section { display: grid; gap: 10px; padding: 14px; border: 1px solid #e5e7eb; border-radius: 12px; }
+            table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 10px; }
+            th { padding: 8px 7px; background: #132238; color: #fff; text-align: left; text-transform: uppercase; font-size: 9px; letter-spacing: .03em; }
+            td { padding: 8px 7px; border-top: 1px solid #e5e7eb; vertical-align: top; word-break: break-word; }
+            tr:nth-child(even) td { background: #faf7f2; }
+            .description { padding: 12px; border: 1px solid #eadcc7; border-radius: 10px; background: #fffaf2; }
+          </style>
+        </head>
+        <body>
+          <main class="report-shell">
+            <section class="report-header">
+              <p class="report-kicker">Ficha executiva do protocolo</p>
+              <h1>${escapeHtml(protocol)}</h1>
+              <p>${escapeHtml(complaint.patient_name || 'Paciente não informado')} | ${escapeHtml(complaint.clinic_name || 'Unidade não informada')}</p>
+              <p class="muted">Exportado em ${escapeHtml(formatDate(printDate))}</p>
+            </section>
+
+            <section class="summary-grid">
+              <article class="summary-card"><span>Status</span><strong>${escapeHtml(statusLabels[complaint.status] || 'Aberta')}</strong></article>
+              <article class="summary-card"><span>Canal</span><strong>${escapeHtml(String(renderChannelLabel(complaint.channel)).replace(/[^\x20-\x7EÀ-ÿ]/g, ''))}</strong></article>
+              <article class="summary-card"><span>Prazo</span><strong>${escapeHtml(formatDate(complaint.due_at))}</strong></article>
+              <article class="summary-card"><span>Responsável atual</span><strong>${escapeHtml(stage.owner)}</strong></article>
+            </section>
+
+            <section class="section">
+              <h2>Dados principais</h2>
+              <table>
+                <tbody>
+                  <tr><td><strong>Telefone</strong></td><td>${escapeHtml(complaint.patient_phone || 'Não informado')}</td><td><strong>Serviço</strong></td><td>${escapeHtml(complaint.service_type || 'Não informado')}</td></tr>
+                  <tr><td><strong>Tipo</strong></td><td>${escapeHtml(complaint.complaint_type || 'Não informado')}</td><td><strong>Valor financeiro</strong></td><td>${escapeHtml(complaint.financial_involved ? formatCurrency(complaint.financial_amount) : 'Não envolve')}</td></tr>
+                  <tr><td><strong>Coordenador</strong></td><td>${escapeHtml(complaint.coordinator_name || 'Não informado')}</td><td><strong>Gerente</strong></td><td>${escapeHtml(complaint.manager_name || 'Não informado')}</td></tr>
+                </tbody>
+              </table>
+            </section>
+
+            <section class="section">
+              <h2>Relato original</h2>
+              <p class="description">${escapeHtml(complaint.description || 'Sem descrição registrada.')}</p>
+            </section>
+
+            <section class="section">
+              <h2>Tratamento do paciente</h2>
+              <table>
+                <thead><tr><th>Protocolo</th><th>Procedimento</th><th>Agenda</th><th>Status</th><th>Observações</th></tr></thead>
+                <tbody>${treatmentRows}</tbody>
+              </table>
+            </section>
+
+            <section class="section">
+              <h2>Evidências</h2>
+              <table>
+                <thead><tr><th>Descrição</th><th>Data</th><th>Responsável</th><th>Arquivo</th></tr></thead>
+                <tbody>${evidenceRows}</tbody>
+              </table>
+            </section>
+
+            <section class="section">
+              <h2>Histórico imutável</h2>
+              <table>
+                <thead><tr><th>Data</th><th>Usuário</th><th>Perfil</th><th>Registro</th></tr></thead>
+                <tbody>${historyRows}</tbody>
+              </table>
+            </section>
+          </main>
+        </body>
+      </html>
+    `);
+    reportWindow.document.close();
+    reportWindow.focus();
+    setTimeout(() => reportWindow.print(), 250);
+  };
+
   if (loading) {
     return (
       <main className="app-page">
@@ -861,6 +1074,9 @@ function ComplaintDetail() {
           </button>
           <button className="outline-action" onClick={() => setShowExecutiveSummary((prev) => !prev)}>
             {showExecutiveSummary ? 'Ocultar resumo' : 'Resumo rápido'}
+          </button>
+          <button className="outline-action" onClick={handleExportComplaintPdf}>
+            Exportar PDF
           </button>
           {canRenotifyComplaint && !isDeletedRecord && (
             <button className="outline-action" onClick={handleRenotify} disabled={saving}>
@@ -1172,8 +1388,8 @@ function ComplaintDetail() {
           <div className="detail-title-row">
             <div>
               <p className="eyebrow">Tratamento do paciente</p>
-              <h2>Agenda vinculada a reclamacao</h2>
-              <p className="history-note">Ao salvar, o paciente entra automaticamente na Gestao de Pacientes como oriundo de reclamacao.</p>
+              <h2>Agenda vinculada à reclamação</h2>
+              <p className="history-note">Ao salvar, o paciente entra automaticamente na Gestão de Pacientes como oriundo de reclamação.</p>
             </div>
             <span className="mini-badge">{linkedPatientTreatments.length} registro(s)</span>
           </div>
@@ -1182,12 +1398,16 @@ function ComplaintDetail() {
             <div className="patient-treatment-form">
               <label>
                 Procedimento
-                <input
+                <select
                   className="field"
                   value={patientTreatmentDraft.procedure_name}
                   onChange={(event) => handlePatientTreatmentDraft('procedure_name', event.target.value)}
-                  placeholder="Ex.: Implante, avaliacao, retorno clinico"
-                />
+                >
+                  <option value="">Selecione o procedimento</option>
+                  {dentalProcedureOptions.map((procedure) => (
+                    <option key={procedure} value={procedure}>{procedure}</option>
+                  ))}
+                </select>
               </label>
               <label>
                 Data e hora agendada
@@ -1199,7 +1419,7 @@ function ComplaintDetail() {
                 />
               </label>
               <label className="patient-treatment-full">
-                Observacoes
+                Observações
                 <textarea
                   className="field textarea"
                   value={patientTreatmentDraft.note}
@@ -1215,12 +1435,12 @@ function ComplaintDetail() {
                   onClick={handleSavePatientTreatment}
                   disabled={savingPatientTreatment || !patientTreatmentDraft.procedure_name.trim() || !patientTreatmentDraft.scheduled_at.trim()}
                 >
-                  {savingPatientTreatment ? 'Salvando...' : 'Salvar na gestao de pacientes'}
+                  {savingPatientTreatment ? 'Salvando...' : 'Salvar na gestão de pacientes'}
                 </button>
               </div>
             </div>
           ) : (
-            <p className="permission-note">Este cadastro fica disponivel apenas para Operador de SAC, Supervisor do CRC, Administrador e Administrador Master.</p>
+            <p className="permission-note">Este cadastro fica disponível apenas para Operador de SAC, Supervisor do CRC, Administrador e Administrador Master.</p>
           )}
 
           <div className="patient-treatment-linked-list">
@@ -1235,14 +1455,14 @@ function ComplaintDetail() {
                   <strong>{item.protocol || `PAC-${item.id}`}</strong>
                   <span>{item.status || 'Em tratamento'}</span>
                 </div>
-                <p>{item.procedureName || 'Procedimento nao informado'}</p>
+                <p>{item.procedureName || 'Procedimento não informado'}</p>
                 <small>
-                  {item.scheduledAt ? `Agendado para ${formatDate(item.scheduledAt)}` : 'Data nao informada'}
+                  {item.scheduledAt ? `Agendado para ${formatDate(item.scheduledAt)}` : 'Data não informada'}
                   {item.note ? ` · ${item.note}` : ''}
                 </small>
               </button>
             )) : (
-              <p className="empty-mini">Nenhum tratamento do paciente foi vinculado a esta reclamacao ate o momento.</p>
+              <p className="empty-mini">Nenhum tratamento do paciente foi vinculado a esta reclamação até o momento.</p>
             )}
           </div>
         </article>
@@ -1284,7 +1504,82 @@ function ComplaintDetail() {
             <p className="permission-note">Seu perfil pode consultar as evidências, mas não anexar novos documentos.</p>
           )}
 
-          <div className="evidence-list">
+          {evidenceRecords.length ? (
+            <>
+              <div className="detail-table-scroll">
+                <table className="detail-data-table">
+                  <thead>
+                    <tr>
+                      <th>Data</th>
+                      <th>Descrição</th>
+                      <th>Responsável</th>
+                      <th>Ação</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedEvidenceRecords.map((evidence) => {
+                      const evidenceUrl = resolveUploadedFileUrl(evidence.file_url);
+                      const evidenceLabel = evidence.description || evidence.original_name || 'Evidência anexada';
+
+                      return (
+                        <tr key={evidence.id}>
+                          <td>{formatDate(evidence.created_at)}</td>
+                          <td>
+                            <button
+                              type="button"
+                              className="table-link-button"
+                              onClick={() => openUploadedItem(evidenceUrl, evidenceLabel)}
+                            >
+                              {evidenceLabel}
+                            </button>
+                            <small>{evidence.original_name || 'Arquivo vinculado ao protocolo'}</small>
+                          </td>
+                          <td>{evidence.uploaded_by_name || 'Não informado'}</td>
+                          <td>
+                            <div className="table-action-stack">
+                              <button
+                                type="button"
+                                className="outline-action compact-action"
+                                onClick={() => openUploadedItem(evidenceUrl, evidenceLabel)}
+                              >
+                                Abrir
+                              </button>
+                              {canDeleteEvidence && (
+                                <button
+                                  type="button"
+                                  className="evidence-delete-button"
+                                  onClick={() => handleDeleteEvidence(evidence)}
+                                  disabled={deletingEvidenceId === evidence.id}
+                                >
+                                  {deletingEvidenceId === evidence.id ? 'Excluindo...' : 'Excluir'}
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="pagination-bar compact-pagination">
+                <span>Mostrando {evidenceStart} a {evidenceEnd} de {evidenceRecords.length} evidências</span>
+                <div className="pagination-actions">
+                  <button className="outline-action" type="button" onClick={() => setEvidencePage((page) => Math.max(1, page - 1))} disabled={currentEvidencePage <= 1}>
+                    Anterior
+                  </button>
+                  <strong>{currentEvidencePage} / {totalEvidencePages}</strong>
+                  <button className="outline-action" type="button" onClick={() => setEvidencePage((page) => Math.min(totalEvidencePages, page + 1))} disabled={currentEvidencePage >= totalEvidencePages}>
+                    Próxima
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <p className="empty-mini">Nenhuma evidência complementar anexada.</p>
+          )}
+
+          <div className="evidence-list legacy-list-hidden" aria-hidden="true">
             {complaint.evidences?.length ? complaint.evidences.map((evidence) => {
               const evidenceUrl = resolveUploadedFileUrl(evidence.file_url);
 
@@ -1337,7 +1632,48 @@ function ComplaintDetail() {
             <span className="mini-badge">{complaint.logs?.length || 0} registros</span>
           </div>
 
-          <div className="history-list">
+          {historyRecords.length ? (
+            <>
+              <div className="detail-table-scroll history-table-scroll">
+                <table className="detail-data-table">
+                  <thead>
+                    <tr>
+                      <th>Data</th>
+                      <th>Usuário</th>
+                      <th>Perfil</th>
+                      <th>Registro</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginatedHistoryRecords.map((log) => (
+                      <tr key={log.id}>
+                        <td>{formatDate(log.created_at)}</td>
+                        <td>{log.actor_name || 'Usuário do sistema'}</td>
+                        <td>{roleLabels[log.actor_role] || log.actor_role || 'Atualização'}</td>
+                        <td>{log.message || 'Atualização registrada no protocolo.'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="pagination-bar compact-pagination">
+                <span>Mostrando {historyStart} a {historyEnd} de {historyRecords.length} registros</span>
+                <div className="pagination-actions">
+                  <button className="outline-action" type="button" onClick={() => setHistoryPage((page) => Math.max(1, page - 1))} disabled={currentHistoryPage <= 1}>
+                    Anterior
+                  </button>
+                  <strong>{currentHistoryPage} / {totalHistoryPages}</strong>
+                  <button className="outline-action" type="button" onClick={() => setHistoryPage((page) => Math.min(totalHistoryPages, page + 1))} disabled={currentHistoryPage >= totalHistoryPages}>
+                    Próxima
+                  </button>
+                </div>
+              </div>
+            </>
+          ) : (
+            <p className="empty-mini">Ainda não existem registros complementares na linha do tempo.</p>
+          )}
+
+          <div className="history-list legacy-list-hidden" aria-hidden="true">
             {complaint.logs?.length ? complaint.logs.map((log) => (
               <article className="history-item" key={log.id}>
                 <div className="history-item-head">
@@ -1458,20 +1794,20 @@ function ComplaintDetail() {
       {showForwardModal && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Encaminhar para tratativa" onClick={() => setShowForwardModal(false)}>
           <div className="modal-panel" onClick={(event) => event.stopPropagation()}>
-            <p className="eyebrow">Encaminhamento da reclamacao</p>
+            <p className="eyebrow">Encaminhamento da reclamação</p>
             <h2>
               {forwardModalMode === 'reassign'
                 ? canReturnToSac
                   ? 'Devolver para o Operador de SAC'
                   : 'Reencaminhar demanda'
-                : 'Selecionar proximo responsavel'}
+                : 'Selecionar próximo responsável'}
             </h2>
             <p>
               {forwardModalMode === 'reassign'
                 ? canReturnToSac
-                  ? 'Ao confirmar, a demanda voltara para o Operador de SAC e o historico da tratativa ficara registrado.'
-                  : 'Ao confirmar, a reclamacao sera enviada novamente para o coordenador ou gerente da unidade e o historico ficara registrado.'
-                : 'Ao confirmar, o contato com o paciente sera registrado e a reclamacao sera encaminhada para o responsavel escolhido.'}
+                  ? 'Ao confirmar, a demanda voltará para o Operador de SAC e o histórico da tratativa ficará registrado.'
+                  : 'Ao confirmar, a reclamação será enviada novamente para o coordenador ou gerente da unidade e o histórico ficará registrado.'
+                : 'Ao confirmar, o contato com o paciente será registrado e a reclamação será encaminhada para o responsável escolhido.'}
             </p>
 
             <label>
