@@ -797,13 +797,94 @@ test('coordinator can open complaint assigned through coordinator scope', async 
   assert.match(complaintQuerySql, /c\.clinic_id IN \(\?\)/);
   assert.deepEqual(complaintQueryParams, [
     '88',
+    [5],
     17,
     17,
+    [5],
     'coordinator',
     'Coordenador Teste',
+    [5],
     'coordinator',
-    'Coordenador Teste',
-    [5]
+    'Coordenador Teste'
+  ]);
+});
+
+test('manager sees finalized complaints only inside selected clinics', async () => {
+  let complaintQuerySql = '';
+  let complaintQueryParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[{ clinic_id: 9 }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes("c.status = 'resolvida'"),
+      reply: async (sql, params) => {
+        complaintQuerySql = sql;
+        complaintQueryParams = params;
+
+        return [[{
+          id: 91,
+          protocol: 'GRC-2026-000091',
+          clinic_id: 9,
+          patient_name: 'Paciente Finalizada',
+          patient_phone: '+5562999999999',
+          status: 'resolvida',
+          forwarded_to_role: 'sac_operator',
+          forwarded_to_label: 'Operador de SAC',
+          assigned_coordinator_user_id: 17,
+          assigned_coordinator_name: 'Coordenador Teste',
+          assigned_responsible_user_id: null,
+          assigned_responsible_name: null,
+          assigned_responsible_role: null,
+          attachment_url: null,
+          deleted_at: null,
+          created_at: new Date(),
+          updated_at: new Date(),
+          closed_at: new Date()
+        }]];
+      }
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_evidences') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_logs') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    }
+  ]);
+
+  const response = await request(app)
+    .get('/complaints')
+    .set('Authorization', `Bearer ${signToken({
+      id: 33,
+      email: 'gerente@example.com',
+      role: 'manager',
+      name: 'Gerente Teste',
+      permissions: [],
+      clinicIds: [9],
+      mustChangePassword: false
+    })}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body[0].id, 91);
+  assert.match(complaintQuerySql, /c\.clinic_id IN \(\?\)/);
+  assert.match(complaintQuerySql, /c\.status = 'resolvida'/);
+  assert.deepEqual(complaintQueryParams, [
+    [9],
+    33,
+    [9],
+    'manager',
+    'Gerente Teste',
+    [9],
+    'manager',
+    'Gerente Teste'
   ]);
 });
 

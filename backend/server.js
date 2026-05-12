@@ -2424,55 +2424,65 @@ async function getComplaintRows(query = {}, user = null) {
     const accessClauses = [];
     const accessParams = [];
 
-    const addNameFallback = (targetRole) => {
+    const addNameFallback = (targetRole, scopedClinicIds = []) => {
       if (!userName) return;
 
+      const clinicScope = scopedClinicIds.length ? 'c.clinic_id IN (?) AND ' : '';
+      const clinicParams = scopedClinicIds.length ? [scopedClinicIds] : [];
+
       accessClauses.push(`(
-        c.assigned_responsible_role = ?
+        ${clinicScope}c.assigned_responsible_role = ?
         AND LOWER(TRIM(c.assigned_responsible_name)) = LOWER(TRIM(?))
       )`);
-      accessParams.push(targetRole, userName);
+      accessParams.push(...clinicParams, targetRole, userName);
       accessClauses.push(`(
-        c.forwarded_to_role = ?
+        ${clinicScope}c.forwarded_to_role = ?
         AND LOWER(TRIM(c.forwarded_to_label)) = LOWER(TRIM(?))
       )`);
-      accessParams.push(targetRole, userName);
+      accessParams.push(...clinicParams, targetRole, userName);
     };
 
     if (role === 'manager') {
       if (clinicIds.length) {
-        accessClauses.push('c.clinic_id IN (?)');
-        accessParams.push(clinicIds);
+        accessClauses.push(`(
+          c.clinic_id IN (?)
+          AND (
+            c.status = 'resolvida'
+            OR c.assigned_responsible_user_id = ?
+            OR c.assigned_responsible_role = 'manager'
+            OR c.forwarded_to_role = 'manager'
+          )
+        )`);
+        accessParams.push(clinicIds, user.id);
+        addNameFallback('manager', clinicIds);
+      } else {
+        accessClauses.push('1 = 0');
       }
-
-      accessClauses.push('c.assigned_responsible_user_id = ?');
-      accessParams.push(user.id);
-      addNameFallback('manager');
     } else if (role === 'coordinator') {
-      accessClauses.push(`(
-        c.assigned_responsible_user_id = ?
-        AND COALESCE(c.assigned_responsible_role, c.forwarded_to_role) = 'coordinator'
-      )`);
-      accessParams.push(user.id);
-      accessClauses.push(`(
-        c.assigned_coordinator_user_id = ?
-        AND (
-          c.assigned_responsible_role = 'coordinator'
-          OR c.forwarded_to_role = 'coordinator'
-        )
-      )`);
-      accessParams.push(user.id);
-      addNameFallback('coordinator');
-
       if (clinicIds.length) {
         accessClauses.push(`(
           c.clinic_id IN (?)
           AND (
-            c.assigned_responsible_role = 'coordinator'
+            c.status = 'resolvida'
+            OR (
+              c.assigned_responsible_user_id = ?
+              AND COALESCE(c.assigned_responsible_role, c.forwarded_to_role) = 'coordinator'
+            )
+            OR c.assigned_responsible_role = 'coordinator'
             OR c.forwarded_to_role = 'coordinator'
+            OR (
+              c.assigned_coordinator_user_id = ?
+              AND (
+                c.assigned_responsible_role = 'coordinator'
+                OR c.forwarded_to_role = 'coordinator'
+              )
+            )
           )
         )`);
-        accessParams.push(clinicIds);
+        accessParams.push(clinicIds, user.id, user.id);
+        addNameFallback('coordinator', clinicIds);
+      } else {
+        accessClauses.push('1 = 0');
       }
     } else {
       accessClauses.push('c.assigned_responsible_user_id = ?');
