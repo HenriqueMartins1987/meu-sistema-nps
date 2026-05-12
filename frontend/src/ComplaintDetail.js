@@ -377,6 +377,7 @@ function ComplaintDetail() {
   const [forwardToRole, setForwardToRole] = useState('');
   const [reactivateReason, setReactivateReason] = useState('');
   const [assetPreview, setAssetPreview] = useState(null);
+  const [assetPreviewZoom, setAssetPreviewZoom] = useState(1);
   const [linkedPatientTreatments, setLinkedPatientTreatments] = useState([]);
   const [savingPatientTreatment, setSavingPatientTreatment] = useState(false);
   const [historyPage, setHistoryPage] = useState(1);
@@ -530,6 +531,22 @@ function ComplaintDetail() {
     }
 
     window.open(url, '_blank', 'noopener,noreferrer');
+  }, []);
+
+  const closeAssetPreview = useCallback(() => {
+    setAssetPreview(null);
+    setAssetPreviewZoom(1);
+  }, []);
+
+  const changeAssetPreviewZoom = useCallback((delta) => {
+    setAssetPreviewZoom((current) => {
+      const next = Math.min(3, Math.max(0.75, Number((current + delta).toFixed(2))));
+      return next;
+    });
+  }, []);
+
+  const resetAssetPreviewZoom = useCallback(() => {
+    setAssetPreviewZoom(1);
   }, []);
 
   useEffect(() => {
@@ -1832,24 +1849,45 @@ function ComplaintDetail() {
       )}
 
       {assetPreview && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Visualizar arquivo do protocolo" onClick={() => setAssetPreview(null)}>
+        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Visualizar arquivo do protocolo" onClick={closeAssetPreview}>
           <div className="modal-panel attachment-preview-modal" onClick={(event) => event.stopPropagation()}>
             <div className="detail-title-row">
               <div>
                 <p className="eyebrow">Arquivo do protocolo</p>
                 <h2>{assetPreview.label}</h2>
               </div>
-              <button type="button" className="outline-action" onClick={() => setAssetPreview(null)}>
-                Fechar
-              </button>
+              <div className="attachment-preview-toolbar" aria-label="Controles da imagem">
+                <button type="button" className="outline-action compact-action" onClick={() => changeAssetPreviewZoom(-0.25)} disabled={assetPreviewZoom <= 0.75}>
+                  Reduzir
+                </button>
+                <strong>{Math.round(assetPreviewZoom * 100)}%</strong>
+                <button type="button" className="outline-action compact-action" onClick={() => changeAssetPreviewZoom(0.25)} disabled={assetPreviewZoom >= 3}>
+                  Ampliar
+                </button>
+                <button type="button" className="outline-action compact-action" onClick={resetAssetPreviewZoom} disabled={assetPreviewZoom === 1}>
+                  Restaurar
+                </button>
+                <button type="button" className="outline-action compact-action" onClick={closeAssetPreview}>
+                  Fechar
+                </button>
+              </div>
             </div>
 
             <div className="attachment-preview-modal-body">
-              <img src={assetPreview.url} alt={assetPreview.label} className="attachment-preview-fullscreen" />
+              <div
+                className="attachment-preview-zoom-stage"
+                style={{
+                  '--preview-zoom': String(assetPreviewZoom),
+                  minWidth: `${assetPreviewZoom * 100}%`,
+                  minHeight: `${assetPreviewZoom * 100}%`
+                }}
+              >
+                <img src={assetPreview.url} alt={assetPreview.label} className="attachment-preview-fullscreen" />
+              </div>
             </div>
 
             <div className="row-actions">
-              <button type="button" className="outline-action" onClick={() => setAssetPreview(null)}>
+              <button type="button" className="outline-action" onClick={closeAssetPreview}>
                 Voltar
               </button>
               <button type="button" className="primary-action" onClick={() => window.open(assetPreview.url, '_blank', 'noopener,noreferrer')}>
