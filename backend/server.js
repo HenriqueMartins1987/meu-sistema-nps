@@ -2416,20 +2416,71 @@ async function getComplaintRows(query = {}, user = null) {
   }
 
   if (user && !isAdminUser(user) && !['sac_operator', 'supervisor_crc'].includes(user?.role)) {
-    if (user?.role === 'manager') {
-      const clinicIds = await getUserClinicIds(user.id);
+    const role = String(user?.role || '').trim().toLowerCase();
+    const userName = String(user?.name || '').trim();
+    const clinicIds = ['coordinator', 'manager'].includes(role)
+      ? await getUserClinicIds(user.id)
+      : [];
+    const accessClauses = [];
+    const accessParams = [];
+
+    const addNameFallback = (targetRole) => {
+      if (!userName) return;
+
+      accessClauses.push(`(
+        c.assigned_responsible_role = ?
+        AND LOWER(TRIM(c.assigned_responsible_name)) = LOWER(TRIM(?))
+      )`);
+      accessParams.push(targetRole, userName);
+      accessClauses.push(`(
+        c.forwarded_to_role = ?
+        AND LOWER(TRIM(c.forwarded_to_label)) = LOWER(TRIM(?))
+      )`);
+      accessParams.push(targetRole, userName);
+    };
+
+    if (role === 'manager') {
+      if (clinicIds.length) {
+        accessClauses.push('c.clinic_id IN (?)');
+        accessParams.push(clinicIds);
+      }
+
+      accessClauses.push('c.assigned_responsible_user_id = ?');
+      accessParams.push(user.id);
+      addNameFallback('manager');
+    } else if (role === 'coordinator') {
+      accessClauses.push(`(
+        c.assigned_responsible_user_id = ?
+        AND COALESCE(c.assigned_responsible_role, c.forwarded_to_role) = 'coordinator'
+      )`);
+      accessParams.push(user.id);
+      accessClauses.push(`(
+        c.assigned_coordinator_user_id = ?
+        AND (
+          c.assigned_responsible_role = 'coordinator'
+          OR c.forwarded_to_role = 'coordinator'
+        )
+      )`);
+      accessParams.push(user.id);
+      addNameFallback('coordinator');
 
       if (clinicIds.length) {
-        filters.clause += filters.clause ? ' AND c.clinic_id IN (?)' : 'WHERE c.clinic_id IN (?)';
-        filters.params.push(clinicIds);
-      } else {
-        filters.clause += filters.clause ? ' AND c.assigned_responsible_user_id = ?' : 'WHERE c.assigned_responsible_user_id = ?';
-        filters.params.push(user.id);
+        accessClauses.push(`(
+          c.clinic_id IN (?)
+          AND (
+            c.assigned_responsible_role = 'coordinator'
+            OR c.forwarded_to_role = 'coordinator'
+          )
+        )`);
+        accessParams.push(clinicIds);
       }
     } else {
-      filters.clause += filters.clause ? ' AND c.assigned_responsible_user_id = ?' : 'WHERE c.assigned_responsible_user_id = ?';
-      filters.params.push(user.id);
+      accessClauses.push('c.assigned_responsible_user_id = ?');
+      accessParams.push(user.id);
     }
+
+    filters.clause += filters.clause ? ` AND (${accessClauses.join(' OR ')})` : `WHERE (${accessClauses.join(' OR ')})`;
+    filters.params.push(...accessParams);
   }
 
   const [rows] = await pool.query(

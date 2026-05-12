@@ -85,13 +85,13 @@ function App() {
           <Route path="/home" element={<Home />} />
           <Route path="/perfil" element={<Profile />} />
         </Route>
+        <Route path="/gestao/:id" element={<ComplaintDetail />} />
         <Route element={<PermissionRoute permission="complaints_register" />}>
           <Route path="/cadastro" element={<Cadastro />} />
         </Route>
         <Route element={<PermissionRoute permission="complaints_management" />}>
           <Route path="/gestao" element={<DashboardManagement />} />
           <Route path="/gestao/relatorio-semanal" element={<WeeklyComplaintReport />} />
-          <Route path="/gestao/:id" element={<ComplaintDetail />} />
         </Route>
         <Route element={<PermissionRoute permission="complaints_dashboard" />}>
           <Route path="/dashboard" element={<Dashboard />} />

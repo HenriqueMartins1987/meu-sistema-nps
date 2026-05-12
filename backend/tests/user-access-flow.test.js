@@ -728,6 +728,85 @@ test('any authenticated user can delete complaint evidence with audit trail', as
   assert.equal(complaintLogParams[4], 'viewer');
 });
 
+test('coordinator can open complaint assigned through coordinator scope', async () => {
+  let complaintQuerySql = '';
+  let complaintQueryParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[{ clinic_id: 5 }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes('WHERE c.id = ?'),
+      reply: async (sql, params) => {
+        complaintQuerySql = sql;
+        complaintQueryParams = params;
+
+        return [[{
+          id: 88,
+          protocol: 'GRC-2026-000088',
+          clinic_id: 5,
+          patient_name: 'Paciente Teste',
+          patient_phone: '+5562999999999',
+          status: 'em_andamento',
+          forwarded_to_role: 'coordinator',
+          forwarded_to_label: 'Coordenador Teste',
+          assigned_coordinator_user_id: 17,
+          assigned_coordinator_name: 'Coordenador Teste',
+          assigned_responsible_user_id: null,
+          assigned_responsible_name: 'Coordenador Teste',
+          assigned_responsible_role: 'coordinator',
+          attachment_url: null,
+          deleted_at: null,
+          created_at: new Date(),
+          updated_at: new Date()
+        }]];
+      }
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_evidences') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_logs') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    }
+  ]);
+
+  const response = await request(app)
+    .get('/complaints/88')
+    .set('Authorization', `Bearer ${signToken({
+      id: 17,
+      email: 'coordenador@example.com',
+      role: 'coordinator',
+      name: 'Coordenador Teste',
+      permissions: [],
+      clinicIds: [5],
+      mustChangePassword: false
+    })}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.id, 88);
+  assert.match(complaintQuerySql, /assigned_coordinator_user_id = \?/);
+  assert.match(complaintQuerySql, /forwarded_to_role = 'coordinator'/);
+  assert.match(complaintQuerySql, /c\.clinic_id IN \(\?\)/);
+  assert.deepEqual(complaintQueryParams, [
+    '88',
+    17,
+    17,
+    'coordinator',
+    'Coordenador Teste',
+    'coordinator',
+    'Coordenador Teste',
+    [5]
+  ]);
+});
+
 test('SAC operator can change complaint unit with audit trail', async () => {
   let updateComplaintSql = null;
   let updateComplaintParams = null;
