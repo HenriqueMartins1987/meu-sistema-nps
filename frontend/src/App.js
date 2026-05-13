@@ -19,6 +19,8 @@ import AdminPanel from './AdminPanel';
 import MasterMonitoring from './MasterMonitoring';
 import PatientManagement from './PatientManagementPage';
 import CrmWorkspace from './CrmWorkspace';
+import FinancialIntelligence from './pages/FinancialIntelligence';
+import FinancialIntelligenceManage from './pages/FinancialIntelligenceManage';
 import { PermissionRoute, ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
 import './App.css';
 
@@ -83,6 +85,8 @@ function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<PermissionRoute permission="home" />}>
           <Route path="/home" element={<Home />} />
+          <Route path="/home/financial-intelligence" element={<FinancialIntelligence />} />
+          <Route path="/home/financial-intelligence/manage" element={<FinancialIntelligenceManage />} />
           <Route path="/perfil" element={<Profile />} />
         </Route>
         <Route path="/gestao/:id" element={<ComplaintDetail />} />

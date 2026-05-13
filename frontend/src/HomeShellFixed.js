@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from './api';
 import logo from './assets/logo3.png';
-import { hasPermission, isMasterAdmin, readUser } from './constants';
+import { hasPermission, isAdmin, isMasterAdmin, readUser } from './constants';
 import { clearSession, saveSession } from './session';
 
 const notificationTypeLabels = {
@@ -149,6 +149,11 @@ function canAccessWeeklyComplaintReport(user) {
   return ['admin', 'supervisor_crc', 'sac_operator', 'manager'].includes(String(user?.role || ''));
 }
 
+function canAccessFinancialIntelligence(user) {
+  const role = String(user?.role || '').toLowerCase();
+  return isAdmin(user) || isMasterAdmin(user) || ['manager', 'supervisor_crc', 'sac_operator'].includes(role);
+}
+
 function HomeShellFixed() {
   const navigate = useNavigate();
   const user = useMemo(() => readUser(), []);
@@ -210,6 +215,12 @@ function HomeShellFixed() {
       ]
     },
     {
+      title: 'Financeiro CRC',
+      items: [
+        { label: 'Inteligência Financeira CRC', path: '/home/financial-intelligence', permission: 'home', financialOnly: true }
+      ]
+    },
+    {
       title: 'Administração',
       items: [
         { label: 'Painel Gerencial', path: '/admin', permission: 'admin_panel', adminOnly: true },
@@ -224,6 +235,10 @@ function HomeShellFixed() {
       ...section,
       items: section.items.filter((item) => {
         if (item.weeklyReportOnly && !canAccessWeeklyComplaintReport(user)) {
+          return false;
+        }
+
+        if (item.financialOnly && !canAccessFinancialIntelligence(user)) {
           return false;
         }
 

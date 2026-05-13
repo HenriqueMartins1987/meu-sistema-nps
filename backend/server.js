@@ -21,6 +21,16 @@ const { z } = require('zod');
 const { clinicSeed, legacyDefaultClinicNames } = require('./clinicSeed');
 const emailService = require('./services/emailService');
 const {
+  DEFAULT_SELIC_RATE,
+  buildFinancialIntelligencePayload,
+  editableFinancialFields,
+  enrichFinancialRow,
+  integerFields: financialIntegerFields,
+  matchesFinancialStatus,
+  moneyFields: financialMoneyFields,
+  toNumber: toFinancialNumber
+} = require('./services/financialIntelligenceService');
+const {
   sendComplaintNotification: sendTwilioComplaintNotification,
   sendGenericNotification: sendTwilioGenericNotification,
   sendNpsNotification: sendTwilioNpsNotification,
@@ -698,6 +708,29 @@ function canDeleteRecords(user) {
 
 function canReactivateComplaint(user) {
   return isMasterAdminUser(user) || user?.role === 'supervisor_crc';
+}
+
+function canViewFinancialIntelligence(user) {
+  const role = String(user?.role || '').trim().toLowerCase();
+  return isAdminUser(user) || ['manager', 'supervisor_crc', 'sac_operator'].includes(role);
+}
+
+function canManageFinancialIntelligence(user) {
+  const role = String(user?.role || '').trim().toLowerCase();
+  return isAdminUser(user) || ['manager', 'supervisor_crc'].includes(role);
+}
+
+function canDeleteFinancialIntelligence(user) {
+  return isMasterAdminUser(user);
+}
+
+function canManageCrcCollaborators(user) {
+  const role = String(user?.role || '').trim().toLowerCase();
+  return isAdminUser(user) || ['manager', 'supervisor_crc'].includes(role);
+}
+
+function canDeleteCrcCollaborators(user) {
+  return isMasterAdminUser(user);
 }
 
 function canRenotifyComplaint(user) {
@@ -1687,6 +1720,126 @@ async function ensureDatabaseSchema() {
       can_edit TINYINT(1) NOT NULL DEFAULT 1,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       UNIQUE KEY uniq_user_clinic (user_id, clinic_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS crc_collaborators (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(180) NOT NULL,
+      role VARCHAR(120) NULL,
+      function_name VARCHAR(160) NOT NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      unit_name VARCHAR(180) NULL,
+      salary DECIMAL(14,2) NOT NULL DEFAULT 0,
+      charges DECIMAL(14,2) NOT NULL DEFAULT 0,
+      benefits DECIMAL(14,2) NOT NULL DEFAULT 0,
+      commission_default DECIMAL(14,2) NOT NULL DEFAULT 0,
+      phone_cost_default DECIMAL(14,2) NOT NULL DEFAULT 0,
+      system_cost_default DECIMAL(14,2) NOT NULL DEFAULT 0,
+      infrastructure_cost_default DECIMAL(14,2) NOT NULL DEFAULT 0,
+      other_costs_default DECIMAL(14,2) NOT NULL DEFAULT 0,
+      status VARCHAR(40) NOT NULL DEFAULT 'ativo',
+      created_by VARCHAR(180) NULL,
+      updated_by VARCHAR(180) NULL,
+      deleted_at TIMESTAMP NULL,
+      deleted_by VARCHAR(180) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_crc_collaborators_name (name),
+      INDEX idx_crc_collaborators_clinic (clinic_id),
+      INDEX idx_crc_collaborators_status (status)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS financial_intelligence (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      date DATE NOT NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      unit_name VARCHAR(180) NULL,
+      supervisor_id INT NULL,
+      supervisor_name VARCHAR(180) NULL,
+      operator_id INT NULL,
+      operator_name VARCHAR(180) NULL,
+      collaborator_id INT NULL,
+      collaborator_name VARCHAR(180) NULL,
+      role VARCHAR(120) NULL,
+      function_name VARCHAR(160) NULL,
+      campaign VARCHAR(180) NULL,
+      channel VARCHAR(120) NULL,
+      leads INT NOT NULL DEFAULT 0,
+      appointments INT NOT NULL DEFAULT 0,
+      attendances INT NOT NULL DEFAULT 0,
+      closings INT NOT NULL DEFAULT 0,
+      revenue DECIMAL(14,2) NOT NULL DEFAULT 0,
+      marketing_investment DECIMAL(14,2) NOT NULL DEFAULT 0,
+      salary DECIMAL(14,2) NOT NULL DEFAULT 0,
+      charges DECIMAL(14,2) NOT NULL DEFAULT 0,
+      benefits DECIMAL(14,2) NOT NULL DEFAULT 0,
+      commission DECIMAL(14,2) NOT NULL DEFAULT 0,
+      bonus DECIMAL(14,2) NOT NULL DEFAULT 0,
+      overtime DECIMAL(14,2) NOT NULL DEFAULT 0,
+      transport_voucher DECIMAL(14,2) NOT NULL DEFAULT 0,
+      food_voucher DECIMAL(14,2) NOT NULL DEFAULT 0,
+      meal_voucher DECIMAL(14,2) NOT NULL DEFAULT 0,
+      health_plan DECIMAL(14,2) NOT NULL DEFAULT 0,
+      dental_plan DECIMAL(14,2) NOT NULL DEFAULT 0,
+      training DECIMAL(14,2) NOT NULL DEFAULT 0,
+      uniforms DECIMAL(14,2) NOT NULL DEFAULT 0,
+      individual_equipment DECIMAL(14,2) NOT NULL DEFAULT 0,
+      other_collaborator_costs DECIMAL(14,2) NOT NULL DEFAULT 0,
+      phone_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      system_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      crm_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      whatsapp_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      internet_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      allocated_energy DECIMAL(14,2) NOT NULL DEFAULT 0,
+      infrastructure_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      allocated_rent DECIMAL(14,2) NOT NULL DEFAULT 0,
+      furniture_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      maintenance_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      equipment_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      software_licenses DECIMAL(14,2) NOT NULL DEFAULT 0,
+      technical_support DECIMAL(14,2) NOT NULL DEFAULT 0,
+      other_operational_costs DECIMAL(14,2) NOT NULL DEFAULT 0,
+      google_ads DECIMAL(14,2) NOT NULL DEFAULT 0,
+      meta_ads DECIMAL(14,2) NOT NULL DEFAULT 0,
+      tv DECIMAL(14,2) NOT NULL DEFAULT 0,
+      radio DECIMAL(14,2) NOT NULL DEFAULT 0,
+      agency DECIMAL(14,2) NOT NULL DEFAULT 0,
+      designer DECIMAL(14,2) NOT NULL DEFAULT 0,
+      video_production DECIMAL(14,2) NOT NULL DEFAULT 0,
+      influencers DECIMAL(14,2) NOT NULL DEFAULT 0,
+      landing_page DECIMAL(14,2) NOT NULL DEFAULT 0,
+      automation_tools DECIMAL(14,2) NOT NULL DEFAULT 0,
+      other_marketing_costs DECIMAL(14,2) NOT NULL DEFAULT 0,
+      supervision_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      management_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      coordination_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      audit_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      consulting_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      legal_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      compliance_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      finance_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      accounting_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      other_administrative_costs DECIMAL(14,2) NOT NULL DEFAULT 0,
+      selic_rate DECIMAL(8,2) NOT NULL DEFAULT ${DEFAULT_SELIC_RATE},
+      notes TEXT NULL,
+      created_by VARCHAR(180) NULL,
+      updated_by VARCHAR(180) NULL,
+      deleted_at TIMESTAMP NULL,
+      deleted_by VARCHAR(180) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_financial_date (date),
+      INDEX idx_financial_clinic (clinic_id),
+      INDEX idx_financial_operator (operator_id),
+      INDEX idx_financial_collaborator (collaborator_id),
+      INDEX idx_financial_campaign (campaign),
+      INDEX idx_financial_channel (channel)
     )
   `);
 
@@ -6612,6 +6765,14 @@ function requireMasterAdmin(req, res, next) {
   return res.status(403).json({ error: 'Acesso restrito ao Administrador Master' });
 }
 
+function requireFinancialView(req, res, next) {
+  if (canViewFinancialIntelligence(req.user)) {
+    return next();
+  }
+
+  return res.status(403).json({ error: 'Acesso restrito à Inteligência Financeira do CRC.' });
+}
+
 // ============================================
 // TESTE
 // ============================================
@@ -10038,6 +10199,467 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
     res.status(500).json({ error: 'Erro ao atualizar reclamação' });
   }
 });
+
+// ============================================
+// INTELIGÊNCIA FINANCEIRA CRC
+// ============================================
+function normalizeFinancialDate(value) {
+  if (!value) return new Date().toISOString().slice(0, 10);
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  return date.toISOString().slice(0, 10);
+}
+
+function sanitizeFinancialString(value, maxLength = 180) {
+  const text = String(value || '').trim();
+  return text ? text.slice(0, maxLength) : null;
+}
+
+async function getClinicSnapshot(clinicId) {
+  const id = Number(clinicId || 0);
+  if (!Number.isInteger(id) || id <= 0) return null;
+
+  const [rows] = await pool.query(
+    'SELECT id, name, city, state, region FROM clinics WHERE id = ? LIMIT 1',
+    [id]
+  );
+
+  return rows[0] || null;
+}
+
+async function getCrcCollaboratorById(collaboratorId) {
+  const id = Number(collaboratorId || 0);
+  if (!Number.isInteger(id) || id <= 0) return null;
+
+  const [rows] = await pool.query(
+    'SELECT * FROM crc_collaborators WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+    [id]
+  );
+
+  return rows[0] || null;
+}
+
+function applyCollaboratorDefaults(payload, collaborator, sourceBody = {}) {
+  if (!collaborator) return payload;
+
+  const next = { ...payload };
+  const defaults = {
+    collaborator_name: collaborator.name,
+    role: collaborator.role,
+    function_name: collaborator.function_name,
+    clinic_id: collaborator.clinic_id,
+    clinic_name: collaborator.clinic_name,
+    unit_name: collaborator.unit_name,
+    salary: collaborator.salary,
+    charges: collaborator.charges,
+    benefits: collaborator.benefits,
+    commission: collaborator.commission_default,
+    phone_cost: collaborator.phone_cost_default,
+    system_cost: collaborator.system_cost_default,
+    infrastructure_cost: collaborator.infrastructure_cost_default,
+    other_collaborator_costs: collaborator.other_costs_default
+  };
+
+  Object.entries(defaults).forEach(([field, value]) => {
+    if ((sourceBody[field] === undefined || sourceBody[field] === '') && (next[field] === undefined || next[field] === null || next[field] === '')) {
+      next[field] = value ?? null;
+    }
+  });
+
+  return next;
+}
+
+async function buildFinancialPayload(body = {}, user = {}) {
+  const payload = {};
+  const date = normalizeFinancialDate(body.date);
+
+  if (!date) {
+    throw new Error('Informe uma data válida para o lançamento.');
+  }
+
+  payload.date = date;
+
+  editableFinancialFields.forEach((field) => {
+    if (field === 'date') return;
+
+    if (field === 'notes') {
+      payload.notes = sanitizeFinancialString(body.notes, 2000);
+      return;
+    }
+
+    if (financialIntegerFields.includes(field)) {
+      payload[field] = Math.max(0, Math.trunc(toFinancialNumber(body[field])));
+      return;
+    }
+
+    if (financialMoneyFields.includes(field) || field === 'selic_rate') {
+      payload[field] = toFinancialNumber(body[field]);
+      return;
+    }
+
+    if (['clinic_id', 'supervisor_id', 'operator_id', 'collaborator_id'].includes(field)) {
+      const numericValue = Number(body[field] || 0);
+      payload[field] = Number.isInteger(numericValue) && numericValue > 0 ? numericValue : null;
+      return;
+    }
+
+    payload[field] = sanitizeFinancialString(body[field]);
+  });
+
+  if (!payload.selic_rate) {
+    payload.selic_rate = DEFAULT_SELIC_RATE;
+  }
+
+  const collaborator = await getCrcCollaboratorById(payload.collaborator_id);
+  const withDefaults = applyCollaboratorDefaults(payload, collaborator, body);
+  const clinic = await getClinicSnapshot(withDefaults.clinic_id);
+
+  if (clinic) {
+    withDefaults.clinic_id = clinic.id;
+    withDefaults.clinic_name = clinic.name;
+  }
+
+  if (!withDefaults.supervisor_name && String(user?.role || '').toLowerCase() === 'supervisor_crc') {
+    withDefaults.supervisor_id = user.id || withDefaults.supervisor_id || null;
+    withDefaults.supervisor_name = getActorName(user);
+  }
+
+  if (!withDefaults.operator_name && String(user?.role || '').toLowerCase() === 'sac_operator') {
+    withDefaults.operator_id = user.id || withDefaults.operator_id || null;
+    withDefaults.operator_name = getActorName(user);
+  }
+
+  return withDefaults;
+}
+
+function buildFinancialWhere(query = {}, user = {}) {
+  const where = ['deleted_at IS NULL'];
+  const params = [];
+
+  if (query.startDate) {
+    where.push('date >= ?');
+    params.push(normalizeFinancialDate(query.startDate));
+  }
+
+  if (query.endDate) {
+    where.push('date <= ?');
+    params.push(normalizeFinancialDate(query.endDate));
+  }
+
+  const numericFilters = {
+    clinicId: 'clinic_id',
+    operatorId: 'operator_id',
+    collaboratorId: 'collaborator_id',
+    supervisorId: 'supervisor_id'
+  };
+
+  Object.entries(numericFilters).forEach(([queryKey, column]) => {
+    const value = Number(query[queryKey] || 0);
+    if (Number.isInteger(value) && value > 0) {
+      where.push(`${column} = ?`);
+      params.push(value);
+    }
+  });
+
+  const textFilters = {
+    role: 'role',
+    functionName: 'function_name',
+    unitName: 'unit_name',
+    unit: 'unit_name',
+    campaign: 'campaign',
+    channel: 'channel'
+  };
+
+  Object.entries(textFilters).forEach(([queryKey, column]) => {
+    const value = sanitizeFinancialString(query[queryKey]);
+    if (value) {
+      where.push(`${column} = ?`);
+      params.push(value);
+    }
+  });
+
+  if (String(user?.role || '').toLowerCase() === 'sac_operator' && !isAdminUser(user)) {
+    where.push('(operator_id = ? OR operator_name = ? OR created_by = ?)');
+    params.push(user.id || 0, getActorName(user), getActorName(user));
+  }
+
+  return { where, params };
+}
+
+function canEditFinancialRecord(user, record) {
+  if (isAdminUser(user) || String(user?.role || '').toLowerCase() === 'manager') return true;
+
+  if (String(user?.role || '').toLowerCase() === 'supervisor_crc') {
+    const actorName = getActorName(user);
+    return String(record.created_by || '') === actorName
+      || Number(record.supervisor_id || 0) === Number(user.id || 0)
+      || String(record.supervisor_name || '') === actorName;
+  }
+
+  return false;
+}
+
+async function handleGetFinancialIntelligence(req, res) {
+  try {
+    const { where, params } = buildFinancialWhere(req.query, req.user);
+    const [rows] = await pool.query(
+      `SELECT *
+         FROM financial_intelligence
+        WHERE ${where.join(' AND ')}
+        ORDER BY date DESC, id DESC`,
+      params
+    );
+    const enrichedRows = rows.map(enrichFinancialRow)
+      .filter((row) => matchesFinancialStatus(row, req.query.status));
+
+    return res.json(buildFinancialIntelligencePayload(enrichedRows));
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar Inteligência Financeira CRC.' });
+  }
+}
+
+async function handleCreateFinancialIntelligence(req, res) {
+  try {
+    if (!canManageFinancialIntelligence(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode lançar dados financeiros do CRC.' });
+    }
+
+    const payload = await buildFinancialPayload(req.body, req.user);
+    const actorName = getActorName(req.user);
+    const columns = [...editableFinancialFields, 'created_by', 'updated_by'];
+    const values = editableFinancialFields.map((field) => payload[field] ?? null);
+    values.push(actorName, actorName);
+
+    const [result] = await pool.query(
+      `INSERT INTO financial_intelligence (${columns.map((column) => `\`${column}\``).join(', ')})
+       VALUES (${columns.map(() => '?').join(', ')})`,
+      values
+    );
+
+    const [rows] = await pool.query('SELECT * FROM financial_intelligence WHERE id = ? LIMIT 1', [result.insertId]);
+    return res.status(201).json(enrichFinancialRow(rows[0]));
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao criar lançamento financeiro.' });
+  }
+}
+
+async function handleUpdateFinancialIntelligence(req, res) {
+  try {
+    if (!canManageFinancialIntelligence(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode editar dados financeiros do CRC.' });
+    }
+
+    const [existingRows] = await pool.query(
+      'SELECT * FROM financial_intelligence WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+      [req.params.id]
+    );
+
+    if (!existingRows.length) {
+      return res.status(404).json({ error: 'Lançamento financeiro não encontrado.' });
+    }
+
+    if (!canEditFinancialRecord(req.user, existingRows[0])) {
+      return res.status(403).json({ error: 'Supervisão CRC pode editar apenas registros próprios.' });
+    }
+
+    const payload = await buildFinancialPayload({ ...existingRows[0], ...req.body }, req.user);
+    const actorName = getActorName(req.user);
+    const updates = editableFinancialFields.map((field) => `\`${field}\` = ?`);
+    const values = editableFinancialFields.map((field) => payload[field] ?? null);
+    updates.push('updated_by = ?');
+    values.push(actorName, req.params.id);
+
+    await pool.query(
+      `UPDATE financial_intelligence
+          SET ${updates.join(', ')}
+        WHERE id = ?`,
+      values
+    );
+
+    const [rows] = await pool.query('SELECT * FROM financial_intelligence WHERE id = ? LIMIT 1', [req.params.id]);
+    return res.json(enrichFinancialRow(rows[0]));
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao atualizar lançamento financeiro.' });
+  }
+}
+
+async function handleDeleteFinancialIntelligence(req, res) {
+  try {
+    if (!canDeleteFinancialIntelligence(req.user)) {
+      return res.status(403).json({ error: 'Somente Administrador Master pode excluir lançamentos financeiros.' });
+    }
+
+    await pool.query(
+      `UPDATE financial_intelligence
+          SET deleted_at = NOW(), deleted_by = ?
+        WHERE id = ? AND deleted_at IS NULL`,
+      [getActorName(req.user), req.params.id]
+    );
+
+    return res.json({ message: 'Lançamento financeiro excluído com histórico preservado.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao excluir lançamento financeiro.' });
+  }
+}
+
+async function buildCrcCollaboratorPayload(body = {}, user = {}) {
+  const name = sanitizeFinancialString(body.name);
+  const functionName = sanitizeFinancialString(body.function_name || body.functionName);
+
+  if (!name || !functionName) {
+    throw new Error('Informe nome do colaborador e função/cargo.');
+  }
+
+  const clinic = await getClinicSnapshot(body.clinic_id);
+  const unitName = sanitizeFinancialString(body.unit_name) || clinic?.city || null;
+
+  if (!clinic && !sanitizeFinancialString(body.clinic_name)) {
+    throw new Error('Selecione a clínica do colaborador.');
+  }
+
+  if (!unitName) {
+    throw new Error('Informe a unidade do colaborador.');
+  }
+
+  if (body.salary === undefined || body.salary === null || body.salary === '') {
+    throw new Error('Informe o salário do colaborador.');
+  }
+
+  return {
+    name,
+    role: sanitizeFinancialString(body.role),
+    function_name: functionName,
+    clinic_id: clinic?.id || null,
+    clinic_name: clinic?.name || sanitizeFinancialString(body.clinic_name),
+    unit_name: unitName,
+    salary: toFinancialNumber(body.salary),
+    charges: toFinancialNumber(body.charges),
+    benefits: toFinancialNumber(body.benefits),
+    commission_default: toFinancialNumber(body.commission_default),
+    phone_cost_default: toFinancialNumber(body.phone_cost_default),
+    system_cost_default: toFinancialNumber(body.system_cost_default),
+    infrastructure_cost_default: toFinancialNumber(body.infrastructure_cost_default),
+    other_costs_default: toFinancialNumber(body.other_costs_default),
+    status: sanitizeFinancialString(body.status, 40) || 'ativo',
+    updated_by: getActorName(user)
+  };
+}
+
+async function handleGetCrcCollaborators(req, res) {
+  try {
+    if (!canViewFinancialIntelligence(req.user)) {
+      return res.status(403).json({ error: 'Acesso restrito aos colaboradores do CRC.' });
+    }
+
+    const [rows] = await pool.query(
+      `SELECT *
+         FROM crc_collaborators
+        WHERE deleted_at IS NULL
+        ORDER BY status ASC, name ASC`
+    );
+
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar colaboradores do CRC.' });
+  }
+}
+
+async function handleCreateCrcCollaborator(req, res) {
+  try {
+    if (!canManageCrcCollaborators(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode cadastrar colaboradores do CRC.' });
+    }
+
+    const payload = await buildCrcCollaboratorPayload(req.body, req.user);
+    payload.created_by = getActorName(req.user);
+    const columns = Object.keys(payload);
+    const values = Object.values(payload);
+    const [result] = await pool.query(
+      `INSERT INTO crc_collaborators (${columns.map((column) => `\`${column}\``).join(', ')})
+       VALUES (${columns.map(() => '?').join(', ')})`,
+      values
+    );
+    const [rows] = await pool.query('SELECT * FROM crc_collaborators WHERE id = ? LIMIT 1', [result.insertId]);
+    return res.status(201).json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao cadastrar colaborador.' });
+  }
+}
+
+async function handleUpdateCrcCollaborator(req, res) {
+  try {
+    if (!canManageCrcCollaborators(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode editar colaboradores do CRC.' });
+    }
+
+    const [existingRows] = await pool.query(
+      'SELECT * FROM crc_collaborators WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+      [req.params.id]
+    );
+
+    if (!existingRows.length) {
+      return res.status(404).json({ error: 'Colaborador não encontrado.' });
+    }
+
+    const payload = await buildCrcCollaboratorPayload({ ...existingRows[0], ...req.body }, req.user);
+    const columns = Object.keys(payload);
+    const values = Object.values(payload);
+    values.push(req.params.id);
+
+    await pool.query(
+      `UPDATE crc_collaborators
+          SET ${columns.map((column) => `\`${column}\` = ?`).join(', ')}
+        WHERE id = ?`,
+      values
+    );
+
+    const [rows] = await pool.query('SELECT * FROM crc_collaborators WHERE id = ? LIMIT 1', [req.params.id]);
+    return res.json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao editar colaborador.' });
+  }
+}
+
+async function handleDeleteCrcCollaborator(req, res) {
+  try {
+    if (!canDeleteCrcCollaborators(req.user)) {
+      return res.status(403).json({ error: 'Somente Administrador Master pode excluir colaboradores.' });
+    }
+
+    await pool.query(
+      `UPDATE crc_collaborators
+          SET status = 'inativo', deleted_at = NOW(), deleted_by = ?, updated_by = ?
+        WHERE id = ? AND deleted_at IS NULL`,
+      [getActorName(req.user), getActorName(req.user), req.params.id]
+    );
+
+    return res.json({ message: 'Colaborador excluído com histórico preservado.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao excluir colaborador.' });
+  }
+}
+
+app.get(['/financial-intelligence', '/api/financial-intelligence'], authenticate, requireFinancialView, handleGetFinancialIntelligence);
+app.post(['/financial-intelligence', '/api/financial-intelligence'], authenticate, requireFinancialView, handleCreateFinancialIntelligence);
+app.put(['/financial-intelligence/:id', '/api/financial-intelligence/:id'], authenticate, requireFinancialView, handleUpdateFinancialIntelligence);
+app.delete(['/financial-intelligence/:id', '/api/financial-intelligence/:id'], authenticate, requireFinancialView, handleDeleteFinancialIntelligence);
+
+app.get(['/crc-collaborators', '/api/crc-collaborators'], authenticate, requireFinancialView, handleGetCrcCollaborators);
+app.post(['/crc-collaborators', '/api/crc-collaborators'], authenticate, requireFinancialView, handleCreateCrcCollaborator);
+app.put(['/crc-collaborators/:id', '/api/crc-collaborators/:id'], authenticate, requireFinancialView, handleUpdateCrcCollaborator);
+app.delete(['/crc-collaborators/:id', '/api/crc-collaborators/:id'], authenticate, requireFinancialView, handleDeleteCrcCollaborator);
 
 // ============================================
 // DASHBOARD / BI
