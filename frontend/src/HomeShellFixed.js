@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from './api';
 import logo from './assets/logo3.png';
-import { hasPermission, isAdmin, isMasterAdmin, readUser } from './constants';
+import { hasPermission, isMasterAdmin, readUser } from './constants';
 import { clearSession, saveSession } from './session';
 
 const notificationTypeLabels = {
@@ -150,17 +150,15 @@ function canAccessWeeklyComplaintReport(user) {
 }
 
 function canAccessFinancialExecutive(user) {
-  return isAdmin(user) || isMasterAdmin(user);
+  return hasPermission(user, 'financial_dashboard');
 }
 
 function canAccessFinancialCampaignDashboard(user) {
-  const role = String(user?.role || '').toLowerCase();
-  return isAdmin(user) || isMasterAdmin(user) || ['manager', 'supervisor_crc'].includes(role);
+  return hasPermission(user, 'financial_campaigns');
 }
 
 function canAccessFinancialManagement(user) {
-  const role = String(user?.role || '').toLowerCase();
-  return isAdmin(user) || isMasterAdmin(user) || ['manager', 'supervisor_crc'].includes(role);
+  return hasPermission(user, 'financial_management');
 }
 
 function HomeShellFixed() {
@@ -194,6 +192,14 @@ function HomeShellFixed() {
 
   const menuSections = useMemo(() => ([
     {
+      title: 'Financeiro CRC',
+      items: [
+        { label: 'Dashboard Executivo CRC', path: '/home/financial-intelligence', permission: 'financial_dashboard', financialExecutiveOnly: true },
+        { label: 'Unidade x Campanha', path: '/home/financial-intelligence/campaigns', permission: 'financial_campaigns', financialCampaignOnly: true },
+        { label: 'Gestão Financeira CRC', path: '/home/financial-intelligence/manage', permission: 'financial_management', financialManageOnly: true }
+      ]
+    },
+    {
       title: 'Reclamações',
       items: [
         { label: 'Novo Protocolo', path: '/cadastro', permission: 'complaints_register' },
@@ -221,14 +227,6 @@ function HomeShellFixed() {
       title: 'Relacionamento',
       items: [
         { label: 'CRM de Relacionamento', path: '/crm', permission: 'crm_relationship' }
-      ]
-    },
-    {
-      title: 'Financeiro CRC',
-      items: [
-        { label: 'Dashboard Executivo CRC', path: '/home/financial-intelligence', permission: 'home', financialExecutiveOnly: true },
-        { label: 'Unidade x Campanha', path: '/home/financial-intelligence/campaigns', permission: 'home', financialCampaignOnly: true },
-        { label: 'Gestão Financeira CRC', path: '/home/financial-intelligence/manage', permission: 'home', financialManageOnly: true }
       ]
     },
     {

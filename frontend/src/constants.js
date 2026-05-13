@@ -85,6 +85,9 @@ export const screenPermissions = [
   { value: 'nps_dashboard', label: 'Dashboard NPS' },
   { value: 'patient_management', label: 'Gestão do paciente' },
   { value: 'crm_relationship', label: 'CRM de relacionamento' },
+  { value: 'financial_dashboard', label: 'Financeiro CRC - Dashboard executivo' },
+  { value: 'financial_campaigns', label: 'Financeiro CRC - Unidade x Campanha' },
+  { value: 'financial_management', label: 'Financeiro CRC - Gestão financeira' },
   { value: 'admin_panel', label: 'Painel gerencial' }
 ];
 

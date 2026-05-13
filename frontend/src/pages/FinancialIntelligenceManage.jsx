@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 
 import api from '../api';
-import { isAdmin, isMasterAdmin, readUser } from '../constants';
+import { hasPermission, isMasterAdmin, readUser } from '../constants';
 
 const DEFAULT_SELIC = 13.75;
 const FINANCIAL_CENTRAL_CLINIC = { id: 'central-crc', name: 'Escritório Central - CRC', unit: 'CRC' };
@@ -142,12 +142,11 @@ const allExportFields = [
 ];
 
 function canViewFinancialDashboard(user) {
-  return isAdmin(user) || isMasterAdmin(user);
+  return hasPermission(user, 'financial_dashboard');
 }
 
 function canManageFinancial(user) {
-  const role = String(user?.role || '').toLowerCase();
-  return isAdmin(user) || isMasterAdmin(user) || ['manager', 'supervisor_crc'].includes(role);
+  return hasPermission(user, 'financial_management');
 }
 
 function canDeleteFinancial(user) {
@@ -312,6 +311,7 @@ function FinancialIntelligenceManage() {
   const [feedback, setFeedback] = useState('');
   const [toast, setToast] = useState('');
   const [collaboratorModalOpen, setCollaboratorModalOpen] = useState(false);
+  const [editorModalOpen, setEditorModalOpen] = useState(false);
   const [expandedCampaign, setExpandedCampaign] = useState('');
   const [collaboratorMonth, setCollaboratorMonth] = useState(currentMonth);
   const [selicInfo, setSelicInfo] = useState({ value: DEFAULT_SELIC, source: 'fallback', referenceDate: null });
@@ -508,45 +508,40 @@ function FinancialIntelligenceManage() {
     const draft = buildDraftRecord();
     setRecords((current) => [draft, ...current]);
     setSelectedId(draft.id);
-    setToast('Novo lançamento criado com operador e SELIC preenchidos automaticamente.');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    setEditorModalOpen(true);
+    setToast('Novo lançamento aberto com operador e SELIC preenchidos automaticamente.');
   };
 
-  const duplicateRecord = () => {
-    if (!selectedRecord) return;
-    const duplicated = normalizeRecord(applyCollaboratorDefaults({
-      ...selectedRecord,
-      id: `draft-${Date.now()}`,
-      __draft: true,
-      __dirty: true,
-      date: new Date().toISOString().slice(0, 10),
-      operator_id: user?.id || '',
-      operator_name: getActorName(user),
-      function_name: currentUserCollaborator?.function_name || getUserFunctionLabel(user),
-      role: user?.role || selectedRecord.role || ''
-    }, currentUserCollaborator));
-    setRecords((current) => [duplicated, ...current]);
-    setSelectedId(duplicated.id);
-    setToast('Linha duplicada para novo lançamento.');
+  const openEditRecord = (record) => {
+    setSelectedId(record.id);
+    setEditorModalOpen(true);
   };
 
-  const deleteSelected = async () => {
-    if (!selectedRecord) return;
+  const closeEditor = () => {
+    if (selectedRecord?.__draft) {
+      setRecords((current) => current.filter((record) => String(record.id) !== String(selectedRecord.id)));
+      setSelectedId((current) => (String(current) === String(selectedRecord.id) ? null : current));
+    }
+    setEditorModalOpen(false);
+  };
+
+  const deleteRecord = async (record) => {
+    if (!record) return;
     if (!canDelete) {
       setFeedback('Somente Administrador Master pode excluir lançamentos.');
       return;
     }
     if (!window.confirm('Confirma a exclusão deste lançamento? O histórico será preservado no banco.')) return;
 
-    if (selectedRecord.__draft) {
-      setRecords((current) => current.filter((record) => String(record.id) !== String(selectedRecord.id)));
-      setSelectedId(records.find((record) => String(record.id) !== String(selectedRecord.id))?.id || null);
+    if (record.__draft) {
+      setRecords((current) => current.filter((item) => String(item.id) !== String(record.id)));
+      setSelectedId((current) => (String(current) === String(record.id) ? null : current));
       return;
     }
 
     setSaving(true);
     try {
-      await api.delete(`/financial-intelligence/${selectedRecord.id}`);
+      await api.delete(`/financial-intelligence/${record.id}`);
       setToast('Lançamento excluído.');
       await loadData();
     } catch (error) {
@@ -556,39 +551,28 @@ function FinancialIntelligenceManage() {
     }
   };
 
-  const saveAll = async ({ resetAfter = false } = {}) => {
-    const dirtyRows = records.filter((record) => record.__dirty || record.__draft);
-    if (!dirtyRows.length) {
-      setToast('Não há alterações pendentes.');
-      return;
-    }
+  const saveCurrentRecord = async () => {
+    if (!selectedRecord) return;
 
     setSaving(true);
     setFeedback('');
 
     try {
-      for (const row of dirtyRows) {
-        const payload = { ...row };
-        delete payload.__dirty;
-        delete payload.__draft;
+      const payload = { ...selectedRecord };
+      delete payload.__dirty;
+      delete payload.__draft;
 
-        if (row.__draft) {
-          await api.post('/financial-intelligence', payload);
-        } else {
-          await api.put(`/financial-intelligence/${row.id}`, payload);
-        }
+      if (selectedRecord.__draft) {
+        await api.post('/financial-intelligence', payload);
+      } else {
+        await api.put(`/financial-intelligence/${selectedRecord.id}`, payload);
       }
-      setToast(resetAfter ? 'Lançamento salvo. A tela foi limpa para um novo registro.' : 'Alterações salvas com sucesso.');
+
+      setToast('Lançamento salvo com sucesso.');
+      setEditorModalOpen(false);
       await loadData();
-
-      if (resetAfter) {
-        const draft = buildDraftRecord();
-        setRecords((current) => [draft, ...current]);
-        setSelectedId(draft.id);
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      }
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível salvar as alterações.');
+      setFeedback(error.response?.data?.error || 'Não foi possível salvar o lançamento.');
     } finally {
       setSaving(false);
     }
@@ -777,15 +761,20 @@ function FinancialIntelligenceManage() {
         </div>
       </header>
 
+      <section className="financial-export-bar">
+        <button className="outline-action icon-action" onClick={exportExcel}>
+          <span className="file-icon xls">XLS</span>
+          Exportar Excel
+        </button>
+        <button className="outline-action icon-action" onClick={exportPdf}>
+          <span className="file-icon pdf">PDF</span>
+          Exportar PDF
+        </button>
+      </section>
+
       <section className="financial-toolbar">
         <button className="primary-action" onClick={addRecord}>+ Novo Lançamento</button>
         <button className="secondary-action" onClick={() => setCollaboratorModalOpen(true)}>+ Cadastrar Colaborador</button>
-        <button className="outline-action" onClick={() => saveAll()} disabled={saving}>{saving ? 'Salvando...' : 'Salvar alterações'}</button>
-        <button className="outline-action" onClick={() => saveAll({ resetAfter: true })} disabled={saving}>Salvar e novo lançamento</button>
-        <button className="outline-action" onClick={duplicateRecord} disabled={!selectedRecord}>Duplicar linha</button>
-        <button className="outline-action danger-action" onClick={deleteSelected} disabled={!selectedRecord || saving}>Excluir</button>
-        <button className="outline-action" onClick={exportExcel}>Exportar Excel</button>
-        <button className="outline-action" onClick={exportPdf}>Exportar PDF</button>
         <button className="outline-action" onClick={() => setFilters({ search: '', clinicId: '', clinicName: '', status: '' })}>Limpar filtros</button>
       </section>
 
@@ -867,7 +856,7 @@ function FinancialIntelligenceManage() {
         </article>
       </section>
 
-      <section className="financial-management-layout">
+      <section className="financial-management-layout single">
         <div className="financial-sheet-wrap">
           {loading ? (
             <p className="empty-state">Carregando planilha financeira...</p>
@@ -885,21 +874,49 @@ function FinancialIntelligenceManage() {
                   <th>Lucro</th>
                   <th>ROI</th>
                   <th>Status</th>
+                  <th>Ações</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredRecords.map((record) => (
                   <tr key={record.id} className={`${String(record.id) === String(selectedId) ? 'selected' : ''} ${record.__dirty ? 'dirty' : ''}`} onClick={() => setSelectedId(record.id)}>
-                    <td><input value={record.date || ''} type="date" onChange={(event) => patchRecord(record.id, { date: event.target.value })} /></td>
-                    <td><select value={record.clinic_name === FINANCIAL_CENTRAL_CLINIC.name ? FINANCIAL_CENTRAL_CLINIC.id : record.clinic_id || ''} onChange={(event) => handleClinicChange(record.id, event.target.value)}><option value="">Selecione</option><option value={FINANCIAL_CENTRAL_CLINIC.id}>{FINANCIAL_CENTRAL_CLINIC.name}</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></td>
+                    <td>{record.date || '-'}</td>
+                    <td><strong>{record.clinic_name || '-'}</strong><small>{record.unit_name || ''}</small></td>
                     <td><span className="financial-readonly-cell">{record.operator_name || '-'}</span></td>
-                    <td><input value={record.campaign || ''} onChange={(event) => patchRecord(record.id, { campaign: event.target.value })} /></td>
-                    <td><input value={record.leads || ''} type="number" onChange={(event) => patchRecord(record.id, { leads: event.target.value })} /></td>
-                    <td><input value={record.revenue || ''} type="number" step="0.01" onChange={(event) => patchRecord(record.id, { revenue: event.target.value })} /></td>
+                    <td>{record.campaign || '-'}</td>
+                    <td>{record.leads || 0}</td>
+                    <td>{formatCurrency(record.revenue)}</td>
                     <td>{formatCurrency(record.total_crc_cost)}</td>
                     <td>{formatCurrency(record.profit)}</td>
                     <td>{formatPercent(record.roi_crc)}</td>
                     <td><span className={`financial-status-badge ${record.status}`}>{record.status}</span></td>
+                    <td>
+                      <div className="financial-row-actions">
+                        <button
+                          type="button"
+                          className="outline-action mini-action"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openEditRecord(record);
+                          }}
+                        >
+                          Editar
+                        </button>
+                        {canDelete && (
+                          <button
+                            type="button"
+                            className="outline-action danger-action mini-action"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              deleteRecord(record);
+                            }}
+                            disabled={saving}
+                          >
+                            Excluir
+                          </button>
+                        )}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -907,58 +924,59 @@ function FinancialIntelligenceManage() {
           )}
         </div>
 
-        <aside className="financial-editor-panel">
-          {selectedRecord ? (
-            <>
-              <div className="financial-card-heading">
-                <h2>Editor do lançamento</h2>
-                <p>{selectedRecord.__draft ? 'Novo registro' : `Registro #${selectedRecord.id}`} · operador, função e SELIC preenchidos automaticamente.</p>
-              </div>
-              {renderGroup('general', '1. Dados Gerais', generalFields, selectedRecord)}
-              {renderGroup('production', '2. Produção CRC', productionFields, selectedRecord)}
-              {renderGroup('operational', '3. Custos Operacionais', operationalCostFields, selectedRecord)}
-              {renderGroup('marketing', '4. Custos de Marketing', marketingCostFields, selectedRecord)}
-              {renderGroup('administrative', '5. Custos Administrativos', administrativeCostFields, selectedRecord)}
-              <section className="financial-editor-group">
-                <button type="button" className="financial-group-toggle" onClick={() => setOpenGroups((current) => ({ ...current, results: !current.results }))}>
-                  <span>6. Resultados Calculados</span>
-                  <strong>{openGroups.results ? 'Recolher' : 'Expandir'}</strong>
-                </button>
-                {openGroups.results && (
-                  <div className="financial-calculated-grid">
-                    <span>Custo Total Colaborador<strong>{formatCurrency(selectedRecord.total_collaborator_cost)}</strong></span>
-                    <span>Custo Total Operacional<strong>{formatCurrency(selectedRecord.total_operational_cost)}</strong></span>
-                    <span>Custo Total Marketing<strong>{formatCurrency(selectedRecord.total_marketing_cost)}</strong></span>
-                    <span>Custo Total Administrativo<strong>{formatCurrency(selectedRecord.total_administrative_cost)}</strong></span>
-                    <span>Custo Total CRC<strong>{formatCurrency(selectedRecord.total_crc_cost)}</strong></span>
-                    <span>Lucro/Prejuízo<strong>{formatCurrency(selectedRecord.profit)}</strong></span>
-                    <span>ROI CRC<strong>{formatPercent(selectedRecord.roi_crc)}</strong></span>
-                    <span>ROI CRC vs SELIC<strong>{formatPercent(selectedRecord.roi_crc_vs_selic)}</strong></span>
-                    <span>ROI Marketing<strong>{formatPercent(selectedRecord.marketing_roi)}</strong></span>
-                    <span>ROAS<strong>{Number(selectedRecord.roas || 0).toFixed(2)}x</strong></span>
-                    <span>CAC<strong>{formatCurrency(selectedRecord.cac)}</strong></span>
-                    <span>CPL<strong>{formatCurrency(selectedRecord.cpl)}</strong></span>
-                    <span>Ticket Médio<strong>{formatCurrency(selectedRecord.average_ticket)}</strong></span>
-                    <span>Lead > Agendamento<strong>{formatPercent(selectedRecord.lead_to_appointment)}</strong></span>
-                    <span>Comparecimento<strong>{formatPercent(selectedRecord.attendance_rate)}</strong></span>
-                    <span>Fechamento<strong>{formatPercent(selectedRecord.closing_rate)}</strong></span>
-                    <span>Margem Líquida<strong>{formatPercent(selectedRecord.net_margin)}</strong></span>
-                    <span>Status<strong>{selectedRecord.status}</strong></span>
-                    <span className="wide">Diagnóstico<strong>{selectedRecord.diagnosis}</strong></span>
-                  </div>
-                )}
-              </section>
-              <label>Observações<textarea className="field textarea" value={selectedRecord.notes || ''} onChange={(event) => patchRecord(selectedRecord.id, { notes: event.target.value })} /></label>
-              <div className="financial-editor-footer">
-                <button className="outline-action" onClick={() => saveAll()} disabled={saving}>{saving ? 'Salvando...' : 'Salvar alterações'}</button>
-                <button className="primary-action" onClick={() => saveAll({ resetAfter: true })} disabled={saving}>Salvar, limpar e novo lançamento</button>
-              </div>
-            </>
-          ) : (
-            <p className="empty-state">Selecione uma linha para editar.</p>
-          )}
-        </aside>
       </section>
+
+      {editorModalOpen && selectedRecord && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={closeEditor}>
+          <section className="modal-panel financial-launch-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="financial-card-heading">
+              <p className="eyebrow">Lançamento CRC</p>
+              <h2>{selectedRecord.__draft ? 'Novo lançamento' : `Editar lançamento #${selectedRecord.id}`}</h2>
+              <p>Operador, função e SELIC são preenchidos automaticamente para manter o histórico padronizado.</p>
+            </div>
+
+            {renderGroup('general', '1. Dados Gerais', generalFields, selectedRecord)}
+            {renderGroup('production', '2. Produção CRC', productionFields, selectedRecord)}
+            {renderGroup('operational', '3. Custos Operacionais', operationalCostFields, selectedRecord)}
+            {renderGroup('marketing', '4. Custos de Marketing', marketingCostFields, selectedRecord)}
+            {renderGroup('administrative', '5. Custos Administrativos', administrativeCostFields, selectedRecord)}
+            <section className="financial-editor-group">
+              <button type="button" className="financial-group-toggle" onClick={() => setOpenGroups((current) => ({ ...current, results: !current.results }))}>
+                <span>6. Resultados Calculados</span>
+                <strong>{openGroups.results ? 'Recolher' : 'Expandir'}</strong>
+              </button>
+              {openGroups.results && (
+                <div className="financial-calculated-grid">
+                  <span>Custo Total Colaborador<strong>{formatCurrency(selectedRecord.total_collaborator_cost)}</strong></span>
+                  <span>Custo Total Operacional<strong>{formatCurrency(selectedRecord.total_operational_cost)}</strong></span>
+                  <span>Custo Total Marketing<strong>{formatCurrency(selectedRecord.total_marketing_cost)}</strong></span>
+                  <span>Custo Total Administrativo<strong>{formatCurrency(selectedRecord.total_administrative_cost)}</strong></span>
+                  <span>Custo Total CRC<strong>{formatCurrency(selectedRecord.total_crc_cost)}</strong></span>
+                  <span>Lucro/Prejuízo<strong>{formatCurrency(selectedRecord.profit)}</strong></span>
+                  <span>ROI CRC<strong>{formatPercent(selectedRecord.roi_crc)}</strong></span>
+                  <span>ROI CRC vs SELIC<strong>{formatPercent(selectedRecord.roi_crc_vs_selic)}</strong></span>
+                  <span>ROI Marketing<strong>{formatPercent(selectedRecord.marketing_roi)}</strong></span>
+                  <span>ROAS<strong>{Number(selectedRecord.roas || 0).toFixed(2)}x</strong></span>
+                  <span>CAC<strong>{formatCurrency(selectedRecord.cac)}</strong></span>
+                  <span>CPL<strong>{formatCurrency(selectedRecord.cpl)}</strong></span>
+                  <span>Ticket Médio<strong>{formatCurrency(selectedRecord.average_ticket)}</strong></span>
+                  <span>Lead > Agendamento<strong>{formatPercent(selectedRecord.lead_to_appointment)}</strong></span>
+                  <span>Comparecimento<strong>{formatPercent(selectedRecord.attendance_rate)}</strong></span>
+                  <span>Fechamento<strong>{formatPercent(selectedRecord.closing_rate)}</strong></span>
+                  <span>Margem Líquida<strong>{formatPercent(selectedRecord.net_margin)}</strong></span>
+                  <span>Status<strong>{selectedRecord.status}</strong></span>
+                  <span className="wide">Diagnóstico<strong>{selectedRecord.diagnosis}</strong></span>
+                </div>
+              )}
+            </section>
+            <label className="financial-notes-field">Observações<textarea className="field textarea" value={selectedRecord.notes || ''} onChange={(event) => patchRecord(selectedRecord.id, { notes: event.target.value })} /></label>
+            <div className="financial-editor-footer">
+              <button className="outline-action" onClick={closeEditor} disabled={saving}>Cancelar</button>
+              <button className="primary-action" onClick={saveCurrentRecord} disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</button>
+            </div>
+          </section>
+        </div>
+      )}
 
       {collaboratorModalOpen && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setCollaboratorModalOpen(false)}>

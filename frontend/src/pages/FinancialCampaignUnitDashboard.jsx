@@ -15,23 +15,21 @@ import {
 } from 'recharts';
 
 import api from '../api';
-import { isAdmin, isMasterAdmin, readUser } from '../constants';
+import { hasPermission, readUser } from '../constants';
 
 const FINANCIAL_CENTRAL_CLINIC = { id: 'central-crc', name: 'Escritório Central - CRC', unit: 'CRC' };
 const chartColors = ['#8e6731', '#1f7a8c', '#4c956c', '#c89a57', '#c44536', '#5d6d7e'];
 
 function canViewCampaignDashboard(user) {
-  const role = String(user?.role || '').toLowerCase();
-  return isAdmin(user) || isMasterAdmin(user) || ['manager', 'supervisor_crc'].includes(role);
+  return hasPermission(user, 'financial_campaigns');
 }
 
 function canViewExecutiveDashboard(user) {
-  return isAdmin(user) || isMasterAdmin(user);
+  return hasPermission(user, 'financial_dashboard');
 }
 
 function canManageFinancial(user) {
-  const role = String(user?.role || '').toLowerCase();
-  return isAdmin(user) || isMasterAdmin(user) || ['manager', 'supervisor_crc'].includes(role);
+  return hasPermission(user, 'financial_management');
 }
 
 function formatCurrency(value) {

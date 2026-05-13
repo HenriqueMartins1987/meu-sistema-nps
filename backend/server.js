@@ -253,6 +253,9 @@ const screenPermissions = {
   nps_dashboard: 'Dashboard NPS',
   patient_management: 'Gestão do paciente',
   crm_relationship: 'CRM de relacionamento',
+  financial_dashboard: 'Financeiro CRC - Dashboard executivo',
+  financial_campaigns: 'Financeiro CRC - Unidade x Campanha',
+  financial_management: 'Financeiro CRC - Gestão financeira',
   admin_panel: 'Painel gerencial'
 };
 
@@ -644,6 +647,14 @@ function defaultPermissionsForRole(role) {
     return ['home', 'complaints_register', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'crm_relationship'];
   }
 
+  if (role === 'supervisor_crc') {
+    return ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management'];
+  }
+
+  if (role === 'manager') {
+    return ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management'];
+  }
+
   if (['supervisor_crc', 'coordinator', 'manager'].includes(role)) {
     return ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship'];
   }
@@ -702,6 +713,29 @@ function canReassignComplaint(user) {
     || isAdminUser(user);
 }
 
+function getUserScreenPermissions(user = {}) {
+  if (Array.isArray(user.permissions)) {
+    return user.permissions;
+  }
+
+  if (typeof user.permissions === 'string' && user.permissions.trim()) {
+    try {
+      const parsed = JSON.parse(user.permissions);
+      if (Array.isArray(parsed)) return parsed;
+    } catch (error) {
+      return defaultPermissionsForRole(user.role);
+    }
+  }
+
+  return defaultPermissionsForRole(user.role);
+}
+
+function hasScreenPermission(user, permission) {
+  if (!user || !permission) return false;
+  if (isAdminUser(user)) return true;
+  return getUserScreenPermissions(user).includes(permission);
+}
+
 function canDeleteRecords(user) {
   return isMasterAdminUser(user) || user?.role === 'supervisor_crc';
 }
@@ -711,22 +745,22 @@ function canReactivateComplaint(user) {
 }
 
 function canViewFinancialIntelligence(user) {
-  const role = String(user?.role || '').trim().toLowerCase();
-  return isAdminUser(user) || ['manager', 'supervisor_crc', 'sac_operator'].includes(role);
+  return isAdminUser(user)
+    || hasScreenPermission(user, 'financial_dashboard')
+    || hasScreenPermission(user, 'financial_campaigns')
+    || hasScreenPermission(user, 'financial_management');
 }
 
 function canViewFinancialDashboard(user) {
-  return isAdminUser(user);
+  return hasScreenPermission(user, 'financial_dashboard');
 }
 
 function canViewFinancialCampaignDashboard(user) {
-  const role = String(user?.role || '').trim().toLowerCase();
-  return isAdminUser(user) || ['manager', 'supervisor_crc'].includes(role);
+  return hasScreenPermission(user, 'financial_campaigns');
 }
 
 function canManageFinancialIntelligence(user) {
-  const role = String(user?.role || '').trim().toLowerCase();
-  return isAdminUser(user) || ['manager', 'supervisor_crc'].includes(role);
+  return hasScreenPermission(user, 'financial_management');
 }
 
 function canDeleteFinancialIntelligence(user) {
@@ -734,8 +768,7 @@ function canDeleteFinancialIntelligence(user) {
 }
 
 function canManageCrcCollaborators(user) {
-  const role = String(user?.role || '').trim().toLowerCase();
-  return isAdminUser(user) || ['manager', 'supervisor_crc'].includes(role);
+  return hasScreenPermission(user, 'financial_management');
 }
 
 function canDeleteCrcCollaborators(user) {
@@ -10464,11 +10497,8 @@ function buildFinancialWhere(query = {}, user = {}) {
   return { where, params };
 }
 
-function canEditFinancialRecord(user, record) {
-  const role = String(user?.role || '').toLowerCase();
-  if (isAdminUser(user) || ['manager', 'supervisor_crc'].includes(role)) return true;
-
-  return false;
+function canEditFinancialRecord(user) {
+  return canManageFinancialIntelligence(user);
 }
 
 async function handleGetFinancialSelic(req, res) {

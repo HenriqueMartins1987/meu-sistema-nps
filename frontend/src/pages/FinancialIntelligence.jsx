@@ -21,18 +21,21 @@ import {
 } from 'recharts';
 
 import api from '../api';
-import { isAdmin, isMasterAdmin, readUser } from '../constants';
+import { hasPermission, readUser } from '../constants';
 
 const chartColors = ['#8e6731', '#1f7a8c', '#6d573b', '#c89a57', '#c44536', '#4c956c', '#5d6d7e'];
 const FINANCIAL_CENTRAL_CLINIC = { id: 'central-crc', name: 'Escritório Central - CRC' };
 
 function canViewFinancial(user) {
-  return isAdmin(user) || isMasterAdmin(user);
+  return hasPermission(user, 'financial_dashboard');
 }
 
 function canManageFinancial(user) {
-  const role = String(user?.role || '').toLowerCase();
-  return isAdmin(user) || isMasterAdmin(user) || ['manager', 'supervisor_crc'].includes(role);
+  return hasPermission(user, 'financial_management');
+}
+
+function canViewCampaignDashboard(user) {
+  return hasPermission(user, 'financial_campaigns');
 }
 
 function formatCurrency(value) {
@@ -52,6 +55,26 @@ function metricTone(value, type = 'neutral') {
   if (type === 'roi') return Number(value || 0) >= 150 ? 'success' : Number(value || 0) >= 0 ? 'warning' : 'danger';
   if (type === 'selic') return Number(value || 0) >= 1 ? 'success' : Number(value || 0) >= -1 ? 'warning' : 'danger';
   return 'neutral';
+}
+
+function toNumber(value) {
+  const parsed = Number(String(value ?? 0).replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function selicStatus(difference) {
+  if (difference >= 1) return 'above';
+  if (difference <= -1) return 'below';
+  return 'near';
+}
+
+function formatReferenceDate(value) {
+  if (!value) return 'referência atual';
+  const text = String(value);
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(text)) return text;
+  const date = new Date(text);
+  if (Number.isNaN(date.getTime())) return text;
+  return date.toLocaleDateString('pt-BR');
 }
 
 function CustomTooltip({ active, payload, label }) {
@@ -76,10 +99,35 @@ function CustomTooltip({ active, payload, label }) {
   );
 }
 
-function MetricCard({ label, value, detail, tone = 'neutral' }) {
+function MetricCard({ label, value, detail, tone = 'neutral', explanation, onOpen }) {
   return (
-    <article className={`financial-metric-card ${tone}`}>
-      <span>{label}</span>
+    <article
+      className={`financial-metric-card ${tone}`}
+      role="button"
+      tabIndex={0}
+      onClick={onOpen}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onOpen?.();
+        }
+      }}
+    >
+      <span className="financial-metric-title">
+        {label}
+        <button
+          type="button"
+          className="financial-help-button"
+          title={explanation}
+          aria-label={`Explicar ${label}`}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpen?.();
+          }}
+        >
+          ?
+        </button>
+      </span>
       <strong>{value}</strong>
       <p>{detail}</p>
     </article>
@@ -120,6 +168,7 @@ function FinancialIntelligence() {
   const user = useMemo(() => readUser(), []);
   const allowed = canViewFinancial(user);
   const canManage = canManageFinancial(user);
+  const canOpenCampaigns = canViewCampaignDashboard(user);
   const today = new Date().toISOString().slice(0, 10);
   const firstDay = new Date(new Date().getFullYear(), new Date().getMonth(), 1).toISOString().slice(0, 10);
   const [filters, setFilters] = useState({
@@ -133,8 +182,10 @@ function FinancialIntelligence() {
   });
   const [clinics, setClinics] = useState([]);
   const [data, setData] = useState(null);
+  const [selicInfo, setSelicInfo] = useState({ value: 0, source: 'fallback', referenceDate: null });
   const [loading, setLoading] = useState(false);
   const [feedback, setFeedback] = useState('');
+  const [activeMetric, setActiveMetric] = useState(null);
 
   const loadData = useCallback(async () => {
     if (!allowed) return;
@@ -147,13 +198,19 @@ function FinancialIntelligence() {
         ...Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== '')),
         view: 'dashboard'
       };
-      const [financialRes, clinicsRes] = await Promise.all([
+      const [financialRes, clinicsRes, selicRes] = await Promise.all([
         api.get('/financial-intelligence', { params }),
-        api.get('/clinics')
+        api.get('/clinics'),
+        api.get('/financial-intelligence/selic').catch(() => ({ data: null }))
       ]);
 
       setData(financialRes.data);
       setClinics(Array.isArray(clinicsRes.data) ? clinicsRes.data : []);
+      setSelicInfo({
+        value: toNumber(selicRes.data?.value) || toNumber(financialRes.data?.summary?.selicRate),
+        source: selicRes.data?.source || 'fallback',
+        referenceDate: selicRes.data?.referenceDate || null
+      });
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível carregar a Inteligência Financeira CRC.');
     } finally {
@@ -190,25 +247,137 @@ function FinancialIntelligence() {
   };
 
   const summary = data?.summary || {};
+  const realSelicRate = toNumber(selicInfo.value) || toNumber(summary.selicRate);
+  const realSelicDifference = toNumber(summary.roiCrc) - realSelicRate;
+  const realSelicStatus = selicStatus(realSelicDifference);
+  const realSelicReference = formatReferenceDate(selicInfo.referenceDate);
   const metrics = [
-    ['Receita Total CRC', formatCurrency(summary.totalRevenue), 'Receita gerada no período', 'neutral'],
-    ['Custo Total CRC', formatCurrency(summary.totalCost), 'Soma de todos os centros de custo', 'warning'],
-    ['Lucro/Prejuízo CRC', formatCurrency(summary.profit), 'Resultado operacional consolidado', metricTone(summary.profit, 'money')],
-    ['ROI CRC', formatPercent(summary.roiCrc), 'Retorno sobre o custo total', metricTone(summary.roiCrc, 'roi')],
-    ['ROI CRC vs SELIC', formatPercent(summary.roiCrcVsSelic), `SELIC: ${formatPercent(summary.selicRate)}`, metricTone(summary.roiCrcVsSelic, 'selic')],
-    ['Investimento Marketing', formatCurrency(summary.marketingInvestment), 'Investimento e custos de mídia', 'neutral'],
-    ['ROI Marketing', formatPercent(summary.marketingRoi), 'Retorno dos custos de marketing', metricTone(summary.marketingRoi, 'roi')],
-    ['ROAS', `${Number(summary.roas || 0).toFixed(2)}x`, 'Receita sobre custo de marketing', 'neutral'],
-    ['CAC Médio', formatCurrency(summary.cac), 'Custo por fechamento', summary.cac > 120 ? 'danger' : 'success'],
-    ['CPL Médio', formatCurrency(summary.cpl), 'Custo por lead', summary.cpl > 25 ? 'danger' : 'success'],
-    ['Ticket Médio', formatCurrency(summary.averageTicket), 'Receita média por fechamento', 'neutral'],
-    ['Margem Líquida', formatPercent(summary.netMargin), 'Lucro sobre receita', metricTone(summary.netMargin, 'money')],
-    ['Conversão Lead > Agendamento', formatPercent(summary.leadToAppointment), 'Eficiência do topo do funil', summary.leadToAppointment >= 20 ? 'success' : 'warning'],
-    ['Comparecimento', formatPercent(summary.attendanceRate), 'Agendamentos que compareceram', summary.attendanceRate >= 70 ? 'success' : 'warning'],
-    ['Fechamento', formatPercent(summary.closingRate), 'Comparecimentos convertidos', summary.closingRate >= 40 ? 'success' : 'warning'],
-    ['Receita por Clínica', formatCurrency(summary.revenueByClinic), 'Média por clínica filtrada', 'neutral'],
-    ['Custo por Clínica', formatCurrency(summary.costByClinic), 'Média por clínica filtrada', 'neutral'],
-    ['Lucro por Clínica', formatCurrency(summary.profitByClinic), 'Média de resultado por clínica', metricTone(summary.profitByClinic, 'money')]
+    {
+      label: 'Receita Total CRC',
+      value: formatCurrency(summary.totalRevenue),
+      detail: 'Receita gerada no período',
+      tone: 'neutral',
+      explanation: 'Soma de toda receita atribuída ao CRC no período filtrado. Use este indicador para entender o volume financeiro gerado antes de descontar custos.'
+    },
+    {
+      label: 'Custo Total CRC',
+      value: formatCurrency(summary.totalCost),
+      detail: 'Soma de todos os centros de custo',
+      tone: 'warning',
+      explanation: 'Consolida custos operacionais, marketing, administrativos e custos de colaboradores vinculados ao CRC no período.'
+    },
+    {
+      label: 'Lucro/Prejuízo CRC',
+      value: formatCurrency(summary.profit),
+      detail: 'Resultado operacional consolidado',
+      tone: metricTone(summary.profit, 'money'),
+      explanation: 'Receita total menos o custo total do CRC. Valor positivo indica lucro operacional; valor negativo indica prejuízo no período.'
+    },
+    {
+      label: 'ROI CRC',
+      value: formatPercent(summary.roiCrc),
+      detail: 'Retorno sobre o custo total',
+      tone: metricTone(summary.roiCrc, 'roi'),
+      explanation: 'Mede o retorno gerado pelo CRC em relação ao custo total. Fórmula: lucro dividido pelo custo total, multiplicado por 100.'
+    },
+    {
+      label: 'ROI CRC vs SELIC',
+      value: formatPercent(realSelicDifference),
+      detail: `SELIC real BCB: ${formatPercent(realSelicRate)}`,
+      tone: metricTone(realSelicDifference, 'selic'),
+      explanation: 'Compara o ROI do CRC com a SELIC obtida pelo backend no serviço do Banco Central. Mostra se o CRC está gerando retorno acima ou abaixo da referência financeira.'
+    },
+    {
+      label: 'Investimento Marketing',
+      value: formatCurrency(summary.marketingInvestment),
+      detail: 'Investimento e custos de mídia',
+      tone: 'neutral',
+      explanation: 'Total informado como investimento de marketing, incluindo mídia e custos de campanhas associados aos lançamentos filtrados.'
+    },
+    {
+      label: 'ROI Marketing',
+      value: formatPercent(summary.marketingRoi),
+      detail: 'Retorno dos custos de marketing',
+      tone: metricTone(summary.marketingRoi, 'roi'),
+      explanation: 'Mostra quanto a receita retornou em relação aos custos de marketing. É útil para comparar a qualidade das campanhas e canais.'
+    },
+    {
+      label: 'ROAS',
+      value: `${Number(summary.roas || 0).toFixed(2)}x`,
+      detail: 'Receita sobre custo de marketing',
+      tone: 'neutral',
+      explanation: 'Receita dividida pelo custo de marketing. Exemplo: 4x significa que cada R$ 1,00 investido gerou R$ 4,00 em receita.'
+    },
+    {
+      label: 'CAC Médio',
+      value: formatCurrency(summary.cac),
+      detail: 'Custo por fechamento',
+      tone: summary.cac > 120 ? 'danger' : 'success',
+      explanation: 'Custo de aquisição por cliente fechado. Quanto menor, melhor a eficiência comercial do CRC.'
+    },
+    {
+      label: 'CPL Médio',
+      value: formatCurrency(summary.cpl),
+      detail: 'Custo por lead',
+      tone: summary.cpl > 25 ? 'danger' : 'success',
+      explanation: 'Custo médio para gerar um lead. Ajuda a avaliar campanhas, canais e qualidade do investimento de marketing.'
+    },
+    {
+      label: 'Ticket Médio',
+      value: formatCurrency(summary.averageTicket),
+      detail: 'Receita média por fechamento',
+      tone: 'neutral',
+      explanation: 'Receita total dividida pela quantidade de fechamentos. Indica o valor médio convertido por paciente/negociação.'
+    },
+    {
+      label: 'Margem Líquida',
+      value: formatPercent(summary.netMargin),
+      detail: 'Lucro sobre receita',
+      tone: metricTone(summary.netMargin, 'money'),
+      explanation: 'Percentual de lucro em relação à receita. Ajuda a medir se o CRC cresce com rentabilidade ou apenas com volume.'
+    },
+    {
+      label: 'Conversão Lead > Agendamento',
+      value: formatPercent(summary.leadToAppointment),
+      detail: 'Eficiência do topo do funil',
+      tone: summary.leadToAppointment >= 20 ? 'success' : 'warning',
+      explanation: 'Percentual de leads que viraram agendamento. Quando baixo, pode indicar problema de abordagem, qualidade do lead ou campanha.'
+    },
+    {
+      label: 'Comparecimento',
+      value: formatPercent(summary.attendanceRate),
+      detail: 'Agendamentos que compareceram',
+      tone: summary.attendanceRate >= 70 ? 'success' : 'warning',
+      explanation: 'Percentual de agendamentos que compareceram. Ajuda a medir qualidade de confirmação, aderência e preparo do paciente.'
+    },
+    {
+      label: 'Fechamento',
+      value: formatPercent(summary.closingRate),
+      detail: 'Comparecimentos convertidos',
+      tone: summary.closingRate >= 40 ? 'success' : 'warning',
+      explanation: 'Percentual de comparecimentos que viraram fechamento. Mostra eficiência comercial depois que o paciente chega à clínica.'
+    },
+    {
+      label: 'Receita por Clínica',
+      value: formatCurrency(summary.revenueByClinic),
+      detail: 'Média por clínica filtrada',
+      tone: 'neutral',
+      explanation: 'Receita média por clínica considerada no filtro atual. Ajuda a comparar unidade, campanha e produção regional.'
+    },
+    {
+      label: 'Custo por Clínica',
+      value: formatCurrency(summary.costByClinic),
+      detail: 'Média por clínica filtrada',
+      tone: 'neutral',
+      explanation: 'Custo médio por clínica no período filtrado. Útil para identificar unidades com custo proporcionalmente alto.'
+    },
+    {
+      label: 'Lucro por Clínica',
+      value: formatCurrency(summary.profitByClinic),
+      detail: 'Média de resultado por clínica',
+      tone: metricTone(summary.profitByClinic, 'money'),
+      explanation: 'Lucro médio por clínica. Mostra quais recortes de unidades estão contribuindo positivamente para o resultado.'
+    }
   ];
 
   const executiveDiagnostics = useMemo(
@@ -238,9 +407,11 @@ function FinancialIntelligence() {
           <p>Visão diretiva de margem, ROI, custos, funil comercial, marketing e clínicas.</p>
         </div>
         <div className="heading-actions">
-          <button className="outline-action" onClick={() => navigate('/home/financial-intelligence/campaigns')}>
-            Unidade x Campanha
-          </button>
+          {canOpenCampaigns && (
+            <button className="outline-action" onClick={() => navigate('/home/financial-intelligence/campaigns')}>
+              Unidade x Campanha
+            </button>
+          )}
           {canManage && (
             <button className="primary-action" onClick={() => navigate('/home/financial-intelligence/manage')}>
               Gestão de dados
@@ -273,28 +444,29 @@ function FinancialIntelligence() {
           <strong>{formatPercent(summary.roiCrc)}</strong>
           <span>Margem líquida {formatPercent(summary.netMargin)} · ROAS {Number(summary.roas || 0).toFixed(2)}x</span>
         </article>
-        <article className={data?.roiVsSelic?.status || 'near'}>
+        <article className={realSelicStatus}>
           <p className="eyebrow">Comparativo SELIC</p>
-          <strong>{formatPercent(summary.roiCrcVsSelic)}</strong>
-          <span>SELIC média {formatPercent(summary.selicRate)}</span>
+          <strong>{formatPercent(realSelicDifference)}</strong>
+          <span>SELIC Banco Central {formatPercent(realSelicRate)} · {realSelicReference}</span>
         </article>
       </section>
 
       <section className="financial-metric-grid">
-        {metrics.map(([label, value, detail, tone]) => (
-          <MetricCard key={label} label={label} value={value} detail={detail} tone={tone} />
+        {metrics.map((metric) => (
+          <MetricCard key={metric.label} {...metric} onOpen={() => setActiveMetric(metric)} />
         ))}
       </section>
 
-      <section className={`financial-selic-card ${data?.roiVsSelic?.status || 'near'}`}>
+      <section className={`financial-selic-card ${realSelicStatus}`}>
         <div>
           <p className="eyebrow">ROI CRC vs SELIC</p>
-          <h2>{data?.roiVsSelic?.status === 'above' ? 'CRC performando acima da SELIC' : data?.roiVsSelic?.status === 'below' ? 'CRC performando abaixo da SELIC' : 'CRC próximo da SELIC'}</h2>
-          <p>Comparação entre o ROI operacional do CRC e a taxa SELIC configurada nos lançamentos.</p>
+          <h2>{realSelicStatus === 'above' ? 'CRC performando acima da SELIC' : realSelicStatus === 'below' ? 'CRC performando abaixo da SELIC' : 'CRC próximo da SELIC'}</h2>
+          <p>Comparação entre o ROI operacional do CRC e a taxa SELIC real consultada no Banco Central.</p>
         </div>
         <div className="financial-selic-values">
-          <strong>{formatPercent(data?.roiVsSelic?.roiCrc)}</strong>
-          <span>SELIC {formatPercent(data?.roiVsSelic?.selicRate)} · Diferença {formatPercent(data?.roiVsSelic?.difference)}</span>
+          <strong>{formatPercent(summary.roiCrc)}</strong>
+          <span>SELIC BCB {formatPercent(realSelicRate)} · Diferença {formatPercent(realSelicDifference)}</span>
+          <small>Fonte: {String(selicInfo.source || '').toLowerCase().includes('bcb') ? 'Banco Central do Brasil' : 'fallback interno'} · {realSelicReference}</small>
         </div>
       </section>
 
@@ -355,6 +527,23 @@ function FinancialIntelligence() {
           ))}
         </div>
       </section>
+
+      {activeMetric && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setActiveMetric(null)}>
+          <section className="modal-panel financial-info-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="financial-card-heading">
+              <p className="eyebrow">Indicador financeiro</p>
+              <h2>{activeMetric.label}</h2>
+              <p>{activeMetric.detail}</p>
+            </div>
+            <strong className="financial-info-value">{activeMetric.value}</strong>
+            <p>{activeMetric.explanation}</p>
+            <div className="row-actions">
+              <button className="primary-action" onClick={() => setActiveMetric(null)}>Fechar</button>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }
