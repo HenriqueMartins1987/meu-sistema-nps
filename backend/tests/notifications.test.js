@@ -419,7 +419,7 @@ test('canRenotifyComplaint only allows master admin, Supervisor do CRC and Opera
   }), false);
 });
 
-test('canDeleteEvidence allows every authenticated system user', () => {
+test('evidence permissions keep marketing limited to upload only', () => {
   assert.equal(__testables.canDeleteEvidence({
     role: 'master_admin',
     email: 'henrique.martins@grcconsultoria.net.br'
@@ -446,6 +446,11 @@ test('canDeleteEvidence allows every authenticated system user', () => {
   }), true);
 
   assert.equal(__testables.canDeleteEvidence({
+    role: 'viewer',
+    email: 'viewer@example.com'
+  }), false);
+
+  assert.equal(__testables.canAttachEvidence({
     role: 'viewer',
     email: 'viewer@example.com'
   }), true);

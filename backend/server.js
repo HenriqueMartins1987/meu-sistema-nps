@@ -267,7 +267,7 @@ function isNoShowStatus(value) {
 }
 
 const treatmentRoles = new Set(['coordinator', 'manager', 'supervisor_crc']);
-const evidenceRoles = new Set(['coordinator', 'manager', 'supervisor_crc', 'sac_operator', 'admin']);
+const evidenceRoles = new Set(['coordinator', 'manager', 'supervisor_crc', 'sac_operator', 'admin', 'viewer']);
 const complaintUnitChangeRoles = new Set(['master_admin', 'supervisor_crc', 'sac_operator']);
 let uploadedFilesTableReady = false;
 
@@ -581,6 +581,10 @@ function isMasterAdminUser(user) {
   return user?.role === 'master_admin' || email === masterAdminEmail;
 }
 
+function isMarketingUser(user) {
+  return String(user?.role || '').trim().toLowerCase() === 'viewer';
+}
+
 function defaultPermissionsForRole(role) {
   if (role === 'master_admin' || role === 'admin') {
     return Object.keys(screenPermissions);
@@ -598,11 +602,13 @@ function defaultPermissionsForRole(role) {
 }
 
 function canAttachEvidence(user) {
-  return evidenceRoles.has(user?.role) || isAdminUser(user);
+  const normalizedRole = String(user?.role || '').trim().toLowerCase();
+  return evidenceRoles.has(normalizedRole) || isAdminUser(user);
 }
 
 function canDeleteEvidence(user) {
-  return Boolean(user?.id || user?.email || user?.role);
+  if (!Boolean(user?.id || user?.email || user?.role)) return false;
+  return !isMarketingUser(user) || isAdminUser(user);
 }
 
 function canChangeComplaintUnit(user) {
@@ -2415,8 +2421,10 @@ async function getComplaintRows(query = {}, user = null) {
     filters.clause += filters.clause ? ' AND c.deleted_at IS NULL' : 'WHERE c.deleted_at IS NULL';
   }
 
-  if (user && !isAdminUser(user) && !['sac_operator', 'supervisor_crc'].includes(user?.role)) {
-    const role = String(user?.role || '').trim().toLowerCase();
+  const normalizedAccessRole = String(user?.role || '').trim().toLowerCase();
+
+  if (user && !isAdminUser(user) && !['sac_operator', 'supervisor_crc', 'viewer'].includes(normalizedAccessRole)) {
+    const role = normalizedAccessRole;
     const userName = String(user?.name || '').trim();
     const clinicIds = ['coordinator', 'manager'].includes(role)
       ? await getUserClinicIds(user.id)
@@ -9550,6 +9558,12 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'Reclamacao nao encontrada' });
     }
 
+    if (isMarketingUser(req.user) && !isAdminUser(req.user)) {
+      return res.status(403).json({
+        error: 'Marketing pode consultar protocolos e anexar evidências, mas não alterar dados da reclamação.'
+      });
+    }
+
     const complaint = rows[0];
     const cleanedComment = typeof operator_comment === 'string' ? operator_comment.trim() : '';
     const hasCommentChange = Boolean(cleanedComment) && cleanedComment !== String(complaint.operator_comment || '').trim();
@@ -10091,6 +10105,7 @@ module.exports = {
     buildComplaintExpiredResponsibleReminderWindowKey,
     buildComplaintWhatsAppMessage,
     buildWeeklyUserDemandReminderJobKey,
+    canAttachEvidence,
     canChangeComplaintUnit,
     canDeleteEvidence,
     canRenotifyComplaint,

@@ -630,7 +630,7 @@ test('master admin can resend temporary passwords to users pending first passwor
   assert.deepEqual(updatedUsers, [21, 22]);
 });
 
-test('any authenticated user can delete complaint evidence with audit trail', async () => {
+test('authenticated operational user can delete complaint evidence with audit trail', async () => {
   let updateEvidenceParams = null;
   let complaintLogParams = null;
 
@@ -703,9 +703,9 @@ test('any authenticated user can delete complaint evidence with audit trail', as
     .delete('/complaints/45/evidences/22')
     .set('Authorization', `Bearer ${signToken({
       id: 9,
-      email: 'viewer@example.com',
-      role: 'viewer',
-      name: 'Viewer Teste',
+      email: 'sac@example.com',
+      role: 'sac_operator',
+      name: 'Operador SAC',
       permissions: ['complaints_management'],
       clinicIds: [],
       mustChangePassword: false
@@ -715,8 +715,8 @@ test('any authenticated user can delete complaint evidence with audit trail', as
   assert.equal(response.status, 200);
   assert.equal(response.body.message, 'Evidência excluída com sucesso.');
   assert.deepEqual(updateEvidenceParams.slice(0, 3), [
-    'Viewer Teste',
-    'viewer',
+    'Operador SAC',
+    'sac_operator',
     'Arquivo anexado incorretamente.'
   ]);
   assert.equal(updateEvidenceParams[3], '22');
@@ -724,8 +724,115 @@ test('any authenticated user can delete complaint evidence with audit trail', as
   assert.equal(complaintLogParams[1], 'evidence_deleted');
   assert.match(complaintLogParams[2], /Comprovante da tratativa/);
   assert.match(complaintLogParams[2], /Arquivo anexado incorretamente/);
-  assert.equal(complaintLogParams[3], 'Viewer Teste');
-  assert.equal(complaintLogParams[4], 'viewer');
+  assert.equal(complaintLogParams[3], 'Operador SAC');
+  assert.equal(complaintLogParams[4], 'sac_operator');
+});
+
+test('marketing viewer can list every complaint without assignment scope', async () => {
+  let complaintQuerySql = '';
+  let complaintQueryParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes('c.deleted_at IS NULL'),
+      reply: async (sql, params) => {
+        complaintQuerySql = sql;
+        complaintQueryParams = params;
+
+        return [[{
+          id: 77,
+          protocol: 'GRC-2026-000077',
+          patient_name: 'Paciente Marketing',
+          status: 'aberta',
+          forwarded_to_role: 'coordinator',
+          assigned_responsible_user_id: 44,
+          attachment_url: null,
+          deleted_at: null,
+          created_at: new Date(),
+          updated_at: new Date()
+        }]];
+      }
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_evidences') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_logs') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    }
+  ]);
+
+  const response = await request(app)
+    .get('/complaints')
+    .set('Authorization', `Bearer ${signToken({
+      id: 12,
+      email: 'marketing@example.com',
+      role: 'viewer',
+      name: 'Marketing Teste',
+      permissions: ['complaints_management'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body[0].id, 77);
+  assert.equal(complaintQueryParams.length, 0);
+  assert.doesNotMatch(complaintQuerySql, /assigned_responsible_user_id = \?/);
+  assert.doesNotMatch(complaintQuerySql, /forwarded_to_role = \?/);
+  assert.doesNotMatch(complaintQuerySql, /clinic_id IN \(\?\)/);
+});
+
+test('marketing viewer cannot edit complaint data', async () => {
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes('WHERE c.id = ?'),
+      reply: async () => [[{
+        id: 45,
+        protocol: 'GRC-2026-000045',
+        patient_name: 'Paciente Marketing',
+        status: 'aberta',
+        priority: 'media',
+        operator_comment: null,
+        attachment_url: null,
+        deleted_at: null,
+        created_at: new Date(),
+        updated_at: new Date()
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_evidences') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_logs') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/complaints/45')
+    .set('Authorization', `Bearer ${signToken({
+      id: 12,
+      email: 'marketing@example.com',
+      role: 'viewer',
+      name: 'Marketing Teste',
+      permissions: ['complaints_management'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({ priority: 'alta', operator_comment: 'Tentativa de alteração' });
+
+  assert.equal(response.status, 403);
+  assert.match(response.body.error, /Marketing pode consultar protocolos e anexar evidências/);
 });
 
 test('coordinator can open complaint assigned through coordinator scope', async () => {

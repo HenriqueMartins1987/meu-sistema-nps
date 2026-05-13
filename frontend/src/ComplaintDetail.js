@@ -6,7 +6,7 @@ import { isAdmin as isAdminUser, isMasterAdmin, priorityOptions, readUser, statu
 const maxUploadSizeBytes = 10 * 1024 * 1024;
 const detailTablePageSize = 10;
 const treatmentRoles = ['coordinator', 'manager', 'supervisor_crc'];
-const evidenceRoles = ['coordinator', 'manager', 'supervisor_crc', 'sac_operator', 'admin'];
+const evidenceRoles = ['coordinator', 'manager', 'supervisor_crc', 'sac_operator', 'admin', 'viewer'];
 const previewableImagePattern = /\.(avif|bmp|gif|jpe?g|png|svg|webp)(\?.*)?$/i;
 
 const dentalProcedureOptions = [
@@ -406,12 +406,12 @@ function ComplaintDetail() {
   const isAdmin = isAdminUser(user);
   const isMasterUser = isMasterAdmin(user);
   const canOperationalClose = isMasterUser || ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole);
-  const canFormalTreatment = treatmentRoles.includes(user?.role) || isAdmin;
-  const canRecordTreatment = Boolean(user?.role);
-  const canAttachEvidence = evidenceRoles.includes(user?.role) || isAdmin;
+  const canFormalTreatment = treatmentRoles.includes(normalizedUserRole) || isAdmin;
+  const canRecordTreatment = Boolean(user?.role) && normalizedUserRole !== 'viewer';
+  const canAttachEvidence = evidenceRoles.includes(normalizedUserRole) || isAdmin;
   const canSupervisorAccept = normalizedUserRole === 'supervisor_crc' || isAdmin;
   const canDeleteComplaint = isMasterUser || user?.role === 'supervisor_crc';
-  const canDeleteEvidence = Boolean(user?.id || user?.email || user?.role);
+  const canDeleteEvidence = normalizedUserRole !== 'viewer' && Boolean(user?.id || user?.email || user?.role);
   const canChangeComplaintUnit = isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole);
   const canEditPatientPhone = isMasterUser || ['sac_operator', 'supervisor_crc', 'master_admin'].includes(normalizedUserRole);
   const canRenotifyComplaint = isMasterUser || normalizedUserRole === 'supervisor_crc' || normalizedUserRole === 'sac_operator';
