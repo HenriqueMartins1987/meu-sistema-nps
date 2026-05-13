@@ -151,13 +151,15 @@ function canAccessWeeklyComplaintReport(user) {
 
 function canAccessFinancialIntelligence(user) {
   const role = String(user?.role || '').toLowerCase();
-  return isAdmin(user) || isMasterAdmin(user) || ['manager', 'supervisor_crc', 'sac_operator'].includes(role);
+  return isAdmin(user) || isMasterAdmin(user) || ['manager', 'supervisor_crc'].includes(role);
 }
 
 function HomeShellFixed() {
   const navigate = useNavigate();
   const user = useMemo(() => readUser(), []);
   const masterUser = isMasterAdmin(user);
+  const canOpenFinancialDashboard = isAdmin(user) || isMasterAdmin(user);
+  const financialHomePath = canOpenFinancialDashboard ? '/home/financial-intelligence' : '/home/financial-intelligence/manage';
   const canManageComplaints = hasPermission(user, 'complaints_management');
   const canManagePatients = hasPermission(user, 'patient_management');
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -217,7 +219,7 @@ function HomeShellFixed() {
     {
       title: 'Financeiro CRC',
       items: [
-        { label: 'Inteligência Financeira CRC', path: '/home/financial-intelligence', permission: 'home', financialOnly: true }
+        { label: 'Inteligência Financeira CRC', path: financialHomePath, permission: 'home', financialOnly: true }
       ]
     },
     {
@@ -228,7 +230,7 @@ function HomeShellFixed() {
         { label: 'Minha conta', path: '/perfil', permission: 'home' }
       ]
     }
-  ]), []);
+  ]), [financialHomePath]);
 
   const visibleSections = menuSections
     .map((section) => ({

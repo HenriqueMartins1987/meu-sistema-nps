@@ -24,10 +24,10 @@ test('financial intelligence calculates CRC ROI and SELIC comparison safely', ()
     selic_rate: 13.75
   });
 
-  assert.equal(metrics.total_crc_cost, 5500);
-  assert.equal(metrics.profit, 4500);
-  assert.equal(metrics.roi_crc, 81.82);
-  assert.equal(metrics.roi_crc_vs_selic, 68.07);
+  assert.equal(metrics.total_crc_cost, 5000);
+  assert.equal(metrics.profit, 5000);
+  assert.equal(metrics.roi_crc, 100);
+  assert.equal(metrics.roi_crc_vs_selic, 86.25);
   assert.equal(metrics.cac, 150);
   assert.equal(metrics.cpl, 15);
   assert.equal(metrics.average_ticket, 1000);

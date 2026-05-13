@@ -24,10 +24,10 @@ import api from '../api';
 import { isAdmin, isMasterAdmin, readUser } from '../constants';
 
 const chartColors = ['#8e6731', '#1f7a8c', '#6d573b', '#c89a57', '#c44536', '#4c956c', '#5d6d7e'];
+const FINANCIAL_CENTRAL_CLINIC = { id: 'central-crc', name: 'Escritório Central - CRC', unit: 'CRC' };
 
 function canViewFinancial(user) {
-  const role = String(user?.role || '').toLowerCase();
-  return isAdmin(user) || isMasterAdmin(user) || ['manager', 'supervisor_crc', 'sac_operator'].includes(role);
+  return isAdmin(user) || isMasterAdmin(user);
 }
 
 function canManageFinancial(user) {
@@ -126,9 +126,9 @@ function FinancialIntelligence() {
     startDate: firstDay,
     endDate: today,
     clinicId: '',
+    clinicName: '',
     unit: '',
     operatorId: '',
-    collaboratorId: '',
     role: '',
     functionName: '',
     supervisorId: '',
@@ -148,7 +148,10 @@ function FinancialIntelligence() {
     setFeedback('');
 
     try {
-      const params = Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== ''));
+      const params = {
+        ...Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== '')),
+        view: 'dashboard'
+      };
       const [financialRes, clinicsRes] = await Promise.all([
         api.get('/financial-intelligence', { params }),
         api.get('/clinics')
@@ -174,7 +177,6 @@ function FinancialIntelligence() {
     return {
       units: unique('unit_name'),
       operators: Array.from(new Map(table.filter((row) => row.operator_name).map((row) => [row.operator_id || row.operator_name, row.operator_name])).entries()),
-      collaborators: Array.from(new Map(table.filter((row) => row.collaborator_name).map((row) => [row.collaborator_id || row.collaborator_name, row.collaborator_name])).entries()),
       supervisors: Array.from(new Map(table.filter((row) => row.supervisor_name).map((row) => [row.supervisor_id || row.supervisor_name, row.supervisor_name])).entries()),
       roles: unique('role'),
       functions: unique('function_name'),
@@ -182,6 +184,21 @@ function FinancialIntelligence() {
       channels: unique('channel')
     };
   }, [table]);
+
+  const clinicFilterValue = filters.clinicName || filters.clinicId;
+  const handleClinicFilterChange = (value) => {
+    if (value === FINANCIAL_CENTRAL_CLINIC.id) {
+      setFilters((current) => ({
+        ...current,
+        clinicId: '',
+        clinicName: FINANCIAL_CENTRAL_CLINIC.name,
+        unit: FINANCIAL_CENTRAL_CLINIC.unit
+      }));
+      return;
+    }
+
+    setFilters((current) => ({ ...current, clinicId: value, clinicName: '' }));
+  };
 
   const summary = data?.summary || {};
   const metrics = [
@@ -243,10 +260,9 @@ function FinancialIntelligence() {
       <section className="financial-filter-panel">
         <label>Período inicial<input className="field" type="date" value={filters.startDate} onChange={(event) => setFilters((current) => ({ ...current, startDate: event.target.value }))} /></label>
         <label>Período final<input className="field" type="date" value={filters.endDate} onChange={(event) => setFilters((current) => ({ ...current, endDate: event.target.value }))} /></label>
-        <label>Clínica<select className="field" value={filters.clinicId} onChange={(event) => setFilters((current) => ({ ...current, clinicId: event.target.value }))}><option value="">Todas</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label>
+        <label>Clínica<select className="field" value={clinicFilterValue} onChange={(event) => handleClinicFilterChange(event.target.value)}><option value="">Todas</option><option value={FINANCIAL_CENTRAL_CLINIC.id}>{FINANCIAL_CENTRAL_CLINIC.name}</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label>
         <label>Unidade<select className="field" value={filters.unit} onChange={(event) => setFilters((current) => ({ ...current, unit: event.target.value }))}><option value="">Todas</option>{optionSets.units.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
         <label>Operador<select className="field" value={filters.operatorId} onChange={(event) => setFilters((current) => ({ ...current, operatorId: event.target.value }))}><option value="">Todos</option>{optionSets.operators.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
-        <label>Colaborador<select className="field" value={filters.collaboratorId} onChange={(event) => setFilters((current) => ({ ...current, collaboratorId: event.target.value }))}><option value="">Todos</option>{optionSets.collaborators.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
         <label>Função/Cargo<select className="field" value={filters.functionName} onChange={(event) => setFilters((current) => ({ ...current, functionName: event.target.value }))}><option value="">Todos</option>{optionSets.functions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
         <label>Supervisor<select className="field" value={filters.supervisorId} onChange={(event) => setFilters((current) => ({ ...current, supervisorId: event.target.value }))}><option value="">Todos</option>{optionSets.supervisors.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
         <label>Campanha<select className="field" value={filters.campaign} onChange={(event) => setFilters((current) => ({ ...current, campaign: event.target.value }))}><option value="">Todas</option>{optionSets.campaigns.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>

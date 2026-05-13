@@ -7196,6 +7196,7 @@ a {
 .financial-filter-panel,
 .financial-toolbar,
 .financial-sheet-summary,
+.financial-insight-grid,
 .financial-diagnostic-panel,
 .financial-margins-panel,
 .financial-selic-card {
@@ -7498,6 +7499,124 @@ a {
   font-size: 22px;
 }
 
+.financial-insight-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr);
+  gap: 14px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.financial-campaign-panel,
+.financial-collaborator-cost-panel {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  min-height: 260px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.financial-campaign-list {
+  display: grid;
+  gap: 10px;
+}
+
+.financial-campaign-item {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.financial-campaign-item > button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.financial-campaign-item span,
+.financial-campaign-item strong,
+.financial-campaign-item em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.financial-campaign-item strong {
+  color: var(--brand-strong);
+}
+
+.financial-campaign-item em {
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 900;
+}
+
+.financial-mini-table {
+  display: grid;
+  gap: 6px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.financial-mini-row {
+  display: grid;
+  grid-template-columns: 96px 1fr 120px 90px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdfa;
+  font-size: 12px;
+}
+
+.financial-mini-row.header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.financial-mini-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.financial-collaborator-cost-panel .collaborator-list .financial-mini-row {
+  grid-template-columns: minmax(120px, 1fr) minmax(130px, 1fr) minmax(120px, 1fr) 110px;
+}
+
+.financial-total-line {
+  display: inline-flex;
+  width: fit-content;
+  padding: 10px 14px;
+  border-radius: 8px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 20px;
+}
+
 .financial-management-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(420px, 0.95fr);
@@ -7580,6 +7699,21 @@ a {
   background: #fff;
 }
 
+.financial-readonly-cell {
+  display: inline-flex;
+  width: 100%;
+  min-width: 130px;
+  padding: 7px;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.readonly-field {
+  background: var(--surface-soft) !important;
+  color: var(--muted) !important;
+  cursor: default;
+}
+
 .financial-editor-panel {
   position: sticky;
   top: 16px;
@@ -7649,6 +7783,19 @@ a {
   grid-column: 1 / -1;
 }
 
+.financial-editor-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+  padding-top: 2px;
+}
+
+.mini-action {
+  min-height: 42px;
+  justify-content: center;
+}
+
 .financial-status-badge {
   display: inline-flex;
   align-items: center;
@@ -7701,6 +7848,7 @@ a {
   .financial-filter-panel.compact,
   .financial-metric-grid,
   .financial-chart-grid,
+  .financial-insight-grid,
   .financial-management-layout {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -7725,6 +7873,7 @@ a {
   .financial-diagnostic-grid,
   .financial-margin-grid,
   .financial-sheet-summary,
+  .financial-insight-grid,
   .financial-management-layout,
   .financial-editor-grid,
   .financial-calculated-grid {
@@ -7734,6 +7883,7 @@ a {
   .financial-filter-panel,
   .financial-toolbar,
   .financial-sheet-summary,
+  .financial-insight-grid,
   .financial-diagnostic-panel,
   .financial-margins-panel,
   .financial-selic-card,
@@ -7742,6 +7892,11 @@ a {
   .financial-management-layout,
   .financial-skeleton {
     width: min(100%, calc(100vw - 24px));
+  }
+
+  .financial-mini-row,
+  .financial-collaborator-cost-panel .collaborator-list .financial-mini-row {
+    grid-template-columns: 1fr;
   }
 
   .financial-selic-card {

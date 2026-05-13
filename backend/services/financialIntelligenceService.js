@@ -51,15 +51,8 @@ const marketingCostFields = [
 ];
 
 const administrativeCostFields = [
-  'supervision_cost',
   'management_cost',
-  'coordination_cost',
-  'audit_cost',
   'consulting_cost',
-  'legal_cost',
-  'compliance_cost',
-  'finance_cost',
-  'accounting_cost',
   'other_administrative_costs'
 ];
 

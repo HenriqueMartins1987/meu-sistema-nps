@@ -5,18 +5,37 @@ import api from '../api';
 import { isAdmin, isMasterAdmin, readUser } from '../constants';
 
 const DEFAULT_SELIC = 13.75;
+const FINANCIAL_CENTRAL_CLINIC = { id: 'central-crc', name: 'Escritório Central - CRC', unit: 'CRC' };
+
+const CRC_FUNCTION_OPTIONS = [
+  'Operador de CRC',
+  'Operador de SAC',
+  'Atendente de Relacionamento',
+  'Analista de Relacionamento',
+  'Analista de Qualidade CRC',
+  'Assistente de Back Office',
+  'Assistente de Control Desk',
+  'SDR CRC',
+  'Consultor de Vendas CRC',
+  'Operador de Retenção',
+  'Operador de Cobrança',
+  'Analista de CRM',
+  'Analista de Planejamento/BI CRC',
+  'Supervisor de CRC',
+  'Coordenador de CRC',
+  'Gerente de CRC',
+  'Gerente Executivo CRC'
+];
 
 const generalFields = [
   ['date', 'Data', 'date'],
   ['clinic_id', 'Clínica', 'clinic'],
   ['unit_name', 'Unidade', 'text'],
-  ['supervisor_name', 'Supervisor', 'text'],
-  ['operator_name', 'Operador', 'text'],
-  ['collaborator_id', 'Colaborador', 'collaborator'],
-  ['function_name', 'Função/Cargo', 'text'],
+  ['operator_name', 'Operador', 'readonly'],
+  ['function_name', 'Função/Cargo', 'readonly'],
   ['campaign', 'Campanha', 'text'],
   ['channel', 'Canal', 'select', ['WhatsApp', 'Instagram', 'Facebook', 'Google', 'Indicação', 'Telefone', 'Presencial', 'Outros']],
-  ['selic_rate', 'SELIC anual', 'percent']
+  ['selic_rate', 'SELIC anual', 'readonlyPercent']
 ];
 
 const productionFields = [
@@ -44,6 +63,17 @@ const collaboratorCostFields = [
   ['uniforms', 'Uniformes'],
   ['individual_equipment', 'Equipamento Individual'],
   ['other_collaborator_costs', 'Outros Custos Colaborador']
+];
+
+const collaboratorDefaultCostFields = [
+  ['salary', 'Salário'],
+  ['charges', 'Encargos'],
+  ['benefits', 'Benefícios'],
+  ['commission_default', 'Comissão padrão'],
+  ['phone_cost_default', 'Telefonia padrão'],
+  ['system_cost_default', 'Sistema padrão'],
+  ['infrastructure_cost_default', 'Infraestrutura padrão'],
+  ['other_costs_default', 'Outros custos padrão']
 ];
 
 const operationalCostFields = [
@@ -78,22 +108,14 @@ const marketingCostFields = [
 ];
 
 const administrativeCostFields = [
-  ['supervision_cost', 'Supervisão'],
   ['management_cost', 'Gerência'],
-  ['coordination_cost', 'Coordenação'],
-  ['audit_cost', 'Auditoria'],
   ['consulting_cost', 'Consultoria'],
-  ['legal_cost', 'Jurídico'],
-  ['compliance_cost', 'Compliance'],
-  ['finance_cost', 'Financeiro'],
-  ['accounting_cost', 'Contabilidade'],
   ['other_administrative_costs', 'Outros Custos Administrativos']
 ];
 
 const allExportFields = [
   ...generalFields.map(([field, label]) => [field, label]),
   ...productionFields.map(([field, label]) => [field, label]),
-  ...collaboratorCostFields,
   ...operationalCostFields,
   ...marketingCostFields,
   ...administrativeCostFields,
@@ -118,6 +140,10 @@ const allExportFields = [
   ['status', 'Status'],
   ['diagnosis', 'Diagnóstico']
 ];
+
+function canViewFinancialDashboard(user) {
+  return isAdmin(user) || isMasterAdmin(user);
+}
 
 function canManageFinancial(user) {
   const role = String(user?.role || '').toLowerCase();
@@ -149,6 +175,58 @@ function divide(numerator, denominator, multiplier = 1) {
   const base = toNumber(denominator);
   if (!base) return 0;
   return Math.round((toNumber(numerator) / base) * multiplier * 100) / 100;
+}
+
+function normalizeText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function getActorName(user) {
+  return user?.name || user?.full_name || user?.email || '';
+}
+
+function getUserFunctionLabel(user = {}) {
+  if (user?.position || user?.function_name || user?.department) {
+    return user.position || user.function_name || user.department;
+  }
+
+  const labels = {
+    master_admin: 'Administrador Master',
+    admin: 'Administrador',
+    supervisor_crc: 'Supervisor de CRC',
+    sac_operator: 'Operador de CRC',
+    manager: 'Gerente de CRC',
+    coordinator: 'Coordenador de CRC'
+  };
+
+  return labels[String(user?.role || '').toLowerCase()] || 'Profissional CRC';
+}
+
+function collaboratorMonthlyCost(collaborator = {}) {
+  return collaboratorDefaultCostFields.reduce((total, [field]) => total + toNumber(collaborator[field]), 0);
+}
+
+function applyCollaboratorDefaults(record, collaborator) {
+  if (!collaborator) return record;
+
+  return {
+    ...record,
+    collaborator_id: collaborator.id || record.collaborator_id || '',
+    collaborator_name: collaborator.name || record.collaborator_name || '',
+    function_name: collaborator.function_name || record.function_name || '',
+    salary: collaborator.salary || 0,
+    charges: collaborator.charges || 0,
+    benefits: collaborator.benefits || 0,
+    commission: collaborator.commission_default || 0,
+    phone_cost: collaborator.phone_cost_default || 0,
+    system_cost: collaborator.system_cost_default || 0,
+    infrastructure_cost: collaborator.infrastructure_cost_default || 0,
+    other_collaborator_costs: collaborator.other_costs_default || 0
+  };
 }
 
 function calculate(row) {
@@ -184,16 +262,19 @@ function calculate(row) {
   };
 }
 
-function buildEmptyRecord(user) {
-  const actorName = user?.name || user?.email || '';
+function buildEmptyRecord(user, selicRate = DEFAULT_SELIC) {
+  const actorName = getActorName(user);
+
   return {
     id: `draft-${Date.now()}`,
     __draft: true,
     __dirty: true,
     date: new Date().toISOString().slice(0, 10),
-    selic_rate: DEFAULT_SELIC,
-    supervisor_name: String(user?.role || '').toLowerCase() === 'supervisor_crc' ? actorName : '',
-    operator_name: String(user?.role || '').toLowerCase() === 'sac_operator' ? actorName : '',
+    selic_rate: selicRate,
+    operator_id: user?.id || '',
+    operator_name: actorName,
+    function_name: getUserFunctionLabel(user),
+    role: user?.role || '',
     status: 'atencao'
   };
 }
@@ -211,15 +292,16 @@ function FinancialIntelligenceManage() {
   const user = useMemo(() => readUser(), []);
   const allowed = canManageFinancial(user);
   const canDelete = canDeleteFinancial(user);
+  const canOpenDashboard = canViewFinancialDashboard(user);
+  const currentMonth = new Date().toISOString().slice(0, 7);
   const [records, setRecords] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [collaborators, setCollaborators] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
-  const [filters, setFilters] = useState({ search: '', clinicId: '', collaboratorId: '', status: '' });
+  const [filters, setFilters] = useState({ search: '', clinicId: '', clinicName: '', status: '' });
   const [openGroups, setOpenGroups] = useState({
     general: true,
     production: true,
-    collaborator: false,
     operational: false,
     marketing: false,
     administrative: false,
@@ -230,11 +312,15 @@ function FinancialIntelligenceManage() {
   const [feedback, setFeedback] = useState('');
   const [toast, setToast] = useState('');
   const [collaboratorModalOpen, setCollaboratorModalOpen] = useState(false);
+  const [expandedCampaign, setExpandedCampaign] = useState('');
+  const [collaboratorMonth, setCollaboratorMonth] = useState(currentMonth);
+  const [selicInfo, setSelicInfo] = useState({ value: DEFAULT_SELIC, source: 'fallback', referenceDate: null });
   const [collaboratorDraft, setCollaboratorDraft] = useState({
     name: '',
     role: 'CRC',
     function_name: '',
     clinic_id: '',
+    clinic_name: '',
     unit_name: '',
     salary: '',
     charges: '',
@@ -247,6 +333,20 @@ function FinancialIntelligenceManage() {
     status: 'ativo'
   });
 
+  const currentUserCollaborator = useMemo(() => {
+    const actorName = normalizeText(getActorName(user));
+    const emailName = normalizeText(String(user?.email || '').split('@')[0]);
+
+    return collaborators.find((item) => {
+      const name = normalizeText(item.name);
+      const nameMatches = name === actorName
+        || name === emailName
+        || (actorName.length > 5 && name.includes(actorName))
+        || (emailName.length > 5 && name.includes(emailName));
+      return item.status !== 'inativo' && name && nameMatches;
+    }) || null;
+  }, [collaborators, user]);
+
   const loadData = useCallback(async () => {
     if (!allowed) return;
 
@@ -254,16 +354,26 @@ function FinancialIntelligenceManage() {
     setFeedback('');
 
     try {
-      const [financialRes, collaboratorsRes, clinicsRes] = await Promise.all([
+      const [financialRes, collaboratorsRes, clinicsRes, selicRes] = await Promise.all([
         api.get('/financial-intelligence'),
         api.get('/crc-collaborators'),
-        api.get('/clinics')
+        api.get('/clinics'),
+        api.get('/financial-intelligence/selic').catch(() => ({ data: null }))
       ]);
-      const rows = Array.isArray(financialRes.data?.table) ? financialRes.data.table.map(normalizeRecord) : [];
+      const selicValue = toNumber(selicRes.data?.value) || DEFAULT_SELIC;
+      const rows = Array.isArray(financialRes.data?.table)
+        ? financialRes.data.table.map((row) => normalizeRecord({ ...row, selic_rate: row.selic_rate || selicValue }))
+        : [];
+
       setRecords(rows);
       setSelectedId((current) => current || rows[0]?.id || null);
       setCollaborators(Array.isArray(collaboratorsRes.data) ? collaboratorsRes.data : []);
       setClinics(Array.isArray(clinicsRes.data) ? clinicsRes.data : []);
+      setSelicInfo({
+        value: selicValue,
+        source: selicRes.data?.source || 'fallback',
+        referenceDate: selicRes.data?.referenceDate || null
+      });
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível carregar a gestão financeira.');
     } finally {
@@ -276,13 +386,16 @@ function FinancialIntelligenceManage() {
   }, [loadData]);
 
   const selectedRecord = useMemo(() => records.find((record) => String(record.id) === String(selectedId)) || null, [records, selectedId]);
+  const clinicFilterValue = filters.clinicName || filters.clinicId;
+
   const filteredRecords = useMemo(() => records.filter((record) => {
-    const text = [record.clinic_name, record.unit_name, record.collaborator_name, record.operator_name, record.campaign, record.channel, record.function_name].join(' ').toLowerCase();
+    const text = [record.clinic_name, record.unit_name, record.operator_name, record.campaign, record.channel, record.function_name].join(' ').toLowerCase();
     const searchOk = !filters.search || text.includes(filters.search.toLowerCase());
-    const clinicOk = !filters.clinicId || String(record.clinic_id || '') === String(filters.clinicId);
-    const collaboratorOk = !filters.collaboratorId || String(record.collaborator_id || '') === String(filters.collaboratorId);
+    const clinicOk = filters.clinicName
+      ? record.clinic_name === filters.clinicName
+      : !filters.clinicId || String(record.clinic_id || '') === String(filters.clinicId);
     const statusOk = !filters.status || record.status === filters.status;
-    return searchOk && clinicOk && collaboratorOk && statusOk;
+    return searchOk && clinicOk && statusOk;
   }), [records, filters]);
 
   const totals = useMemo(() => filteredRecords.reduce((acc, row) => {
@@ -290,18 +403,61 @@ function FinancialIntelligenceManage() {
     acc.revenue += toNumber(row.revenue);
     acc.cost += calculated.total_crc_cost;
     acc.profit += calculated.profit;
+    acc.rows += 1;
     return acc;
-  }, { revenue: 0, cost: 0, profit: 0 }), [filteredRecords]);
+  }, { revenue: 0, cost: 0, profit: 0, rows: 0 }), [filteredRecords]);
+
+  const campaignGroups = useMemo(() => {
+    const grouped = new Map();
+    filteredRecords.forEach((row) => {
+      const key = row.campaign || 'Sem campanha';
+      const current = grouped.get(key) || { name: key, rows: [], revenue: 0, cost: 0, profit: 0, leads: 0, closings: 0 };
+      current.rows.push(row);
+      current.revenue += toNumber(row.revenue);
+      current.cost += toNumber(row.total_crc_cost);
+      current.profit += toNumber(row.profit);
+      current.leads += toNumber(row.leads);
+      current.closings += toNumber(row.closings);
+      grouped.set(key, current);
+    });
+
+    return Array.from(grouped.values()).sort((a, b) => b.revenue - a.revenue || a.name.localeCompare(b.name));
+  }, [filteredRecords]);
+
+  const collaboratorCostRows = useMemo(() => {
+    const selectedMonth = collaboratorMonth || currentMonth;
+
+    return collaborators
+      .filter((item) => {
+        if (!selectedMonth || !item.created_at) return true;
+        return String(item.created_at).slice(0, 7) <= selectedMonth;
+      })
+      .map((item) => ({ ...item, monthlyCost: collaboratorMonthlyCost(item) }))
+      .sort((a, b) => b.monthlyCost - a.monthlyCost || String(a.name).localeCompare(String(b.name)));
+  }, [collaborators, collaboratorMonth, currentMonth]);
+
+  const collaboratorCostTotal = useMemo(
+    () => collaboratorCostRows.reduce((total, item) => total + toNumber(item.monthlyCost), 0),
+    [collaboratorCostRows]
+  );
 
   const patchRecord = (id, changes) => {
     setRecords((current) => current.map((record) => {
       if (String(record.id) !== String(id)) return record;
-      const next = normalizeRecord({ ...record, ...changes, __dirty: true });
-      return next;
+      return normalizeRecord({ ...record, ...changes, __dirty: true });
     }));
   };
 
   const handleClinicChange = (id, clinicId) => {
+    if (clinicId === FINANCIAL_CENTRAL_CLINIC.id) {
+      patchRecord(id, {
+        clinic_id: '',
+        clinic_name: FINANCIAL_CENTRAL_CLINIC.name,
+        unit_name: FINANCIAL_CENTRAL_CLINIC.unit
+      });
+      return;
+    }
+
     const clinic = clinics.find((item) => String(item.id) === String(clinicId));
     patchRecord(id, {
       clinic_id: clinic?.id || '',
@@ -310,49 +466,65 @@ function FinancialIntelligenceManage() {
     });
   };
 
-  const handleCollaboratorChange = (id, collaboratorId) => {
-    const collaborator = collaborators.find((item) => String(item.id) === String(collaboratorId));
-
-    if (!collaborator) {
-      patchRecord(id, { collaborator_id: '', collaborator_name: '' });
+  const handleClinicFilterChange = (value) => {
+    if (value === FINANCIAL_CENTRAL_CLINIC.id) {
+      setFilters((current) => ({
+        ...current,
+        clinicId: '',
+        clinicName: FINANCIAL_CENTRAL_CLINIC.name
+      }));
       return;
     }
 
-    patchRecord(id, {
-      collaborator_id: collaborator.id,
-      collaborator_name: collaborator.name,
-      function_name: collaborator.function_name,
-      role: collaborator.role,
-      clinic_id: collaborator.clinic_id || '',
-      clinic_name: collaborator.clinic_name || '',
-      unit_name: collaborator.unit_name || '',
-      salary: collaborator.salary || 0,
-      charges: collaborator.charges || 0,
-      benefits: collaborator.benefits || 0,
-      commission: collaborator.commission_default || 0,
-      phone_cost: collaborator.phone_cost_default || 0,
-      system_cost: collaborator.system_cost_default || 0,
-      infrastructure_cost: collaborator.infrastructure_cost_default || 0,
-      other_collaborator_costs: collaborator.other_costs_default || 0
-    });
+    setFilters((current) => ({ ...current, clinicId: value, clinicName: '' }));
   };
 
+  const handleCollaboratorClinicChange = (clinicId) => {
+    if (clinicId === FINANCIAL_CENTRAL_CLINIC.id) {
+      setCollaboratorDraft((current) => ({
+        ...current,
+        clinic_id: FINANCIAL_CENTRAL_CLINIC.id,
+        clinic_name: FINANCIAL_CENTRAL_CLINIC.name,
+        unit_name: FINANCIAL_CENTRAL_CLINIC.unit
+      }));
+      return;
+    }
+
+    const clinic = clinics.find((item) => String(item.id) === String(clinicId));
+    setCollaboratorDraft((current) => ({
+      ...current,
+      clinic_id: clinic?.id || '',
+      clinic_name: clinic?.name || '',
+      unit_name: clinic?.city || ''
+    }));
+  };
+
+  const buildDraftRecord = () => normalizeRecord(applyCollaboratorDefaults(
+    buildEmptyRecord(user, selicInfo.value || DEFAULT_SELIC),
+    currentUserCollaborator
+  ));
+
   const addRecord = () => {
-    const draft = normalizeRecord(buildEmptyRecord(user));
+    const draft = buildDraftRecord();
     setRecords((current) => [draft, ...current]);
     setSelectedId(draft.id);
-    setToast('Novo lançamento criado. Preencha os dados e salve.');
+    setToast('Novo lançamento criado com operador e SELIC preenchidos automaticamente.');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const duplicateRecord = () => {
     if (!selectedRecord) return;
-    const duplicated = normalizeRecord({
+    const duplicated = normalizeRecord(applyCollaboratorDefaults({
       ...selectedRecord,
       id: `draft-${Date.now()}`,
       __draft: true,
       __dirty: true,
-      date: new Date().toISOString().slice(0, 10)
-    });
+      date: new Date().toISOString().slice(0, 10),
+      operator_id: user?.id || '',
+      operator_name: getActorName(user),
+      function_name: currentUserCollaborator?.function_name || getUserFunctionLabel(user),
+      role: user?.role || selectedRecord.role || ''
+    }, currentUserCollaborator));
     setRecords((current) => [duplicated, ...current]);
     setSelectedId(duplicated.id);
     setToast('Linha duplicada para novo lançamento.');
@@ -384,7 +556,7 @@ function FinancialIntelligenceManage() {
     }
   };
 
-  const saveAll = async () => {
+  const saveAll = async ({ resetAfter = false } = {}) => {
     const dirtyRows = records.filter((record) => record.__dirty || record.__draft);
     if (!dirtyRows.length) {
       setToast('Não há alterações pendentes.');
@@ -406,8 +578,15 @@ function FinancialIntelligenceManage() {
           await api.put(`/financial-intelligence/${row.id}`, payload);
         }
       }
-      setToast('Alterações salvas com sucesso.');
+      setToast(resetAfter ? 'Lançamento salvo. A tela foi limpa para um novo registro.' : 'Alterações salvas com sucesso.');
       await loadData();
+
+      if (resetAfter) {
+        const draft = buildDraftRecord();
+        setRecords((current) => [draft, ...current]);
+        setSelectedId(draft.id);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível salvar as alterações.');
     } finally {
@@ -415,35 +594,61 @@ function FinancialIntelligenceManage() {
     }
   };
 
+  const resetCollaboratorDraft = () => {
+    setCollaboratorDraft({
+      name: '',
+      role: 'CRC',
+      function_name: '',
+      clinic_id: '',
+      clinic_name: '',
+      unit_name: '',
+      salary: '',
+      charges: '',
+      benefits: '',
+      commission_default: '',
+      phone_cost_default: '',
+      system_cost_default: '',
+      infrastructure_cost_default: '',
+      other_costs_default: '',
+      status: 'ativo'
+    });
+  };
+
   const saveCollaborator = async () => {
     setSaving(true);
     setFeedback('');
 
     try {
-      await api.post('/crc-collaborators', collaboratorDraft);
+      const payload = { ...collaboratorDraft };
+      if (payload.clinic_id === FINANCIAL_CENTRAL_CLINIC.id) {
+        payload.clinic_id = '';
+        payload.clinic_name = FINANCIAL_CENTRAL_CLINIC.name;
+        payload.unit_name = FINANCIAL_CENTRAL_CLINIC.unit;
+      }
+
+      await api.post('/crc-collaborators', payload);
       setCollaboratorModalOpen(false);
-      setCollaboratorDraft({
-        name: '',
-        role: 'CRC',
-        function_name: '',
-        clinic_id: '',
-        unit_name: '',
-        salary: '',
-        charges: '',
-        benefits: '',
-        commission_default: '',
-        phone_cost_default: '',
-        system_cost_default: '',
-        infrastructure_cost_default: '',
-        other_costs_default: '',
-        status: 'ativo'
-      });
+      resetCollaboratorDraft();
       setToast('Colaborador cadastrado com sucesso.');
       await loadData();
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível cadastrar o colaborador.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const refreshSelic = async () => {
+    try {
+      const { data } = await api.get('/financial-intelligence/selic');
+      const value = toNumber(data?.value) || DEFAULT_SELIC;
+      setSelicInfo({ value, source: data?.source || 'fallback', referenceDate: data?.referenceDate || null });
+      if (selectedRecord?.__draft) {
+        patchRecord(selectedRecord.id, { selic_rate: value });
+      }
+      setToast('SELIC atualizada pelo Banco Central.');
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível consultar a SELIC agora.');
     }
   };
 
@@ -471,8 +676,8 @@ function FinancialIntelligenceManage() {
       <style>body{font-family:Arial,sans-serif;padding:24px;color:#161218}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #ddcfbc;padding:6px;text-align:left}th{background:#f8f3eb}h1{margin:0 0 16px}</style>
       </head><body><h1>Inteligência Financeira CRC</h1>
       <p>Receita: ${formatCurrency(totals.revenue)} · Custo: ${formatCurrency(totals.cost)} · Lucro: ${formatCurrency(totals.profit)}</p>
-      <table><thead><tr><th>Data</th><th>Clínica</th><th>Colaborador</th><th>Campanha</th><th>Receita</th><th>Custo</th><th>Lucro</th><th>ROI</th><th>Status</th></tr></thead>
-      <tbody>${rows.map((row) => `<tr><td>${row.date || ''}</td><td>${row.clinic_name || ''}</td><td>${row.collaborator_name || ''}</td><td>${row.campaign || ''}</td><td>${formatCurrency(row.revenue)}</td><td>${formatCurrency(row.total_crc_cost)}</td><td>${formatCurrency(row.profit)}</td><td>${formatPercent(row.roi_crc)}</td><td>${row.status || ''}</td></tr>`).join('')}</tbody></table>
+      <table><thead><tr><th>Data</th><th>Clínica</th><th>Operador</th><th>Campanha</th><th>Receita</th><th>Custo</th><th>Lucro</th><th>ROI</th><th>Status</th></tr></thead>
+      <tbody>${rows.map((row) => `<tr><td>${row.date || ''}</td><td>${row.clinic_name || ''}</td><td>${row.operator_name || ''}</td><td>${row.campaign || ''}</td><td>${formatCurrency(row.revenue)}</td><td>${formatCurrency(row.total_crc_cost)}</td><td>${formatCurrency(row.profit)}</td><td>${formatPercent(row.roi_crc)}</td><td>${row.status || ''}</td></tr>`).join('')}</tbody></table>
       </body></html>
     `);
     printWindow.document.close();
@@ -481,23 +686,26 @@ function FinancialIntelligenceManage() {
 
   const renderField = (record, [field, label, type = 'currency', options = []]) => {
     if (type === 'clinic') {
+      const value = record.clinic_name === FINANCIAL_CENTRAL_CLINIC.name ? FINANCIAL_CENTRAL_CLINIC.id : record.clinic_id || '';
       return (
         <label key={field}>{label}
-          <select className="field" value={record.clinic_id || ''} onChange={(event) => handleClinicChange(record.id, event.target.value)}>
+          <select className="field" value={value} onChange={(event) => handleClinicChange(record.id, event.target.value)}>
             <option value="">Selecione</option>
+            <option value={FINANCIAL_CENTRAL_CLINIC.id}>{FINANCIAL_CENTRAL_CLINIC.name}</option>
             {clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}
           </select>
         </label>
       );
     }
 
-    if (type === 'collaborator') {
+    if (type === 'readonly' || type === 'readonlyPercent') {
       return (
         <label key={field}>{label}
-          <select className="field" value={record.collaborator_id || ''} onChange={(event) => handleCollaboratorChange(record.id, event.target.value)}>
-            <option value="">Selecione</option>
-            {collaborators.filter((item) => item.status !== 'inativo').map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-          </select>
+          <input
+            className="field readonly-field"
+            value={type === 'readonlyPercent' ? formatPercent(record[field]) : record[field] || ''}
+            readOnly
+          />
         </label>
       );
     }
@@ -561,10 +769,10 @@ function FinancialIntelligenceManage() {
         <div>
           <p className="eyebrow">Inteligência Financeira CRC</p>
           <h1>Gestão Financeira CRC</h1>
-          <p>Lançamento inteligente de custos, produção, marketing, colaboradores e resultados calculados.</p>
+          <p>Lançamento profissional com custos centralizados no cadastro do colaborador, ROI de mercado e SELIC automática.</p>
         </div>
         <div className="heading-actions">
-          <button className="outline-action" onClick={() => navigate('/home/financial-intelligence')}>Dashboard</button>
+          {canOpenDashboard && <button className="outline-action" onClick={() => navigate('/home/financial-intelligence')}>Dashboard</button>}
           <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
         </div>
       </header>
@@ -572,19 +780,24 @@ function FinancialIntelligenceManage() {
       <section className="financial-toolbar">
         <button className="primary-action" onClick={addRecord}>+ Novo Lançamento</button>
         <button className="secondary-action" onClick={() => setCollaboratorModalOpen(true)}>+ Cadastrar Colaborador</button>
-        <button className="outline-action" onClick={saveAll} disabled={saving}>{saving ? 'Salvando...' : 'Salvar alterações'}</button>
+        <button className="outline-action" onClick={() => saveAll()} disabled={saving}>{saving ? 'Salvando...' : 'Salvar alterações'}</button>
+        <button className="outline-action" onClick={() => saveAll({ resetAfter: true })} disabled={saving}>Salvar e novo lançamento</button>
         <button className="outline-action" onClick={duplicateRecord} disabled={!selectedRecord}>Duplicar linha</button>
         <button className="outline-action danger-action" onClick={deleteSelected} disabled={!selectedRecord || saving}>Excluir</button>
         <button className="outline-action" onClick={exportExcel}>Exportar Excel</button>
         <button className="outline-action" onClick={exportPdf}>Exportar PDF</button>
-        <button className="outline-action" onClick={() => setFilters({ search: '', clinicId: '', collaboratorId: '', status: '' })}>Limpar filtros</button>
+        <button className="outline-action" onClick={() => setFilters({ search: '', clinicId: '', clinicName: '', status: '' })}>Limpar filtros</button>
       </section>
 
       <section className="financial-filter-panel compact">
-        <label>Buscar<input className="field" value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Clínica, colaborador, campanha..." /></label>
-        <label>Clínica<select className="field" value={filters.clinicId} onChange={(event) => setFilters((current) => ({ ...current, clinicId: event.target.value }))}><option value="">Todas</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label>
-        <label>Colaborador<select className="field" value={filters.collaboratorId} onChange={(event) => setFilters((current) => ({ ...current, collaboratorId: event.target.value }))}><option value="">Todos</option>{collaborators.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <label>Buscar<input className="field" value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Clínica, operador, campanha..." /></label>
+        <label>Clínica<select className="field" value={clinicFilterValue} onChange={(event) => handleClinicFilterChange(event.target.value)}><option value="">Todas</option><option value={FINANCIAL_CENTRAL_CLINIC.id}>{FINANCIAL_CENTRAL_CLINIC.name}</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label>
         <label>Status<select className="field" value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option value="">Todos</option><option value="excelente">Excelente</option><option value="adequado">Adequado</option><option value="atencao">Atenção</option><option value="critico">Crítico</option></select></label>
+        <label>SELIC Banco Central
+          <button type="button" className="outline-action mini-action" onClick={refreshSelic}>
+            {formatPercent(selicInfo.value)}
+          </button>
+        </label>
       </section>
 
       {feedback && <p className="form-feedback">{feedback}</p>}
@@ -594,7 +807,64 @@ function FinancialIntelligenceManage() {
         <article><span>Receita</span><strong>{formatCurrency(totals.revenue)}</strong></article>
         <article><span>Custo</span><strong>{formatCurrency(totals.cost)}</strong></article>
         <article><span>Lucro</span><strong>{formatCurrency(totals.profit)}</strong></article>
-        <article><span>Linhas</span><strong>{filteredRecords.length}</strong></article>
+        <article><span>Linhas</span><strong>{totals.rows}</strong></article>
+      </section>
+
+      <section className="financial-insight-grid">
+        <article className="financial-campaign-panel">
+          <div className="financial-card-heading">
+            <p className="eyebrow">Campanhas</p>
+            <h2>Análise por linha</h2>
+            <p>Clique em uma campanha para abrir os lançamentos vinculados.</p>
+          </div>
+          <div className="financial-campaign-list">
+            {campaignGroups.map((campaign) => (
+              <div key={campaign.name} className="financial-campaign-item">
+                <button type="button" onClick={() => setExpandedCampaign((current) => current === campaign.name ? '' : campaign.name)}>
+                  <span>{campaign.name}</span>
+                  <strong>{formatCurrency(campaign.revenue)}</strong>
+                  <em>{campaign.rows.length} linha(s)</em>
+                </button>
+                {expandedCampaign === campaign.name && (
+                  <div className="financial-mini-table">
+                    <div className="financial-mini-row header"><span>Data</span><span>Operador</span><span>Receita</span><span>ROI</span></div>
+                    {campaign.rows.map((row) => (
+                      <div className="financial-mini-row" key={`${campaign.name}-${row.id}`}>
+                        <span>{row.date || '-'}</span>
+                        <span>{row.operator_name || '-'}</span>
+                        <span>{formatCurrency(row.revenue)}</span>
+                        <span>{formatPercent(row.roi_crc)}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+            {!campaignGroups.length && <p className="empty-state">Sem campanhas no período filtrado.</p>}
+          </div>
+        </article>
+
+        <article className="financial-collaborator-cost-panel">
+          <div className="financial-card-heading">
+            <p className="eyebrow">Colaboradores</p>
+            <h2>Custo mensal cadastrado</h2>
+            <p>Base usada para compor o custo de colaborador no ROI do CRC.</p>
+          </div>
+          <label>Mês de referência<input className="field" type="month" value={collaboratorMonth} onChange={(event) => setCollaboratorMonth(event.target.value)} /></label>
+          <strong className="financial-total-line">{formatCurrency(collaboratorCostTotal)}</strong>
+          <div className="financial-mini-table collaborator-list">
+            <div className="financial-mini-row header"><span>Nome</span><span>Função</span><span>Clínica</span><span>Custo</span></div>
+            {collaboratorCostRows.map((item) => (
+              <div className="financial-mini-row" key={item.id}>
+                <span>{item.name}</span>
+                <span>{item.function_name || '-'}</span>
+                <span>{item.clinic_name || '-'}</span>
+                <span>{formatCurrency(item.monthlyCost)}</span>
+              </div>
+            ))}
+            {!collaboratorCostRows.length && <p className="empty-state">Nenhum colaborador cadastrado.</p>}
+          </div>
+        </article>
       </section>
 
       <section className="financial-management-layout">
@@ -607,7 +877,7 @@ function FinancialIntelligenceManage() {
                 <tr>
                   <th>Data</th>
                   <th>Clínica</th>
-                  <th>Colaborador</th>
+                  <th>Operador</th>
                   <th>Campanha</th>
                   <th>Leads</th>
                   <th>Receita</th>
@@ -621,8 +891,8 @@ function FinancialIntelligenceManage() {
                 {filteredRecords.map((record) => (
                   <tr key={record.id} className={`${String(record.id) === String(selectedId) ? 'selected' : ''} ${record.__dirty ? 'dirty' : ''}`} onClick={() => setSelectedId(record.id)}>
                     <td><input value={record.date || ''} type="date" onChange={(event) => patchRecord(record.id, { date: event.target.value })} /></td>
-                    <td><select value={record.clinic_id || ''} onChange={(event) => handleClinicChange(record.id, event.target.value)}><option value="">Selecione</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></td>
-                    <td><select value={record.collaborator_id || ''} onChange={(event) => handleCollaboratorChange(record.id, event.target.value)}><option value="">Selecione</option>{collaborators.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></td>
+                    <td><select value={record.clinic_name === FINANCIAL_CENTRAL_CLINIC.name ? FINANCIAL_CENTRAL_CLINIC.id : record.clinic_id || ''} onChange={(event) => handleClinicChange(record.id, event.target.value)}><option value="">Selecione</option><option value={FINANCIAL_CENTRAL_CLINIC.id}>{FINANCIAL_CENTRAL_CLINIC.name}</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></td>
+                    <td><span className="financial-readonly-cell">{record.operator_name || '-'}</span></td>
                     <td><input value={record.campaign || ''} onChange={(event) => patchRecord(record.id, { campaign: event.target.value })} /></td>
                     <td><input value={record.leads || ''} type="number" onChange={(event) => patchRecord(record.id, { leads: event.target.value })} /></td>
                     <td><input value={record.revenue || ''} type="number" step="0.01" onChange={(event) => patchRecord(record.id, { revenue: event.target.value })} /></td>
@@ -642,17 +912,16 @@ function FinancialIntelligenceManage() {
             <>
               <div className="financial-card-heading">
                 <h2>Editor do lançamento</h2>
-                <p>{selectedRecord.__draft ? 'Novo registro' : `Registro #${selectedRecord.id}`} · campos calculados bloqueados.</p>
+                <p>{selectedRecord.__draft ? 'Novo registro' : `Registro #${selectedRecord.id}`} · operador, função e SELIC preenchidos automaticamente.</p>
               </div>
               {renderGroup('general', '1. Dados Gerais', generalFields, selectedRecord)}
               {renderGroup('production', '2. Produção CRC', productionFields, selectedRecord)}
-              {renderGroup('collaborator', '3. Custos do Colaborador', collaboratorCostFields, selectedRecord)}
-              {renderGroup('operational', '4. Custos Operacionais', operationalCostFields, selectedRecord)}
-              {renderGroup('marketing', '5. Custos de Marketing', marketingCostFields, selectedRecord)}
-              {renderGroup('administrative', '6. Custos Administrativos', administrativeCostFields, selectedRecord)}
+              {renderGroup('operational', '3. Custos Operacionais', operationalCostFields, selectedRecord)}
+              {renderGroup('marketing', '4. Custos de Marketing', marketingCostFields, selectedRecord)}
+              {renderGroup('administrative', '5. Custos Administrativos', administrativeCostFields, selectedRecord)}
               <section className="financial-editor-group">
                 <button type="button" className="financial-group-toggle" onClick={() => setOpenGroups((current) => ({ ...current, results: !current.results }))}>
-                  <span>7. Resultados Calculados</span>
+                  <span>6. Resultados Calculados</span>
                   <strong>{openGroups.results ? 'Recolher' : 'Expandir'}</strong>
                 </button>
                 {openGroups.results && (
@@ -680,6 +949,10 @@ function FinancialIntelligenceManage() {
                 )}
               </section>
               <label>Observações<textarea className="field textarea" value={selectedRecord.notes || ''} onChange={(event) => patchRecord(selectedRecord.id, { notes: event.target.value })} /></label>
+              <div className="financial-editor-footer">
+                <button className="outline-action" onClick={() => saveAll()} disabled={saving}>{saving ? 'Salvando...' : 'Salvar alterações'}</button>
+                <button className="primary-action" onClick={() => saveAll({ resetAfter: true })} disabled={saving}>Salvar, limpar e novo lançamento</button>
+              </div>
             </>
           ) : (
             <p className="empty-state">Selecione uma linha para editar.</p>
@@ -693,12 +966,12 @@ function FinancialIntelligenceManage() {
             <div className="financial-card-heading">
               <p className="eyebrow">Cadastro CRC</p>
               <h2>Novo colaborador</h2>
-              <p>Os valores padrão serão puxados automaticamente ao selecionar o colaborador no lançamento.</p>
+              <p>Os custos do colaborador ficam centralizados aqui e entram no ROI dos lançamentos automaticamente quando houver vínculo pelo nome do usuário.</p>
             </div>
             <div className="financial-editor-grid">
               <label>Nome do colaborador<input className="field" value={collaboratorDraft.name} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, name: event.target.value }))} /></label>
-              <label>Função/Cargo<input className="field" value={collaboratorDraft.function_name} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, function_name: event.target.value }))} /></label>
-              <label>Clínica<select className="field" value={collaboratorDraft.clinic_id} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, clinic_id: event.target.value }))}><option value="">Selecione</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label>
+              <label>Função/Cargo<select className="field" value={collaboratorDraft.function_name} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, function_name: event.target.value }))}><option value="">Selecione</option>{CRC_FUNCTION_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+              <label>Clínica<select className="field" value={collaboratorDraft.clinic_id} onChange={(event) => handleCollaboratorClinicChange(event.target.value)}><option value="">Selecione</option><option value={FINANCIAL_CENTRAL_CLINIC.id}>{FINANCIAL_CENTRAL_CLINIC.name}</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label>
               <label>Unidade<input className="field" value={collaboratorDraft.unit_name} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, unit_name: event.target.value }))} /></label>
               <label>Salário<input className="field" type="number" step="0.01" value={collaboratorDraft.salary} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, salary: event.target.value }))} /></label>
               <label>Status<select className="field" value={collaboratorDraft.status} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, status: event.target.value }))}><option value="ativo">Ativo</option><option value="inativo">Inativo</option></select></label>
@@ -711,7 +984,7 @@ function FinancialIntelligenceManage() {
               <label>Outros custos padrão<input className="field" type="number" step="0.01" value={collaboratorDraft.other_costs_default} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, other_costs_default: event.target.value }))} /></label>
             </div>
             <div className="row-actions">
-              <button className="outline-action" onClick={() => setCollaboratorModalOpen(false)} disabled={saving}>Cancelar</button>
+              <button className="outline-action" onClick={() => { setCollaboratorModalOpen(false); resetCollaboratorDraft(); }} disabled={saving}>Cancelar</button>
               <button className="primary-action" onClick={saveCollaborator} disabled={saving}>{saving ? 'Salvando...' : 'Salvar colaborador'}</button>
             </div>
           </section>

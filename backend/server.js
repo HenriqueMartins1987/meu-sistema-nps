@@ -715,6 +715,10 @@ function canViewFinancialIntelligence(user) {
   return isAdminUser(user) || ['manager', 'supervisor_crc', 'sac_operator'].includes(role);
 }
 
+function canViewFinancialDashboard(user) {
+  return isAdminUser(user);
+}
+
 function canManageFinancialIntelligence(user) {
   const role = String(user?.role || '').trim().toLowerCase();
   return isAdminUser(user) || ['manager', 'supervisor_crc'].includes(role);
@@ -10219,6 +10223,67 @@ function sanitizeFinancialString(value, maxLength = 180) {
   return text ? text.slice(0, maxLength) : null;
 }
 
+function getFinancialFunctionLabel(user = {}) {
+  const position = sanitizeFinancialString(user.position || user.function_name || user.department);
+  if (position) return position;
+
+  const roleLabels = {
+    master_admin: 'Administrador Master',
+    admin: 'Administrador',
+    supervisor_crc: 'Supervisor de CRC',
+    sac_operator: 'Operador de CRC',
+    manager: 'Gerente de CRC',
+    coordinator: 'Coordenador de CRC',
+    viewer: 'Marketing'
+  };
+
+  return roleLabels[String(user?.role || '').toLowerCase()] || 'Profissional CRC';
+}
+
+let cachedSelicRate = {
+  value: null,
+  source: 'fallback',
+  updatedAt: 0,
+  referenceDate: null
+};
+
+async function getCurrentSelicRate() {
+  const cacheTtlMs = 6 * 60 * 60 * 1000;
+
+  if (cachedSelicRate.value && Date.now() - cachedSelicRate.updatedAt < cacheTtlMs) {
+    return cachedSelicRate;
+  }
+
+  try {
+    const response = await axios.get(
+      'https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json',
+      { timeout: 7000 }
+    );
+    const latest = Array.isArray(response.data) ? response.data[0] : null;
+    const value = toFinancialNumber(latest?.valor);
+
+    if (value > 0) {
+      cachedSelicRate = {
+        value,
+        source: 'BCB SGS 432',
+        updatedAt: Date.now(),
+        referenceDate: latest?.data || null
+      };
+      return cachedSelicRate;
+    }
+  } catch (error) {
+    console.warn('Não foi possível consultar a SELIC no Banco Central:', error.message);
+  }
+
+  cachedSelicRate = {
+    value: DEFAULT_SELIC_RATE,
+    source: 'fallback',
+    updatedAt: Date.now(),
+    referenceDate: null
+  };
+  return cachedSelicRate;
+}
+
 async function getClinicSnapshot(clinicId) {
   const id = Number(clinicId || 0);
   if (!Number.isInteger(id) || id <= 0) return null;
@@ -10323,14 +10388,17 @@ async function buildFinancialPayload(body = {}, user = {}) {
     withDefaults.clinic_name = clinic.name;
   }
 
-  if (!withDefaults.supervisor_name && String(user?.role || '').toLowerCase() === 'supervisor_crc') {
-    withDefaults.supervisor_id = user.id || withDefaults.supervisor_id || null;
-    withDefaults.supervisor_name = getActorName(user);
-  }
-
-  if (!withDefaults.operator_name && String(user?.role || '').toLowerCase() === 'sac_operator') {
+  if (!withDefaults.operator_name) {
     withDefaults.operator_id = user.id || withDefaults.operator_id || null;
     withDefaults.operator_name = getActorName(user);
+  }
+
+  if (!withDefaults.function_name) {
+    withDefaults.function_name = getFinancialFunctionLabel(user);
+  }
+
+  if (!withDefaults.role) {
+    withDefaults.role = String(user?.role || '').trim() || null;
   }
 
   return withDefaults;
@@ -10370,6 +10438,7 @@ function buildFinancialWhere(query = {}, user = {}) {
     functionName: 'function_name',
     unitName: 'unit_name',
     unit: 'unit_name',
+    clinicName: 'clinic_name',
     campaign: 'campaign',
     channel: 'channel'
   };
@@ -10391,20 +10460,28 @@ function buildFinancialWhere(query = {}, user = {}) {
 }
 
 function canEditFinancialRecord(user, record) {
-  if (isAdminUser(user) || String(user?.role || '').toLowerCase() === 'manager') return true;
-
-  if (String(user?.role || '').toLowerCase() === 'supervisor_crc') {
-    const actorName = getActorName(user);
-    return String(record.created_by || '') === actorName
-      || Number(record.supervisor_id || 0) === Number(user.id || 0)
-      || String(record.supervisor_name || '') === actorName;
-  }
+  const role = String(user?.role || '').toLowerCase();
+  if (isAdminUser(user) || ['manager', 'supervisor_crc'].includes(role)) return true;
 
   return false;
 }
 
+async function handleGetFinancialSelic(req, res) {
+  try {
+    const selic = await getCurrentSelicRate();
+    return res.json(selic);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao consultar a taxa SELIC.' });
+  }
+}
+
 async function handleGetFinancialIntelligence(req, res) {
   try {
+    if (String(req.query.view || '').toLowerCase() === 'dashboard' && !canViewFinancialDashboard(req.user)) {
+      return res.status(403).json({ error: 'Dashboard financeiro restrito ao Administrador Master e Administradores.' });
+    }
+
     const { where, params } = buildFinancialWhere(req.query, req.user);
     const [rows] = await pool.query(
       `SELECT *
@@ -10465,7 +10542,7 @@ async function handleUpdateFinancialIntelligence(req, res) {
     }
 
     if (!canEditFinancialRecord(req.user, existingRows[0])) {
-      return res.status(403).json({ error: 'Supervisão CRC pode editar apenas registros próprios.' });
+      return res.status(403).json({ error: 'Seu perfil não pode editar este lançamento financeiro.' });
     }
 
     const payload = await buildFinancialPayload({ ...existingRows[0], ...req.body }, req.user);
@@ -10652,6 +10729,7 @@ async function handleDeleteCrcCollaborator(req, res) {
 }
 
 app.get(['/financial-intelligence', '/api/financial-intelligence'], authenticate, requireFinancialView, handleGetFinancialIntelligence);
+app.get(['/financial-intelligence/selic', '/api/financial-intelligence/selic'], authenticate, requireFinancialView, handleGetFinancialSelic);
 app.post(['/financial-intelligence', '/api/financial-intelligence'], authenticate, requireFinancialView, handleCreateFinancialIntelligence);
 app.put(['/financial-intelligence/:id', '/api/financial-intelligence/:id'], authenticate, requireFinancialView, handleUpdateFinancialIntelligence);
 app.delete(['/financial-intelligence/:id', '/api/financial-intelligence/:id'], authenticate, requireFinancialView, handleDeleteFinancialIntelligence);
