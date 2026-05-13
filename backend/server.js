@@ -24,12 +24,14 @@ const {
   DEFAULT_SELIC_RATE,
   DEFAULT_FINANCIAL_RULES,
   buildFinancialIntelligencePayload,
+  collaboratorDefaultFields,
   editableFinancialFields,
   enrichFinancialRow,
   integerFields: financialIntegerFields,
   matchesFinancialStatus,
   moneyFields: financialMoneyFields,
   normalizeFinancialRules,
+  operationalCostFields,
   toNumber: toFinancialNumber
 } = require('./services/financialIntelligenceService');
 const {
@@ -1776,13 +1778,17 @@ async function ensureDatabaseSchema() {
       clinic_id INT NULL,
       clinic_name VARCHAR(180) NULL,
       unit_name VARCHAR(180) NULL,
+      reference_month CHAR(7) NULL,
       salary DECIMAL(14,2) NOT NULL DEFAULT 0,
       charges DECIMAL(14,2) NOT NULL DEFAULT 0,
       benefits DECIMAL(14,2) NOT NULL DEFAULT 0,
+      receives_commission TINYINT(1) NOT NULL DEFAULT 0,
       commission_default DECIMAL(14,2) NOT NULL DEFAULT 0,
       phone_cost_default DECIMAL(14,2) NOT NULL DEFAULT 0,
       system_cost_default DECIMAL(14,2) NOT NULL DEFAULT 0,
       infrastructure_cost_default DECIMAL(14,2) NOT NULL DEFAULT 0,
+      vacation_taken TINYINT(1) NOT NULL DEFAULT 0,
+      vacation_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
       other_costs_default DECIMAL(14,2) NOT NULL DEFAULT 0,
       status VARCHAR(40) NOT NULL DEFAULT 'ativo',
       created_by VARCHAR(180) NULL,
@@ -1797,13 +1803,21 @@ async function ensureDatabaseSchema() {
     )
   `);
 
+  await ensureColumn('crc_collaborators', 'reference_month', 'CHAR(7) NULL');
+  await ensureColumn('crc_collaborators', 'receives_commission', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn('crc_collaborators', 'vacation_taken', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn('crc_collaborators', 'vacation_amount', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS financial_intelligence (
       id INT AUTO_INCREMENT PRIMARY KEY,
       date DATE NOT NULL,
+      campaign_start_date DATE NULL,
+      campaign_end_date DATE NULL,
       clinic_id INT NULL,
       clinic_name VARCHAR(180) NULL,
       unit_name VARCHAR(180) NULL,
+      campaign_target_unit VARCHAR(180) NULL,
       supervisor_id INT NULL,
       supervisor_name VARCHAR(180) NULL,
       operator_id INT NULL,
@@ -1884,6 +1898,61 @@ async function ensureDatabaseSchema() {
       INDEX idx_financial_collaborator (collaborator_id),
       INDEX idx_financial_campaign (campaign),
       INDEX idx_financial_channel (channel)
+    )
+  `);
+
+  await ensureColumn('financial_intelligence', 'campaign_start_date', 'DATE NULL');
+  await ensureColumn('financial_intelligence', 'campaign_end_date', 'DATE NULL');
+  await ensureColumn('financial_intelligence', 'campaign_target_unit', 'VARCHAR(180) NULL');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS crc_collaborator_monthly_costs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      collaborator_id INT NOT NULL,
+      collaborator_name VARCHAR(180) NULL,
+      reference_month CHAR(7) NOT NULL,
+      commission DECIMAL(14,2) NOT NULL DEFAULT 0,
+      vacation_paid TINYINT(1) NOT NULL DEFAULT 0,
+      vacation_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
+      other_costs DECIMAL(14,2) NOT NULL DEFAULT 0,
+      notes TEXT NULL,
+      created_by VARCHAR(180) NULL,
+      updated_by VARCHAR(180) NULL,
+      deleted_at TIMESTAMP NULL,
+      deleted_by VARCHAR(180) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_crc_collaborator_month (collaborator_id, reference_month),
+      INDEX idx_crc_collaborator_month_ref (reference_month)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS crc_monthly_operational_costs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      reference_month CHAR(7) NOT NULL,
+      phone_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      system_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      crm_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      whatsapp_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      internet_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      allocated_energy DECIMAL(14,2) NOT NULL DEFAULT 0,
+      infrastructure_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      allocated_rent DECIMAL(14,2) NOT NULL DEFAULT 0,
+      furniture_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      maintenance_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      equipment_cost DECIMAL(14,2) NOT NULL DEFAULT 0,
+      software_licenses DECIMAL(14,2) NOT NULL DEFAULT 0,
+      technical_support DECIMAL(14,2) NOT NULL DEFAULT 0,
+      other_operational_costs DECIMAL(14,2) NOT NULL DEFAULT 0,
+      notes TEXT NULL,
+      created_by VARCHAR(180) NULL,
+      updated_by VARCHAR(180) NULL,
+      deleted_at TIMESTAMP NULL,
+      deleted_by VARCHAR(180) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_crc_operational_month_ref (reference_month)
     )
   `);
 
@@ -2726,6 +2795,12 @@ async function getComplaintRows(query = {}, user = null) {
     };
 
     if (role === 'manager') {
+      accessClauses.push(`(
+        c.assigned_responsible_user_id = ?
+        OR c.created_by_user_id = ?
+      )`);
+      accessParams.push(user.id, user.id);
+
       if (clinicIds.length) {
         accessClauses.push(`(
           c.clinic_id IN (?)
@@ -2742,6 +2817,13 @@ async function getComplaintRows(query = {}, user = null) {
         accessClauses.push('1 = 0');
       }
     } else if (role === 'coordinator') {
+      accessClauses.push(`(
+        c.assigned_responsible_user_id = ?
+        OR c.assigned_coordinator_user_id = ?
+        OR c.created_by_user_id = ?
+      )`);
+      accessParams.push(user.id, user.id, user.id);
+
       if (clinicIds.length) {
         accessClauses.push(`(
           c.clinic_id IN (?)
@@ -10272,6 +10354,12 @@ function sanitizeFinancialString(value, maxLength = 180) {
   return text ? text.slice(0, maxLength) : null;
 }
 
+function toFinancialBoolean(value) {
+  if (typeof value === 'boolean') return value;
+  const text = String(value ?? '').trim().toLowerCase();
+  return ['1', 'true', 'sim', 'yes', 'on'].includes(text);
+}
+
 function getFinancialFunctionLabel(user = {}) {
   const position = sanitizeFinancialString(user.position || user.function_name || user.department);
   if (position) return position;
@@ -10316,6 +10404,58 @@ function toFinancialMonthKey(value) {
   if (Number.isNaN(date.getTime())) return null;
 
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function normalizeFinancialMonth(value) {
+  const text = String(value || '').trim();
+  if (/^\d{4}-\d{2}$/.test(text)) return text;
+  const date = normalizeFinancialDate(value);
+  return date ? date.slice(0, 7) : new Date().toISOString().slice(0, 7);
+}
+
+function compareMonthKey(a, b) {
+  return String(a || '').localeCompare(String(b || ''));
+}
+
+function expandFinancialRowMonthKeys(row = {}) {
+  const start = toFinancialMonthKey(row.campaign_start_date || row.date);
+  const end = toFinancialMonthKey(row.campaign_end_date || row.campaign_start_date || row.date);
+  if (!start || !end || compareMonthKey(start, end) > 0) {
+    return [toFinancialMonthKey(row.date)].filter(Boolean);
+  }
+
+  const [startYear, startMonth] = start.split('-').map(Number);
+  const [endYear, endMonth] = end.split('-').map(Number);
+  const cursor = new Date(startYear, startMonth - 1, 1);
+  const endDate = new Date(endYear, endMonth - 1, 1);
+  const months = [];
+
+  while (cursor <= endDate) {
+    months.push(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`);
+    cursor.setMonth(cursor.getMonth() + 1);
+  }
+
+  return months;
+}
+
+function collaboratorBaseMonthlyCost(collaborator = {}, monthly = null) {
+  const receivesCommission = Boolean(Number(collaborator.receives_commission || 0));
+  const monthlyCommission = monthly ? toFinancialNumber(monthly.commission) : toFinancialNumber(collaborator.commission_default);
+  const vacationAmount = monthly
+    ? (Number(monthly.vacation_paid || 0) ? toFinancialNumber(monthly.vacation_amount) : 0)
+    : (Number(collaborator.vacation_taken || 0) ? toFinancialNumber(collaborator.vacation_amount) : 0);
+
+  return toFinancialNumber(collaborator.salary)
+    + toFinancialNumber(collaborator.charges)
+    + toFinancialNumber(collaborator.benefits)
+    + (receivesCommission ? monthlyCommission : 0)
+    + vacationAmount
+    + toFinancialNumber(collaborator.other_costs_default)
+    + (monthly ? toFinancialNumber(monthly.other_costs) : 0);
+}
+
+function sumOperationalCost(row = {}) {
+  return operationalCostFields.reduce((total, field) => total + toFinancialNumber(row[field]), 0);
 }
 
 async function getSelicMonthlySeries() {
@@ -10405,6 +10545,100 @@ async function applyMonthlySelicToRows(rows = []) {
   });
 }
 
+async function getFinancialMonthlyCostContext(rows = []) {
+  const monthKeys = Array.from(new Set(
+    rows.flatMap((row) => expandFinancialRowMonthKeys(row)).filter(Boolean)
+  )).sort(compareMonthKey);
+
+  if (!monthKeys.length) {
+    return {
+      byMonth: {},
+      totalCollaboratorCost: 0,
+      totalOperationalCost: 0,
+      totalAdministrativeCost: 0,
+      collaboratorRows: [],
+      operationalRows: []
+    };
+  }
+
+  const [collaborators] = await pool.query(
+    `SELECT *
+       FROM crc_collaborators
+      WHERE deleted_at IS NULL
+        AND status <> 'inativo'
+      ORDER BY name ASC`
+  );
+
+  const [monthlyCollaboratorRows] = await pool.query(
+    `SELECT *
+       FROM crc_collaborator_monthly_costs
+      WHERE deleted_at IS NULL
+        AND reference_month IN (?)
+      ORDER BY reference_month DESC, collaborator_name ASC`,
+    [monthKeys]
+  );
+
+  const [operationalRows] = await pool.query(
+    `SELECT *
+       FROM crc_monthly_operational_costs
+      WHERE deleted_at IS NULL
+        AND reference_month IN (?)
+      ORDER BY reference_month DESC, id DESC`,
+    [monthKeys]
+  );
+
+  const monthlyByCollaborator = monthlyCollaboratorRows.reduce((acc, row) => {
+    acc[`${row.reference_month}:${row.collaborator_id}`] = row;
+    return acc;
+  }, {});
+  const byMonth = {};
+  const collaboratorCostRows = [];
+
+  monthKeys.forEach((month) => {
+    byMonth[month] = {
+      collaboratorCost: 0,
+      operationalCost: 0,
+      administrativeCost: 0
+    };
+
+    collaborators.forEach((collaborator) => {
+      const referenceMonth = normalizeFinancialMonth(collaborator.reference_month || collaborator.created_at);
+      if (referenceMonth && compareMonthKey(referenceMonth, month) > 0) return;
+
+      const monthly = monthlyByCollaborator[`${month}:${collaborator.id}`] || null;
+      const totalCost = collaboratorBaseMonthlyCost(collaborator, monthly);
+      if (!totalCost) return;
+
+      byMonth[month].collaboratorCost += totalCost;
+      collaboratorCostRows.push({
+        reference_month: month,
+        collaborator_id: collaborator.id,
+        collaborator_name: collaborator.name,
+        function_name: collaborator.function_name,
+        clinic_name: collaborator.clinic_name,
+        total_cost: totalCost
+      });
+    });
+  });
+
+  operationalRows.forEach((row) => {
+    const month = normalizeFinancialMonth(row.reference_month);
+    if (!byMonth[month]) {
+      byMonth[month] = { collaboratorCost: 0, operationalCost: 0, administrativeCost: 0 };
+    }
+    byMonth[month].operationalCost += sumOperationalCost(row);
+  });
+
+  return {
+    byMonth,
+    totalCollaboratorCost: Object.values(byMonth).reduce((total, item) => total + toFinancialNumber(item.collaboratorCost), 0),
+    totalOperationalCost: Object.values(byMonth).reduce((total, item) => total + toFinancialNumber(item.operationalCost), 0),
+    totalAdministrativeCost: Object.values(byMonth).reduce((total, item) => total + toFinancialNumber(item.administrativeCost), 0),
+    collaboratorRows: collaboratorCostRows,
+    operationalRows
+  };
+}
+
 async function getFinancialSettings() {
   try {
     const [rows] = await pool.query(
@@ -10461,18 +10695,7 @@ function applyCollaboratorDefaults(payload, collaborator, sourceBody = {}) {
   const defaults = {
     collaborator_name: collaborator.name,
     role: collaborator.role,
-    function_name: collaborator.function_name,
-    clinic_id: collaborator.clinic_id,
-    clinic_name: collaborator.clinic_name,
-    unit_name: collaborator.unit_name,
-    salary: collaborator.salary,
-    charges: collaborator.charges,
-    benefits: collaborator.benefits,
-    commission: collaborator.commission_default,
-    phone_cost: collaborator.phone_cost_default,
-    system_cost: collaborator.system_cost_default,
-    infrastructure_cost: collaborator.infrastructure_cost_default,
-    other_collaborator_costs: collaborator.other_costs_default
+    function_name: collaborator.function_name
   };
 
   Object.entries(defaults).forEach(([field, value]) => {
@@ -10499,6 +10722,11 @@ async function buildFinancialPayload(body = {}, user = {}) {
 
     if (field === 'notes') {
       payload.notes = sanitizeFinancialString(body.notes, 2000);
+      return;
+    }
+
+    if (['campaign_start_date', 'campaign_end_date'].includes(field)) {
+      payload[field] = body[field] ? normalizeFinancialDate(body[field]) : null;
       return;
     }
 
@@ -10644,8 +10872,9 @@ async function handleGetFinancialIntelligence(req, res) {
     const rowsWithMonthlySelic = await applyMonthlySelicToRows(rows);
     const enrichedRows = rowsWithMonthlySelic.map((row) => enrichFinancialRow(row, financialRules))
       .filter((row) => matchesFinancialStatus(row, req.query.status));
+    const monthlyCostContext = await getFinancialMonthlyCostContext(enrichedRows);
 
-    return res.json(buildFinancialIntelligencePayload(enrichedRows, financialRules));
+    return res.json(buildFinancialIntelligencePayload(enrichedRows, financialRules, monthlyCostContext));
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao carregar Inteligência Financeira CRC.' });
@@ -10843,13 +11072,17 @@ async function buildCrcCollaboratorPayload(body = {}, user = {}) {
     clinic_id: clinic?.id || null,
     clinic_name: clinic?.name || sanitizeFinancialString(body.clinic_name),
     unit_name: unitName,
+    reference_month: normalizeFinancialMonth(body.reference_month || body.referenceMonth),
     salary: toFinancialNumber(body.salary),
     charges: toFinancialNumber(body.charges),
     benefits: toFinancialNumber(body.benefits),
+    receives_commission: toFinancialBoolean(body.receives_commission ?? body.receivesCommission) ? 1 : 0,
     commission_default: toFinancialNumber(body.commission_default),
     phone_cost_default: toFinancialNumber(body.phone_cost_default),
     system_cost_default: toFinancialNumber(body.system_cost_default),
     infrastructure_cost_default: toFinancialNumber(body.infrastructure_cost_default),
+    vacation_taken: toFinancialBoolean(body.vacation_taken ?? body.vacationTaken) ? 1 : 0,
+    vacation_amount: toFinancialNumber(body.vacation_amount || body.vacationAmount),
     other_costs_default: toFinancialNumber(body.other_costs_default),
     status: sanitizeFinancialString(body.status, 40) || 'ativo',
     updated_by: getActorName(user)
@@ -10954,6 +11187,160 @@ async function handleDeleteCrcCollaborator(req, res) {
   }
 }
 
+async function handleGetCrcCollaboratorMonthlyCosts(req, res) {
+  try {
+    if (!canViewFinancialIntelligence(req.user)) {
+      return res.status(403).json({ error: 'Acesso restrito aos custos mensais do CRC.' });
+    }
+
+    const month = req.query.referenceMonth || req.query.reference_month;
+    const params = [];
+    const where = ['m.deleted_at IS NULL'];
+    if (month) {
+      where.push('m.reference_month = ?');
+      params.push(normalizeFinancialMonth(month));
+    }
+
+    const [rows] = await pool.query(
+      `SELECT m.*, c.function_name, c.clinic_name
+         FROM crc_collaborator_monthly_costs m
+         LEFT JOIN crc_collaborators c ON c.id = m.collaborator_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY m.reference_month DESC, m.collaborator_name ASC`,
+      params
+    );
+
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar comissões mensais.' });
+  }
+}
+
+async function handleUpsertCrcCollaboratorMonthlyCost(req, res) {
+  try {
+    if (!canManageCrcCollaborators(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode lançar comissões do CRC.' });
+    }
+
+    const collaborator = await getCrcCollaboratorById(req.body.collaborator_id || req.body.collaboratorId);
+    if (!collaborator) {
+      return res.status(404).json({ error: 'Colaborador não encontrado.' });
+    }
+
+    const referenceMonth = normalizeFinancialMonth(req.body.reference_month || req.body.referenceMonth);
+    const payload = {
+      collaboratorId: collaborator.id,
+      collaboratorName: collaborator.name,
+      referenceMonth,
+      commission: toFinancialNumber(req.body.commission),
+      vacationPaid: toFinancialBoolean(req.body.vacation_paid ?? req.body.vacationPaid) ? 1 : 0,
+      vacationAmount: toFinancialNumber(req.body.vacation_amount || req.body.vacationAmount),
+      otherCosts: toFinancialNumber(req.body.other_costs || req.body.otherCosts),
+      notes: sanitizeFinancialString(req.body.notes, 2000),
+      actor: getActorName(req.user)
+    };
+
+    await pool.query(
+      `INSERT INTO crc_collaborator_monthly_costs
+       (collaborator_id, collaborator_name, reference_month, commission, vacation_paid, vacation_amount, other_costs, notes, created_by, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         collaborator_name = VALUES(collaborator_name),
+         commission = VALUES(commission),
+         vacation_paid = VALUES(vacation_paid),
+         vacation_amount = VALUES(vacation_amount),
+         other_costs = VALUES(other_costs),
+         notes = VALUES(notes),
+         updated_by = VALUES(updated_by),
+         deleted_at = NULL,
+         deleted_by = NULL`,
+      [
+        payload.collaboratorId,
+        payload.collaboratorName,
+        payload.referenceMonth,
+        payload.commission,
+        payload.vacationPaid,
+        payload.vacationAmount,
+        payload.otherCosts,
+        payload.notes,
+        payload.actor,
+        payload.actor
+      ]
+    );
+
+    const [rows] = await pool.query(
+      'SELECT * FROM crc_collaborator_monthly_costs WHERE collaborator_id = ? AND reference_month = ? LIMIT 1',
+      [payload.collaboratorId, payload.referenceMonth]
+    );
+    return res.status(201).json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao lançar comissão mensal.' });
+  }
+}
+
+async function handleGetCrcOperationalCosts(req, res) {
+  try {
+    if (!canViewFinancialIntelligence(req.user)) {
+      return res.status(403).json({ error: 'Acesso restrito aos custos operacionais do CRC.' });
+    }
+
+    const month = req.query.referenceMonth || req.query.reference_month;
+    const params = [];
+    const where = ['deleted_at IS NULL'];
+    if (month) {
+      where.push('reference_month = ?');
+      params.push(normalizeFinancialMonth(month));
+    }
+
+    const [rows] = await pool.query(
+      `SELECT *
+         FROM crc_monthly_operational_costs
+        WHERE ${where.join(' AND ')}
+        ORDER BY reference_month DESC, id DESC`,
+      params
+    );
+
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar custos operacionais mensais.' });
+  }
+}
+
+async function handleCreateCrcOperationalCost(req, res) {
+  try {
+    if (!canManageFinancialIntelligence(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode lançar custos operacionais.' });
+    }
+
+    const payload = {
+      reference_month: normalizeFinancialMonth(req.body.reference_month || req.body.referenceMonth),
+      notes: sanitizeFinancialString(req.body.notes, 2000),
+      created_by: getActorName(req.user),
+      updated_by: getActorName(req.user)
+    };
+    operationalCostFields.forEach((field) => {
+      payload[field] = toFinancialNumber(req.body[field]);
+    });
+
+    const columns = Object.keys(payload);
+    const values = Object.values(payload);
+    const [result] = await pool.query(
+      `INSERT INTO crc_monthly_operational_costs (${columns.map((column) => `\`${column}\``).join(', ')})
+       VALUES (${columns.map(() => '?').join(', ')})`,
+      values
+    );
+
+    const [rows] = await pool.query('SELECT * FROM crc_monthly_operational_costs WHERE id = ? LIMIT 1', [result.insertId]);
+    return res.status(201).json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao lançar custo operacional.' });
+  }
+}
+
 app.get(['/financial-intelligence', '/api/financial-intelligence'], authenticate, requireFinancialView, handleGetFinancialIntelligence);
 app.get(['/financial-intelligence/selic', '/api/financial-intelligence/selic'], authenticate, requireFinancialView, handleGetFinancialSelic);
 app.get(['/financial-intelligence/:id', '/api/financial-intelligence/:id'], authenticate, requireFinancialView, handleGetFinancialIntelligenceRecord);
@@ -10969,6 +11356,10 @@ app.get(['/crc-collaborators', '/api/crc-collaborators'], authenticate, requireF
 app.post(['/crc-collaborators', '/api/crc-collaborators'], authenticate, requireFinancialView, handleCreateCrcCollaborator);
 app.put(['/crc-collaborators/:id', '/api/crc-collaborators/:id'], authenticate, requireFinancialView, handleUpdateCrcCollaborator);
 app.delete(['/crc-collaborators/:id', '/api/crc-collaborators/:id'], authenticate, requireFinancialView, handleDeleteCrcCollaborator);
+app.get(['/crc-collaborator-monthly-costs', '/api/crc-collaborator-monthly-costs'], authenticate, requireFinancialView, handleGetCrcCollaboratorMonthlyCosts);
+app.post(['/crc-collaborator-monthly-costs', '/api/crc-collaborator-monthly-costs'], authenticate, requireFinancialView, handleUpsertCrcCollaboratorMonthlyCost);
+app.get(['/crc-operational-costs', '/api/crc-operational-costs'], authenticate, requireFinancialView, handleGetCrcOperationalCosts);
+app.post(['/crc-operational-costs', '/api/crc-operational-costs'], authenticate, requireFinancialView, handleCreateCrcOperationalCost);
 
 // ============================================
 // DASHBOARD / BI

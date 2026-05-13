@@ -29,8 +29,11 @@ const CRC_FUNCTION_OPTIONS = [
 
 const generalFields = [
   ['date', 'Data', 'date'],
+  ['campaign_start_date', 'Início da campanha', 'date'],
+  ['campaign_end_date', 'Fim da campanha', 'date'],
   ['clinic_id', 'Clínica', 'clinic'],
   ['unit_name', 'Unidade', 'text'],
+  ['campaign_target_unit', 'Unidade direcionada da campanha', 'targetUnit'],
   ['operator_name', 'Operador', 'readonly'],
   ['function_name', 'Função/Cargo', 'readonly'],
   ['campaign', 'Campanha', 'text'],
@@ -45,35 +48,6 @@ const productionFields = [
   ['closings', 'Fechamentos', 'integer'],
   ['revenue', 'Receita Gerada', 'currency'],
   ['marketing_investment', 'Investimento Marketing', 'currency']
-];
-
-const collaboratorCostFields = [
-  ['salary', 'Salário'],
-  ['charges', 'Encargos'],
-  ['benefits', 'Benefícios'],
-  ['commission', 'Comissão'],
-  ['bonus', 'Bonificação'],
-  ['overtime', 'Horas Extras'],
-  ['transport_voucher', 'Vale Transporte'],
-  ['food_voucher', 'Vale Alimentação'],
-  ['meal_voucher', 'Vale Refeição'],
-  ['health_plan', 'Plano de Saúde'],
-  ['dental_plan', 'Plano Odontológico'],
-  ['training', 'Treinamento'],
-  ['uniforms', 'Uniformes'],
-  ['individual_equipment', 'Equipamento Individual'],
-  ['other_collaborator_costs', 'Outros Custos Colaborador']
-];
-
-const collaboratorDefaultCostFields = [
-  ['salary', 'Salário'],
-  ['charges', 'Encargos'],
-  ['benefits', 'Benefícios'],
-  ['commission_default', 'Comissão padrão'],
-  ['phone_cost_default', 'Telefonia padrão'],
-  ['system_cost_default', 'Sistema padrão'],
-  ['infrastructure_cost_default', 'Infraestrutura padrão'],
-  ['other_costs_default', 'Outros custos padrão']
 ];
 
 const operationalCostFields = [
@@ -107,18 +81,10 @@ const marketingCostFields = [
   ['other_marketing_costs', 'Outros Custos Marketing']
 ];
 
-const administrativeCostFields = [
-  ['management_cost', 'Gerência'],
-  ['consulting_cost', 'Consultoria'],
-  ['other_administrative_costs', 'Outros Custos Administrativos']
-];
-
 const allExportFields = [
   ...generalFields.map(([field, label]) => [field, label]),
   ...productionFields.map(([field, label]) => [field, label]),
-  ...operationalCostFields,
   ...marketingCostFields,
-  ...administrativeCostFields,
   ['notes', 'Observações'],
   ['total_collaborator_cost', 'Custo Total Colaborador'],
   ['total_operational_cost', 'Custo Total Operacional'],
@@ -201,6 +167,11 @@ function normalizeText(value) {
     .toLowerCase();
 }
 
+function toBooleanFlag(value) {
+  if (typeof value === 'boolean') return value;
+  return ['1', 'true', 'sim', 'yes', 'on'].includes(String(value ?? '').trim().toLowerCase());
+}
+
 function getActorName(user) {
   return user?.name || user?.full_name || user?.email || '';
 }
@@ -223,7 +194,12 @@ function getUserFunctionLabel(user = {}) {
 }
 
 function collaboratorMonthlyCost(collaborator = {}) {
-  return collaboratorDefaultCostFields.reduce((total, [field]) => total + toNumber(collaborator[field]), 0);
+  return toNumber(collaborator.salary)
+    + toNumber(collaborator.charges)
+    + toNumber(collaborator.benefits)
+    + (toBooleanFlag(collaborator.receives_commission) ? toNumber(collaborator.commission_default) : 0)
+    + (toBooleanFlag(collaborator.vacation_taken) ? toNumber(collaborator.vacation_amount) : 0)
+    + toNumber(collaborator.other_costs_default);
 }
 
 function applyCollaboratorDefaults(record, collaborator) {
@@ -233,23 +209,15 @@ function applyCollaboratorDefaults(record, collaborator) {
     ...record,
     collaborator_id: collaborator.id || record.collaborator_id || '',
     collaborator_name: collaborator.name || record.collaborator_name || '',
-    function_name: collaborator.function_name || record.function_name || '',
-    salary: collaborator.salary || 0,
-    charges: collaborator.charges || 0,
-    benefits: collaborator.benefits || 0,
-    commission: collaborator.commission_default || 0,
-    phone_cost: collaborator.phone_cost_default || 0,
-    system_cost: collaborator.system_cost_default || 0,
-    infrastructure_cost: collaborator.infrastructure_cost_default || 0,
-    other_collaborator_costs: collaborator.other_costs_default || 0
+    function_name: collaborator.function_name || record.function_name || ''
   };
 }
 
 function calculate(row) {
-  const totalCollaborator = sum(row, collaboratorCostFields);
-  const totalOperational = sum(row, operationalCostFields);
+  const totalCollaborator = 0;
+  const totalOperational = 0;
   const totalMarketing = toNumber(row.marketing_investment) + sum(row, marketingCostFields);
-  const totalAdministrative = sum(row, administrativeCostFields);
+  const totalAdministrative = 0;
   const total = totalCollaborator + totalOperational + totalMarketing + totalAdministrative;
   const profit = toNumber(row.revenue) - total;
   const roi = divide(profit, total, 100);
@@ -318,9 +286,7 @@ function FinancialIntelligenceManage() {
   const [openGroups, setOpenGroups] = useState({
     general: true,
     production: true,
-    operational: false,
     marketing: false,
-    administrative: false,
     results: true
   });
   const [loading, setLoading] = useState(false);
@@ -328,6 +294,8 @@ function FinancialIntelligenceManage() {
   const [feedback, setFeedback] = useState('');
   const [toast, setToast] = useState('');
   const [collaboratorModalOpen, setCollaboratorModalOpen] = useState(false);
+  const [commissionModalOpen, setCommissionModalOpen] = useState(false);
+  const [operationalCostModalOpen, setOperationalCostModalOpen] = useState(false);
   const [editorModalOpen, setEditorModalOpen] = useState(false);
   const [expandedCampaign, setExpandedCampaign] = useState('');
   const [collaboratorMonth, setCollaboratorMonth] = useState(currentMonth);
@@ -339,15 +307,29 @@ function FinancialIntelligenceManage() {
     clinic_id: '',
     clinic_name: '',
     unit_name: '',
+    reference_month: currentMonth,
     salary: '',
     charges: '',
     benefits: '',
+    receives_commission: false,
     commission_default: '',
-    phone_cost_default: '',
-    system_cost_default: '',
-    infrastructure_cost_default: '',
+    vacation_taken: false,
+    vacation_amount: '',
     other_costs_default: '',
     status: 'ativo'
+  });
+  const [commissionDraft, setCommissionDraft] = useState({
+    collaborator_id: '',
+    reference_month: currentMonth,
+    commission: '',
+    vacation_paid: false,
+    vacation_amount: '',
+    other_costs: '',
+    notes: ''
+  });
+  const [operationalCostDraft, setOperationalCostDraft] = useState({
+    reference_month: currentMonth,
+    notes: ''
   });
 
   const currentUserCollaborator = useMemo(() => {
@@ -479,7 +461,8 @@ function FinancialIntelligenceManage() {
     patchRecord(id, {
       clinic_id: clinic?.id || '',
       clinic_name: clinic?.name || '',
-      unit_name: clinic?.city || ''
+      unit_name: clinic?.city || '',
+      campaign_target_unit: ''
     });
   };
 
@@ -548,7 +531,7 @@ function FinancialIntelligenceManage() {
       setFeedback('Somente Administrador Master pode excluir lançamentos.');
       return;
     }
-    if (!window.confirm('Confirma a exclusão deste lançamento? O histórico será preservado no banco.')) return;
+    if (!window.confirm('Confirma a exclusão definitiva deste lançamento? Ele será retirado dos dashboards.')) return;
 
     if (record.__draft) {
       setRecords((current) => current.filter((item) => String(item.id) !== String(record.id)));
@@ -603,13 +586,14 @@ function FinancialIntelligenceManage() {
       clinic_id: '',
       clinic_name: '',
       unit_name: '',
+      reference_month: currentMonth,
       salary: '',
       charges: '',
       benefits: '',
+      receives_commission: false,
       commission_default: '',
-      phone_cost_default: '',
-      system_cost_default: '',
-      infrastructure_cost_default: '',
+      vacation_taken: false,
+      vacation_amount: '',
       other_costs_default: '',
       status: 'ativo'
     });
@@ -634,6 +618,48 @@ function FinancialIntelligenceManage() {
       await loadData();
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível cadastrar o colaborador.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveCommission = async () => {
+    setSaving(true);
+    setFeedback('');
+
+    try {
+      await api.post('/crc-collaborator-monthly-costs', commissionDraft);
+      setCommissionModalOpen(false);
+      setCommissionDraft({
+        collaborator_id: '',
+        reference_month: currentMonth,
+        commission: '',
+        vacation_paid: false,
+        vacation_amount: '',
+        other_costs: '',
+        notes: ''
+      });
+      setToast('Comissão mensal lançada com sucesso.');
+      await loadData();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível lançar a comissão.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveOperationalCost = async () => {
+    setSaving(true);
+    setFeedback('');
+
+    try {
+      await api.post('/crc-operational-costs', operationalCostDraft);
+      setOperationalCostModalOpen(false);
+      setOperationalCostDraft({ reference_month: currentMonth, notes: '' });
+      setToast('Custo operacional mensal cadastrado.');
+      await loadData();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível lançar o custo operacional.');
     } finally {
       setSaving(false);
     }
@@ -711,6 +737,10 @@ function FinancialIntelligenceManage() {
   };
 
   const renderField = (record, [field, label, type = 'currency', options = []]) => {
+    if (type === 'targetUnit' && record.clinic_name !== FINANCIAL_CENTRAL_CLINIC.name) {
+      return null;
+    }
+
     if (type === 'clinic') {
       const value = record.clinic_name === FINANCIAL_CENTRAL_CLINIC.name ? FINANCIAL_CENTRAL_CLINIC.id : record.clinic_id || '';
       return (
@@ -817,6 +847,9 @@ function FinancialIntelligenceManage() {
       <section className="financial-toolbar">
         <button className="primary-action" onClick={addRecord}>+ Novo Lançamento</button>
         <button className="secondary-action" onClick={() => setCollaboratorModalOpen(true)}>+ Cadastrar Colaborador</button>
+        <button className="secondary-action" onClick={() => setCommissionModalOpen(true)}>Lançar comissão</button>
+        <button className="secondary-action" onClick={() => setOperationalCostModalOpen(true)}>Custos operacionais</button>
+        <button className="outline-action" onClick={() => navigate('/home/financial-intelligence/manage/collaborators')}>Gestão de colaboradores</button>
         <button className="outline-action" onClick={() => setFilters({ search: '', clinicId: '', clinicName: '', status: '' })}>Limpar filtros</button>
       </section>
 
@@ -912,7 +945,7 @@ function FinancialIntelligenceManage() {
                   <th>Campanha</th>
                   <th>Leads</th>
                   <th>Receita</th>
-                  <th>Custo Total</th>
+                  <th>Custo Marketing</th>
                   <th>Lucro</th>
                   <th>ROI</th>
                   <th>Status</th>
@@ -991,21 +1024,16 @@ function FinancialIntelligenceManage() {
 
             {renderGroup('general', '1. Dados Gerais', generalFields, selectedRecord)}
             {renderGroup('production', '2. Produção CRC', productionFields, selectedRecord)}
-            {renderGroup('operational', '3. Custos Operacionais', operationalCostFields, selectedRecord)}
-            {renderGroup('marketing', '4. Custos de Marketing', marketingCostFields, selectedRecord)}
-            {renderGroup('administrative', '5. Custos Administrativos', administrativeCostFields, selectedRecord)}
+            {renderGroup('marketing', '3. Custos de Marketing', marketingCostFields, selectedRecord)}
             <section className="financial-editor-group">
               <button type="button" className="financial-group-toggle" onClick={() => setOpenGroups((current) => ({ ...current, results: !current.results }))}>
-                <span>6. Resultados Calculados</span>
+                <span>4. Resultados Calculados</span>
                 <strong>{openGroups.results ? 'Recolher' : 'Expandir'}</strong>
               </button>
               {openGroups.results && (
                 <div className="financial-calculated-grid">
-                  <span>Custo Total Colaborador<strong>{formatCurrency(selectedRecord.total_collaborator_cost)}</strong></span>
-                  <span>Custo Total Operacional<strong>{formatCurrency(selectedRecord.total_operational_cost)}</strong></span>
                   <span>Custo Total Marketing<strong>{formatCurrency(selectedRecord.total_marketing_cost)}</strong></span>
-                  <span>Custo Total Administrativo<strong>{formatCurrency(selectedRecord.total_administrative_cost)}</strong></span>
-                  <span>Custo Total CRC<strong>{formatCurrency(selectedRecord.total_crc_cost)}</strong></span>
+                  <span>Custo do Lançamento<strong>{formatCurrency(selectedRecord.total_crc_cost)}</strong></span>
                   <span>Lucro/Prejuízo<strong>{formatCurrency(selectedRecord.profit)}</strong></span>
                   <span>ROI CRC<strong>{formatPercent(selectedRecord.roi_crc)}</strong></span>
                   <span>ROI CRC vs SELIC<strong>{formatPercent(selectedRecord.roi_crc_vs_selic)}</strong></span>
@@ -1045,19 +1073,68 @@ function FinancialIntelligenceManage() {
               <label>Função/Cargo<select className="field" value={collaboratorDraft.function_name} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, function_name: event.target.value }))}><option value="">Selecione</option>{CRC_FUNCTION_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
               <label>Clínica<select className="field" value={collaboratorDraft.clinic_id} onChange={(event) => handleCollaboratorClinicChange(event.target.value)}><option value="">Selecione</option><option value={FINANCIAL_CENTRAL_CLINIC.id}>{FINANCIAL_CENTRAL_CLINIC.name}</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label>
               <label>Unidade<input className="field" value={collaboratorDraft.unit_name} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, unit_name: event.target.value }))} /></label>
+              <label>Mês/Ano de referência<input className="field" type="month" value={collaboratorDraft.reference_month} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, reference_month: event.target.value }))} /></label>
               <label>Salário<input className="field" type="number" step="0.01" value={collaboratorDraft.salary} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, salary: event.target.value }))} /></label>
               <label>Status<select className="field" value={collaboratorDraft.status} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, status: event.target.value }))}><option value="ativo">Ativo</option><option value="inativo">Inativo</option></select></label>
               <label>Encargos<input className="field" type="number" step="0.01" value={collaboratorDraft.charges} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, charges: event.target.value }))} /></label>
               <label>Benefícios<input className="field" type="number" step="0.01" value={collaboratorDraft.benefits} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, benefits: event.target.value }))} /></label>
-              <label>Comissão padrão<input className="field" type="number" step="0.01" value={collaboratorDraft.commission_default} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, commission_default: event.target.value }))} /></label>
-              <label>Telefonia padrão<input className="field" type="number" step="0.01" value={collaboratorDraft.phone_cost_default} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, phone_cost_default: event.target.value }))} /></label>
-              <label>Sistema padrão<input className="field" type="number" step="0.01" value={collaboratorDraft.system_cost_default} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, system_cost_default: event.target.value }))} /></label>
-              <label>Infraestrutura padrão<input className="field" type="number" step="0.01" value={collaboratorDraft.infrastructure_cost_default} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, infrastructure_cost_default: event.target.value }))} /></label>
-              <label>Outros custos padrão<input className="field" type="number" step="0.01" value={collaboratorDraft.other_costs_default} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, other_costs_default: event.target.value }))} /></label>
+              <label>Recebe comissão?<select className="field" value={collaboratorDraft.receives_commission ? 'sim' : 'nao'} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, receives_commission: event.target.value === 'sim', commission_default: event.target.value === 'sim' ? current.commission_default : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
+              {collaboratorDraft.receives_commission && <label>Comissão<input className="field" type="number" step="0.01" value={collaboratorDraft.commission_default} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, commission_default: event.target.value }))} /></label>}
+              <label>Férias no mês?<select className="field" value={collaboratorDraft.vacation_taken ? 'sim' : 'nao'} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, vacation_taken: event.target.value === 'sim', vacation_amount: event.target.value === 'sim' ? current.vacation_amount : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
+              {collaboratorDraft.vacation_taken && <label>Valor das férias<input className="field" type="number" step="0.01" value={collaboratorDraft.vacation_amount} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, vacation_amount: event.target.value }))} /></label>}
+              <label>Outros custos<input className="field" type="number" step="0.01" value={collaboratorDraft.other_costs_default} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, other_costs_default: event.target.value }))} /></label>
             </div>
             <div className="row-actions">
               <button className="outline-action" onClick={() => { setCollaboratorModalOpen(false); resetCollaboratorDraft(); }} disabled={saving}>Cancelar</button>
               <button className="primary-action" onClick={saveCollaborator} disabled={saving}>{saving ? 'Salvando...' : 'Salvar colaborador'}</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {commissionModalOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setCommissionModalOpen(false)}>
+          <section className="modal-panel financial-collaborator-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="financial-card-heading">
+              <p className="eyebrow">Custo variável</p>
+              <h2>Lançar comissão mensal</h2>
+              <p>Use este lançamento para ajustar comissões variáveis por mês sem alterar o cadastro base do colaborador.</p>
+            </div>
+            <div className="financial-editor-grid">
+              <label>Colaborador<select className="field" value={commissionDraft.collaborator_id} onChange={(event) => setCommissionDraft((current) => ({ ...current, collaborator_id: event.target.value }))}><option value="">Selecione</option>{collaborators.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+              <label>Mês/Ano<input className="field" type="month" value={commissionDraft.reference_month} onChange={(event) => setCommissionDraft((current) => ({ ...current, reference_month: event.target.value }))} /></label>
+              <label>Comissão<input className="field" type="number" step="0.01" value={commissionDraft.commission} onChange={(event) => setCommissionDraft((current) => ({ ...current, commission: event.target.value }))} /></label>
+              <label>Férias pagas?<select className="field" value={commissionDraft.vacation_paid ? 'sim' : 'nao'} onChange={(event) => setCommissionDraft((current) => ({ ...current, vacation_paid: event.target.value === 'sim', vacation_amount: event.target.value === 'sim' ? current.vacation_amount : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
+              {commissionDraft.vacation_paid && <label>Valor das férias<input className="field" type="number" step="0.01" value={commissionDraft.vacation_amount} onChange={(event) => setCommissionDraft((current) => ({ ...current, vacation_amount: event.target.value }))} /></label>}
+              <label>Outros custos<input className="field" type="number" step="0.01" value={commissionDraft.other_costs} onChange={(event) => setCommissionDraft((current) => ({ ...current, other_costs: event.target.value }))} /></label>
+            </div>
+            <label className="financial-notes-field">Observações<textarea className="field textarea" value={commissionDraft.notes} onChange={(event) => setCommissionDraft((current) => ({ ...current, notes: event.target.value }))} /></label>
+            <div className="row-actions">
+              <button className="outline-action" onClick={() => setCommissionModalOpen(false)} disabled={saving}>Cancelar</button>
+              <button className="primary-action" onClick={saveCommission} disabled={saving}>{saving ? 'Salvando...' : 'Salvar comissão'}</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {operationalCostModalOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setOperationalCostModalOpen(false)}>
+          <section className="modal-panel financial-launch-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="financial-card-heading">
+              <p className="eyebrow">Custo mensal</p>
+              <h2>Custos operacionais do CRC</h2>
+              <p>Esses valores entram uma única vez no mês para o ROI geral, sem impactar o custo por clínica.</p>
+            </div>
+            <div className="financial-editor-grid">
+              <label>Mês/Ano<input className="field" type="month" value={operationalCostDraft.reference_month} onChange={(event) => setOperationalCostDraft((current) => ({ ...current, reference_month: event.target.value }))} /></label>
+              {operationalCostFields.map(([field, label]) => (
+                <label key={field}>{label}<input className="field" type="number" step="0.01" value={operationalCostDraft[field] || ''} onChange={(event) => setOperationalCostDraft((current) => ({ ...current, [field]: event.target.value }))} /></label>
+              ))}
+            </div>
+            <label className="financial-notes-field">Observações<textarea className="field textarea" value={operationalCostDraft.notes || ''} onChange={(event) => setOperationalCostDraft((current) => ({ ...current, notes: event.target.value }))} /></label>
+            <div className="row-actions">
+              <button className="outline-action" onClick={() => setOperationalCostModalOpen(false)} disabled={saving}>Cancelar</button>
+              <button className="primary-action" onClick={saveOperationalCost} disabled={saving}>{saving ? 'Salvando...' : 'Salvar custo mensal'}</button>
             </div>
           </section>
         </div>

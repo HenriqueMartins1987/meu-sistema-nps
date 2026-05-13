@@ -21,6 +21,7 @@ function MasterControlCenter() {
   const navigate = useNavigate();
   const currentUser = useMemo(() => readUser(), []);
   const [users, setUsers] = useState([]);
+  const [collaborators, setCollaborators] = useState([]);
   const [settings, setSettings] = useState(null);
   const [feedback, setFeedback] = useState('');
   const [loading, setLoading] = useState(true);
@@ -38,12 +39,14 @@ function MasterControlCenter() {
     setFeedback('');
 
     try {
-      const [usersRes, settingsRes] = await Promise.all([
+      const [usersRes, settingsRes, collaboratorsRes] = await Promise.all([
         api.get('/admin/users'),
-        api.get('/admin/financial-settings')
+        api.get('/admin/financial-settings'),
+        api.get('/crc-collaborators')
       ]);
       setUsers(Array.isArray(usersRes.data) ? usersRes.data : []);
       setSettings(settingsRes.data || null);
+      setCollaborators(Array.isArray(collaboratorsRes.data) ? collaboratorsRes.data : []);
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível carregar o centro de controle master.');
     } finally {
@@ -147,6 +150,19 @@ function MasterControlCenter() {
     }
   };
 
+  const deleteCollaborator = async (collaborator) => {
+    if (!window.confirm(`Confirma excluir o colaborador ${collaborator.name}?`)) return;
+    setFeedback('');
+
+    try {
+      await api.delete(`/crc-collaborators/${collaborator.id}`);
+      setFeedback(`Colaborador ${collaborator.name} excluído.`);
+      await loadData();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível excluir o colaborador.');
+    }
+  };
+
   if (!isMasterAdmin(currentUser)) return null;
 
   return (
@@ -218,6 +234,25 @@ function MasterControlCenter() {
                 <button className="outline-action danger-action" onClick={clearFinancialTests} disabled={clearingTests}>
                   {clearingTests ? 'Limpando...' : 'Limpar testes financeiros'}
                 </button>
+              </div>
+            </article>
+
+            <article className="management-panel master-actions-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="eyebrow">Colaboradores CRC</p>
+                  <h2>Exclusão administrativa</h2>
+                  <p className="base-subtitle">Remova colaboradores que não devem compor os custos mensais do ROI.</p>
+                </div>
+              </div>
+              <div className="master-collaborator-list">
+                {collaborators.slice(0, 12).map((collaborator) => (
+                  <div className="master-collaborator-row" key={collaborator.id}>
+                    <strong>{collaborator.name}<small>{collaborator.function_name || 'Função não informada'}</small></strong>
+                    <button className="outline-action danger-action mini-action" onClick={() => deleteCollaborator(collaborator)}>Excluir</button>
+                  </div>
+                ))}
+                {!collaborators.length && <p className="empty-state">Nenhum colaborador cadastrado.</p>}
               </div>
             </article>
           </section>

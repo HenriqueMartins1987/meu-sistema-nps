@@ -8,8 +8,11 @@ const FINANCIAL_CENTRAL_CLINIC = { id: 'central-crc', name: 'Escritório Central
 
 const generalFields = [
   ['date', 'Data', 'date'],
+  ['campaign_start_date', 'Início da campanha', 'date'],
+  ['campaign_end_date', 'Fim da campanha', 'date'],
   ['clinic_id', 'Clínica', 'clinic'],
   ['unit_name', 'Unidade', 'text'],
+  ['campaign_target_unit', 'Unidade direcionada da campanha', 'targetUnit'],
   ['operator_name', 'Operador', 'readonly'],
   ['function_name', 'Função/Cargo', 'readonly'],
   ['campaign', 'Campanha', 'text'],
@@ -26,23 +29,6 @@ const productionFields = [
   ['marketing_investment', 'Investimento Marketing', 'currency']
 ];
 
-const operationalCostFields = [
-  ['phone_cost', 'Telefonia'],
-  ['system_cost', 'Sistema'],
-  ['crm_cost', 'CRM'],
-  ['whatsapp_cost', 'WhatsApp'],
-  ['internet_cost', 'Internet'],
-  ['allocated_energy', 'Energia Rateada'],
-  ['infrastructure_cost', 'Infraestrutura'],
-  ['allocated_rent', 'Aluguel Rateado'],
-  ['furniture_cost', 'Mobiliário'],
-  ['maintenance_cost', 'Manutenção'],
-  ['equipment_cost', 'Equipamentos'],
-  ['software_licenses', 'Licenças Software'],
-  ['technical_support', 'Suporte Técnico'],
-  ['other_operational_costs', 'Outros Custos Operacionais']
-];
-
 const marketingCostFields = [
   ['google_ads', 'Google Ads'],
   ['meta_ads', 'Meta Ads'],
@@ -55,12 +41,6 @@ const marketingCostFields = [
   ['landing_page', 'Landing Page'],
   ['automation_tools', 'Automação'],
   ['other_marketing_costs', 'Outros Custos Marketing']
-];
-
-const administrativeCostFields = [
-  ['management_cost', 'Gerência'],
-  ['consulting_cost', 'Consultoria'],
-  ['other_administrative_costs', 'Outros Custos Administrativos']
 ];
 
 function formatCurrency(value) {
@@ -85,9 +65,7 @@ function FinancialIntelligenceRecord() {
   const [openGroups, setOpenGroups] = useState({
     general: true,
     production: true,
-    operational: true,
-    marketing: true,
-    administrative: false
+    marketing: true
   });
 
   const loadRecord = useCallback(async () => {
@@ -131,7 +109,8 @@ function FinancialIntelligenceRecord() {
     patchRecord({
       clinic_id: clinic?.id || '',
       clinic_name: clinic?.name || '',
-      unit_name: clinic?.city || ''
+      unit_name: clinic?.city || '',
+      campaign_target_unit: ''
     });
   };
 
@@ -154,6 +133,10 @@ function FinancialIntelligenceRecord() {
 
   const renderField = ([field, label, type = 'currency', options = []]) => {
     if (!record) return null;
+
+    if (type === 'targetUnit' && record.clinic_name !== FINANCIAL_CENTRAL_CLINIC.name) {
+      return null;
+    }
 
     if (type === 'clinic') {
       const value = record.clinic_name === FINANCIAL_CENTRAL_CLINIC.name ? FINANCIAL_CENTRAL_CLINIC.id : record.clinic_id || '';
@@ -276,9 +259,7 @@ function FinancialIntelligenceRecord() {
             <section className="financial-record-editor">
               {renderGroup('general', '1. Dados Gerais', generalFields)}
               {renderGroup('production', '2. Produção CRC', productionFields)}
-              {renderGroup('operational', '3. Custos Operacionais', operationalCostFields)}
-              {renderGroup('marketing', '4. Custos de Marketing', marketingCostFields)}
-              {renderGroup('administrative', '5. Custos Administrativos', administrativeCostFields)}
+              {renderGroup('marketing', '3. Custos de Marketing', marketingCostFields)}
               <label className="financial-notes-field">Observações<textarea className="field textarea" value={record.notes || ''} onChange={(event) => patchRecord({ notes: event.target.value })} /></label>
               <div className="financial-editor-footer">
                 <button className="outline-action" onClick={loadRecord} disabled={saving}>Desfazer alterações</button>

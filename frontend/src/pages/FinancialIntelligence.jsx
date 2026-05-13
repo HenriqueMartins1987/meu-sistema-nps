@@ -94,6 +94,10 @@ function formatReferenceDate(value) {
   return date.toLocaleDateString('pt-BR');
 }
 
+function escapeCsv(value) {
+  return `"${String(value ?? '').replace(/"/g, '""')}"`;
+}
+
 function CustomTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
 
@@ -131,6 +135,7 @@ function MetricCard({ label, value, detail, tone = 'neutral', explanation, onOpe
       }}
     >
       <span className="financial-metric-title">
+        <i className={`financial-metric-signal ${tone}`} aria-hidden="true" />
         {label}
         <button
           type="button"
@@ -294,7 +299,7 @@ function FinancialIntelligence() {
       label: 'ROI CRC',
       value: formatPercent(summary.roiCrc),
       detail: 'Retorno sobre o custo total',
-      tone: metricTone(summary.roiCrc, 'roi'),
+      tone: toNumber(summary.roiCrc) < realSelicRate ? 'danger' : metricTone(summary.roiCrc, 'roi'),
       explanation: 'Mede o retorno gerado pelo CRC em relação ao custo total. Fórmula: lucro dividido pelo custo total, multiplicado por 100.'
     },
     {
@@ -386,7 +391,7 @@ function FinancialIntelligence() {
       value: formatCurrency(summary.costByClinic),
       detail: 'Média por clínica filtrada',
       tone: 'neutral',
-      explanation: 'Custo médio por clínica no período filtrado. Útil para identificar unidades com custo proporcionalmente alto.'
+      explanation: 'Custo médio por clínica considerando somente investimento e custos de marketing/campanha. Custos operacionais e de colaboradores ficam no ROI geral mensal, sem distorcer a análise por unidade.'
     },
     {
       label: 'Lucro por Clínica',
@@ -401,6 +406,78 @@ function FinancialIntelligence() {
     () => (data?.diagnostics || []).filter((item) => !/^(Colaborador|Função)\b/i.test(item)),
     [data?.diagnostics]
   );
+
+  const exportExcel = () => {
+    const header = ['Data', 'Clínica', 'Unidade', 'Campanha', 'Canal', 'Receita', 'Custo Marketing', 'Lucro', 'ROI', 'Status'];
+    const rows = table.map((row) => [
+      row.date,
+      row.clinic_name,
+      row.campaign_target_unit || row.unit_name,
+      row.campaign,
+      row.channel,
+      row.revenue,
+      row.total_marketing_cost,
+      row.profit,
+      row.roi_crc,
+      row.status
+    ]);
+    const summaryRows = [
+      ['Resumo executivo', ''],
+      ['Receita Total CRC', summary.totalRevenue],
+      ['Custo Total CRC', summary.totalCost],
+      ['Lucro/Prejuízo CRC', summary.profit],
+      ['ROI CRC', summary.roiCrc],
+      ['SELIC mensal BCB', realSelicRate],
+      ['Custo mensal colaboradores', summary.totalCollaboratorCost],
+      ['Custo mensal operacional', summary.totalOperationalCost]
+    ];
+    const csv = [
+      `Exportado em;${new Date().toLocaleString('pt-BR')}`,
+      '',
+      ...summaryRows.map((row) => row.map(escapeCsv).join(';')),
+      '',
+      header.map(escapeCsv).join(';'),
+      ...rows.map((row) => row.map(escapeCsv).join(';'))
+    ].join('\n');
+    const blob = new Blob([`\ufeff${csv}`], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'dashboard-executivo-crc.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportPdf = () => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+    printWindow.document.write(`
+      <html><head><title>Dashboard Executivo CRC</title>
+      <style>
+        body{font-family:Arial,sans-serif;padding:28px;color:#17120f;background:#fffdfa}
+        h1{margin:0;color:#2a2218}.sub{color:#6d5b4b;margin:6px 0 18px}
+        .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:18px 0}
+        .card{border:1px solid #ddcfbc;border-radius:10px;padding:12px;background:#f8f3eb}
+        .card span{display:block;color:#6d5b4b;font-size:10px;text-transform:uppercase;font-weight:700}
+        .card strong{font-size:18px}
+        table{width:100%;border-collapse:collapse;font-size:10.5px}th,td{border:1px solid #ddcfbc;padding:7px;text-align:left}
+        th{background:#efe6d8;text-transform:uppercase;font-size:9px}
+      </style></head><body>
+      <h1>Dashboard Executivo CRC</h1>
+      <p class="sub">Relatório exportado em ${new Date().toLocaleString('pt-BR')} · SELIC mensal BCB ${formatPercent(realSelicRate)}</p>
+      <section class="cards">
+        <article class="card"><span>Receita</span><strong>${formatCurrency(summary.totalRevenue)}</strong></article>
+        <article class="card"><span>Custo</span><strong>${formatCurrency(summary.totalCost)}</strong></article>
+        <article class="card"><span>Lucro</span><strong>${formatCurrency(summary.profit)}</strong></article>
+        <article class="card"><span>ROI CRC</span><strong>${formatPercent(summary.roiCrc)}</strong></article>
+      </section>
+      <table><thead><tr><th>Data</th><th>Clínica</th><th>Unidade/Campanha</th><th>Campanha</th><th>Receita</th><th>Custo Marketing</th><th>Lucro</th><th>ROI</th><th>Status</th></tr></thead>
+      <tbody>${table.map((row) => `<tr><td>${row.date || ''}</td><td>${row.clinic_name || ''}</td><td>${row.campaign_target_unit || row.unit_name || ''}</td><td>${row.campaign || ''}</td><td>${formatCurrency(row.revenue)}</td><td>${formatCurrency(row.total_marketing_cost)}</td><td>${formatCurrency(row.profit)}</td><td>${formatPercent(row.roi_crc)}</td><td>${row.status || ''}</td></tr>`).join('')}</tbody></table>
+      </body></html>
+    `);
+    printWindow.document.close();
+    printWindow.print();
+  };
 
   if (!allowed) {
     return (
@@ -437,6 +514,17 @@ function FinancialIntelligence() {
           <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
         </div>
       </header>
+
+      <section className="financial-export-bar">
+        <button className="outline-action icon-action" onClick={exportExcel}>
+          <span className="file-icon xls">XLS</span>
+          Exportar Excel
+        </button>
+        <button className="outline-action icon-action" onClick={exportPdf}>
+          <span className="file-icon pdf">PDF</span>
+          Exportar PDF
+        </button>
+      </section>
 
       <section className="financial-filter-panel">
         <label>Período inicial<input className="field" type="date" value={filters.startDate} onChange={(event) => setFilters((current) => ({ ...current, startDate: event.target.value }))} /></label>
@@ -484,6 +572,7 @@ function FinancialIntelligence() {
           <strong>{formatPercent(summary.roiCrc)}</strong>
           <span>SELIC mensal BCB {formatPercent(realSelicRate)} · Diferença {formatPercent(realSelicDifference)}</span>
           <small>Fonte: {String(selicInfo.source || '').toLowerCase().includes('bcb') ? 'Banco Central do Brasil' : 'fallback interno'} · {realSelicReference}</small>
+          {realSelicStatus === 'below' && <em className="financial-alert-text">Alerta: ROI geral abaixo da SELIC. Revisar custos mensais, campanhas e conversão.</em>}
         </div>
       </section>
 

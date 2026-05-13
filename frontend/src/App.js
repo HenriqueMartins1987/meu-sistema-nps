@@ -21,6 +21,7 @@ import MasterMonitoring from './MasterMonitoring';
 import PatientManagement from './PatientManagementPage';
 import CrmWorkspace from './CrmWorkspace';
 import FinancialCampaignUnitDashboard from './pages/FinancialCampaignUnitDashboard';
+import FinancialCollaboratorManagement from './pages/FinancialCollaboratorManagement';
 import FinancialIntelligence from './pages/FinancialIntelligence';
 import FinancialIntelligenceManage from './pages/FinancialIntelligenceManage';
 import FinancialIntelligenceRecord from './pages/FinancialIntelligenceRecord';
@@ -98,6 +99,7 @@ function App() {
         </Route>
         <Route element={<PermissionRoute permission="financial_management" />}>
           <Route path="/home/financial-intelligence/manage" element={<FinancialIntelligenceManage />} />
+          <Route path="/home/financial-intelligence/manage/collaborators" element={<FinancialCollaboratorManagement />} />
           <Route path="/home/financial-intelligence/manage/:id" element={<FinancialIntelligenceRecord />} />
         </Route>
         <Route path="/gestao/:id" element={<ComplaintDetail />} />

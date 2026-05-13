@@ -68,9 +68,12 @@ const moneyFields = [
 
 const editableFinancialFields = [
   'date',
+  'campaign_start_date',
+  'campaign_end_date',
   'clinic_id',
   'clinic_name',
   'unit_name',
+  'campaign_target_unit',
   'supervisor_id',
   'supervisor_name',
   'operator_id',
@@ -103,13 +106,14 @@ const editableFinancialFields = [
 ];
 
 const collaboratorDefaultFields = [
+  'reference_month',
   'salary',
   'charges',
   'benefits',
+  'receives_commission',
   'commission_default',
-  'phone_cost_default',
-  'system_cost_default',
-  'infrastructure_cost_default',
+  'vacation_taken',
+  'vacation_amount',
   'other_costs_default'
 ];
 
@@ -226,11 +230,13 @@ function buildRowDiagnosis(row, metrics, rules = DEFAULT_FINANCIAL_RULES) {
 function calculateFinancialMetrics(row, rules = DEFAULT_FINANCIAL_RULES) {
   const normalizedRules = normalizeFinancialRules(rules);
   const revenue = toNumber(row.revenue);
-  const totalCollaboratorCost = sumFields(row, collaboratorCostFields);
-  const totalOperationalCost = sumFields(row, operationalCostFields);
+  // Lançamentos registram produção/campanha. Custos de colaborador e operação são mensais,
+  // aplicados no resumo consolidado para não multiplicar custo por linha lançada.
+  const totalCollaboratorCost = toNumber(row.total_collaborator_cost_override);
+  const totalOperationalCost = toNumber(row.total_operational_cost_override);
   const totalMarketingCost = sumFields(row, marketingCostFields);
-  const totalAdministrativeCost = sumFields(row, administrativeCostFields);
-  const totalCrcCost = totalCollaboratorCost + totalOperationalCost + totalMarketingCost + totalAdministrativeCost;
+  const totalAdministrativeCost = toNumber(row.total_administrative_cost_override);
+  const totalCrcCost = totalMarketingCost + totalCollaboratorCost + totalOperationalCost + totalAdministrativeCost;
   const profit = revenue - totalCrcCost;
   const selicRate = toNumber(row.selic_rate) || DEFAULT_SELIC_RATE;
   const metrics = {
@@ -367,12 +373,38 @@ function buildFinancialDiagnostics(summary, clinicFinancials, collaboratorFinanc
   return diagnostics;
 }
 
-function buildSummary(rows) {
+function normalizeMonthlyCostContext(monthlyCosts = {}) {
+  const byMonth = monthlyCosts.byMonth || {};
+  const normalizedByMonth = Object.keys(byMonth).reduce((acc, month) => {
+    const item = byMonth[month] || {};
+    acc[month] = {
+      collaboratorCost: round(toNumber(item.collaboratorCost)),
+      operationalCost: round(toNumber(item.operationalCost)),
+      administrativeCost: round(toNumber(item.administrativeCost)),
+      total: round(toNumber(item.collaboratorCost) + toNumber(item.operationalCost) + toNumber(item.administrativeCost))
+    };
+    return acc;
+  }, {});
+
+  return {
+    byMonth: normalizedByMonth,
+    totalCollaboratorCost: round(toNumber(monthlyCosts.totalCollaboratorCost)),
+    totalOperationalCost: round(toNumber(monthlyCosts.totalOperationalCost)),
+    totalAdministrativeCost: round(toNumber(monthlyCosts.totalAdministrativeCost)),
+    collaboratorRows: Array.isArray(monthlyCosts.collaboratorRows) ? monthlyCosts.collaboratorRows : [],
+    operationalRows: Array.isArray(monthlyCosts.operationalRows) ? monthlyCosts.operationalRows : []
+  };
+}
+
+function buildSummary(rows, monthlyCosts = {}) {
+  const monthly = normalizeMonthlyCostContext(monthlyCosts);
   const revenue = rows.reduce((total, row) => total + toNumber(row.revenue), 0);
-  const cost = rows.reduce((total, row) => total + toNumber(row.total_crc_cost), 0);
-  const profit = revenue - cost;
   const marketingCost = rows.reduce((total, row) => total + toNumber(row.total_marketing_cost), 0);
-  const collaboratorCost = rows.reduce((total, row) => total + toNumber(row.total_collaborator_cost), 0);
+  const cost = marketingCost
+    + monthly.totalCollaboratorCost
+    + monthly.totalOperationalCost
+    + monthly.totalAdministrativeCost;
+  const profit = revenue - cost;
   const leads = rows.reduce((total, row) => total + toNumber(row.leads), 0);
   const appointments = rows.reduce((total, row) => total + toNumber(row.appointments), 0);
   const attendances = rows.reduce((total, row) => total + toNumber(row.attendances), 0);
@@ -402,7 +434,9 @@ function buildSummary(rows) {
     revenueByClinic: 0,
     costByClinic: 0,
     profitByClinic: 0,
-    totalCollaboratorCost: round(collaboratorCost),
+    totalCollaboratorCost: monthly.totalCollaboratorCost,
+    totalOperationalCost: monthly.totalOperationalCost,
+    totalAdministrativeCost: monthly.totalAdministrativeCost,
     averageCollaboratorCost: 0,
     revenueByCollaborator: 0,
     roiByCollaborator: 0,
@@ -414,26 +448,80 @@ function buildSummary(rows) {
   };
 }
 
-function buildFinancialIntelligencePayload(rawRows, rules = DEFAULT_FINANCIAL_RULES) {
+function applySharedMonthlyCostsToSeries(series, monthlyCosts = {}) {
+  const monthly = normalizeMonthlyCostContext(monthlyCosts);
+  return series.map((item) => {
+    const extra = monthly.byMonth[item.label] || {};
+    const sharedCost = toNumber(extra.total);
+    const cost = toNumber(item.cost) + sharedCost;
+    const profit = toNumber(item.revenue) - cost;
+    const roi = safeDivide(profit, cost, 100);
+
+    return {
+      ...item,
+      collaboratorCost: round(toNumber(extra.collaboratorCost)),
+      operationalCost: round(toNumber(extra.operationalCost)),
+      administrativeCost: round(toNumber(extra.administrativeCost)),
+      sharedMonthlyCost: round(sharedCost),
+      cost: round(cost),
+      profit: round(profit),
+      roi,
+      roiVsSelic: round(roi - toNumber(item.selicRate))
+    };
+  });
+}
+
+function buildCollaboratorFinancials(monthlyCosts = {}) {
+  const rows = Array.isArray(monthlyCosts.collaboratorRows) ? monthlyCosts.collaboratorRows : [];
+  const grouped = new Map();
+
+  rows.forEach((row) => {
+    const key = row.collaborator_name || row.name || 'Não informado';
+    const current = grouped.get(key) || {
+      label: key,
+      collaboratorCost: 0,
+      cost: 0,
+      revenue: 0,
+      profit: 0,
+      rows: 0
+    };
+    const cost = toNumber(row.total_cost);
+    current.collaboratorCost += cost;
+    current.cost += cost;
+    current.profit -= cost;
+    current.rows += 1;
+    grouped.set(key, current);
+  });
+
+  return Array.from(grouped.values()).map((item) => ({
+    ...item,
+    collaboratorCost: round(item.collaboratorCost),
+    cost: round(item.cost),
+    profit: round(item.profit),
+    roi: 0
+  })).sort(sortBy('collaboratorCost'));
+}
+
+function buildFinancialIntelligencePayload(rawRows, rules = DEFAULT_FINANCIAL_RULES, monthlyCosts = {}) {
   const normalizedRules = normalizeFinancialRules(rules);
+  const monthly = normalizeMonthlyCostContext(monthlyCosts);
   const table = rawRows.map((row) => enrichFinancialRow(row, normalizedRules));
-  const summary = buildSummary(table);
+  const summary = buildSummary(table, monthly);
   const clinicFinancials = groupFinancialRows(table, (row) => row.clinic_name).sort(sortBy('profit'));
-  const collaboratorFinancials = groupFinancialRows(table, (row) => row.collaborator_name).sort(sortBy('profit'));
+  const collaboratorFinancials = buildCollaboratorFinancials(monthly);
   const operatorFinancials = groupFinancialRows(table, (row) => row.operator_name).sort(sortBy('closings'));
   const campaignFinancials = groupFinancialRows(table, (row) => row.campaign).sort(sortBy('profit'));
   const channelFinancials = groupFinancialRows(table, (row) => row.channel).sort(sortBy('profit'));
   const roleFinancials = groupFinancialRows(table, (row) => row.function_name || row.role).sort(sortBy('collaboratorCost'));
-  const monthlySeries = groupFinancialRows(table, (row) => monthKey(row.date))
-    .sort((a, b) => String(a.label).localeCompare(String(b.label)))
-    .map((item) => ({
-      ...item,
-      roiVsSelic: round(item.roi - item.selicRate)
-    }));
+  const monthlySeries = applySharedMonthlyCostsToSeries(
+    groupFinancialRows(table, (row) => monthKey(row.date))
+      .sort((a, b) => String(a.label).localeCompare(String(b.label))),
+    monthly
+  );
 
   summary.revenueByClinic = clinicFinancials.length ? round(summary.totalRevenue / clinicFinancials.length) : 0;
-  summary.costByClinic = clinicFinancials.length ? round(summary.totalCost / clinicFinancials.length) : 0;
-  summary.profitByClinic = clinicFinancials.length ? round(summary.profit / clinicFinancials.length) : 0;
+  summary.costByClinic = clinicFinancials.length ? round(clinicFinancials.reduce((total, item) => total + toNumber(item.marketingCost), 0) / clinicFinancials.length) : 0;
+  summary.profitByClinic = clinicFinancials.length ? round(clinicFinancials.reduce((total, item) => total + toNumber(item.profit), 0) / clinicFinancials.length) : 0;
   summary.averageCollaboratorCost = collaboratorFinancials.length ? round(summary.totalCollaboratorCost / collaboratorFinancials.length) : 0;
   summary.revenueByCollaborator = collaboratorFinancials.length ? round(summary.totalRevenue / collaboratorFinancials.length) : 0;
   summary.roiByCollaborator = collaboratorFinancials.length ? round(collaboratorFinancials.reduce((total, item) => total + item.roi, 0) / collaboratorFinancials.length) : 0;
@@ -517,5 +605,6 @@ module.exports = {
   moneyFields,
   operationalCostFields,
   marketingCostFields,
+  normalizeMonthlyCostContext,
   toNumber
 };
