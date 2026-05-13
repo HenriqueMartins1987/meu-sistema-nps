@@ -9917,6 +9917,9 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
             coordinator: 'Coordenador',
             manager: 'Gerente'
           };
+      const hasCoordinatorManagerTreatment = Boolean(complaint.treatment_at)
+        && ['coordinator', 'manager'].includes(String(complaint.treatment_by_role || '').toLowerCase());
+      const willSaveCoordinatorManagerTreatment = Boolean(cleanedComment) && canAddTreatment(req.user);
 
       if (!allowedReassignRoles[forward_to_role]) {
         return res.status(400).json({
@@ -9926,7 +9929,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         });
       }
 
-      if (requesterIsOperational && !cleanedComment) {
+      if (requesterIsOperational && !hasCoordinatorManagerTreatment && !willSaveCoordinatorManagerTreatment) {
         return res.status(400).json({
           error: 'Coordenador e Gerente precisam registrar a tratativa antes de devolver a demanda ao Operador de SAC.'
         });

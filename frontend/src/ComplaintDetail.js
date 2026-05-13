@@ -445,6 +445,10 @@ function ComplaintDetail() {
   const hasTreatment = Boolean(complaint?.treatment_at);
   const hasCoordinatorOrManagerTreatment = hasTreatment
     && ['coordinator', 'manager'].includes(String(complaint?.treatment_by_role || '').toLowerCase());
+  const pendingTreatmentComment = comment.trim();
+  const canReturnToSacWithTreatment = !canReturnToSac
+    || hasCoordinatorOrManagerTreatment
+    || Boolean(pendingTreatmentComment);
   const isHighPriority = normalizePriority(complaint?.priority) === 'alta';
   const hasSupervisorApproval = Boolean(complaint?.supervisor_approval_at);
   const hasSacApproval = Boolean(complaint?.sac_approval_at);
@@ -665,6 +669,24 @@ function ComplaintDetail() {
       return;
     }
 
+    if (!canReturnToSac && !hasPatientContact && !hasFirstAttendance) {
+      if (!canMarkPatientContact) {
+        setFeedback('Registre e salve uma tratativa antes de encaminhar a demanda para a unidade.');
+        return;
+      }
+
+      setFeedback('');
+      setForwardModalMode('contact');
+      setForwardToRole('');
+      setShowForwardModal(true);
+      return;
+    }
+
+    if (canReturnToSac && !canReturnToSacWithTreatment) {
+      setFeedback('Registre uma tratativa antes de devolver a demanda ao Operador de SAC.');
+      return;
+    }
+
     setFeedback('');
     setForwardModalMode('reassign');
     setForwardToRole('');
@@ -719,15 +741,22 @@ function ComplaintDetail() {
       return;
     }
 
+    if (forwardModalMode === 'reassign' && canReturnToSac && !canReturnToSacWithTreatment) {
+      setFeedback('Registre uma tratativa antes de devolver a demanda ao Operador de SAC.');
+      return;
+    }
+
     setSaving(true);
     setFeedback('');
 
     try {
+      const shouldSendPendingComment = forwardModalMode === 'reassign' && Boolean(pendingTreatmentComment);
       const payload = forwardModalMode === 'reassign'
         ? {
             status: complaint?.status === 'aberta' ? 'em_andamento' : complaint?.status,
             reassign_forward: true,
-            forward_to_role: forwardToRole
+            forward_to_role: forwardToRole,
+            ...(shouldSendPendingComment ? { operator_comment: pendingTreatmentComment } : {})
           }
         : {
             status: 'em_andamento',
@@ -742,7 +771,9 @@ function ComplaintDetail() {
       setForwardToRole('');
       setFeedback(
         forwardModalMode === 'reassign'
-          ? 'Demanda reencaminhada com sucesso para a unidade.'
+          ? canReturnToSac
+            ? 'Demanda devolvida com sucesso para o Operador de SAC.'
+            : 'Demanda reencaminhada com sucesso para a unidade.'
           : 'Contato com o paciente registrado e reclamação encaminhada para tratativa.'
       );
       await loadComplaint();
@@ -1803,7 +1834,7 @@ function ComplaintDetail() {
             )}
             {canOperationalClose && complaint.status !== 'resolvida' && (
               <button className="outline-action" onClick={handlePatientContact} disabled={saving || !canMarkPatientContact || isDeletedRecord}>
-                {hasPatientContact ? 'Contato ja registrado' : 'Registrar contato com paciente'}
+                {hasPatientContact ? 'Contato já registrado' : 'Registrar contato com paciente'}
               </button>
             )}
             {canReassignForward && complaint.status !== 'resolvida' && !isDeletedRecord && (
@@ -1856,7 +1887,7 @@ function ComplaintDetail() {
             </p>
 
             <label>
-              Responsavel pela tratativa
+              Responsável pela tratativa
               <select className="field" value={forwardToRole} onChange={(event) => setForwardToRole(event.target.value)} required>
                 <option value="">Selecione o destino</option>
                 {(forwardModalMode === 'reassign' ? reassignOptions : forwardingOptions).map((option) => (
@@ -1870,7 +1901,7 @@ function ComplaintDetail() {
                 Cancelar
               </button>
               <button className="primary-action" type="button" onClick={handleContactForward} disabled={saving || !forwardToRole}>
-                {saving ? 'Salvando...' : 'Confirmar encaminhamento'}
+                {saving ? 'Salvando...' : canReturnToSac ? 'Confirmar devolução' : 'Confirmar encaminhamento'}
               </button>
             </div>
           </div>
