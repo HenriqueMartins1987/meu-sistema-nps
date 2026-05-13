@@ -442,6 +442,7 @@ function AdminPanel() {
         </div>
 
         <div className="heading-actions">
+          <button className="outline-action" onClick={() => navigate('/admin/controle-master')}>Centro Master</button>
           <button className="primary-action" onClick={() => setCreateOpen(true)}>Cadastrar novo usuário</button>
           <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
         </div>

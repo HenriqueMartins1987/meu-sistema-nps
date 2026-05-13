@@ -1,4 +1,4 @@
-const DEFAULT_SELIC_RATE = 13.75;
+const DEFAULT_SELIC_RATE = 1.08;
 
 const collaboratorCostFields = [
   'salary',
@@ -125,6 +125,13 @@ const expectedMargins = {
   crcRoi: { label: 'ROI CRC previsto', min: 150, max: null, suffix: '%' }
 };
 
+const DEFAULT_FINANCIAL_RULES = {
+  crcRoiExcellent: 150,
+  netMarginHealthyMin: 20,
+  selicComparisonTolerance: 1,
+  expectedMargins
+};
+
 function toNumber(value) {
   if (value === null || value === undefined || value === '') return 0;
 
@@ -132,10 +139,23 @@ function toNumber(value) {
     return Number.isFinite(value) ? value : 0;
   }
 
-  const normalized = String(value)
-    .replace(/\./g, '')
-    .replace(',', '.')
-    .replace(/[^\d.-]/g, '');
+  let normalized = String(value)
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/[R$%]/g, '');
+
+  const hasComma = normalized.includes(',');
+  const hasDot = normalized.includes('.');
+
+  if (hasComma && hasDot) {
+    normalized = normalized.replace(/\./g, '').replace(',', '.');
+  } else if (hasComma) {
+    normalized = normalized.replace(',', '.');
+  } else if (hasDot && /^\d{1,3}(\.\d{3})+$/.test(normalized)) {
+    normalized = normalized.replace(/\./g, '');
+  }
+
+  normalized = normalized.replace(/[^\d.-]/g, '');
 
   const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -156,30 +176,55 @@ function sumFields(row, fields) {
   return fields.reduce((total, field) => total + toNumber(row[field]), 0);
 }
 
-function classifyFinancialStatus(metrics) {
+function normalizeFinancialRules(rules = {}) {
+  const expected = {};
+
+  Object.keys(expectedMargins).forEach((key) => {
+    const merged = {
+      ...expectedMargins[key],
+      ...(rules.expectedMargins?.[key] || {})
+    };
+    expected[key] = {
+      ...merged,
+      min: toNumber(merged.min),
+      max: merged.max === null || merged.max === '' || merged.max === undefined ? null : toNumber(merged.max)
+    };
+  });
+
+  return {
+    crcRoiExcellent: toNumber(rules.crcRoiExcellent) || DEFAULT_FINANCIAL_RULES.crcRoiExcellent,
+    netMarginHealthyMin: toNumber(rules.netMarginHealthyMin) || DEFAULT_FINANCIAL_RULES.netMarginHealthyMin,
+    selicComparisonTolerance: toNumber(rules.selicComparisonTolerance) || DEFAULT_FINANCIAL_RULES.selicComparisonTolerance,
+    expectedMargins: expected
+  };
+}
+
+function classifyFinancialStatus(metrics, rules = DEFAULT_FINANCIAL_RULES) {
   if (metrics.profit < 0 || metrics.roi_crc < 0) return 'critico';
-  if (metrics.roi_crc >= 150 && metrics.net_margin >= 20) return 'excelente';
+  if (metrics.roi_crc >= rules.crcRoiExcellent && metrics.net_margin >= rules.netMarginHealthyMin) return 'excelente';
   if (metrics.roi_crc >= metrics.selic_rate && metrics.profit >= 0) return 'adequado';
   return 'atencao';
 }
 
-function buildRowDiagnosis(row, metrics) {
+function buildRowDiagnosis(row, metrics, rules = DEFAULT_FINANCIAL_RULES) {
+  const margins = rules.expectedMargins || expectedMargins;
   const diagnostics = [];
 
   if (metrics.profit >= 0) diagnostics.push('CRC lucrativo no período.');
   if (metrics.profit < 0) diagnostics.push('CRC deficitário no período.');
   diagnostics.push(metrics.roi_crc >= metrics.selic_rate ? 'ROI do CRC acima da SELIC.' : 'ROI do CRC abaixo da SELIC.');
-  if (metrics.marketing_roi < expectedMargins.marketingRoi.min && metrics.total_marketing_cost > 0) diagnostics.push('ROI de marketing abaixo da margem prevista.');
-  if (metrics.cac > expectedMargins.cac.max) diagnostics.push('CAC elevado.');
-  if (metrics.cpl > expectedMargins.cpl.max) diagnostics.push('CPL elevado.');
-  if (metrics.lead_to_appointment < expectedMargins.leadToAppointment.min && toNumber(row.leads) > 0) diagnostics.push('Baixa conversão de leads.');
-  if (metrics.attendance_rate < expectedMargins.attendanceRate.min && toNumber(row.appointments) > 0) diagnostics.push('Baixo comparecimento.');
-  if (metrics.closing_rate < expectedMargins.closingRate.min && toNumber(row.attendances) > 0) diagnostics.push('Baixo fechamento.');
+  if (metrics.marketing_roi < margins.marketingRoi.min && metrics.total_marketing_cost > 0) diagnostics.push('ROI de marketing abaixo da margem prevista.');
+  if (metrics.cac > margins.cac.max) diagnostics.push('CAC elevado.');
+  if (metrics.cpl > margins.cpl.max) diagnostics.push('CPL elevado.');
+  if (metrics.lead_to_appointment < margins.leadToAppointment.min && toNumber(row.leads) > 0) diagnostics.push('Baixa conversão de leads.');
+  if (metrics.attendance_rate < margins.attendanceRate.min && toNumber(row.appointments) > 0) diagnostics.push('Baixo comparecimento.');
+  if (metrics.closing_rate < margins.closingRate.min && toNumber(row.attendances) > 0) diagnostics.push('Baixo fechamento.');
 
   return diagnostics;
 }
 
-function calculateFinancialMetrics(row) {
+function calculateFinancialMetrics(row, rules = DEFAULT_FINANCIAL_RULES) {
+  const normalizedRules = normalizeFinancialRules(rules);
   const revenue = toNumber(row.revenue);
   const totalCollaboratorCost = sumFields(row, collaboratorCostFields);
   const totalOperationalCost = sumFields(row, operationalCostFields);
@@ -209,13 +254,13 @@ function calculateFinancialMetrics(row) {
     selic_rate: selicRate
   };
 
-  metrics.status = classifyFinancialStatus(metrics);
-  metrics.diagnosis = buildRowDiagnosis(row, metrics).join(' ');
+  metrics.status = classifyFinancialStatus(metrics, normalizedRules);
+  metrics.diagnosis = buildRowDiagnosis(row, metrics, normalizedRules).join(' ');
   return metrics;
 }
 
-function enrichFinancialRow(row) {
-  const metrics = calculateFinancialMetrics(row);
+function enrichFinancialRow(row, rules = DEFAULT_FINANCIAL_RULES) {
+  const metrics = calculateFinancialMetrics(row, rules);
 
   return {
     ...row,
@@ -246,6 +291,7 @@ function groupFinancialRows(rows, getKey) {
       appointments: 0,
       attendances: 0,
       closings: 0,
+      selicRateTotal: 0,
       rows: 0
     };
 
@@ -258,6 +304,7 @@ function groupFinancialRows(rows, getKey) {
     current.appointments += toNumber(row.appointments);
     current.attendances += toNumber(row.attendances);
     current.closings += toNumber(row.closings);
+    current.selicRateTotal += toNumber(row.selic_rate || DEFAULT_SELIC_RATE);
     current.rows += 1;
     grouped.set(key, current);
   });
@@ -277,7 +324,8 @@ function groupFinancialRows(rows, getKey) {
     averageTicket: safeDivide(item.revenue, item.closings),
     leadToAppointment: safeDivide(item.appointments, item.leads, 100),
     attendanceRate: safeDivide(item.attendances, item.appointments, 100),
-    closingRate: safeDivide(item.closings, item.attendances, 100)
+    closingRate: safeDivide(item.closings, item.attendances, 100),
+    selicRate: item.rows ? round(item.selicRateTotal / item.rows) : DEFAULT_SELIC_RATE
   }));
 }
 
@@ -287,17 +335,19 @@ function sortBy(field, direction = 'desc') {
     : toNumber(b[field]) - toNumber(a[field]);
 }
 
-function buildFinancialDiagnostics(summary, clinicFinancials, collaboratorFinancials, roleFinancials) {
+function buildFinancialDiagnostics(summary, clinicFinancials, collaboratorFinancials, roleFinancials, rules = DEFAULT_FINANCIAL_RULES) {
+  const normalizedRules = normalizeFinancialRules(rules);
+  const margins = normalizedRules.expectedMargins;
   const diagnostics = [];
   diagnostics.push(summary.profit >= 0 ? 'CRC lucrativo no período.' : 'CRC deficitário no período.');
   diagnostics.push(summary.roiCrc >= summary.selicRate ? 'ROI do CRC acima da SELIC.' : 'ROI do CRC abaixo da SELIC.');
 
-  if (summary.marketingRoi < expectedMargins.marketingRoi.min && summary.totalMarketingCost > 0) diagnostics.push('ROI de marketing abaixo da margem prevista.');
-  if (summary.cac > expectedMargins.cac.max) diagnostics.push('CAC elevado.');
-  if (summary.cpl > expectedMargins.cpl.max) diagnostics.push('CPL elevado.');
-  if (summary.leadToAppointment < expectedMargins.leadToAppointment.min && summary.leads > 0) diagnostics.push('Baixa conversão de leads.');
-  if (summary.attendanceRate < expectedMargins.attendanceRate.min && summary.appointments > 0) diagnostics.push('Baixo comparecimento.');
-  if (summary.closingRate < expectedMargins.closingRate.min && summary.attendances > 0) diagnostics.push('Baixo fechamento.');
+  if (summary.marketingRoi < margins.marketingRoi.min && summary.totalMarketingCost > 0) diagnostics.push('ROI de marketing abaixo da margem prevista.');
+  if (summary.cac > margins.cac.max) diagnostics.push('CAC elevado.');
+  if (summary.cpl > margins.cpl.max) diagnostics.push('CPL elevado.');
+  if (summary.leadToAppointment < margins.leadToAppointment.min && summary.leads > 0) diagnostics.push('Baixa conversão de leads.');
+  if (summary.attendanceRate < margins.attendanceRate.min && summary.appointments > 0) diagnostics.push('Baixo comparecimento.');
+  if (summary.closingRate < margins.closingRate.min && summary.attendances > 0) diagnostics.push('Baixo fechamento.');
 
   const deficitClinic = clinicFinancials.find((clinic) => clinic.profit < 0);
   if (deficitClinic) diagnostics.push(`Clínica ${deficitClinic.label} apresenta prejuízo operacional.`);
@@ -364,8 +414,9 @@ function buildSummary(rows) {
   };
 }
 
-function buildFinancialIntelligencePayload(rawRows) {
-  const table = rawRows.map(enrichFinancialRow);
+function buildFinancialIntelligencePayload(rawRows, rules = DEFAULT_FINANCIAL_RULES) {
+  const normalizedRules = normalizeFinancialRules(rules);
+  const table = rawRows.map((row) => enrichFinancialRow(row, normalizedRules));
   const summary = buildSummary(table);
   const clinicFinancials = groupFinancialRows(table, (row) => row.clinic_name).sort(sortBy('profit'));
   const collaboratorFinancials = groupFinancialRows(table, (row) => row.collaborator_name).sort(sortBy('profit'));
@@ -377,8 +428,7 @@ function buildFinancialIntelligencePayload(rawRows) {
     .sort((a, b) => String(a.label).localeCompare(String(b.label)))
     .map((item) => ({
       ...item,
-      selicRate: summary.selicRate,
-      roiVsSelic: round(item.roi - summary.selicRate)
+      roiVsSelic: round(item.roi - item.selicRate)
     }));
 
   summary.revenueByClinic = clinicFinancials.length ? round(summary.totalRevenue / clinicFinancials.length) : 0;
@@ -425,7 +475,7 @@ function buildFinancialIntelligencePayload(rawRows) {
       costByRole: roleFinancials,
       historicalSeries: monthlySeries
     },
-    diagnostics: buildFinancialDiagnostics(summary, clinicFinancials, collaboratorFinancials, roleFinancials),
+    diagnostics: buildFinancialDiagnostics(summary, clinicFinancials, collaboratorFinancials, roleFinancials, normalizedRules),
     table,
     clinicFinancials,
     collaboratorFinancials,
@@ -433,14 +483,15 @@ function buildFinancialIntelligencePayload(rawRows) {
       roiCrc: summary.roiCrc,
       selicRate: summary.selicRate,
       difference: summary.roiCrcVsSelic,
-      status: summary.roiCrcVsSelic >= 1
+      status: summary.roiCrcVsSelic >= normalizedRules.selicComparisonTolerance
         ? 'above'
-        : summary.roiCrcVsSelic >= -1
+        : summary.roiCrcVsSelic >= -normalizedRules.selicComparisonTolerance
           ? 'near'
           : 'below'
     },
     historicalSeries: monthlySeries,
-    expectedMargins
+    expectedMargins: normalizedRules.expectedMargins,
+    financialRules: normalizedRules
   };
 }
 
@@ -451,6 +502,7 @@ function matchesFinancialStatus(row, status) {
 
 module.exports = {
   DEFAULT_SELIC_RATE,
+  DEFAULT_FINANCIAL_RULES,
   administrativeCostFields,
   buildFinancialIntelligencePayload,
   calculateFinancialMetrics,
@@ -459,6 +511,7 @@ module.exports = {
   editableFinancialFields,
   enrichFinancialRow,
   expectedMargins,
+  normalizeFinancialRules,
   integerFields,
   matchesFinancialStatus,
   moneyFields,

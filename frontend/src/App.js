@@ -16,12 +16,14 @@ import NpsSurveyPage from './NpsSurveyPage';
 import NpsManagement from './NpsManagement';
 import NpsDashboard from './NpsDashboard';
 import AdminPanel from './AdminPanel';
+import MasterControlCenter from './MasterControlCenter';
 import MasterMonitoring from './MasterMonitoring';
 import PatientManagement from './PatientManagementPage';
 import CrmWorkspace from './CrmWorkspace';
 import FinancialCampaignUnitDashboard from './pages/FinancialCampaignUnitDashboard';
 import FinancialIntelligence from './pages/FinancialIntelligence';
 import FinancialIntelligenceManage from './pages/FinancialIntelligenceManage';
+import FinancialIntelligenceRecord from './pages/FinancialIntelligenceRecord';
 import { PermissionRoute, ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
 import './App.css';
 
@@ -86,10 +88,17 @@ function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<PermissionRoute permission="home" />}>
           <Route path="/home" element={<Home />} />
-          <Route path="/home/financial-intelligence" element={<FinancialIntelligence />} />
-          <Route path="/home/financial-intelligence/campaigns" element={<FinancialCampaignUnitDashboard />} />
-          <Route path="/home/financial-intelligence/manage" element={<FinancialIntelligenceManage />} />
           <Route path="/perfil" element={<Profile />} />
+        </Route>
+        <Route element={<PermissionRoute permission="financial_dashboard" />}>
+          <Route path="/home/financial-intelligence" element={<FinancialIntelligence />} />
+        </Route>
+        <Route element={<PermissionRoute permission="financial_campaigns" />}>
+          <Route path="/home/financial-intelligence/campaigns" element={<FinancialCampaignUnitDashboard />} />
+        </Route>
+        <Route element={<PermissionRoute permission="financial_management" />}>
+          <Route path="/home/financial-intelligence/manage" element={<FinancialIntelligenceManage />} />
+          <Route path="/home/financial-intelligence/manage/:id" element={<FinancialIntelligenceRecord />} />
         </Route>
         <Route path="/gestao/:id" element={<ComplaintDetail />} />
         <Route element={<PermissionRoute permission="complaints_register" />}>
@@ -114,6 +123,7 @@ function App() {
         </Route>
         <Route element={<PermissionRoute masterOnly />}>
           <Route path="/admin" element={<AdminPanel />} />
+          <Route path="/admin/controle-master" element={<MasterControlCenter />} />
           <Route path="/admin/monitoria" element={<MasterMonitoring />} />
         </Route>
         <Route element={<PermissionRoute permission="patient_management" />}>

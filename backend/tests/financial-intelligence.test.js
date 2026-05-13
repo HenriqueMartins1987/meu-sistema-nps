@@ -21,16 +21,32 @@ test('financial intelligence calculates CRC ROI and SELIC comparison safely', ()
     appointments: 40,
     attendances: 30,
     closings: 10,
-    selic_rate: 13.75
+    selic_rate: 1.08
   });
 
   assert.equal(metrics.total_crc_cost, 5000);
   assert.equal(metrics.profit, 5000);
   assert.equal(metrics.roi_crc, 100);
-  assert.equal(metrics.roi_crc_vs_selic, 86.25);
+  assert.equal(metrics.roi_crc_vs_selic, 98.92);
   assert.equal(metrics.cac, 150);
   assert.equal(metrics.cpl, 15);
   assert.equal(metrics.average_ticket, 1000);
+});
+
+test('financial intelligence parses decimal points without multiplying values', () => {
+  const metrics = calculateFinancialMetrics({
+    revenue: '10000.00',
+    marketing_investment: '1000.00',
+    leads: 10,
+    appointments: 5,
+    attendances: 4,
+    closings: 2,
+    selic_rate: 1.08
+  });
+
+  assert.equal(metrics.total_marketing_cost, 1000);
+  assert.equal(metrics.profit, 9000);
+  assert.equal(metrics.roas, 10);
 });
 
 test('financial intelligence payload keeps historical monthly series', () => {

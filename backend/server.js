@@ -22,12 +22,14 @@ const { clinicSeed, legacyDefaultClinicNames } = require('./clinicSeed');
 const emailService = require('./services/emailService');
 const {
   DEFAULT_SELIC_RATE,
+  DEFAULT_FINANCIAL_RULES,
   buildFinancialIntelligencePayload,
   editableFinancialFields,
   enrichFinancialRow,
   integerFields: financialIntegerFields,
   matchesFinancialStatus,
   moneyFields: financialMoneyFields,
+  normalizeFinancialRules,
   toNumber: toFinancialNumber
 } = require('./services/financialIntelligenceService');
 const {
@@ -1882,6 +1884,15 @@ async function ensureDatabaseSchema() {
       INDEX idx_financial_collaborator (collaborator_id),
       INDEX idx_financial_campaign (campaign),
       INDEX idx_financial_channel (channel)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS system_settings (
+      setting_key VARCHAR(120) PRIMARY KEY,
+      setting_value LONGTEXT NULL,
+      updated_by VARCHAR(180) NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
     )
   `);
 
@@ -10282,8 +10293,67 @@ let cachedSelicRate = {
   value: null,
   source: 'fallback',
   updatedAt: 0,
-  referenceDate: null
+  referenceDate: null,
+  periodType: 'monthly_consolidated'
 };
+
+let cachedSelicMonthlySeries = {
+  rows: [],
+  updatedAt: 0
+};
+
+function parseBrazilianDate(value) {
+  const match = String(value || '').match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return null;
+  return new Date(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+}
+
+function toFinancialMonthKey(value) {
+  if (!value) return null;
+
+  const brazilianDate = parseBrazilianDate(value);
+  const date = brazilianDate || new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+async function getSelicMonthlySeries() {
+  const cacheTtlMs = 6 * 60 * 60 * 1000;
+
+  if (cachedSelicMonthlySeries.rows.length && Date.now() - cachedSelicMonthlySeries.updatedAt < cacheTtlMs) {
+    return cachedSelicMonthlySeries.rows;
+  }
+
+  try {
+    const response = await axios.get(
+      'https://api.bcb.gov.br/dados/serie/bcdata.sgs.4390/dados/ultimos/72?formato=json',
+      { timeout: 7000 }
+    );
+    const rows = Array.isArray(response.data)
+      ? response.data
+        .map((item) => ({
+          month: toFinancialMonthKey(item.data),
+          value: toFinancialNumber(item.valor),
+          referenceDate: item.data
+        }))
+        .filter((item) => item.month && item.value > 0)
+        .sort((a, b) => String(a.month).localeCompare(String(b.month)))
+      : [];
+
+    if (rows.length) {
+      cachedSelicMonthlySeries = {
+        rows,
+        updatedAt: Date.now()
+      };
+      return rows;
+    }
+  } catch (error) {
+    console.warn('Não foi possível consultar a SELIC mensal no Banco Central:', error.message);
+  }
+
+  return cachedSelicMonthlySeries.rows;
+}
 
 async function getCurrentSelicRate() {
   const cacheTtlMs = 6 * 60 * 60 * 1000;
@@ -10292,34 +10362,72 @@ async function getCurrentSelicRate() {
     return cachedSelicRate;
   }
 
-  try {
-    const response = await axios.get(
-      'https://api.bcb.gov.br/dados/serie/bcdata.sgs.432/dados/ultimos/1?formato=json',
-      { timeout: 7000 }
-    );
-    const latest = Array.isArray(response.data) ? response.data[0] : null;
-    const value = toFinancialNumber(latest?.valor);
+  const rows = await getSelicMonthlySeries();
+  const latest = rows[rows.length - 1];
 
-    if (value > 0) {
-      cachedSelicRate = {
-        value,
-        source: 'BCB SGS 432',
-        updatedAt: Date.now(),
-        referenceDate: latest?.data || null
-      };
-      return cachedSelicRate;
-    }
-  } catch (error) {
-    console.warn('Não foi possível consultar a SELIC no Banco Central:', error.message);
+  if (latest?.value > 0) {
+    cachedSelicRate = {
+      value: latest.value,
+      source: 'BCB SGS 4390',
+      updatedAt: Date.now(),
+      referenceDate: latest.referenceDate || null,
+      periodType: 'monthly_consolidated',
+      description: 'SELIC acumulada no mês, série SGS 4390 do Banco Central'
+    };
+    return cachedSelicRate;
   }
 
   cachedSelicRate = {
     value: DEFAULT_SELIC_RATE,
     source: 'fallback',
     updatedAt: Date.now(),
-    referenceDate: null
+    referenceDate: null,
+    periodType: 'monthly_consolidated',
+    description: 'Fallback mensal equivalente ao parâmetro interno do sistema'
   };
   return cachedSelicRate;
+}
+
+async function applyMonthlySelicToRows(rows = []) {
+  const current = await getCurrentSelicRate();
+  const monthlySeries = await getSelicMonthlySeries();
+  const byMonth = new Map(monthlySeries.map((item) => [item.month, item.value]));
+
+  return rows.map((row) => {
+    const month = toFinancialMonthKey(row.date);
+    const monthlyValue = byMonth.get(month);
+    const storedValue = toFinancialNumber(row.selic_rate);
+
+    return {
+      ...row,
+      selic_rate: monthlyValue || (storedValue > 0 && storedValue <= 5 ? storedValue : current.value)
+    };
+  });
+}
+
+async function getFinancialSettings() {
+  try {
+    const [rows] = await pool.query(
+      'SELECT setting_value FROM system_settings WHERE setting_key = ? LIMIT 1',
+      ['financial_rules']
+    );
+    const parsed = rows[0]?.setting_value ? JSON.parse(rows[0].setting_value) : {};
+    return normalizeFinancialRules(parsed);
+  } catch (error) {
+    console.warn('Não foi possível carregar regras financeiras:', error.message);
+    return normalizeFinancialRules(DEFAULT_FINANCIAL_RULES);
+  }
+}
+
+async function saveFinancialSettings(settings, user) {
+  const normalized = normalizeFinancialRules(settings);
+  await pool.query(
+    `INSERT INTO system_settings (setting_key, setting_value, updated_by)
+     VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by)`,
+    ['financial_rules', JSON.stringify(normalized), getActorName(user)]
+  );
+  return normalized;
 }
 
 async function getClinicSnapshot(clinicId) {
@@ -10413,8 +10521,9 @@ async function buildFinancialPayload(body = {}, user = {}) {
     payload[field] = sanitizeFinancialString(body[field]);
   });
 
-  if (!payload.selic_rate) {
-    payload.selic_rate = DEFAULT_SELIC_RATE;
+  if (!payload.selic_rate || payload.selic_rate > 5) {
+    const monthlySelic = await getCurrentSelicRate();
+    payload.selic_rate = monthlySelic.value || DEFAULT_SELIC_RATE;
   }
 
   const collaborator = await getCrcCollaboratorById(payload.collaborator_id);
@@ -10531,13 +10640,35 @@ async function handleGetFinancialIntelligence(req, res) {
         ORDER BY date DESC, id DESC`,
       params
     );
-    const enrichedRows = rows.map(enrichFinancialRow)
+    const financialRules = await getFinancialSettings();
+    const rowsWithMonthlySelic = await applyMonthlySelicToRows(rows);
+    const enrichedRows = rowsWithMonthlySelic.map((row) => enrichFinancialRow(row, financialRules))
       .filter((row) => matchesFinancialStatus(row, req.query.status));
 
-    return res.json(buildFinancialIntelligencePayload(enrichedRows));
+    return res.json(buildFinancialIntelligencePayload(enrichedRows, financialRules));
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao carregar Inteligência Financeira CRC.' });
+  }
+}
+
+async function handleGetFinancialIntelligenceRecord(req, res) {
+  try {
+    const [rows] = await pool.query(
+      'SELECT * FROM financial_intelligence WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+      [req.params.id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Lançamento financeiro não encontrado.' });
+    }
+
+    const financialRules = await getFinancialSettings();
+    const [rowWithSelic] = await applyMonthlySelicToRows(rows);
+    return res.json(enrichFinancialRow(rowWithSelic, financialRules));
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar lançamento financeiro.' });
   }
 }
 
@@ -10560,7 +10691,9 @@ async function handleCreateFinancialIntelligence(req, res) {
     );
 
     const [rows] = await pool.query('SELECT * FROM financial_intelligence WHERE id = ? LIMIT 1', [result.insertId]);
-    return res.status(201).json(enrichFinancialRow(rows[0]));
+    const financialRules = await getFinancialSettings();
+    const [rowWithSelic] = await applyMonthlySelicToRows(rows);
+    return res.status(201).json(enrichFinancialRow(rowWithSelic, financialRules));
   } catch (error) {
     console.error(error);
     return res.status(400).json({ error: error.message || 'Erro ao criar lançamento financeiro.' });
@@ -10601,7 +10734,9 @@ async function handleUpdateFinancialIntelligence(req, res) {
     );
 
     const [rows] = await pool.query('SELECT * FROM financial_intelligence WHERE id = ? LIMIT 1', [req.params.id]);
-    return res.json(enrichFinancialRow(rows[0]));
+    const financialRules = await getFinancialSettings();
+    const [rowWithSelic] = await applyMonthlySelicToRows(rows);
+    return res.json(enrichFinancialRow(rowWithSelic, financialRules));
   } catch (error) {
     console.error(error);
     return res.status(400).json({ error: error.message || 'Erro ao atualizar lançamento financeiro.' });
@@ -10615,16 +10750,66 @@ async function handleDeleteFinancialIntelligence(req, res) {
     }
 
     await pool.query(
-      `UPDATE financial_intelligence
-          SET deleted_at = NOW(), deleted_by = ?
-        WHERE id = ? AND deleted_at IS NULL`,
-      [getActorName(req.user), req.params.id]
+      'DELETE FROM financial_intelligence WHERE id = ?',
+      [req.params.id]
     );
 
-    return res.json({ message: 'Lançamento financeiro excluído com histórico preservado.' });
+    return res.json({ message: 'Lançamento financeiro excluído definitivamente e removido dos dashboards.' });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao excluir lançamento financeiro.' });
+  }
+}
+
+async function handleGetFinancialSettings(req, res) {
+  try {
+    if (!isMasterAdminUser(req.user)) {
+      return res.status(403).json({ error: 'Acesso restrito ao Administrador Master.' });
+    }
+
+    return res.json(await getFinancialSettings());
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar regras financeiras.' });
+  }
+}
+
+async function handleUpdateFinancialSettings(req, res) {
+  try {
+    if (!isMasterAdminUser(req.user)) {
+      return res.status(403).json({ error: 'Acesso restrito ao Administrador Master.' });
+    }
+
+    const settings = await saveFinancialSettings(req.body || {}, req.user);
+    return res.json(settings);
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao atualizar regras financeiras.' });
+  }
+}
+
+async function handleClearFinancialTestRecords(req, res) {
+  try {
+    if (!isMasterAdminUser(req.user)) {
+      return res.status(403).json({ error: 'Acesso restrito ao Administrador Master.' });
+    }
+
+    const [result] = await pool.query(
+      `DELETE FROM financial_intelligence
+        WHERE deleted_at IS NOT NULL
+           OR LOWER(COALESCE(campaign, '')) LIKE '%teste%'
+           OR LOWER(COALESCE(notes, '')) LIKE '%teste%'
+           OR LOWER(COALESCE(clinic_name, '')) LIKE '%teste%'
+           OR LOWER(COALESCE(operator_name, '')) LIKE '%teste%'`
+    );
+
+    return res.json({
+      message: 'Registros financeiros de teste removidos definitivamente.',
+      deleted: result.affectedRows || 0
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao limpar registros financeiros de teste.' });
   }
 }
 
@@ -10771,9 +10956,14 @@ async function handleDeleteCrcCollaborator(req, res) {
 
 app.get(['/financial-intelligence', '/api/financial-intelligence'], authenticate, requireFinancialView, handleGetFinancialIntelligence);
 app.get(['/financial-intelligence/selic', '/api/financial-intelligence/selic'], authenticate, requireFinancialView, handleGetFinancialSelic);
+app.get(['/financial-intelligence/:id', '/api/financial-intelligence/:id'], authenticate, requireFinancialView, handleGetFinancialIntelligenceRecord);
 app.post(['/financial-intelligence', '/api/financial-intelligence'], authenticate, requireFinancialView, handleCreateFinancialIntelligence);
 app.put(['/financial-intelligence/:id', '/api/financial-intelligence/:id'], authenticate, requireFinancialView, handleUpdateFinancialIntelligence);
 app.delete(['/financial-intelligence/:id', '/api/financial-intelligence/:id'], authenticate, requireFinancialView, handleDeleteFinancialIntelligence);
+
+app.get(['/admin/financial-settings', '/api/admin/financial-settings'], authenticate, handleGetFinancialSettings);
+app.put(['/admin/financial-settings', '/api/admin/financial-settings'], authenticate, handleUpdateFinancialSettings);
+app.post(['/admin/financial-maintenance/clear-test-records', '/api/admin/financial-maintenance/clear-test-records'], authenticate, handleClearFinancialTestRecords);
 
 app.get(['/crc-collaborators', '/api/crc-collaborators'], authenticate, requireFinancialView, handleGetCrcCollaborators);
 app.post(['/crc-collaborators', '/api/crc-collaborators'], authenticate, requireFinancialView, handleCreateCrcCollaborator);

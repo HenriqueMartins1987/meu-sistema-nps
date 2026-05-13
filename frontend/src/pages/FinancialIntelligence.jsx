@@ -58,7 +58,24 @@ function metricTone(value, type = 'neutral') {
 }
 
 function toNumber(value) {
-  const parsed = Number(String(value ?? 0).replace(',', '.'));
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  let normalized = String(value ?? 0)
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/[R$%]/g, '');
+  const hasComma = normalized.includes(',');
+  const hasDot = normalized.includes('.');
+
+  if (hasComma && hasDot) {
+    normalized = normalized.replace(/\./g, '').replace(',', '.');
+  } else if (hasComma) {
+    normalized = normalized.replace(',', '.');
+  } else if (hasDot && /^\d{1,3}(\.\d{3})+$/.test(normalized)) {
+    normalized = normalized.replace(/\./g, '');
+  }
+
+  normalized = normalized.replace(/[^\d.-]/g, '');
+  const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
@@ -283,9 +300,9 @@ function FinancialIntelligence() {
     {
       label: 'ROI CRC vs SELIC',
       value: formatPercent(realSelicDifference),
-      detail: `SELIC real BCB: ${formatPercent(realSelicRate)}`,
+      detail: `SELIC mensal BCB: ${formatPercent(realSelicRate)}`,
       tone: metricTone(realSelicDifference, 'selic'),
-      explanation: 'Compara o ROI do CRC com a SELIC obtida pelo backend no serviço do Banco Central. Mostra se o CRC está gerando retorno acima ou abaixo da referência financeira.'
+      explanation: 'Compara o ROI do CRC com a SELIC mensal consolidada obtida pelo backend na série SGS 4390 do Banco Central. Mostra se o CRC está gerando retorno acima ou abaixo da referência financeira do mês.'
     },
     {
       label: 'Investimento Marketing',
@@ -447,7 +464,7 @@ function FinancialIntelligence() {
         <article className={realSelicStatus}>
           <p className="eyebrow">Comparativo SELIC</p>
           <strong>{formatPercent(realSelicDifference)}</strong>
-          <span>SELIC Banco Central {formatPercent(realSelicRate)} · {realSelicReference}</span>
+          <span>SELIC mensal Banco Central {formatPercent(realSelicRate)} · {realSelicReference}</span>
         </article>
       </section>
 
@@ -461,11 +478,11 @@ function FinancialIntelligence() {
         <div>
           <p className="eyebrow">ROI CRC vs SELIC</p>
           <h2>{realSelicStatus === 'above' ? 'CRC performando acima da SELIC' : realSelicStatus === 'below' ? 'CRC performando abaixo da SELIC' : 'CRC próximo da SELIC'}</h2>
-          <p>Comparação entre o ROI operacional do CRC e a taxa SELIC real consultada no Banco Central.</p>
+          <p>Comparação entre o ROI operacional do CRC e a SELIC mensal consolidada consultada no Banco Central.</p>
         </div>
         <div className="financial-selic-values">
           <strong>{formatPercent(summary.roiCrc)}</strong>
-          <span>SELIC BCB {formatPercent(realSelicRate)} · Diferença {formatPercent(realSelicDifference)}</span>
+          <span>SELIC mensal BCB {formatPercent(realSelicRate)} · Diferença {formatPercent(realSelicDifference)}</span>
           <small>Fonte: {String(selicInfo.source || '').toLowerCase().includes('bcb') ? 'Banco Central do Brasil' : 'fallback interno'} · {realSelicReference}</small>
         </div>
       </section>

@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { hasPermission, isMasterAdmin, readUser } from '../constants';
 
-const DEFAULT_SELIC = 13.75;
+const DEFAULT_SELIC = 1.08;
 const FINANCIAL_CENTRAL_CLINIC = { id: 'central-crc', name: 'Escritório Central - CRC', unit: 'CRC' };
 
 const CRC_FUNCTION_OPTIONS = [
@@ -35,7 +35,7 @@ const generalFields = [
   ['function_name', 'Função/Cargo', 'readonly'],
   ['campaign', 'Campanha', 'text'],
   ['channel', 'Canal', 'select', ['WhatsApp', 'Instagram', 'Facebook', 'Google', 'Indicação', 'Telefone', 'Presencial', 'Outros']],
-  ['selic_rate', 'SELIC anual', 'readonlyPercent']
+  ['selic_rate', 'SELIC mensal consolidada', 'readonlyPercent']
 ];
 
 const productionFields = [
@@ -162,7 +162,24 @@ function formatPercent(value) {
 }
 
 function toNumber(value) {
-  const parsed = Number(String(value || 0).replace(',', '.'));
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
+  let normalized = String(value || 0)
+    .trim()
+    .replace(/\s+/g, '')
+    .replace(/[R$%]/g, '');
+  const hasComma = normalized.includes(',');
+  const hasDot = normalized.includes('.');
+
+  if (hasComma && hasDot) {
+    normalized = normalized.replace(/\./g, '').replace(',', '.');
+  } else if (hasComma) {
+    normalized = normalized.replace(',', '.');
+  } else if (hasDot && /^\d{1,3}(\.\d{3})+$/.test(normalized)) {
+    normalized = normalized.replace(/\./g, '');
+  }
+
+  normalized = normalized.replace(/[^\d.-]/g, '');
+  const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
@@ -637,12 +654,21 @@ function FinancialIntelligenceManage() {
   };
 
   const exportExcel = () => {
+    const period = `Exportado em;${new Date().toLocaleString('pt-BR')}`;
+    const summaryRows = [
+      ['Resumo executivo', ''],
+      ['Receita filtrada', totals.revenue],
+      ['Custo filtrado', totals.cost],
+      ['Lucro filtrado', totals.profit],
+      ['Lançamentos', totals.rows],
+      ['SELIC mensal BCB', selicInfo.value]
+    ].map((row) => row.map(escapeCsv).join(';'));
     const header = allExportFields.map(([, label]) => escapeCsv(label)).join(';');
     const rows = filteredRecords.map((record) => {
       const calculated = normalizeRecord(record);
       return allExportFields.map(([field]) => escapeCsv(calculated[field])).join(';');
     });
-    const blob = new Blob([`\ufeff${[header, ...rows].join('\n')}`], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob([`\ufeff${[period, '', ...summaryRows, '', header, ...rows].join('\n')}`], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
@@ -657,11 +683,27 @@ function FinancialIntelligenceManage() {
     const rows = filteredRecords.map((record) => normalizeRecord(record));
     printWindow.document.write(`
       <html><head><title>Inteligência Financeira CRC</title>
-      <style>body{font-family:Arial,sans-serif;padding:24px;color:#161218}table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #ddcfbc;padding:6px;text-align:left}th{background:#f8f3eb}h1{margin:0 0 16px}</style>
+      <style>
+        body{font-family:Arial,sans-serif;padding:28px;color:#161218;background:#fffdfa}
+        h1{margin:0;color:#2a2218;font-size:26px} .sub{color:#6d5b4b;margin:6px 0 20px}
+        .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:16px 0 22px}
+        .card{border:1px solid #ddcfbc;border-radius:10px;padding:12px;background:#f8f3eb}
+        .card span{display:block;color:#6d5b4b;font-size:10px;text-transform:uppercase;font-weight:700}
+        .card strong{font-size:18px;color:#161218}
+        table{width:100%;border-collapse:collapse;font-size:10.5px;background:#fff}
+        th,td{border:1px solid #ddcfbc;padding:7px;text-align:left;vertical-align:top}
+        th{background:#efe6d8;color:#6d573b;text-transform:uppercase;font-size:9px}
+      </style>
       </head><body><h1>Inteligência Financeira CRC</h1>
-      <p>Receita: ${formatCurrency(totals.revenue)} · Custo: ${formatCurrency(totals.cost)} · Lucro: ${formatCurrency(totals.profit)}</p>
-      <table><thead><tr><th>Data</th><th>Clínica</th><th>Operador</th><th>Campanha</th><th>Receita</th><th>Custo</th><th>Lucro</th><th>ROI</th><th>Status</th></tr></thead>
-      <tbody>${rows.map((row) => `<tr><td>${row.date || ''}</td><td>${row.clinic_name || ''}</td><td>${row.operator_name || ''}</td><td>${row.campaign || ''}</td><td>${formatCurrency(row.revenue)}</td><td>${formatCurrency(row.total_crc_cost)}</td><td>${formatCurrency(row.profit)}</td><td>${formatPercent(row.roi_crc)}</td><td>${row.status || ''}</td></tr>`).join('')}</tbody></table>
+      <p class="sub">Relatório executivo exportado em ${new Date().toLocaleString('pt-BR')} · SELIC mensal BCB ${formatPercent(selicInfo.value)}</p>
+      <section class="cards">
+        <article class="card"><span>Receita</span><strong>${formatCurrency(totals.revenue)}</strong></article>
+        <article class="card"><span>Custo</span><strong>${formatCurrency(totals.cost)}</strong></article>
+        <article class="card"><span>Lucro</span><strong>${formatCurrency(totals.profit)}</strong></article>
+        <article class="card"><span>Lançamentos</span><strong>${totals.rows}</strong></article>
+      </section>
+      <table><thead><tr><th>Data</th><th>Clínica</th><th>Unidade</th><th>Operador</th><th>Campanha</th><th>Canal</th><th>Leads</th><th>Agend.</th><th>Comp.</th><th>Fech.</th><th>Receita</th><th>Custo</th><th>Lucro</th><th>ROI</th><th>ROAS</th><th>CAC</th><th>CPL</th><th>Status</th><th>Diagnóstico</th></tr></thead>
+      <tbody>${rows.map((row) => `<tr><td>${row.date || ''}</td><td>${row.clinic_name || ''}</td><td>${row.unit_name || ''}</td><td>${row.operator_name || ''}</td><td>${row.campaign || ''}</td><td>${row.channel || ''}</td><td>${row.leads || 0}</td><td>${row.appointments || 0}</td><td>${row.attendances || 0}</td><td>${row.closings || 0}</td><td>${formatCurrency(row.revenue)}</td><td>${formatCurrency(row.total_crc_cost)}</td><td>${formatCurrency(row.profit)}</td><td>${formatPercent(row.roi_crc)}</td><td>${Number(row.roas || 0).toFixed(2)}x</td><td>${formatCurrency(row.cac)}</td><td>${formatCurrency(row.cpl)}</td><td>${row.status || ''}</td><td>${row.diagnosis || ''}</td></tr>`).join('')}</tbody></table>
       </body></html>
     `);
     printWindow.document.close();
@@ -782,7 +824,7 @@ function FinancialIntelligenceManage() {
         <label>Buscar<input className="field" value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Clínica, operador, campanha..." /></label>
         <label>Clínica<select className="field" value={clinicFilterValue} onChange={(event) => handleClinicFilterChange(event.target.value)}><option value="">Todas</option><option value={FINANCIAL_CENTRAL_CLINIC.id}>{FINANCIAL_CENTRAL_CLINIC.name}</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label>
         <label>Status<select className="field" value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option value="">Todos</option><option value="excelente">Excelente</option><option value="adequado">Adequado</option><option value="atencao">Atenção</option><option value="critico">Crítico</option></select></label>
-        <label>SELIC Banco Central
+        <label>SELIC mensal BCB
           <button type="button" className="outline-action mini-action" onClick={refreshSelic}>
             {formatPercent(selicInfo.value)}
           </button>
@@ -892,6 +934,18 @@ function FinancialIntelligenceManage() {
                     <td><span className={`financial-status-badge ${record.status}`}>{record.status}</span></td>
                     <td>
                       <div className="financial-row-actions">
+                        {!record.__draft && (
+                          <button
+                            type="button"
+                            className="outline-action mini-action"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              navigate(`/home/financial-intelligence/manage/${record.id}`);
+                            }}
+                          >
+                            Abrir
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="outline-action mini-action"
