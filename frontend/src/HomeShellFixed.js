@@ -149,7 +149,16 @@ function canAccessWeeklyComplaintReport(user) {
   return ['admin', 'supervisor_crc', 'sac_operator', 'manager'].includes(String(user?.role || ''));
 }
 
-function canAccessFinancialIntelligence(user) {
+function canAccessFinancialExecutive(user) {
+  return isAdmin(user) || isMasterAdmin(user);
+}
+
+function canAccessFinancialCampaignDashboard(user) {
+  const role = String(user?.role || '').toLowerCase();
+  return isAdmin(user) || isMasterAdmin(user) || ['manager', 'supervisor_crc'].includes(role);
+}
+
+function canAccessFinancialManagement(user) {
   const role = String(user?.role || '').toLowerCase();
   return isAdmin(user) || isMasterAdmin(user) || ['manager', 'supervisor_crc'].includes(role);
 }
@@ -158,8 +167,6 @@ function HomeShellFixed() {
   const navigate = useNavigate();
   const user = useMemo(() => readUser(), []);
   const masterUser = isMasterAdmin(user);
-  const canOpenFinancialDashboard = isAdmin(user) || isMasterAdmin(user);
-  const financialHomePath = canOpenFinancialDashboard ? '/home/financial-intelligence' : '/home/financial-intelligence/manage';
   const canManageComplaints = hasPermission(user, 'complaints_management');
   const canManagePatients = hasPermission(user, 'patient_management');
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -219,7 +226,9 @@ function HomeShellFixed() {
     {
       title: 'Financeiro CRC',
       items: [
-        { label: 'Inteligência Financeira CRC', path: financialHomePath, permission: 'home', financialOnly: true }
+        { label: 'Dashboard Executivo CRC', path: '/home/financial-intelligence', permission: 'home', financialExecutiveOnly: true },
+        { label: 'Unidade x Campanha', path: '/home/financial-intelligence/campaigns', permission: 'home', financialCampaignOnly: true },
+        { label: 'Gestão Financeira CRC', path: '/home/financial-intelligence/manage', permission: 'home', financialManageOnly: true }
       ]
     },
     {
@@ -230,7 +239,7 @@ function HomeShellFixed() {
         { label: 'Minha conta', path: '/perfil', permission: 'home' }
       ]
     }
-  ]), [financialHomePath]);
+  ]), []);
 
   const visibleSections = menuSections
     .map((section) => ({
@@ -240,7 +249,15 @@ function HomeShellFixed() {
           return false;
         }
 
-        if (item.financialOnly && !canAccessFinancialIntelligence(user)) {
+        if (item.financialExecutiveOnly && !canAccessFinancialExecutive(user)) {
+          return false;
+        }
+
+        if (item.financialCampaignOnly && !canAccessFinancialCampaignDashboard(user)) {
+          return false;
+        }
+
+        if (item.financialManageOnly && !canAccessFinancialManagement(user)) {
           return false;
         }
 

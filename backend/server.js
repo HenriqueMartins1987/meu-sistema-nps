@@ -719,6 +719,11 @@ function canViewFinancialDashboard(user) {
   return isAdminUser(user);
 }
 
+function canViewFinancialCampaignDashboard(user) {
+  const role = String(user?.role || '').trim().toLowerCase();
+  return isAdminUser(user) || ['manager', 'supervisor_crc'].includes(role);
+}
+
 function canManageFinancialIntelligence(user) {
   const role = String(user?.role || '').trim().toLowerCase();
   return isAdminUser(user) || ['manager', 'supervisor_crc'].includes(role);
@@ -10478,8 +10483,14 @@ async function handleGetFinancialSelic(req, res) {
 
 async function handleGetFinancialIntelligence(req, res) {
   try {
-    if (String(req.query.view || '').toLowerCase() === 'dashboard' && !canViewFinancialDashboard(req.user)) {
+    const view = String(req.query.view || '').toLowerCase();
+
+    if (view === 'dashboard' && !canViewFinancialDashboard(req.user)) {
       return res.status(403).json({ error: 'Dashboard financeiro restrito ao Administrador Master e Administradores.' });
+    }
+
+    if (view === 'campaign_unit' && !canViewFinancialCampaignDashboard(req.user)) {
+      return res.status(403).json({ error: 'Dashboard por unidade e campanha restrito à Gerência CRC, Supervisão CRC e Administradores.' });
     }
 
     const { where, params } = buildFinancialWhere(req.query, req.user);

@@ -24,7 +24,7 @@ import api from '../api';
 import { isAdmin, isMasterAdmin, readUser } from '../constants';
 
 const chartColors = ['#8e6731', '#1f7a8c', '#6d573b', '#c89a57', '#c44536', '#4c956c', '#5d6d7e'];
-const FINANCIAL_CENTRAL_CLINIC = { id: 'central-crc', name: 'Escritório Central - CRC', unit: 'CRC' };
+const FINANCIAL_CENTRAL_CLINIC = { id: 'central-crc', name: 'Escritório Central - CRC' };
 
 function canViewFinancial(user) {
   return isAdmin(user) || isMasterAdmin(user);
@@ -127,11 +127,6 @@ function FinancialIntelligence() {
     endDate: today,
     clinicId: '',
     clinicName: '',
-    unit: '',
-    operatorId: '',
-    role: '',
-    functionName: '',
-    supervisorId: '',
     campaign: '',
     channel: '',
     status: ''
@@ -175,11 +170,6 @@ function FinancialIntelligence() {
     const unique = (field) => Array.from(new Set(table.map((row) => row[field]).filter(Boolean))).sort();
 
     return {
-      units: unique('unit_name'),
-      operators: Array.from(new Map(table.filter((row) => row.operator_name).map((row) => [row.operator_id || row.operator_name, row.operator_name])).entries()),
-      supervisors: Array.from(new Map(table.filter((row) => row.supervisor_name).map((row) => [row.supervisor_id || row.supervisor_name, row.supervisor_name])).entries()),
-      roles: unique('role'),
-      functions: unique('function_name'),
       campaigns: unique('campaign'),
       channels: unique('channel')
     };
@@ -192,7 +182,6 @@ function FinancialIntelligence() {
         ...current,
         clinicId: '',
         clinicName: FINANCIAL_CENTRAL_CLINIC.name,
-        unit: FINANCIAL_CENTRAL_CLINIC.unit
       }));
       return;
     }
@@ -219,12 +208,13 @@ function FinancialIntelligence() {
     ['Fechamento', formatPercent(summary.closingRate), 'Comparecimentos convertidos', summary.closingRate >= 40 ? 'success' : 'warning'],
     ['Receita por Clínica', formatCurrency(summary.revenueByClinic), 'Média por clínica filtrada', 'neutral'],
     ['Custo por Clínica', formatCurrency(summary.costByClinic), 'Média por clínica filtrada', 'neutral'],
-    ['Lucro por Clínica', formatCurrency(summary.profitByClinic), 'Média de resultado por clínica', metricTone(summary.profitByClinic, 'money')],
-    ['Custo Total com Colaboradores', formatCurrency(summary.totalCollaboratorCost), 'Folha e custos vinculados', 'neutral'],
-    ['Custo Médio por Colaborador', formatCurrency(summary.averageCollaboratorCost), 'Média por colaborador', 'neutral'],
-    ['Receita por Colaborador', formatCurrency(summary.revenueByCollaborator), 'Produtividade média', 'neutral'],
-    ['ROI por Colaborador', formatPercent(summary.roiByCollaborator), 'Média de retorno individual', metricTone(summary.roiByCollaborator, 'roi')]
+    ['Lucro por Clínica', formatCurrency(summary.profitByClinic), 'Média de resultado por clínica', metricTone(summary.profitByClinic, 'money')]
   ];
+
+  const executiveDiagnostics = useMemo(
+    () => (data?.diagnostics || []).filter((item) => !/^(Colaborador|Função)\b/i.test(item)),
+    [data?.diagnostics]
+  );
 
   if (!allowed) {
     return (
@@ -245,9 +235,12 @@ function FinancialIntelligence() {
         <div>
           <p className="eyebrow">Inteligência Financeira do CRC</p>
           <h1>Dashboard Executivo</h1>
-          <p>BI financeiro para margem, ROI, custos, funil comercial, marketing, clínicas e colaboradores.</p>
+          <p>Visão diretiva de margem, ROI, custos, funil comercial, marketing e clínicas.</p>
         </div>
         <div className="heading-actions">
+          <button className="outline-action" onClick={() => navigate('/home/financial-intelligence/campaigns')}>
+            Unidade x Campanha
+          </button>
           {canManage && (
             <button className="primary-action" onClick={() => navigate('/home/financial-intelligence/manage')}>
               Gestão de dados
@@ -261,10 +254,6 @@ function FinancialIntelligence() {
         <label>Período inicial<input className="field" type="date" value={filters.startDate} onChange={(event) => setFilters((current) => ({ ...current, startDate: event.target.value }))} /></label>
         <label>Período final<input className="field" type="date" value={filters.endDate} onChange={(event) => setFilters((current) => ({ ...current, endDate: event.target.value }))} /></label>
         <label>Clínica<select className="field" value={clinicFilterValue} onChange={(event) => handleClinicFilterChange(event.target.value)}><option value="">Todas</option><option value={FINANCIAL_CENTRAL_CLINIC.id}>{FINANCIAL_CENTRAL_CLINIC.name}</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label>
-        <label>Unidade<select className="field" value={filters.unit} onChange={(event) => setFilters((current) => ({ ...current, unit: event.target.value }))}><option value="">Todas</option>{optionSets.units.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-        <label>Operador<select className="field" value={filters.operatorId} onChange={(event) => setFilters((current) => ({ ...current, operatorId: event.target.value }))}><option value="">Todos</option>{optionSets.operators.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
-        <label>Função/Cargo<select className="field" value={filters.functionName} onChange={(event) => setFilters((current) => ({ ...current, functionName: event.target.value }))}><option value="">Todos</option>{optionSets.functions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
-        <label>Supervisor<select className="field" value={filters.supervisorId} onChange={(event) => setFilters((current) => ({ ...current, supervisorId: event.target.value }))}><option value="">Todos</option>{optionSets.supervisors.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
         <label>Campanha<select className="field" value={filters.campaign} onChange={(event) => setFilters((current) => ({ ...current, campaign: event.target.value }))}><option value="">Todas</option>{optionSets.campaigns.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
         <label>Canal<select className="field" value={filters.channel} onChange={(event) => setFilters((current) => ({ ...current, channel: event.target.value }))}><option value="">Todos</option>{optionSets.channels.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
         <label>Status<select className="field" value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option value="">Todos</option><option value="excelente">Excelente</option><option value="adequado">Adequado</option><option value="atencao">Atenção</option><option value="critico">Crítico</option></select></label>
@@ -272,6 +261,24 @@ function FinancialIntelligence() {
 
       {feedback && <p className="form-feedback">{feedback}</p>}
       {loading && <div className="financial-skeleton">Carregando indicadores financeiros...</div>}
+
+      <section className="financial-executive-overview">
+        <article>
+          <p className="eyebrow">Resultado consolidado</p>
+          <strong>{formatCurrency(summary.profit)}</strong>
+          <span>Receita {formatCurrency(summary.totalRevenue)} · Custo {formatCurrency(summary.totalCost)}</span>
+        </article>
+        <article>
+          <p className="eyebrow">Eficiência do CRC</p>
+          <strong>{formatPercent(summary.roiCrc)}</strong>
+          <span>Margem líquida {formatPercent(summary.netMargin)} · ROAS {Number(summary.roas || 0).toFixed(2)}x</span>
+        </article>
+        <article className={data?.roiVsSelic?.status || 'near'}>
+          <p className="eyebrow">Comparativo SELIC</p>
+          <strong>{formatPercent(summary.roiCrcVsSelic)}</strong>
+          <span>SELIC média {formatPercent(summary.selicRate)}</span>
+        </article>
+      </section>
 
       <section className="financial-metric-grid">
         {metrics.map(([label, value, detail, tone]) => (
@@ -297,8 +304,8 @@ function FinancialIntelligence() {
           <h2>Análise executiva do período</h2>
         </div>
         <div className="financial-diagnostic-grid">
-          {(data?.diagnostics || []).map((item) => <span key={item}>{item}</span>)}
-          {!data?.diagnostics?.length && <span>Sem alertas para o período selecionado.</span>}
+          {executiveDiagnostics.map((item) => <span key={item}>{item}</span>)}
+          {!executiveDiagnostics.length && <span>Sem alertas para o período selecionado.</span>}
         </div>
       </section>
 
@@ -322,7 +329,6 @@ function FinancialIntelligence() {
         <ChartCard title="ROI por campanha"><ResponsiveContainer><BarChart data={data?.charts?.campaignRoi || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Bar dataKey="roi" name="ROI %" fill="#8e6731" /></BarChart></ResponsiveContainer></ChartCard>
         <ChartCard title="CAC por campanha"><ResponsiveContainer><BarChart data={data?.charts?.campaignCac || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Bar dataKey="cac" name="CAC R$" fill="#c44536" /></BarChart></ResponsiveContainer></ChartCard>
         <ChartCard title="CPL por campanha"><ResponsiveContainer><BarChart data={data?.charts?.campaignCpl || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Bar dataKey="cpl" name="CPL R$" fill="#d4a764" /></BarChart></ResponsiveContainer></ChartCard>
-        <ChartCard title="Ranking de operadores"><RankingList rows={data?.rankings?.operators || []} valueKey="closings" formatter={formatNumber} /></ChartCard>
         <ChartCard title="Ranking de clínicas"><RankingList rows={data?.rankings?.clinics || []} valueKey="profit" /></ChartCard>
         <ChartCard title="Receita por clínica"><ResponsiveContainer><BarChart data={data?.charts?.revenueByClinic || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Bar dataKey="revenue" name="Receita R$" fill="#1f7a8c" /></BarChart></ResponsiveContainer></ChartCard>
         <ChartCard title="Custo por clínica"><ResponsiveContainer><BarChart data={data?.charts?.costByClinic || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Bar dataKey="cost" name="Custo R$" fill="#c89a57" /></BarChart></ResponsiveContainer></ChartCard>
@@ -332,10 +338,6 @@ function FinancialIntelligence() {
         <ChartCard title="Ranking de canais"><RankingList rows={data?.rankings?.channels || []} valueKey="profit" /></ChartCard>
         <ChartCard title="Evolução mensal"><ResponsiveContainer><AreaChart data={data?.charts?.monthlyEvolution || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Area type="monotone" dataKey="revenue" name="Receita" stroke="#1f7a8c" fill="#1f7a8c33" /><Area type="monotone" dataKey="cost" name="Custo" stroke="#c89a57" fill="#c89a5733" /></AreaChart></ResponsiveContainer></ChartCard>
         <ChartCard title="ROI CRC vs SELIC"><ResponsiveContainer><LineChart data={data?.charts?.roiVsSelic || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Legend /><Line type="monotone" dataKey="roi" name="ROI CRC" stroke="#4c956c" strokeWidth={3} /><Line type="monotone" dataKey="selicRate" name="SELIC" stroke="#c44536" strokeWidth={2} /></LineChart></ResponsiveContainer></ChartCard>
-        <ChartCard title="Custo por colaborador"><ResponsiveContainer><BarChart data={data?.charts?.costByCollaborator || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Bar dataKey="collaboratorCost" name="Custo R$" fill="#c89a57" /></BarChart></ResponsiveContainer></ChartCard>
-        <ChartCard title="ROI por colaborador"><ResponsiveContainer><BarChart data={data?.charts?.roiByCollaborator || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Bar dataKey="roi" name="ROI %" fill="#8e6731" /></BarChart></ResponsiveContainer></ChartCard>
-        <ChartCard title="Receita por colaborador"><ResponsiveContainer><BarChart data={data?.charts?.revenueByCollaborator || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Bar dataKey="revenue" name="Receita R$" fill="#1f7a8c" /></BarChart></ResponsiveContainer></ChartCard>
-        <ChartCard title="Custo por função/cargo"><ResponsiveContainer><BarChart data={data?.charts?.costByRole || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Bar dataKey="collaboratorCost" name="Custo R$" fill="#6d573b" /></BarChart></ResponsiveContainer></ChartCard>
         <ChartCard title="Série histórica" subtitle="Receita, custo, lucro e ROI" className="large"><ResponsiveContainer><ComposedChart data={data?.charts?.historicalSeries || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Legend /><Bar dataKey="revenue" name="Receita" fill="#1f7a8c" /><Bar dataKey="cost" name="Custo" fill="#c89a57" /><Line dataKey="profit" name="Lucro" stroke="#4c956c" strokeWidth={3} /><Line dataKey="roi" name="ROI" stroke="#8e6731" strokeWidth={2} /></ComposedChart></ResponsiveContainer></ChartCard>
       </section>
 

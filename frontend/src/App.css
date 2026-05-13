@@ -7196,7 +7196,9 @@ a {
 .financial-filter-panel,
 .financial-toolbar,
 .financial-sheet-summary,
+.financial-executive-overview,
 .financial-insight-grid,
+.financial-campaign-matrix,
 .financial-diagnostic-panel,
 .financial-margins-panel,
 .financial-selic-card {
@@ -7234,6 +7236,7 @@ a {
 
 .financial-metric-grid,
 .financial-chart-grid,
+.financial-campaign-dashboard-grid,
 .financial-management-layout,
 .financial-skeleton {
   width: min(var(--page-shell-width), calc(100vw - 48px));
@@ -7292,6 +7295,47 @@ a {
 .financial-metric-card.danger {
   border-color: rgba(196, 69, 54, 0.35);
   background: linear-gradient(180deg, rgba(196, 69, 54, 0.1), #fffdfa);
+}
+
+.financial-executive-overview {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  padding: 16px;
+  background: linear-gradient(135deg, #fffdfa 0%, #f8f3eb 55%, rgba(31, 122, 140, 0.08) 100%);
+}
+
+.financial-executive-overview article {
+  display: grid;
+  gap: 8px;
+  min-height: 132px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.financial-executive-overview strong {
+  color: var(--ink);
+  font-size: 30px;
+  line-height: 1.05;
+}
+
+.financial-executive-overview span {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.financial-executive-overview article.above {
+  border-left: 5px solid #4c956c;
+}
+
+.financial-executive-overview article.near {
+  border-left: 5px solid #d4a764;
+}
+
+.financial-executive-overview article.below {
+  border-left: 5px solid #c44536;
 }
 
 .financial-selic-card {
@@ -7380,6 +7424,12 @@ a {
 }
 
 .financial-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.financial-campaign-dashboard-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
@@ -7617,6 +7667,54 @@ a {
   font-size: 20px;
 }
 
+.financial-campaign-matrix {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.financial-campaign-table-wrap {
+  overflow: auto;
+  max-height: 620px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.financial-campaign-table {
+  width: 100%;
+  min-width: 1180px;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.financial-campaign-table th,
+.financial-campaign-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.financial-campaign-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.financial-campaign-table td {
+  color: var(--ink);
+  font-weight: 750;
+}
+
+.financial-campaign-table tbody tr:hover {
+  background: rgba(200, 154, 87, 0.12);
+}
+
 .financial-management-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(420px, 0.95fr);
@@ -7848,6 +7946,8 @@ a {
   .financial-filter-panel.compact,
   .financial-metric-grid,
   .financial-chart-grid,
+  .financial-campaign-dashboard-grid,
+  .financial-executive-overview,
   .financial-insight-grid,
   .financial-management-layout {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -7870,9 +7970,11 @@ a {
   .financial-filter-panel.compact,
   .financial-metric-grid,
   .financial-chart-grid,
+  .financial-campaign-dashboard-grid,
   .financial-diagnostic-grid,
   .financial-margin-grid,
   .financial-sheet-summary,
+  .financial-executive-overview,
   .financial-insight-grid,
   .financial-management-layout,
   .financial-editor-grid,
@@ -7883,12 +7985,15 @@ a {
   .financial-filter-panel,
   .financial-toolbar,
   .financial-sheet-summary,
+  .financial-executive-overview,
   .financial-insight-grid,
+  .financial-campaign-matrix,
   .financial-diagnostic-panel,
   .financial-margins-panel,
   .financial-selic-card,
   .financial-metric-grid,
   .financial-chart-grid,
+  .financial-campaign-dashboard-grid,
   .financial-management-layout,
   .financial-skeleton {
     width: min(100%, calc(100vw - 24px));
