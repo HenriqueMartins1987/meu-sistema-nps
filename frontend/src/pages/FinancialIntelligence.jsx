@@ -305,9 +305,9 @@ function FinancialIntelligence() {
     {
       label: 'ROI CRC vs SELIC',
       value: formatPercent(realSelicDifference),
-      detail: `SELIC mensal BCB: ${formatPercent(realSelicRate)}`,
+      detail: `SELIC anual fixa: ${formatPercent(realSelicRate)}`,
       tone: metricTone(realSelicDifference, 'selic'),
-      explanation: 'Compara o ROI do CRC com a SELIC mensal consolidada obtida pelo backend na série SGS 4390 do Banco Central. Mostra se o CRC está gerando retorno acima ou abaixo da referência financeira do mês.'
+      explanation: 'Compara o ROI do CRC com a SELIC anual fixa de 15% definida como referência administrativa do sistema.'
     },
     {
       label: 'Investimento Marketing',
@@ -427,7 +427,7 @@ function FinancialIntelligence() {
       ['Custo Total CRC', summary.totalCost],
       ['Lucro/Prejuízo CRC', summary.profit],
       ['ROI CRC', summary.roiCrc],
-      ['SELIC mensal BCB', realSelicRate],
+      ['SELIC anual fixa', realSelicRate],
       ['Custo mensal colaboradores', summary.totalCollaboratorCost],
       ['Custo mensal operacional', summary.totalOperationalCost]
     ];
@@ -464,7 +464,7 @@ function FinancialIntelligence() {
         th{background:#efe6d8;text-transform:uppercase;font-size:9px}
       </style></head><body>
       <h1>Dashboard Executivo CRC</h1>
-      <p class="sub">Relatório exportado em ${new Date().toLocaleString('pt-BR')} · SELIC mensal BCB ${formatPercent(realSelicRate)}</p>
+      <p class="sub">Relatório exportado em ${new Date().toLocaleString('pt-BR')} · SELIC anual fixa ${formatPercent(realSelicRate)}</p>
       <section class="cards">
         <article class="card"><span>Receita</span><strong>${formatCurrency(summary.totalRevenue)}</strong></article>
         <article class="card"><span>Custo</span><strong>${formatCurrency(summary.totalCost)}</strong></article>
@@ -552,7 +552,7 @@ function FinancialIntelligence() {
         <article className={realSelicStatus}>
           <p className="eyebrow">Comparativo SELIC</p>
           <strong>{formatPercent(realSelicDifference)}</strong>
-          <span>SELIC mensal Banco Central {formatPercent(realSelicRate)} · {realSelicReference}</span>
+          <span>SELIC anual fixa {formatPercent(realSelicRate)} · {realSelicReference}</span>
         </article>
       </section>
 
@@ -566,12 +566,12 @@ function FinancialIntelligence() {
         <div>
           <p className="eyebrow">ROI CRC vs SELIC</p>
           <h2>{realSelicStatus === 'above' ? 'CRC performando acima da SELIC' : realSelicStatus === 'below' ? 'CRC performando abaixo da SELIC' : 'CRC próximo da SELIC'}</h2>
-          <p>Comparação entre o ROI operacional do CRC e a SELIC mensal consolidada consultada no Banco Central.</p>
+          <p>Comparação entre o ROI operacional do CRC e a SELIC anual fixa de 15%.</p>
         </div>
         <div className="financial-selic-values">
           <strong>{formatPercent(summary.roiCrc)}</strong>
-          <span>SELIC mensal BCB {formatPercent(realSelicRate)} · Diferença {formatPercent(realSelicDifference)}</span>
-          <small>Fonte: {String(selicInfo.source || '').toLowerCase().includes('bcb') ? 'Banco Central do Brasil' : 'fallback interno'} · {realSelicReference}</small>
+          <span>SELIC anual fixa {formatPercent(realSelicRate)} · Diferença {formatPercent(realSelicDifference)}</span>
+          <small>Fonte: regra administrativa interna · {realSelicReference}</small>
           {realSelicStatus === 'below' && <em className="financial-alert-text">Alerta: ROI geral abaixo da SELIC. Revisar custos mensais, campanhas e conversão.</em>}
         </div>
       </section>

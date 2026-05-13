@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { hasPermission, isMasterAdmin, readUser } from '../constants';
 
-const DEFAULT_SELIC = 1.08;
+const DEFAULT_SELIC = 15;
 const FINANCIAL_CENTRAL_CLINIC = { id: 'central-crc', name: 'Escritório Central - CRC', unit: 'CRC' };
 
 const CRC_FUNCTION_OPTIONS = [
@@ -38,7 +38,7 @@ const generalFields = [
   ['function_name', 'Função/Cargo', 'readonly'],
   ['campaign', 'Campanha', 'text'],
   ['channel', 'Canal', 'select', ['WhatsApp', 'Instagram', 'Facebook', 'Google', 'Indicação', 'Telefone', 'Presencial', 'Outros']],
-  ['selic_rate', 'SELIC mensal consolidada', 'readonlyPercent']
+  ['selic_rate', 'SELIC anual fixa', 'readonlyPercent']
 ];
 
 const productionFields = [
@@ -315,7 +315,9 @@ function FinancialIntelligenceManage() {
     commission_default: '',
     vacation_taken: false,
     vacation_amount: '',
+    has_other_costs: false,
     other_costs_default: '',
+    other_costs_description: '',
     status: 'ativo'
   });
   const [commissionDraft, setCommissionDraft] = useState({
@@ -324,6 +326,7 @@ function FinancialIntelligenceManage() {
     commission: '',
     vacation_paid: false,
     vacation_amount: '',
+    has_other_costs: false,
     other_costs: '',
     notes: ''
   });
@@ -559,8 +562,12 @@ function FinancialIntelligenceManage() {
 
     try {
       const payload = { ...selectedRecord };
+      if (payload.channel === 'Outros' && payload.channel_other) {
+        payload.channel = payload.channel_other;
+      }
       delete payload.__dirty;
       delete payload.__draft;
+      delete payload.channel_other;
 
       if (selectedRecord.__draft) {
         await api.post('/financial-intelligence', payload);
@@ -594,7 +601,9 @@ function FinancialIntelligenceManage() {
       commission_default: '',
       vacation_taken: false,
       vacation_amount: '',
+      has_other_costs: false,
       other_costs_default: '',
+      other_costs_description: '',
       status: 'ativo'
     });
   };
@@ -605,6 +614,14 @@ function FinancialIntelligenceManage() {
 
     try {
       const payload = { ...collaboratorDraft };
+      if (!payload.receives_commission) {
+        payload.commission_default = '';
+      }
+      if (!payload.has_other_costs) {
+        payload.other_costs_default = '';
+        payload.other_costs_description = '';
+      }
+      delete payload.has_other_costs;
       if (payload.clinic_id === FINANCIAL_CENTRAL_CLINIC.id) {
         payload.clinic_id = '';
         payload.clinic_name = FINANCIAL_CENTRAL_CLINIC.name;
@@ -628,7 +645,13 @@ function FinancialIntelligenceManage() {
     setFeedback('');
 
     try {
-      await api.post('/crc-collaborator-monthly-costs', commissionDraft);
+      const payload = { ...commissionDraft };
+      if (!payload.has_other_costs) {
+        payload.other_costs = '';
+        payload.notes = '';
+      }
+      delete payload.has_other_costs;
+      await api.post('/crc-collaborator-monthly-costs', payload);
       setCommissionModalOpen(false);
       setCommissionDraft({
         collaborator_id: '',
@@ -636,6 +659,7 @@ function FinancialIntelligenceManage() {
         commission: '',
         vacation_paid: false,
         vacation_amount: '',
+        has_other_costs: false,
         other_costs: '',
         notes: ''
       });
@@ -673,7 +697,7 @@ function FinancialIntelligenceManage() {
       if (selectedRecord?.__draft) {
         patchRecord(selectedRecord.id, { selic_rate: value });
       }
-      setToast('SELIC atualizada pelo Banco Central.');
+      setToast('SELIC fixa de 15% ao ano aplicada.');
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível consultar a SELIC agora.');
     }
@@ -687,7 +711,7 @@ function FinancialIntelligenceManage() {
       ['Custo filtrado', totals.cost],
       ['Lucro filtrado', totals.profit],
       ['Lançamentos', totals.rows],
-      ['SELIC mensal BCB', selicInfo.value]
+      ['SELIC anual fixa', selicInfo.value]
     ].map((row) => row.map(escapeCsv).join(';'));
     const header = allExportFields.map(([, label]) => escapeCsv(label)).join(';');
     const rows = filteredRecords.map((record) => {
@@ -721,7 +745,7 @@ function FinancialIntelligenceManage() {
         th{background:#efe6d8;color:#6d573b;text-transform:uppercase;font-size:9px}
       </style>
       </head><body><h1>Inteligência Financeira CRC</h1>
-      <p class="sub">Relatório executivo exportado em ${new Date().toLocaleString('pt-BR')} · SELIC mensal BCB ${formatPercent(selicInfo.value)}</p>
+      <p class="sub">Relatório executivo exportado em ${new Date().toLocaleString('pt-BR')} · SELIC anual fixa ${formatPercent(selicInfo.value)}</p>
       <section class="cards">
         <article class="card"><span>Receita</span><strong>${formatCurrency(totals.revenue)}</strong></article>
         <article class="card"><span>Custo</span><strong>${formatCurrency(totals.cost)}</strong></article>
@@ -767,13 +791,34 @@ function FinancialIntelligenceManage() {
     }
 
     if (type === 'select') {
+      const isCustomChannel = field === 'channel' && record[field] && !options.includes(record[field]);
+      const selectValue = isCustomChannel ? 'Outros' : (record[field] || '');
       return (
-        <label key={field}>{label}
-          <select className="field" value={record[field] || ''} onChange={(event) => patchRecord(record.id, { [field]: event.target.value })}>
-            <option value="">Selecione</option>
-            {options.map((option) => <option key={option} value={option}>{option}</option>)}
-          </select>
-        </label>
+        <React.Fragment key={field}>
+          <label>{label}
+            <select
+              className="field"
+              value={selectValue}
+              onChange={(event) => patchRecord(record.id, {
+                [field]: event.target.value,
+                ...(field === 'channel' && event.target.value !== 'Outros' ? { channel_other: '' } : {})
+              })}
+            >
+              <option value="">Selecione</option>
+              {options.map((option) => <option key={option} value={option}>{option}</option>)}
+            </select>
+          </label>
+          {field === 'channel' && selectValue === 'Outros' && (
+            <label>Descreva o canal
+              <input
+                className="field"
+                value={record.channel_other || (isCustomChannel ? record.channel : '')}
+                onChange={(event) => patchRecord(record.id, { channel_other: event.target.value })}
+                placeholder="Informe a origem do canal"
+              />
+            </label>
+          )}
+        </React.Fragment>
       );
     }
 
@@ -825,7 +870,7 @@ function FinancialIntelligenceManage() {
         <div>
           <p className="eyebrow">Inteligência Financeira CRC</p>
           <h1>Gestão Financeira CRC</h1>
-          <p>Lançamento profissional com custos centralizados no cadastro do colaborador, ROI de mercado e SELIC automática.</p>
+          <p>Lançamento profissional com custos centralizados no cadastro do colaborador, ROI de mercado e SELIC fixa de 15% ao ano.</p>
         </div>
         <div className="heading-actions">
           {canOpenDashboard && <button className="outline-action" onClick={() => navigate('/home/financial-intelligence')}>Dashboard</button>}
@@ -857,7 +902,7 @@ function FinancialIntelligenceManage() {
         <label>Buscar<input className="field" value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} placeholder="Clínica, operador, campanha..." /></label>
         <label>Clínica<select className="field" value={clinicFilterValue} onChange={(event) => handleClinicFilterChange(event.target.value)}><option value="">Todas</option><option value={FINANCIAL_CENTRAL_CLINIC.id}>{FINANCIAL_CENTRAL_CLINIC.name}</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label>
         <label>Status<select className="field" value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}><option value="">Todos</option><option value="excelente">Excelente</option><option value="adequado">Adequado</option><option value="atencao">Atenção</option><option value="critico">Crítico</option></select></label>
-        <label>SELIC mensal BCB
+        <label>SELIC anual fixa
           <button type="button" className="outline-action mini-action" onClick={refreshSelic}>
             {formatPercent(selicInfo.value)}
           </button>
@@ -1019,7 +1064,7 @@ function FinancialIntelligenceManage() {
             <div className="financial-card-heading">
               <p className="eyebrow">Lançamento CRC</p>
               <h2>{selectedRecord.__draft ? 'Novo lançamento' : `Editar lançamento #${selectedRecord.id}`}</h2>
-              <p>Operador, função e SELIC são preenchidos automaticamente para manter o histórico padronizado.</p>
+              <p>Operador, função e SELIC fixa de 15% ao ano são preenchidos automaticamente para manter o histórico padronizado.</p>
             </div>
 
             {renderGroup('general', '1. Dados Gerais', generalFields, selectedRecord)}
@@ -1082,7 +1127,9 @@ function FinancialIntelligenceManage() {
               {collaboratorDraft.receives_commission && <label>Comissão<input className="field" type="number" step="0.01" value={collaboratorDraft.commission_default} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, commission_default: event.target.value }))} /></label>}
               <label>Férias no mês?<select className="field" value={collaboratorDraft.vacation_taken ? 'sim' : 'nao'} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, vacation_taken: event.target.value === 'sim', vacation_amount: event.target.value === 'sim' ? current.vacation_amount : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
               {collaboratorDraft.vacation_taken && <label>Valor das férias<input className="field" type="number" step="0.01" value={collaboratorDraft.vacation_amount} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, vacation_amount: event.target.value }))} /></label>}
-              <label>Outros custos<input className="field" type="number" step="0.01" value={collaboratorDraft.other_costs_default} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, other_costs_default: event.target.value }))} /></label>
+              <label>Possui outros custos?<select className="field" value={collaboratorDraft.has_other_costs ? 'sim' : 'nao'} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, has_other_costs: event.target.value === 'sim', other_costs_default: event.target.value === 'sim' ? current.other_costs_default : '', other_costs_description: event.target.value === 'sim' ? current.other_costs_description : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
+              {collaboratorDraft.has_other_costs && <label>Valor de outros custos<input className="field" type="number" step="0.01" value={collaboratorDraft.other_costs_default} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, other_costs_default: event.target.value }))} /></label>}
+              {collaboratorDraft.has_other_costs && <label className="wide-field">Descrição de outros custos<input className="field" value={collaboratorDraft.other_costs_description} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, other_costs_description: event.target.value }))} placeholder="Descreva o custo adicional" /></label>}
             </div>
             <div className="row-actions">
               <button className="outline-action" onClick={() => { setCollaboratorModalOpen(false); resetCollaboratorDraft(); }} disabled={saving}>Cancelar</button>
@@ -1106,9 +1153,10 @@ function FinancialIntelligenceManage() {
               <label>Comissão<input className="field" type="number" step="0.01" value={commissionDraft.commission} onChange={(event) => setCommissionDraft((current) => ({ ...current, commission: event.target.value }))} /></label>
               <label>Férias pagas?<select className="field" value={commissionDraft.vacation_paid ? 'sim' : 'nao'} onChange={(event) => setCommissionDraft((current) => ({ ...current, vacation_paid: event.target.value === 'sim', vacation_amount: event.target.value === 'sim' ? current.vacation_amount : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
               {commissionDraft.vacation_paid && <label>Valor das férias<input className="field" type="number" step="0.01" value={commissionDraft.vacation_amount} onChange={(event) => setCommissionDraft((current) => ({ ...current, vacation_amount: event.target.value }))} /></label>}
-              <label>Outros custos<input className="field" type="number" step="0.01" value={commissionDraft.other_costs} onChange={(event) => setCommissionDraft((current) => ({ ...current, other_costs: event.target.value }))} /></label>
+              <label>Houve outros custos?<select className="field" value={commissionDraft.has_other_costs ? 'sim' : 'nao'} onChange={(event) => setCommissionDraft((current) => ({ ...current, has_other_costs: event.target.value === 'sim', other_costs: event.target.value === 'sim' ? current.other_costs : '', notes: event.target.value === 'sim' ? current.notes : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
+              {commissionDraft.has_other_costs && <label>Valor de outros custos<input className="field" type="number" step="0.01" value={commissionDraft.other_costs} onChange={(event) => setCommissionDraft((current) => ({ ...current, other_costs: event.target.value }))} /></label>}
             </div>
-            <label className="financial-notes-field">Observações<textarea className="field textarea" value={commissionDraft.notes} onChange={(event) => setCommissionDraft((current) => ({ ...current, notes: event.target.value }))} /></label>
+            {commissionDraft.has_other_costs && <label className="financial-notes-field">Descrição dos outros custos<textarea className="field textarea" value={commissionDraft.notes} onChange={(event) => setCommissionDraft((current) => ({ ...current, notes: event.target.value }))} /></label>}
             <div className="row-actions">
               <button className="outline-action" onClick={() => setCommissionModalOpen(false)} disabled={saving}>Cancelar</button>
               <button className="primary-action" onClick={saveCommission} disabled={saving}>{saving ? 'Salvando...' : 'Salvar comissão'}</button>

@@ -1790,6 +1790,7 @@ async function ensureDatabaseSchema() {
       vacation_taken TINYINT(1) NOT NULL DEFAULT 0,
       vacation_amount DECIMAL(14,2) NOT NULL DEFAULT 0,
       other_costs_default DECIMAL(14,2) NOT NULL DEFAULT 0,
+      other_costs_description VARCHAR(500) NULL,
       status VARCHAR(40) NOT NULL DEFAULT 'ativo',
       created_by VARCHAR(180) NULL,
       updated_by VARCHAR(180) NULL,
@@ -1807,6 +1808,7 @@ async function ensureDatabaseSchema() {
   await ensureColumn('crc_collaborators', 'receives_commission', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn('crc_collaborators', 'vacation_taken', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn('crc_collaborators', 'vacation_amount', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+  await ensureColumn('crc_collaborators', 'other_costs_description', 'VARCHAR(500) NULL');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS financial_intelligence (
@@ -10379,10 +10381,10 @@ function getFinancialFunctionLabel(user = {}) {
 
 let cachedSelicRate = {
   value: null,
-  source: 'fallback',
+  source: 'fixed_admin_rate',
   updatedAt: 0,
   referenceDate: null,
-  periodType: 'monthly_consolidated'
+  periodType: 'annual_fixed'
 };
 
 let cachedSelicMonthlySeries = {
@@ -10459,90 +10461,33 @@ function sumOperationalCost(row = {}) {
 }
 
 async function getSelicMonthlySeries() {
-  const cacheTtlMs = 6 * 60 * 60 * 1000;
-
-  if (cachedSelicMonthlySeries.rows.length && Date.now() - cachedSelicMonthlySeries.updatedAt < cacheTtlMs) {
-    return cachedSelicMonthlySeries.rows;
-  }
-
-  try {
-    const response = await axios.get(
-      'https://api.bcb.gov.br/dados/serie/bcdata.sgs.4390/dados/ultimos/72?formato=json',
-      { timeout: 7000 }
-    );
-    const rows = Array.isArray(response.data)
-      ? response.data
-        .map((item) => ({
-          month: toFinancialMonthKey(item.data),
-          value: toFinancialNumber(item.valor),
-          referenceDate: item.data
-        }))
-        .filter((item) => item.month && item.value > 0)
-        .sort((a, b) => String(a.month).localeCompare(String(b.month)))
-      : [];
-
-    if (rows.length) {
-      cachedSelicMonthlySeries = {
-        rows,
-        updatedAt: Date.now()
-      };
-      return rows;
-    }
-  } catch (error) {
-    console.warn('Não foi possível consultar a SELIC mensal no Banco Central:', error.message);
-  }
-
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  cachedSelicMonthlySeries = {
+    rows: [{ month: currentMonth, value: DEFAULT_SELIC_RATE, referenceDate: currentMonth }],
+    updatedAt: Date.now()
+  };
   return cachedSelicMonthlySeries.rows;
 }
 
 async function getCurrentSelicRate() {
-  const cacheTtlMs = 6 * 60 * 60 * 1000;
-
-  if (cachedSelicRate.value && Date.now() - cachedSelicRate.updatedAt < cacheTtlMs) {
-    return cachedSelicRate;
-  }
-
-  const rows = await getSelicMonthlySeries();
-  const latest = rows[rows.length - 1];
-
-  if (latest?.value > 0) {
-    cachedSelicRate = {
-      value: latest.value,
-      source: 'BCB SGS 4390',
-      updatedAt: Date.now(),
-      referenceDate: latest.referenceDate || null,
-      periodType: 'monthly_consolidated',
-      description: 'SELIC acumulada no mês, série SGS 4390 do Banco Central'
-    };
-    return cachedSelicRate;
-  }
-
   cachedSelicRate = {
     value: DEFAULT_SELIC_RATE,
-    source: 'fallback',
+    source: 'fixed_admin_rate',
     updatedAt: Date.now(),
-    referenceDate: null,
-    periodType: 'monthly_consolidated',
-    description: 'Fallback mensal equivalente ao parâmetro interno do sistema'
+    referenceDate: `${new Date().getFullYear()}`,
+    periodType: 'annual_fixed',
+    description: 'SELIC travada em 15% ao ano por regra administrativa do sistema'
   };
   return cachedSelicRate;
 }
 
 async function applyMonthlySelicToRows(rows = []) {
   const current = await getCurrentSelicRate();
-  const monthlySeries = await getSelicMonthlySeries();
-  const byMonth = new Map(monthlySeries.map((item) => [item.month, item.value]));
 
-  return rows.map((row) => {
-    const month = toFinancialMonthKey(row.date);
-    const monthlyValue = byMonth.get(month);
-    const storedValue = toFinancialNumber(row.selic_rate);
-
-    return {
-      ...row,
-      selic_rate: monthlyValue || (storedValue > 0 && storedValue <= 5 ? storedValue : current.value)
-    };
-  });
+  return rows.map((row) => ({
+    ...row,
+    selic_rate: current.value
+  }));
 }
 
 async function getFinancialMonthlyCostContext(rows = []) {
@@ -10749,10 +10694,8 @@ async function buildFinancialPayload(body = {}, user = {}) {
     payload[field] = sanitizeFinancialString(body[field]);
   });
 
-  if (!payload.selic_rate || payload.selic_rate > 5) {
-    const monthlySelic = await getCurrentSelicRate();
-    payload.selic_rate = monthlySelic.value || DEFAULT_SELIC_RATE;
-  }
+  const fixedSelic = await getCurrentSelicRate();
+  payload.selic_rate = fixedSelic.value || DEFAULT_SELIC_RATE;
 
   const collaborator = await getCrcCollaboratorById(payload.collaborator_id);
   const withDefaults = applyCollaboratorDefaults(payload, collaborator, body);
@@ -11084,6 +11027,7 @@ async function buildCrcCollaboratorPayload(body = {}, user = {}) {
     vacation_taken: toFinancialBoolean(body.vacation_taken ?? body.vacationTaken) ? 1 : 0,
     vacation_amount: toFinancialNumber(body.vacation_amount || body.vacationAmount),
     other_costs_default: toFinancialNumber(body.other_costs_default),
+    other_costs_description: sanitizeFinancialString(body.other_costs_description || body.otherCostsDescription, 500),
     status: sanitizeFinancialString(body.status, 40) || 'ativo',
     updated_by: getActorName(user)
   };

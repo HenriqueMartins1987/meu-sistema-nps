@@ -21,13 +21,13 @@ test('financial intelligence calculates campaign ROI without duplicating monthly
     appointments: 40,
     attendances: 30,
     closings: 10,
-    selic_rate: 1.08
+    selic_rate: 15
   });
 
   assert.equal(metrics.total_crc_cost, 1500);
   assert.equal(metrics.profit, 8500);
   assert.equal(metrics.roi_crc, 566.67);
-  assert.equal(metrics.roi_crc_vs_selic, 565.59);
+  assert.equal(metrics.roi_crc_vs_selic, 551.67);
   assert.equal(metrics.cac, 150);
   assert.equal(metrics.cpl, 15);
   assert.equal(metrics.average_ticket, 1000);
@@ -41,7 +41,7 @@ test('financial intelligence parses decimal points without multiplying values', 
     appointments: 5,
     attendances: 4,
     closings: 2,
-    selic_rate: 1.08
+    selic_rate: 15
   });
 
   assert.equal(metrics.total_marketing_cost, 1000);

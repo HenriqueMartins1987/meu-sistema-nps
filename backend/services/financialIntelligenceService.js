@@ -1,4 +1,4 @@
-const DEFAULT_SELIC_RATE = 1.08;
+const DEFAULT_SELIC_RATE = 15;
 
 const collaboratorCostFields = [
   'salary',

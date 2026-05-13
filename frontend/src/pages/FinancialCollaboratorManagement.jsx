@@ -72,7 +72,9 @@ function emptyDraft(referenceMonth) {
     commission_default: '',
     vacation_taken: false,
     vacation_amount: '',
+    has_other_costs: false,
     other_costs_default: '',
+    other_costs_description: '',
     status: 'ativo'
   };
 }
@@ -137,7 +139,8 @@ function FinancialCollaboratorManagement() {
       ...emptyDraft(referenceMonth || currentMonth),
       ...item,
       receives_commission: toFlag(item.receives_commission),
-      vacation_taken: toFlag(item.vacation_taken)
+      vacation_taken: toFlag(item.vacation_taken),
+      has_other_costs: toNumber(item.other_costs_default) > 0 || Boolean(item.other_costs_description)
     });
     setModalOpen(true);
   };
@@ -166,6 +169,14 @@ function FinancialCollaboratorManagement() {
     setFeedback('');
     try {
       const payload = { ...draft };
+      if (!payload.receives_commission) {
+        payload.commission_default = '';
+      }
+      if (!payload.has_other_costs) {
+        payload.other_costs_default = '';
+        payload.other_costs_description = '';
+      }
+      delete payload.has_other_costs;
       if (payload.clinic_id === FINANCIAL_CENTRAL_CLINIC.id) {
         payload.clinic_id = '';
         payload.clinic_name = FINANCIAL_CENTRAL_CLINIC.name;
@@ -202,7 +213,7 @@ function FinancialCollaboratorManagement() {
   };
 
   const exportExcel = () => {
-    const header = ['Nome', 'Função', 'Clínica', 'Mês/Ano', 'Salário', 'Encargos', 'Benefícios', 'Comissão', 'Férias', 'Outros custos', 'Custo mensal'];
+    const header = ['Nome', 'Função', 'Clínica', 'Mês/Ano', 'Salário', 'Encargos', 'Benefícios', 'Comissão', 'Férias', 'Outros custos', 'Descrição outros custos', 'Custo mensal'];
     const csv = [
       `Exportado em;${new Date().toLocaleString('pt-BR')}`,
       `Mês de referência;${referenceMonth}`,
@@ -217,9 +228,10 @@ function FinancialCollaboratorManagement() {
         row.salary,
         row.charges,
         row.benefits,
-        row.commission_default,
+        toFlag(row.receives_commission) ? row.commission_default : 'Não recebe',
         row.vacation_amount,
         row.other_costs_default,
+        row.other_costs_description,
         row.monthlyCost
       ].map((value) => `"${String(value ?? '').replace(/"/g, '""')}"`).join(';'))
     ].join('\n');
@@ -317,6 +329,7 @@ function FinancialCollaboratorManagement() {
                 <th>Clínica</th>
                 <th>Mês/Ano</th>
                 <th>Comissão</th>
+                <th>Outros custos</th>
                 <th>Férias</th>
                 <th>Custo mensal</th>
                 <th>Status</th>
@@ -330,7 +343,8 @@ function FinancialCollaboratorManagement() {
                   <td>{item.function_name || '-'}</td>
                   <td>{item.clinic_name || '-'}</td>
                   <td>{item.reference_month || '-'}</td>
-                  <td>{toFlag(item.receives_commission) ? formatCurrency(item.commission_default) : 'Não'}</td>
+                  <td>{toFlag(item.receives_commission) ? formatCurrency(item.commission_default) : 'Não recebe'}</td>
+                  <td>{toNumber(item.other_costs_default) > 0 ? formatCurrency(item.other_costs_default) : 'Não'}</td>
                   <td>{toFlag(item.vacation_taken) ? formatCurrency(item.vacation_amount) : 'Não'}</td>
                   <td>{formatCurrency(item.monthlyCost)}</td>
                   <td><span className={`financial-status-badge ${item.status === 'ativo' ? 'excelente' : 'atencao'}`}>{item.status}</span></td>
@@ -363,11 +377,13 @@ function FinancialCollaboratorManagement() {
               <label>Salário<input className="field" type="number" step="0.01" value={draft.salary || ''} onChange={(event) => setDraft((current) => ({ ...current, salary: event.target.value }))} /></label>
               <label>Encargos<input className="field" type="number" step="0.01" value={draft.charges || ''} onChange={(event) => setDraft((current) => ({ ...current, charges: event.target.value }))} /></label>
               <label>Benefícios<input className="field" type="number" step="0.01" value={draft.benefits || ''} onChange={(event) => setDraft((current) => ({ ...current, benefits: event.target.value }))} /></label>
-              <label>Recebe comissão?<select className="field" value={toFlag(draft.receives_commission) ? 'sim' : 'nao'} onChange={(event) => setDraft((current) => ({ ...current, receives_commission: event.target.value === 'sim' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
+              <label>Recebe comissão?<select className="field" value={toFlag(draft.receives_commission) ? 'sim' : 'nao'} onChange={(event) => setDraft((current) => ({ ...current, receives_commission: event.target.value === 'sim', commission_default: event.target.value === 'sim' ? current.commission_default : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
               {toFlag(draft.receives_commission) && <label>Comissão<input className="field" type="number" step="0.01" value={draft.commission_default || ''} onChange={(event) => setDraft((current) => ({ ...current, commission_default: event.target.value }))} /></label>}
               <label>Férias?<select className="field" value={toFlag(draft.vacation_taken) ? 'sim' : 'nao'} onChange={(event) => setDraft((current) => ({ ...current, vacation_taken: event.target.value === 'sim' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
               {toFlag(draft.vacation_taken) && <label>Valor das férias<input className="field" type="number" step="0.01" value={draft.vacation_amount || ''} onChange={(event) => setDraft((current) => ({ ...current, vacation_amount: event.target.value }))} /></label>}
-              <label>Outros custos<input className="field" type="number" step="0.01" value={draft.other_costs_default || ''} onChange={(event) => setDraft((current) => ({ ...current, other_costs_default: event.target.value }))} /></label>
+              <label>Houve outros custos?<select className="field" value={toFlag(draft.has_other_costs) ? 'sim' : 'nao'} onChange={(event) => setDraft((current) => ({ ...current, has_other_costs: event.target.value === 'sim', other_costs_default: event.target.value === 'sim' ? current.other_costs_default : '', other_costs_description: event.target.value === 'sim' ? current.other_costs_description : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
+              {toFlag(draft.has_other_costs) && <label>Valor de outros custos<input className="field" type="number" step="0.01" value={draft.other_costs_default || ''} onChange={(event) => setDraft((current) => ({ ...current, other_costs_default: event.target.value }))} /></label>}
+              {toFlag(draft.has_other_costs) && <label className="wide-field">Descrição dos outros custos<input className="field" value={draft.other_costs_description || ''} onChange={(event) => setDraft((current) => ({ ...current, other_costs_description: event.target.value }))} /></label>}
               <label>Status<select className="field" value={draft.status || 'ativo'} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value }))}><option value="ativo">Ativo</option><option value="inativo">Inativo</option></select></label>
             </div>
             <div className="row-actions">

@@ -17,7 +17,7 @@ const generalFields = [
   ['function_name', 'Função/Cargo', 'readonly'],
   ['campaign', 'Campanha', 'text'],
   ['channel', 'Canal', 'select', ['WhatsApp', 'Instagram', 'Facebook', 'Google', 'Indicação', 'Telefone', 'Presencial', 'Outros']],
-  ['selic_rate', 'SELIC mensal consolidada', 'readonlyPercent']
+  ['selic_rate', 'SELIC anual fixa', 'readonlyPercent']
 ];
 
 const productionFields = [
