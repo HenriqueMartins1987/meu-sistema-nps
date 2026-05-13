@@ -42,6 +42,7 @@ const clinicSeed = [
   { name: 'Santa Rita', city: 'Santa Rita', state: 'MA', region: 'Nordeste', coordinator_name: null, active: 1 },
   { name: 'Santo Antão', city: 'Vitória de Santo Antão', state: 'PE', region: 'Nordeste', coordinator_name: null, active: 1 },
   { name: 'Santo Antônio', city: 'Santo Antônio de Goiás', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
+  { name: 'Santo Hilário', city: 'Goiânia', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
   { name: 'Senador Canedo', city: 'Senador Canedo', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
   { name: 'Taguatinga', city: 'Brasília', state: 'DF', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
   { name: 'Trindade Centro', city: 'Trindade', state: 'GO', region: 'Centro-Oeste', coordinator_name: null, active: 1 },
