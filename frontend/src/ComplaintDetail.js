@@ -55,7 +55,10 @@ const roleLabels = {
   supervisor_crc: 'Supervisor do CRC',
   coordinator: 'Coordenador',
   manager: 'Gerente',
-  viewer: 'Marketing'
+  viewer: 'Marketing',
+  marketing_publico: 'Marketing público',
+  externo: 'Link externo',
+  interno: 'Interno'
 };
 
 const forwardingOptions = [
@@ -135,6 +138,19 @@ function formatPhoneDisplay(phone) {
   }
 
   return `+${normalized}`;
+}
+
+function getComplaintCreatorName(complaint) {
+  return complaint?.created_by_name
+    || complaint?.created_by_email
+    || (complaint?.created_origin === 'Marketing' ? 'Marketing' : '')
+    || 'Usuário não informado';
+}
+
+function getComplaintCreatorDetail(complaint) {
+  const role = roleLabels[complaint?.created_by_role] || complaint?.created_by_role || complaint?.created_origin || 'Origem não informada';
+  const email = complaint?.created_by_email ? ` · ${complaint.created_by_email}` : '';
+  return `${role}${email}`;
 }
 
 function normalizeChannelKey(channel) {
@@ -925,6 +941,8 @@ function ComplaintDetail() {
     }
 
     const printDate = new Date();
+    const creatorName = getComplaintCreatorName(complaint);
+    const creatorDetail = getComplaintCreatorDetail(complaint);
     const historyRows = historyRecords.length
       ? historyRecords.map((log) => `
         <tr>
@@ -1026,6 +1044,7 @@ function ComplaintDetail() {
               <p class="report-kicker">Ficha executiva do protocolo</p>
               <h1>${escapeHtml(protocol)}</h1>
               <p>${escapeHtml(complaint.patient_name || 'Paciente não informado')} | ${escapeHtml(complaint.clinic_name || 'Unidade não informada')}</p>
+              <p class="muted">Cadastrado por ${escapeHtml(creatorName)} | ${escapeHtml(creatorDetail)} | ${escapeHtml(formatDate(complaint.created_at))}</p>
               <p class="muted">Exportado em ${escapeHtml(formatDate(printDate))}</p>
             </section>
 
@@ -1034,6 +1053,7 @@ function ComplaintDetail() {
               <article class="summary-card"><span>Canal</span><strong>${escapeHtml(String(renderChannelLabel(complaint.channel)).replace(/[^\x20-\x7EÀ-ÿ]/g, ''))}</strong></article>
               <article class="summary-card"><span>Prazo</span><strong>${escapeHtml(formatDate(complaint.due_at))}</strong></article>
               <article class="summary-card"><span>Responsável atual</span><strong>${escapeHtml(stage.owner)}</strong></article>
+              <article class="summary-card"><span>Cadastrado por</span><strong>${escapeHtml(creatorName)}</strong></article>
             </section>
 
             <section class="section">
@@ -1043,6 +1063,7 @@ function ComplaintDetail() {
                   <tr><td><strong>Telefone</strong></td><td>${escapeHtml(complaint.patient_phone || 'Não informado')}</td><td><strong>Serviço</strong></td><td>${escapeHtml(complaint.service_type || 'Não informado')}</td></tr>
                   <tr><td><strong>Tipo</strong></td><td>${escapeHtml(complaint.complaint_type || 'Não informado')}</td><td><strong>Valor financeiro</strong></td><td>${escapeHtml(complaint.financial_involved ? formatCurrency(complaint.financial_amount) : 'Não envolve')}</td></tr>
                   <tr><td><strong>Coordenador</strong></td><td>${escapeHtml(complaint.coordinator_name || 'Não informado')}</td><td><strong>Gerente</strong></td><td>${escapeHtml(complaint.manager_name || 'Não informado')}</td></tr>
+                  <tr><td><strong>Cadastrado por</strong></td><td>${escapeHtml(creatorName)}</td><td><strong>Perfil / e-mail</strong></td><td>${escapeHtml(creatorDetail)}</td></tr>
                 </tbody>
               </table>
             </section>
@@ -1120,6 +1141,7 @@ function ComplaintDetail() {
             <span>{complaint.clinic_name || 'Clínica não informada'}</span>
             <span>{complaint.city || 'Cidade'} / {complaint.state || 'UF'}</span>
             <span>{statusLabels[complaint.status] || 'Aberta'}</span>
+            <span>Cadastrado por {getComplaintCreatorName(complaint)}</span>
           </div>
         </div>
 
@@ -1373,6 +1395,13 @@ function ComplaintDetail() {
             <div>
               <dt>Atualizada em</dt>
               <dd>{formatDate(complaint.updated_at)}</dd>
+            </div>
+            <div>
+              <dt>Cadastrado por</dt>
+              <dd>
+                {getComplaintCreatorName(complaint)}
+                <small>{getComplaintCreatorDetail(complaint)}</small>
+              </dd>
             </div>
           </dl>
 

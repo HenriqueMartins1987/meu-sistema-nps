@@ -458,6 +458,34 @@ test('evidence permissions keep marketing limited to upload only', () => {
   assert.equal(__testables.canDeleteEvidence(null), false);
 });
 
+test('complaint creator audit keeps user or public origin trail', () => {
+  assert.deepEqual(__testables.buildComplaintCreatorAudit({
+    id: 15,
+    name: 'Operador Teste',
+    role: 'sac_operator',
+    email: 'operador@example.com'
+  }, 'Interno'), {
+    userId: 15,
+    name: 'Operador Teste',
+    role: 'sac_operator',
+    email: 'operador@example.com'
+  });
+
+  assert.deepEqual(__testables.buildComplaintCreatorAudit(null, 'Marketing'), {
+    userId: null,
+    name: 'Link público Marketing',
+    role: 'marketing_publico',
+    email: null
+  });
+
+  assert.deepEqual(__testables.buildComplaintCreatorAudit(null, 'Externo'), {
+    userId: null,
+    name: 'Link público externo',
+    role: 'externo',
+    email: null
+  });
+});
+
 test('canChangeComplaintUnit allows only operational admin profiles', () => {
   assert.equal(__testables.canChangeComplaintUnit({
     role: 'master_admin',

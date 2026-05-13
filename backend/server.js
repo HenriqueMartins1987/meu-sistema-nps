@@ -567,6 +567,46 @@ function getActorName(user) {
   return user?.name || user?.email || 'Usuário autenticado';
 }
 
+function buildComplaintCreatorAudit(user, origin = 'Interno') {
+  if (user && (user.id || user.email || user.name || user.role)) {
+    const numericUserId = Number(user.id);
+
+    return {
+      userId: Number.isInteger(numericUserId) && numericUserId > 0 ? numericUserId : null,
+      name: getActorName(user),
+      role: user.role || null,
+      email: user.email || null
+    };
+  }
+
+  const normalizedOrigin = normalizeCreatedOrigin(origin);
+
+  if (normalizedOrigin === 'Marketing') {
+    return {
+      userId: null,
+      name: 'Link público Marketing',
+      role: 'marketing_publico',
+      email: null
+    };
+  }
+
+  if (normalizedOrigin === 'Externo') {
+    return {
+      userId: null,
+      name: 'Link público externo',
+      role: 'externo',
+      email: null
+    };
+  }
+
+  return {
+    userId: null,
+    name: 'Usuário interno não identificado',
+    role: 'interno',
+    email: null
+  };
+}
+
 function isAdminUser(user) {
   const email = String(user?.email || '').toLowerCase();
   return user?.role === 'admin'
@@ -1900,6 +1940,10 @@ async function ensureDatabaseSchema() {
       priority VARCHAR(40) DEFAULT 'media',
       due_at DATETIME NULL,
       created_origin VARCHAR(80) DEFAULT 'Interno',
+      created_by_user_id INT NULL,
+      created_by_name VARCHAR(160) NULL,
+      created_by_role VARCHAR(80) NULL,
+      created_by_email VARCHAR(190) NULL,
       financial_involved TINYINT(1) NOT NULL DEFAULT 0,
       financial_description TEXT NULL,
       financial_amount DECIMAL(12,2) NULL,
@@ -1945,6 +1989,10 @@ async function ensureDatabaseSchema() {
   await ensureColumn('complaints', 'assigned_responsible_role', 'VARCHAR(80) NULL');
   await ensureColumn('complaints', 'clinic_snapshot_name', 'VARCHAR(180) NULL');
   await ensureColumn('complaints', 'created_origin', "VARCHAR(80) DEFAULT 'Interno'");
+  await ensureColumn('complaints', 'created_by_user_id', 'INT NULL');
+  await ensureColumn('complaints', 'created_by_name', 'VARCHAR(160) NULL');
+  await ensureColumn('complaints', 'created_by_role', 'VARCHAR(80) NULL');
+  await ensureColumn('complaints', 'created_by_email', 'VARCHAR(190) NULL');
   await ensureColumn('complaints', 'financial_involved', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn('complaints', 'financial_description', 'TEXT NULL');
   await ensureColumn('complaints', 'financial_amount', 'DECIMAL(12,2) NULL');
@@ -1963,6 +2011,27 @@ async function ensureDatabaseSchema() {
   await pool.query("ALTER TABLE complaints MODIFY COLUMN status VARCHAR(40) NOT NULL DEFAULT 'aberta'");
   await pool.query("ALTER TABLE complaints MODIFY COLUMN priority VARCHAR(40) DEFAULT 'media'");
   await pool.query("ALTER TABLE complaints MODIFY COLUMN created_origin VARCHAR(80) DEFAULT 'Interno'");
+  await pool.query(`
+    UPDATE complaints
+       SET created_by_name = CASE
+             WHEN created_by_name IS NULL OR TRIM(created_by_name) = '' THEN
+               CASE
+                 WHEN created_origin = 'Marketing' THEN 'Link público Marketing'
+                 WHEN created_origin = 'Externo' THEN 'Link público externo'
+                 ELSE 'Usuário interno não identificado'
+               END
+             ELSE created_by_name
+           END,
+           created_by_role = CASE
+             WHEN created_by_role IS NULL OR TRIM(created_by_role) = '' THEN
+               CASE
+                 WHEN created_origin = 'Marketing' THEN 'marketing_publico'
+                 WHEN created_origin = 'Externo' THEN 'externo'
+                 ELSE 'interno'
+               END
+             ELSE created_by_role
+           END
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS system_job_runs (
@@ -2545,6 +2614,10 @@ async function getComplaintRows(query = {}, user = null) {
         c.assigned_responsible_role,
         c.clinic_snapshot_name,
       c.created_origin,
+      c.created_by_user_id,
+      c.created_by_name,
+      c.created_by_role,
+      c.created_by_email,
       c.financial_involved,
       c.financial_description,
       c.financial_amount,
@@ -2722,6 +2795,10 @@ function toCsv(rows) {
     'forwarded_at',
     'forwarded_by',
     'created_origin',
+    'created_by_user_id',
+    'created_by_name',
+    'created_by_role',
+    'created_by_email',
     'financial_involved',
     'financial_description',
     'financial_amount',
@@ -6329,10 +6406,11 @@ async function convertNpsToComplaint(npsId, user) {
   const resolutionDueAt = calculateResolutionDueAt();
   const description = buildNpsComplaintDescription(nps);
   const assignment = await resolveCoordinatorAssignment(nps.clinic_id || null);
+  const creatorAudit = buildComplaintCreatorAudit(user, 'Externo');
   const [result] = await pool.query(
     `INSERT INTO complaints
-     (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, resolution_due_at, created_origin)
-     VALUES (?, ?, ?, 'NPS', 'Reclamação NPS', ?, 'Pesquisa de satisfação', 'aberta', ?, ?, ?, 'Externo')`,
+     (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, resolution_due_at, created_origin, created_by_user_id, created_by_name, created_by_role, created_by_email)
+     VALUES (?, ?, ?, 'NPS', 'Reclamação NPS', ?, 'Pesquisa de satisfação', 'aberta', ?, ?, ?, 'Externo', ?, ?, ?, ?)`,
     [
       nps.clinic_id || null,
       nps.patient_name || 'Paciente NPS',
@@ -6340,7 +6418,11 @@ async function convertNpsToComplaint(npsId, user) {
       description,
       priority,
       toMysqlDateTime(dueAt),
-      toMysqlDateTime(resolutionDueAt)
+      toMysqlDateTime(resolutionDueAt),
+      creatorAudit.userId,
+      creatorAudit.name,
+      creatorAudit.role,
+      creatorAudit.email
     ]
   );
   const protocol = `GRC-${new Date().getFullYear()}-${String(result.insertId).padStart(6, '0')}`;
@@ -8435,10 +8517,11 @@ app.post('/nps/public', async (req, res) => {
     if (shouldCreateManifestation) {
       const priority = priorityForNpsFeedback(numericScore, classification);
       const resolutionDueAt = calculateResolutionDueAt();
+      const creatorAudit = buildComplaintCreatorAudit(null, 'Externo');
       const [result] = await pool.query(
         `INSERT INTO complaints
-         (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, resolution_due_at, created_origin)
-         VALUES (?, ?, ?, 'NPS', ?, ?, 'Pesquisa de satisfação', 'aberta', ?, ?, ?, 'Externo')`,
+         (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, resolution_due_at, created_origin, created_by_user_id, created_by_name, created_by_role, created_by_email)
+         VALUES (?, ?, ?, 'NPS', ?, ?, 'Pesquisa de satisfação', 'aberta', ?, ?, ?, 'Externo', ?, ?, ?, ?)`,
         [
           clinic_id || null,
           patient_name || 'Paciente NPS',
@@ -8447,7 +8530,11 @@ app.post('/nps/public', async (req, res) => {
           narrative,
           priority,
           toMysqlDateTime(calculateDueAt(priority)),
-          toMysqlDateTime(resolutionDueAt)
+          toMysqlDateTime(resolutionDueAt),
+          creatorAudit.userId,
+          creatorAudit.name,
+          creatorAudit.role,
+          creatorAudit.email
         ]
       );
       const protocol = `GRC-${new Date().getFullYear()}-${String(result.insertId).padStart(6, '0')}`;
@@ -9158,11 +9245,12 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
     }
 
     const assignment = await resolveCoordinatorAssignment(clinic_id);
+    const creatorAudit = buildComplaintCreatorAudit(req.user, normalizedOrigin);
 
     const [result] = await pool.query(
       `INSERT INTO complaints 
-      (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, attachment_url, status, priority, due_at, resolution_due_at, created_origin, financial_involved, financial_description, financial_amount)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'aberta', ?, ?, ?, ?, ?, ?, ?)`,
+      (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, attachment_url, status, priority, due_at, resolution_due_at, created_origin, created_by_user_id, created_by_name, created_by_role, created_by_email, financial_involved, financial_description, financial_amount)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'aberta', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         clinic_id,
         patient_name,
@@ -9176,6 +9264,10 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
         toMysqlDateTime(dueAt),
         toMysqlDateTime(resolutionDueAt),
         normalizedOrigin,
+        creatorAudit.userId,
+        creatorAudit.name,
+        creatorAudit.role,
+        creatorAudit.email,
         hasFinancialValue ? 1 : 0,
         hasFinancialValue ? financial_description || null : null,
         hasFinancialValue ? Number(financial_amount || 0) : null
@@ -9189,8 +9281,8 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
       [assignment.coordinatorUserId, assignment.coordinatorName, assignment.clinicSnapshotName, result.insertId]
     );
     await insertComplaintLog(result.insertId, 'created', `Protocolo ${protocol} cadastrado com origem ${normalizedOrigin}.`, {
-      name: normalizedOrigin === 'Interno' ? 'Usuário interno' : normalizedOrigin,
-      role: normalizedOrigin.toLowerCase()
+      name: creatorAudit.name,
+      role: creatorAudit.role
     });
     let notificationResult = { notificationStatus: 'failed' };
 
@@ -9219,7 +9311,7 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
           const marketingProtocolEmail = emailService.renderMarketingProtocolEmail({
             protocol,
             patientName: patient_name,
-            clinicName: selectedClinic?.name || clinic_name || '',
+            clinicName: assignment?.clinicSnapshotName || '',
             complaintUrl: `${frontendUrl}/reclamacoes/${result.insertId}`
           });
 
@@ -10103,6 +10195,7 @@ module.exports = {
     buildComplaintNotificationEmail,
     buildComplaintExpiredResponsibleReminderJobKey,
     buildComplaintExpiredResponsibleReminderWindowKey,
+    buildComplaintCreatorAudit,
     buildComplaintWhatsAppMessage,
     buildWeeklyUserDemandReminderJobKey,
     canAttachEvidence,

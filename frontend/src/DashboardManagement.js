@@ -68,6 +68,13 @@ function priorityLabel(value) {
   return priorityOptions.find((option) => option.value === value)?.label || 'Média';
 }
 
+function getComplaintCreatorName(item) {
+  return item?.created_by_name
+    || item?.created_by_email
+    || (item?.created_origin === 'Marketing' ? 'Marketing' : '')
+    || 'Usuário não informado';
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -224,6 +231,7 @@ function ComplaintListItem({ item, onOpen }) {
         <span>{item.complaint_type || 'Tipo não informado'}</span>
         <span>{item.channel || 'Canal não informado'}</span>
         <span>Origem {item.created_origin || 'Interno'}</span>
+        <span>Cadastrado por {getComplaintCreatorName(item)}</span>
         <span>Prioridade {priorityLabel(item.priority)}</span>
         {Boolean(item.financial_involved) && <span>Financeiro {formatCurrency(item.financial_amount)}</span>}
         <span>{item.region || 'Região não informada'}</span>
@@ -444,6 +452,8 @@ function DashboardManagement() {
       gerente_responsavel: item.manager_name || 'Não informado',
       tipo: item.complaint_type || 'Não informado',
       origem: item.created_origin || 'Interno',
+      cadastrado_por: getComplaintCreatorName(item),
+      email_cadastrante: item.created_by_email || 'Não informado',
       status: statusLabels[item.status] || item.status || 'Aberta',
       prioridade: priorityLabel(item.priority),
       financeiro: item.financial_involved ? 'Sim' : 'Não',
@@ -468,6 +478,8 @@ function DashboardManagement() {
       gerente_responsavel: '',
       tipo: '',
       origem: '',
+      cadastrado_por: '',
+      email_cadastrante: '',
       status: '',
       prioridade: '',
       financeiro: '',
@@ -506,6 +518,7 @@ function DashboardManagement() {
       'Coordenador responsável',
       'Gerente responsável',
       'Origem',
+      'Cadastrado por',
       'Status',
       'Prioridade',
       'SLA',
@@ -519,6 +532,7 @@ function DashboardManagement() {
       row.coordenador_responsavel,
       row.gerente_responsavel,
       row.origem,
+      row.cadastrado_por,
       row.status,
       row.prioridade,
       row.sla,
