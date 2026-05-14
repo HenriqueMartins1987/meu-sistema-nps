@@ -91,6 +91,72 @@ export const screenPermissions = [
   { value: 'admin_panel', label: 'Painel gerencial' }
 ];
 
+export const actionPermissions = [
+  { value: 'complaints_view_all', label: 'Visualizar todas as demandas', area: 'Protocolos' },
+  { value: 'complaints_close', label: 'Fechar protocolo', area: 'Protocolos' },
+  { value: 'complaints_reactivate', label: 'Reabilitar protocolo', area: 'Protocolos' },
+  { value: 'complaints_change_unit', label: 'Alterar unidade', area: 'Protocolos' },
+  { value: 'complaints_edit_patient_phone', label: 'Alterar telefone do paciente', area: 'Protocolos' },
+  { value: 'complaints_reassign', label: 'Encaminhar/reencaminhar demanda', area: 'Protocolos' },
+  { value: 'complaints_renotify', label: 'Notificar responsaveis', area: 'Protocolos' },
+  { value: 'evidence_attach', label: 'Anexar evidencias', area: 'Evidencias' },
+  { value: 'evidence_delete', label: 'Excluir evidencias', area: 'Evidencias' },
+  { value: 'treatment_register', label: 'Registrar tratativa', area: 'Tratativas' },
+  { value: 'patient_contact_register', label: 'Registrar contato com paciente', area: 'Tratativas' },
+  { value: 'patient_treatment_manage', label: 'Cadastrar tratamento/agendamento', area: 'Tratamento do paciente' },
+  { value: 'nps_finish', label: 'Finalizar NPS', area: 'NPS' },
+  { value: 'deleted_view', label: 'Visualizar aba excluidos', area: 'Excluidos' },
+  { value: 'financial_record_delete', label: 'Excluir lancamento financeiro', area: 'Financeiro CRC' },
+  { value: 'financial_collaborator_delete', label: 'Excluir colaborador CRC', area: 'Financeiro CRC' }
+];
+
+export function defaultActionPermissionsForRole(role) {
+  if (role === 'master_admin' || role === 'admin') {
+    return actionPermissions.map((permission) => permission.value);
+  }
+
+  if (role === 'sac_operator') {
+    return [
+      'complaints_view_all',
+      'complaints_close',
+      'complaints_change_unit',
+      'complaints_edit_patient_phone',
+      'complaints_reassign',
+      'complaints_renotify',
+      'evidence_attach',
+      'evidence_delete',
+      'treatment_register',
+      'patient_contact_register',
+      'patient_treatment_manage',
+      'nps_finish'
+    ];
+  }
+
+  if (role === 'supervisor_crc') {
+    return [
+      'complaints_view_all',
+      'complaints_close',
+      'complaints_reactivate',
+      'complaints_change_unit',
+      'complaints_edit_patient_phone',
+      'complaints_reassign',
+      'complaints_renotify',
+      'evidence_attach',
+      'evidence_delete',
+      'treatment_register',
+      'patient_contact_register',
+      'patient_treatment_manage',
+      'nps_finish'
+    ];
+  }
+
+  if (role === 'manager' || role === 'coordinator') {
+    return ['complaints_reassign', 'evidence_attach', 'evidence_delete', 'treatment_register'];
+  }
+
+  return ['complaints_view_all', 'evidence_attach'];
+}
+
 export const statusLabels = statusOptions.reduce((labels, option) => {
   labels[option.value] = option.label;
   return labels;
@@ -149,6 +215,13 @@ export function isAdmin(user) {
     || user?.role === 'master_admin'
     || email === 'admin@sorria.com'
     || email === masterAdminEmail;
+}
+
+export function hasActionPermission(user, permission) {
+  if (!user || !permission) return false;
+  if (isMasterAdmin(user)) return true;
+  const permissions = Array.isArray(user.actionPermissions) ? user.actionPermissions : defaultActionPermissionsForRole(user.role);
+  return permissions.includes(permission);
 }
 
 export function hasPermission(user, permission) {

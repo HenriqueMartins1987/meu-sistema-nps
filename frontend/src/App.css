@@ -9111,6 +9111,11 @@ a {
   line-height: 1.35;
 }
 
+.master-profile-action input {
+  justify-self: end;
+  margin-top: 2px;
+}
+
 .master-release-users {
   position: sticky;
   top: 16px;

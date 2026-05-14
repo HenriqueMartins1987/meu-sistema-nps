@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from './api';
-import { isMasterAdmin, readUser } from './constants';
+import { hasActionPermission, isMasterAdmin, readUser } from './constants';
 
 const profileLabels = {
   detrator: 'Detrator',
@@ -134,6 +134,7 @@ function NpsManagement() {
   const currentUser = readUser();
   const canViewDeleted = isMasterAdmin(currentUser);
   const canDeleteRecords = isMasterAdmin(currentUser) || currentUser?.role === 'supervisor_crc';
+  const canFinishNps = hasActionPermission(currentUser, 'nps_finish');
   const [rows, setRows] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [viewMode, setViewMode] = useState('active');
@@ -659,7 +660,7 @@ function NpsManagement() {
               const reasons = parseReasons(item.detractor_reasons);
               const isDetractor = profile === 'detrator';
               const isDeleted = Boolean(item.deleted_at);
-              const canFinalize = canFinalizeNps(item);
+              const canFinalize = canFinishNps && canFinalizeNps(item);
 
               return (
                 <article className={`nps-list-item ${profile}`} key={item.id}>
@@ -865,7 +866,7 @@ function NpsManagement() {
                   Migrar para reclamação
                 </button>
               )}
-              {canFinalizeNps(selectedNps) && (
+              {canFinishNps && canFinalizeNps(selectedNps) && (
                 <button className="outline-action" onClick={() => handleFinalizeNps()} disabled={savingId === selectedNps.id}>
                   {savingId === selectedNps.id ? 'Finalizando...' : 'Finalizar'}
                 </button>

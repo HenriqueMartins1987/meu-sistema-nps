@@ -4,8 +4,10 @@ import { useNavigate } from 'react-router-dom';
 import api from './api';
 import {
   accessProfiles,
+  actionPermissions,
   defaultBrazilPhone,
   formatBrazilPhoneInput,
+  hasActionPermission,
   isMasterAdmin,
   readUser,
   screenPermissions
@@ -44,29 +46,66 @@ const defaultRolePermissions = {
   viewer: ['home', 'complaints_management', 'nps_management']
 };
 
+const defaultRoleActionPermissions = {
+  master_admin: actionPermissions.map((permission) => permission.value),
+  admin: actionPermissions.map((permission) => permission.value),
+  sac_operator: [
+    'complaints_view_all',
+    'complaints_close',
+    'complaints_change_unit',
+    'complaints_edit_patient_phone',
+    'complaints_reassign',
+    'complaints_renotify',
+    'evidence_attach',
+    'evidence_delete',
+    'treatment_register',
+    'patient_contact_register',
+    'patient_treatment_manage',
+    'nps_finish'
+  ],
+  supervisor_crc: [
+    'complaints_view_all',
+    'complaints_close',
+    'complaints_reactivate',
+    'complaints_change_unit',
+    'complaints_edit_patient_phone',
+    'complaints_reassign',
+    'complaints_renotify',
+    'evidence_attach',
+    'evidence_delete',
+    'treatment_register',
+    'patient_contact_register',
+    'patient_treatment_manage',
+    'nps_finish'
+  ],
+  manager: ['complaints_reassign', 'evidence_attach', 'evidence_delete', 'treatment_register'],
+  coordinator: ['complaints_reassign', 'evidence_attach', 'evidence_delete', 'treatment_register'],
+  viewer: ['complaints_view_all', 'evidence_attach']
+};
+
 const authorityRules = [
-  { area: 'Protocolos', action: 'Visualizar todas as demandas', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'viewer'], note: 'Gerente e coordenador dependem das clinicas vinculadas e/ou atribuicao da demanda.' },
+  { area: 'Protocolos', action: 'Visualizar todas as demandas', actionPermission: 'complaints_view_all', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'viewer'], note: 'Gerente e coordenador dependem das clinicas vinculadas e/ou atribuicao da demanda.' },
   { area: 'Protocolos', action: 'Cadastrar protocolo', permission: 'complaints_register', roles: ['master_admin', 'admin', 'sac_operator'], note: 'Liberado por permissao de tela de cadastro.' },
-  { area: 'Protocolos', action: 'Fechar protocolo', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator'], note: 'Coordenador, gerente e marketing nao finalizam protocolo.' },
-  { area: 'Protocolos', action: 'Reabilitar protocolo finalizado/cancelado', roles: ['master_admin', 'supervisor_crc'], note: 'Exige justificativa operacional.' },
-  { area: 'Protocolos', action: 'Alterar unidade cadastrada', roles: ['master_admin', 'supervisor_crc', 'sac_operator'], note: 'Alcada restrita para preservar lastro da demanda.' },
-  { area: 'Protocolos', action: 'Alterar telefone do paciente', roles: ['master_admin', 'supervisor_crc', 'sac_operator'], note: 'Usado dentro da ficha executiva.' },
-  { area: 'Protocolos', action: 'Encaminhar/reencaminhar demanda', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager'], note: 'Coordenador e gerente devolvem ao Operador de SAC.' },
-  { area: 'Protocolos', action: 'Notificar responsaveis novamente', roles: ['master_admin', 'supervisor_crc', 'sac_operator'], note: 'Reenvio manual de e-mail/WhatsApp quando permitido.' },
-  { area: 'Evidencias', action: 'Anexar evidencias', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager', 'viewer'], note: 'Marketing pode anexar, mas sem alcadas de fechamento.' },
-  { area: 'Evidencias', action: 'Excluir evidencias', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager'], note: 'Marketing nao exclui evidencias; exclusao deve preservar lastro.' },
-  { area: 'Tratativas', action: 'Registrar tratativa', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager'], note: 'Coordenador e gerente devem relatar antes de registrar contato com paciente.' },
-  { area: 'Tratativas', action: 'Registrar contato com paciente', roles: ['master_admin', 'supervisor_crc', 'sac_operator'], note: 'Regra principal do atendimento SAC/CRC.' },
-  { area: 'Tratamento do paciente', action: 'Cadastrar tratamento/agendamento', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator'], note: 'Dados alimentam a gestao de pacientes e agenda da Home.' },
+  { area: 'Protocolos', action: 'Fechar protocolo', actionPermission: 'complaints_close', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator'], note: 'Coordenador, gerente e marketing nao finalizam protocolo.' },
+  { area: 'Protocolos', action: 'Reabilitar protocolo finalizado/cancelado', actionPermission: 'complaints_reactivate', roles: ['master_admin', 'supervisor_crc'], note: 'Exige justificativa operacional.' },
+  { area: 'Protocolos', action: 'Alterar unidade cadastrada', actionPermission: 'complaints_change_unit', roles: ['master_admin', 'supervisor_crc', 'sac_operator'], note: 'Alcada restrita para preservar lastro da demanda.' },
+  { area: 'Protocolos', action: 'Alterar telefone do paciente', actionPermission: 'complaints_edit_patient_phone', roles: ['master_admin', 'supervisor_crc', 'sac_operator'], note: 'Usado dentro da ficha executiva.' },
+  { area: 'Protocolos', action: 'Encaminhar/reencaminhar demanda', actionPermission: 'complaints_reassign', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager'], note: 'Coordenador e gerente devolvem ao Operador de SAC.' },
+  { area: 'Protocolos', action: 'Notificar responsaveis novamente', actionPermission: 'complaints_renotify', roles: ['master_admin', 'supervisor_crc', 'sac_operator'], note: 'Reenvio manual de e-mail/WhatsApp quando permitido.' },
+  { area: 'Evidencias', action: 'Anexar evidencias', actionPermission: 'evidence_attach', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager', 'viewer'], note: 'Marketing pode anexar, mas sem alcadas de fechamento.' },
+  { area: 'Evidencias', action: 'Excluir evidencias', actionPermission: 'evidence_delete', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager'], note: 'Marketing nao exclui evidencias; exclusao deve preservar lastro.' },
+  { area: 'Tratativas', action: 'Registrar tratativa', actionPermission: 'treatment_register', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager'], note: 'Coordenador e gerente devem relatar antes de registrar contato com paciente.' },
+  { area: 'Tratativas', action: 'Registrar contato com paciente', actionPermission: 'patient_contact_register', roles: ['master_admin', 'supervisor_crc', 'sac_operator'], note: 'Regra principal do atendimento SAC/CRC.' },
+  { area: 'Tratamento do paciente', action: 'Cadastrar tratamento/agendamento', actionPermission: 'patient_treatment_manage', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator'], note: 'Dados alimentam a gestao de pacientes e agenda da Home.' },
   { area: 'NPS', action: 'Gerir registros NPS', permission: 'nps_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'manager', 'coordinator', 'viewer'], note: 'Controle principal por permissao de tela.' },
-  { area: 'NPS', action: 'Finalizar NPS', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator'], note: 'Botao de finalizar fica restrito a perfis operacionais.' },
-  { area: 'Excluidos', action: 'Visualizar aba excluidos', roles: ['master_admin'], note: 'Exclusivo do Administrador Master.' },
+  { area: 'NPS', action: 'Finalizar NPS', actionPermission: 'nps_finish', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator'], note: 'Botao de finalizar fica restrito a perfis operacionais.' },
+  { area: 'Excluidos', action: 'Visualizar aba excluidos', actionPermission: 'deleted_view', roles: ['master_admin'], note: 'Exclusivo do Administrador Master.' },
   { area: 'Relatorios', action: 'Relatorio semanal de reclamacoes', permission: 'complaints_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'manager'], note: 'Depende tambem de acesso ao painel de gestao de reclamacoes.' },
   { area: 'Financeiro CRC', action: 'Dashboard executivo', permission: 'financial_dashboard', roles: ['master_admin', 'admin'], note: 'Visao de diretoria.' },
   { area: 'Financeiro CRC', action: 'Unidade x campanha', permission: 'financial_campaigns', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Analise por unidade/campanha.' },
   { area: 'Financeiro CRC', action: 'Gestao financeira e lancamentos', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Permite lancar/editar dados conforme perfil.' },
-  { area: 'Financeiro CRC', action: 'Excluir lancamento financeiro', roles: ['master_admin'], note: 'Exclusao definitiva restrita ao Master.' },
-  { area: 'Financeiro CRC', action: 'Excluir colaborador CRC', roles: ['master_admin'], note: 'Preserva a base do ROI.' },
+  { area: 'Financeiro CRC', action: 'Excluir lancamento financeiro', actionPermission: 'financial_record_delete', roles: ['master_admin'], note: 'Exclusao definitiva restrita ao Master.' },
+  { area: 'Financeiro CRC', action: 'Excluir colaborador CRC', actionPermission: 'financial_collaborator_delete', roles: ['master_admin'], note: 'Preserva a base do ROI.' },
   { area: 'Painel Gerencial', action: 'Acessar Centro Master e administracao', permission: 'admin_panel', roles: ['master_admin'], note: 'Apenas Administrador Master altera usuarios e permissoes.' }
 ];
 
@@ -101,6 +140,7 @@ const actionControls = authorityRules.map((rule) => ({
   title: rule.action,
   path: rule.action,
   permission: rule.permission,
+  actionPermission: rule.actionPermission,
   roles: rule.roles,
   note: rule.note
 }));
@@ -139,6 +179,7 @@ function normalizeUser(user = {}) {
     ...user,
     active: Boolean(user.active),
     permissions: Array.isArray(user.permissions) ? user.permissions : [],
+    actionPermissions: Array.isArray(user.actionPermissions) ? user.actionPermissions : (defaultRoleActionPermissions[user.role] || []),
     clinicIds: normalizeClinicIds(user)
   };
 }
@@ -148,7 +189,10 @@ function roleLabel(value) {
 }
 
 function controlPermissionLabel(permission) {
-  return screenPermissions.find((item) => item.value === permission)?.label || permission || 'Alcada por perfil';
+  return screenPermissions.find((item) => item.value === permission)?.label
+    || actionPermissions.find((item) => item.value === permission)?.label
+    || permission
+    || 'Alcada por perfil';
 }
 
 function userCanAccessControl(user, control) {
@@ -162,8 +206,9 @@ function userCanAccessControl(user, control) {
     || user.role === 'admin'
     || permissions.includes(control.permission);
   const roleAllowed = !Array.isArray(control.roles) || control.roles.includes(user.role);
+  const actionAllowed = !control.actionPermission || hasActionPermission(user, control.actionPermission);
 
-  return permissionAllowed && roleAllowed;
+  return permissionAllowed && roleAllowed && actionAllowed;
 }
 
 function MasterControlCenter() {
@@ -176,6 +221,7 @@ function MasterControlCenter() {
   const [selectedUserId, setSelectedUserId] = useState('');
   const [selectedProfile, setSelectedProfile] = useState('supervisor_crc');
   const [profilePermissionDraft, setProfilePermissionDraft] = useState(() => ({ ...defaultRolePermissions }));
+  const [profileActionDraft, setProfileActionDraft] = useState(() => ({ ...defaultRoleActionPermissions }));
   const [activeTab, setActiveTab] = useState('users');
   const [filters, setFilters] = useState({ search: '', role: '', status: '' });
   const [feedback, setFeedback] = useState('');
@@ -257,15 +303,20 @@ function MasterControlCenter() {
     () => profilePermissionDraft[selectedProfile] || ['home'],
     [profilePermissionDraft, selectedProfile]
   );
+  const selectedProfileActionPermissions = useMemo(
+    () => profileActionDraft[selectedProfile] || [],
+    [profileActionDraft, selectedProfile]
+  );
   const selectedProfileStats = useMemo(() => {
     const profileUser = {
       role: selectedProfile,
       active: true,
-      permissions: selectedProfilePermissions
+      permissions: selectedProfilePermissions,
+      actionPermissions: selectedProfileActionPermissions
     };
     const released = accessControls.filter((control) => userCanAccessControl(profileUser, control)).length;
     return { released, blocked: accessControls.length - released };
-  }, [selectedProfile, selectedProfilePermissions]);
+  }, [selectedProfile, selectedProfilePermissions, selectedProfileActionPermissions]);
 
   const summary = useMemo(() => ({
     users: users.length,
@@ -312,11 +363,88 @@ function MasterControlCenter() {
     )));
   };
 
+  const buildUserPayload = (user, overrides = {}) => {
+    const merged = { ...user, ...overrides };
+    return {
+      name: merged.name,
+      email: merged.email,
+      role: merged.role,
+      position: merged.position,
+      phone: merged.phone ? formatBrazilPhoneInput(merged.phone) : defaultBrazilPhone,
+      whatsapp: merged.whatsapp ? formatBrazilPhoneInput(merged.whatsapp) : defaultBrazilPhone,
+      department: merged.department,
+      active: Boolean(merged.active),
+      permissions: merged.permissions || [],
+      actionPermissions: merged.actionPermissions || [],
+      clinicIds: normalizeClinicIds(merged)
+    };
+  };
+
   const toggleUserPermission = (userId, permission) => {
     const user = users.find((item) => String(item.id) === String(userId));
     const permissions = new Set(Array.isArray(user?.permissions) ? user.permissions : []);
     permissions.has(permission) ? permissions.delete(permission) : permissions.add(permission);
     patchUser(userId, { permissions: Array.from(permissions) });
+  };
+
+  const toggleUserPermissionInstant = async (userId, permission) => {
+    const user = users.find((item) => String(item.id) === String(userId));
+    const permissions = new Set(Array.isArray(user?.permissions) ? user.permissions : []);
+    permissions.has(permission) ? permissions.delete(permission) : permissions.add(permission);
+    const nextPermissions = Array.from(permissions);
+    patchUser(userId, { permissions: nextPermissions });
+    setSavingUserId(String(userId));
+    setFeedback('');
+
+    try {
+      await api.patch(`/admin/users/${userId}`, buildUserPayload(user, { permissions: nextPermissions }));
+      setFeedback('Liberacao aplicada instantaneamente.');
+      await loadData();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Nao foi possivel aplicar a liberacao.');
+      await loadData();
+    } finally {
+      setSavingUserId('');
+    }
+  };
+
+  const toggleUserActionPermission = async (userId, permission) => {
+    const user = users.find((item) => String(item.id) === String(userId));
+    const permissions = new Set(Array.isArray(user?.actionPermissions) ? user.actionPermissions : []);
+    permissions.has(permission) ? permissions.delete(permission) : permissions.add(permission);
+    const actionPermissions = Array.from(permissions);
+    patchUser(userId, { actionPermissions });
+    setSavingUserId(String(userId));
+    setFeedback('');
+
+    try {
+      await api.patch(`/admin/users/${userId}`, buildUserPayload(user, { actionPermissions }));
+      setFeedback('Botao/acao atualizado instantaneamente.');
+      await loadData();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Nao foi possivel atualizar o botao/acao.');
+      await loadData();
+    } finally {
+      setSavingUserId('');
+    }
+  };
+
+  const updateUserInstant = async (userId, changes, successMessage = 'Alteracao aplicada instantaneamente.') => {
+    const user = users.find((item) => String(item.id) === String(userId));
+    patchUser(userId, changes);
+    setSavingUserId(String(userId));
+    setFeedback('');
+
+    try {
+      await api.patch(`/admin/users/${userId}`, buildUserPayload(user, changes));
+      setFeedback(successMessage);
+      await loadData();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Nao foi possivel aplicar a alteracao.');
+      await loadData();
+    } finally {
+      setSavingUserId('');
+    }
   };
 
   const toggleClinic = (userId, clinicId) => {
@@ -335,11 +463,57 @@ function MasterControlCenter() {
     patchUser(userId, { permissions: ['home'] });
   };
 
+  const applyAllPermissionsInstant = async (userId) => {
+    const user = users.find((item) => String(item.id) === String(userId));
+    const permissions = screenPermissions.map((permission) => permission.value);
+    patchUser(userId, { permissions });
+    setSavingUserId(String(userId));
+    setFeedback('');
+
+    try {
+      await api.patch(`/admin/users/${userId}`, buildUserPayload(user, { permissions }));
+      setFeedback('Todas as telas foram liberadas instantaneamente.');
+      await loadData();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Nao foi possivel liberar todas as telas.');
+      await loadData();
+    } finally {
+      setSavingUserId('');
+    }
+  };
+
+  const clearPermissionsInstant = async (userId) => {
+    const user = users.find((item) => String(item.id) === String(userId));
+    const permissions = ['home'];
+    patchUser(userId, { permissions });
+    setSavingUserId(String(userId));
+    setFeedback('');
+
+    try {
+      await api.patch(`/admin/users/${userId}`, buildUserPayload(user, { permissions }));
+      setFeedback('Telas bloqueadas instantaneamente. Home mantida.');
+      await loadData();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Nao foi possivel bloquear as telas.');
+      await loadData();
+    } finally {
+      setSavingUserId('');
+    }
+  };
+
   const toggleProfilePermission = (role, permission) => {
     setProfilePermissionDraft((current) => {
       const permissions = new Set(current[role] || ['home']);
       permissions.has(permission) ? permissions.delete(permission) : permissions.add(permission);
       permissions.add('home');
+      return { ...current, [role]: Array.from(permissions) };
+    });
+  };
+
+  const toggleProfileActionPermission = (role, permission) => {
+    setProfileActionDraft((current) => {
+      const permissions = new Set(current[role] || []);
+      permissions.has(permission) ? permissions.delete(permission) : permissions.add(permission);
       return { ...current, [role]: Array.from(permissions) };
     });
   };
@@ -351,13 +525,25 @@ function MasterControlCenter() {
     }));
   };
 
+  const applyAllProfileActionPermissions = (role) => {
+    setProfileActionDraft((current) => ({
+      ...current,
+      [role]: actionPermissions.map((permission) => permission.value)
+    }));
+  };
+
   const clearProfilePermissions = (role) => {
     setProfilePermissionDraft((current) => ({ ...current, [role]: ['home'] }));
+  };
+
+  const clearProfileActionPermissions = (role) => {
+    setProfileActionDraft((current) => ({ ...current, [role]: [] }));
   };
 
   const applyProfileToUsers = async (role) => {
     const roleUsers = users.filter((user) => user.role === role);
     const permissions = profilePermissionDraft[role] || ['home'];
+    const actionPermissions = profileActionDraft[role] || [];
 
     if (!roleUsers.length) {
       setFeedback(`Nenhum usuario encontrado no perfil ${roleLabel(role)}.`);
@@ -371,16 +557,7 @@ function MasterControlCenter() {
 
     try {
       await Promise.all(roleUsers.map((user) => api.patch(`/admin/users/${user.id}`, {
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        position: user.position,
-        phone: user.phone ? formatBrazilPhoneInput(user.phone) : defaultBrazilPhone,
-        whatsapp: user.whatsapp ? formatBrazilPhoneInput(user.whatsapp) : defaultBrazilPhone,
-        department: user.department,
-        active: Boolean(user.active),
-        permissions,
-        clinicIds: normalizeClinicIds(user)
+        ...buildUserPayload(user, { permissions, actionPermissions })
       })));
       setFeedback(`Modelo do perfil ${roleLabel(role)} aplicado em ${roleUsers.length} usuario(s).`);
       await loadData();
@@ -396,18 +573,7 @@ function MasterControlCenter() {
     setFeedback('');
 
     try {
-      await api.patch(`/admin/users/${user.id}`, {
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        position: user.position,
-        phone: user.phone ? formatBrazilPhoneInput(user.phone) : defaultBrazilPhone,
-        whatsapp: user.whatsapp ? formatBrazilPhoneInput(user.whatsapp) : defaultBrazilPhone,
-        department: user.department,
-        active: Boolean(user.active),
-        permissions: user.permissions || [],
-        clinicIds: normalizeClinicIds(user)
-      });
+      await api.patch(`/admin/users/${user.id}`, buildUserPayload(user));
       setFeedback(`Usuario ${user.name} atualizado com sucesso.`);
       await loadData();
     } catch (error) {
@@ -692,6 +858,8 @@ function MasterControlCenter() {
                     </select>
                     <button className="outline-action" onClick={() => applyAllProfilePermissions(selectedProfile)}>Liberar telas do perfil</button>
                     <button className="outline-action" onClick={() => clearProfilePermissions(selectedProfile)}>Bloquear telas do perfil</button>
+                    <button className="outline-action" onClick={() => applyAllProfileActionPermissions(selectedProfile)}>Liberar botoes</button>
+                    <button className="outline-action" onClick={() => clearProfileActionPermissions(selectedProfile)}>Bloquear botoes</button>
                     <button className="primary-action" onClick={() => applyProfileToUsers(selectedProfile)} disabled={savingUserId === `profile:${selectedProfile}`}>
                       {savingUserId === `profile:${selectedProfile}` ? 'Aplicando...' : 'Aplicar aos usuarios'}
                     </button>
@@ -701,7 +869,7 @@ function MasterControlCenter() {
                 <div className="master-release-kpis">
                   <article><span>Perfil selecionado</span><strong>{roleLabel(selectedProfile)}</strong><small>{selectedProfileUsers.length} usuario(s) neste perfil</small></article>
                   <article><span>Telas liberadas</span><strong>{selectedProfilePermissions.length}/{screenPermissions.length}</strong><small>Modelo que sera aplicado</small></article>
-                  <article><span>Acessos do perfil</span><strong>{selectedProfileStats.released}</strong><small>{selectedProfileStats.blocked} bloqueado(s) por perfil/permissao</small></article>
+                  <article><span>Botoes liberados</span><strong>{selectedProfileActionPermissions.length}/{actionPermissions.length}</strong><small>{selectedProfileStats.blocked} bloqueado(s) por perfil/permissao</small></article>
                 </div>
 
                 <div className="master-profile-grid">
@@ -728,17 +896,24 @@ function MasterControlCenter() {
                   <section className="master-profile-card">
                     <header>
                       <strong>Botoes e acoes por perfil</strong>
-                      <span>{authorityRules.filter((rule) => rule.roles.includes(selectedProfile)).length}/{authorityRules.length}</span>
+                      <span>{selectedProfileActionPermissions.length}/{actionPermissions.length}</span>
                     </header>
                     <div className="master-profile-scroll">
-                      {authorityRules.map((rule) => {
-                        const allowed = rule.roles.includes(selectedProfile);
+                      {actionPermissions.map((permission) => {
+                        const rule = authorityRules.find((item) => item.actionPermission === permission.value);
+                        const allowed = selectedProfileActionPermissions.includes(permission.value);
+                        const roleAllowed = !rule?.roles || rule.roles.includes(selectedProfile);
                         return (
-                          <div className={`master-profile-action ${allowed ? 'allowed' : 'blocked'}`} key={`${rule.area}-${rule.action}`}>
-                            <strong>{rule.action}</strong>
-                            <span>{rule.area}</span>
-                            <small>{allowed ? 'Perfil autorizado' : 'Perfil bloqueado'} | {rule.permission ? controlPermissionLabel(rule.permission) : 'Alcada por perfil'}</small>
-                          </div>
+                          <label className={`master-profile-action ${allowed ? 'allowed' : 'blocked'}`} key={permission.value}>
+                            <strong>{permission.label}</strong>
+                            <span>{permission.area}</span>
+                            <small>{allowed ? 'Botao liberado no modelo' : 'Botao bloqueado no modelo'} | {roleAllowed ? 'Perfil compativel' : 'Perfil fora da alcada original'}</small>
+                            <input
+                              type="checkbox"
+                              checked={allowed}
+                              onChange={() => toggleProfileActionPermission(selectedProfile, permission.value)}
+                            />
+                          </label>
                         );
                       })}
                     </div>
@@ -797,15 +972,15 @@ function MasterControlCenter() {
                       <p>Todos os caminhos e botoes conhecidos ficam listados aqui. Itens com permissao podem ser liberados direto; itens por alcada seguem o perfil operacional selecionado.</p>
                     </div>
                     <div className="master-release-actions">
-                      <select className="field" value={selectedUser.role || ''} onChange={(event) => patchUser(selectedUser.id, { role: event.target.value })}>
+                      <select className="field" value={selectedUser.role || ''} onChange={(event) => updateUserInstant(selectedUser.id, { role: event.target.value }, 'Perfil aplicado instantaneamente.')}>
                         {roleOptions.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
                       </select>
-                      <select className="field" value={selectedUser.active ? 'active' : 'inactive'} onChange={(event) => patchUser(selectedUser.id, { active: event.target.value === 'active' })}>
+                      <select className="field" value={selectedUser.active ? 'active' : 'inactive'} onChange={(event) => updateUserInstant(selectedUser.id, { active: event.target.value === 'active' }, 'Status aplicado instantaneamente.')}>
                         <option value="active">Usuario ativo</option>
                         <option value="inactive">Usuario bloqueado</option>
                       </select>
-                      <button className="outline-action" onClick={() => applyAllPermissions(selectedUser.id)}>Liberar telas</button>
-                      <button className="outline-action" onClick={() => clearPermissions(selectedUser.id)}>Bloquear telas</button>
+                      <button className="outline-action" onClick={() => applyAllPermissionsInstant(selectedUser.id)} disabled={savingUserId === String(selectedUser.id)}>Liberar telas</button>
+                      <button className="outline-action" onClick={() => clearPermissionsInstant(selectedUser.id)} disabled={savingUserId === String(selectedUser.id)}>Bloquear telas</button>
                       <button className="primary-action" onClick={() => saveUser(selectedUser)} disabled={savingUserId === String(selectedUser.id)}>
                         {savingUserId === String(selectedUser.id) ? 'Salvando...' : 'Salvar liberacoes'}
                       </button>
@@ -822,9 +997,11 @@ function MasterControlCenter() {
                     {accessControls.map((control) => {
                       const allowed = userCanAccessControl(selectedUser, control);
                       const editable = Boolean(control.permission) && !control.masterOnly && control.permission !== 'home';
+                      const actionEditable = Boolean(control.actionPermission) && !control.masterOnly;
                       const checked = control.permission === 'home'
                         ? true
                         : Array.isArray(selectedUser.permissions) && selectedUser.permissions.includes(control.permission);
+                      const actionChecked = Array.isArray(selectedUser.actionPermissions) && selectedUser.actionPermissions.includes(control.actionPermission);
                       return (
                         <article className={`master-release-card ${allowed ? 'allowed' : 'blocked'}`} key={`${control.type}-${control.area}-${control.path}`}>
                           <header>
@@ -840,15 +1017,26 @@ function MasterControlCenter() {
                           </div>
                           <p>{control.note}</p>
                           <footer>
-                            <small>{controlPermissionLabel(control.permission)}</small>
-                            {editable ? (
+                            <small>{control.actionPermission ? controlPermissionLabel(control.actionPermission) : controlPermissionLabel(control.permission)}</small>
+                            {actionEditable ? (
+                              <label className="master-release-switch">
+                                <input
+                                  type="checkbox"
+                                  checked={actionChecked}
+                                  onChange={() => toggleUserActionPermission(selectedUser.id, control.actionPermission)}
+                                  disabled={savingUserId === String(selectedUser.id)}
+                                />
+                                <span>{actionChecked ? 'Botao liberado' : 'Botao bloqueado'}</span>
+                              </label>
+                            ) : editable ? (
                               <label className="master-release-switch">
                                 <input
                                   type="checkbox"
                                   checked={checked}
-                                  onChange={() => toggleUserPermission(selectedUser.id, control.permission)}
+                                  onChange={() => toggleUserPermissionInstant(selectedUser.id, control.permission)}
+                                  disabled={savingUserId === String(selectedUser.id)}
                                 />
-                                <span>{checked ? 'Permissao ativa' : 'Permissao bloqueada'}</span>
+                                <span>{checked ? 'Tela liberada' : 'Tela bloqueada'}</span>
                               </label>
                             ) : (
                               <span className="master-release-lock">{control.masterOnly ? 'Apenas Master' : 'Controlado por perfil'}</span>

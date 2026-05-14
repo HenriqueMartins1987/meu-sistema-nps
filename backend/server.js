@@ -666,37 +666,123 @@ function defaultPermissionsForRole(role) {
   return ['home', 'complaints_management', 'nps_management'];
 }
 
+const actionPermissions = {
+  complaints_view_all: true,
+  complaints_close: true,
+  complaints_reactivate: true,
+  complaints_change_unit: true,
+  complaints_edit_patient_phone: true,
+  complaints_reassign: true,
+  complaints_renotify: true,
+  evidence_attach: true,
+  evidence_delete: true,
+  treatment_register: true,
+  patient_contact_register: true,
+  patient_treatment_manage: true,
+  nps_finish: true,
+  deleted_view: true,
+  financial_record_delete: true,
+  financial_collaborator_delete: true
+};
+
+function defaultActionPermissionsForRole(role) {
+  if (role === 'master_admin' || role === 'admin') return Object.keys(actionPermissions);
+
+  if (role === 'sac_operator') {
+    return [
+      'complaints_view_all',
+      'complaints_close',
+      'complaints_change_unit',
+      'complaints_edit_patient_phone',
+      'complaints_reassign',
+      'complaints_renotify',
+      'evidence_attach',
+      'evidence_delete',
+      'treatment_register',
+      'patient_contact_register',
+      'patient_treatment_manage',
+      'nps_finish'
+    ];
+  }
+
+  if (role === 'supervisor_crc') {
+    return [
+      'complaints_view_all',
+      'complaints_close',
+      'complaints_reactivate',
+      'complaints_change_unit',
+      'complaints_edit_patient_phone',
+      'complaints_reassign',
+      'complaints_renotify',
+      'evidence_attach',
+      'evidence_delete',
+      'treatment_register',
+      'patient_contact_register',
+      'patient_treatment_manage',
+      'nps_finish'
+    ];
+  }
+
+  if (role === 'manager' || role === 'coordinator') {
+    return ['complaints_reassign', 'evidence_attach', 'evidence_delete', 'treatment_register'];
+  }
+
+  return ['complaints_view_all', 'evidence_attach'];
+}
+
+function getUserActionPermissions(user = {}) {
+  const defaults = defaultActionPermissionsForRole(user.role);
+  let permissions = defaults;
+
+  try {
+    permissions = user?.action_permissions ? JSON.parse(user.action_permissions) : permissions;
+  } catch (error) {
+    permissions = defaults;
+  }
+
+  return Array.from(new Set(Array.isArray(permissions) ? permissions.filter((permission) => actionPermissions[permission]) : defaults));
+}
+
+function hasActionPermission(user, permission) {
+  if (!user || !permission) return false;
+  if (isMasterAdminUser(user)) return true;
+  const permissions = Array.isArray(user.actionPermissions)
+    ? user.actionPermissions
+    : getUserActionPermissions(user);
+  return permissions.includes(permission);
+}
+
 function canAttachEvidence(user) {
   const normalizedRole = String(user?.role || '').trim().toLowerCase();
-  return evidenceRoles.has(normalizedRole) || isAdminUser(user);
+  return (evidenceRoles.has(normalizedRole) || isAdminUser(user)) && hasActionPermission(user, 'evidence_attach');
 }
 
 function canDeleteEvidence(user) {
   if (!Boolean(user?.id || user?.email || user?.role)) return false;
-  return !isMarketingUser(user) || isAdminUser(user);
+  return (!isMarketingUser(user) || isAdminUser(user)) && hasActionPermission(user, 'evidence_delete');
 }
 
 function canChangeComplaintUnit(user) {
   const normalizedRole = String(user?.role || '').trim().toLowerCase();
-  return complaintUnitChangeRoles.has(normalizedRole) || isMasterAdminUser(user);
+  return (complaintUnitChangeRoles.has(normalizedRole) || isMasterAdminUser(user)) && hasActionPermission(user, 'complaints_change_unit');
 }
 
 function canEditComplaintPatientPhone(user) {
   const normalizedRole = String(user?.role || '').trim().toLowerCase();
-  return ['sac_operator', 'supervisor_crc', 'master_admin'].includes(normalizedRole) || isMasterAdminUser(user);
+  return (['sac_operator', 'supervisor_crc', 'master_admin'].includes(normalizedRole) || isMasterAdminUser(user)) && hasActionPermission(user, 'complaints_edit_patient_phone');
 }
 
 function canManageComplaintPatientTreatment(user) {
   const normalizedRole = String(user?.role || '').trim().toLowerCase();
-  return ['sac_operator', 'supervisor_crc', 'admin', 'master_admin'].includes(normalizedRole) || isMasterAdminUser(user);
+  return (['sac_operator', 'supervisor_crc', 'admin', 'master_admin'].includes(normalizedRole) || isMasterAdminUser(user)) && hasActionPermission(user, 'patient_treatment_manage');
 }
 
 function canAddTreatment(user) {
-  return treatmentRoles.has(user?.role) || isAdminUser(user);
+  return (treatmentRoles.has(user?.role) || isAdminUser(user)) && hasActionPermission(user, 'treatment_register');
 }
 
 function canCloseComplaint(user) {
-  return ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role) || isMasterAdminUser(user);
+  return (['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role) || isMasterAdminUser(user)) && hasActionPermission(user, 'complaints_close');
 }
 
 function canSupervisorApprove(user) {
@@ -704,7 +790,7 @@ function canSupervisorApprove(user) {
 }
 
 function canMarkPatientContact(user) {
-  return ['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role) || isMasterAdminUser(user);
+  return (['master_admin', 'supervisor_crc', 'sac_operator'].includes(user?.role) || isMasterAdminUser(user)) && hasActionPermission(user, 'patient_contact_register');
 }
 
 function canRegisterFirstAttendance(user) {
@@ -712,9 +798,9 @@ function canRegisterFirstAttendance(user) {
 }
 
 function canReassignComplaint(user) {
-  return ['admin', 'master_admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager'].includes(user?.role)
+  return (['admin', 'master_admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager'].includes(user?.role)
     || isMasterAdminUser(user)
-    || isAdminUser(user);
+    || isAdminUser(user)) && hasActionPermission(user, 'complaints_reassign');
 }
 
 function getUserScreenPermissions(user = {}) {
@@ -741,11 +827,11 @@ function hasScreenPermission(user, permission) {
 }
 
 function canDeleteRecords(user) {
-  return isMasterAdminUser(user) || user?.role === 'supervisor_crc';
+  return (isMasterAdminUser(user) || user?.role === 'supervisor_crc') && hasActionPermission(user, 'deleted_view');
 }
 
 function canReactivateComplaint(user) {
-  return isMasterAdminUser(user) || user?.role === 'supervisor_crc';
+  return (isMasterAdminUser(user) || user?.role === 'supervisor_crc') && hasActionPermission(user, 'complaints_reactivate');
 }
 
 function canViewFinancialIntelligence(user) {
@@ -768,7 +854,7 @@ function canManageFinancialIntelligence(user) {
 }
 
 function canDeleteFinancialIntelligence(user) {
-  return isMasterAdminUser(user);
+  return isMasterAdminUser(user) && hasActionPermission(user, 'financial_record_delete');
 }
 
 function canManageCrcCollaborators(user) {
@@ -776,15 +862,15 @@ function canManageCrcCollaborators(user) {
 }
 
 function canDeleteCrcCollaborators(user) {
-  return isMasterAdminUser(user);
+  return isMasterAdminUser(user) && hasActionPermission(user, 'financial_collaborator_delete');
 }
 
 function canRenotifyComplaint(user) {
-  return isMasterAdminUser(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator';
+  return (isMasterAdminUser(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator') && hasActionPermission(user, 'complaints_renotify');
 }
 
 function canViewDeletedRecords(user) {
-  return isMasterAdminUser(user);
+  return isMasterAdminUser(user) && hasActionPermission(user, 'deleted_view');
 }
 
 function classifyNpsFeedback(score, feedbackType) {
@@ -1520,6 +1606,7 @@ const adminUserCreateSchema = z.object({
   whatsapp: z.string().trim().min(1, 'Informe o WhatsApp.').max(40),
   department: z.string().trim().max(160).optional().or(z.literal('')).or(z.null()),
   permissions: z.array(z.string().trim().min(1)).max(50).optional(),
+  actionPermissions: z.array(z.string().trim().min(1)).max(80).optional(),
   clinicIds: z.array(z.union([z.string(), z.number()])).max(200).optional()
 });
 
@@ -1744,6 +1831,7 @@ async function ensureDatabaseSchema() {
   await ensureColumn('users', 'whatsapp', 'VARCHAR(40) NULL');
   await ensureColumn('users', 'department', 'VARCHAR(160) NULL');
   await ensureColumn('users', 'permissions', 'LONGTEXT NULL');
+  await ensureColumn('users', 'action_permissions', 'LONGTEXT NULL');
   await ensureColumn('users', 'deleted_at', 'TIMESTAMP NULL');
   await ensureColumn('users', 'deleted_by', 'VARCHAR(160) NULL');
   await ensureColumn('users', 'must_change_password', 'TINYINT(1) NOT NULL DEFAULT 0');
@@ -4635,6 +4723,10 @@ function parsePermissionsFromUser(user) {
   return Array.from(new Set(Array.isArray(permissions) ? permissions : defaultPermissions));
 }
 
+function parseActionPermissionsFromUser(user) {
+  return getUserActionPermissions(user);
+}
+
 function canReceiveComplaintNotification(user) {
   if (isAdminUser(user)) {
     return true;
@@ -4652,6 +4744,7 @@ async function buildAuthenticatedUser(user) {
   const { password: _password, ...safeUser } = user;
   const role = safeUser.role || 'viewer';
   const permissions = parsePermissionsFromUser(safeUser);
+  const actionPermissions = parseActionPermissionsFromUser(safeUser);
   const clinicIds = await getUserClinicIds(user.id);
   const mustChangePassword = Boolean(user.must_change_password);
   const tokenVersion = Number(user.token_version || 1);
@@ -4660,6 +4753,7 @@ async function buildAuthenticatedUser(user) {
     ...safeUser,
     role,
     permissions,
+    actionPermissions,
     clinicIds,
     mustChangePassword,
     tokenVersion
@@ -4673,6 +4767,7 @@ function signUserToken(user) {
     role: user.role,
     name: user.name,
     permissions: user.permissions,
+    actionPermissions: user.actionPermissions,
     clinicIds: user.clinicIds,
     mustChangePassword: Boolean(user.mustChangePassword),
     tokenVersion: Number(user.tokenVersion || user.token_version || 1)
@@ -6766,6 +6861,13 @@ async function saveNpsTreatment(npsId, user, payload = {}, options = {}) {
 
   const requestedStatus = normalizeNpsStatus(payload.status || 'em_tratativa');
   const nextStatus = requestedStatus === 'registrado' ? 'em_tratativa' : requestedStatus;
+
+  if (nextStatus === 'tratado' && !hasActionPermission(user, 'nps_finish')) {
+    const error = new Error('Seu usuário não possui liberação para finalizar NPS.');
+    error.statusCode = 403;
+    throw error;
+  }
+
   const protocol = nps.nps_protocol || formatNpsProtocol(nps.id, nps.created_at);
   const actorName = getActorName(user);
   const lastComment = comment || nps.nps_treatment_comment || null;
@@ -6813,7 +6915,7 @@ async function authenticate(req, res, next) {
 
     if (req.user?.id) {
       const [rows] = await pool.query(
-        'SELECT must_change_password, token_version, active FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+        'SELECT role, permissions, action_permissions, must_change_password, token_version, active FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
         [req.user.id]
       );
 
@@ -6828,6 +6930,9 @@ async function authenticate(req, res, next) {
       }
 
       const mustChangePassword = Boolean(rows[0]?.must_change_password);
+      req.user.role = rows[0]?.role || req.user.role;
+      req.user.permissions = parsePermissionsFromUser({ role: req.user.role, permissions: rows[0]?.permissions });
+      req.user.actionPermissions = getUserActionPermissions({ role: req.user.role, action_permissions: rows[0]?.action_permissions });
       req.user.tokenVersion = tokenVersion;
       req.user.mustChangePassword = mustChangePassword;
 
@@ -6862,7 +6967,7 @@ function optionalAuthenticate(req, res, next) {
     }
 
     return pool.query(
-      'SELECT token_version, active FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+      'SELECT role, permissions, action_permissions, token_version, active FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
       [req.user.id]
     ).then(([rows]) => {
       if (!rows.length || !rows[0]?.active) {
@@ -6875,6 +6980,9 @@ function optionalAuthenticate(req, res, next) {
         return res.status(401).json({ error: 'Sessão expirada por atualização de segurança. Faça login novamente.' });
       }
 
+      req.user.role = rows[0]?.role || req.user.role;
+      req.user.permissions = parsePermissionsFromUser({ role: req.user.role, permissions: rows[0]?.permissions });
+      req.user.actionPermissions = getUserActionPermissions({ role: req.user.role, action_permissions: rows[0]?.action_permissions });
       req.user.tokenVersion = tokenVersion;
       return next();
     }).catch((error) => {
@@ -7772,7 +7880,7 @@ app.post('/admin/registration-requests/:id/reject', authenticate, requireMasterA
 app.get('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const [users] = await pool.query(
-      `SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, created_at, updated_at
+      `SELECT id, name, email, role, position, phone, whatsapp, department, permissions, action_permissions, active, must_change_password, created_at, updated_at
        FROM users
        WHERE deleted_at IS NULL
        ORDER BY name ASC`
@@ -7786,6 +7894,7 @@ app.get('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
 
     res.json(users.map((user) => {
       let permissions = defaultPermissionsForRole(user.role);
+      let actionPermissionList = defaultActionPermissionsForRole(user.role);
 
       try {
         permissions = user.permissions ? JSON.parse(user.permissions) : permissions;
@@ -7793,9 +7902,16 @@ app.get('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
         permissions = defaultPermissionsForRole(user.role);
       }
 
+      try {
+        actionPermissionList = user.action_permissions ? JSON.parse(user.action_permissions) : actionPermissionList;
+      } catch (error) {
+        actionPermissionList = defaultActionPermissionsForRole(user.role);
+      }
+
       return {
         ...user,
         permissions,
+        actionPermissions: Array.isArray(actionPermissionList) ? actionPermissionList : defaultActionPermissionsForRole(user.role),
         clinics: clinicsByUser[user.id] || []
       };
     }));
@@ -7822,6 +7938,7 @@ app.post('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
       whatsapp,
       department,
       permissions,
+      actionPermissions: requestedActionPermissions,
       clinicIds
     } = parsed.data;
 
@@ -7853,6 +7970,9 @@ app.post('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
     const allowedPermissions = Array.isArray(permissions)
       ? permissions.filter((permission) => screenPermissions[permission])
       : defaultPermissionsForRole(role);
+    const allowedActionPermissions = Array.isArray(requestedActionPermissions)
+      ? requestedActionPermissions.filter((permission) => actionPermissions[permission])
+      : defaultActionPermissionsForRole(role);
     const normalizedClinicIds = Array.isArray(clinicIds)
       ? clinicIds
         .map((clinicId) => Number(clinicId))
@@ -7862,8 +7982,8 @@ app.post('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
     const passwordHash = await bcrypt.hash(temporaryPassword, 10);
     const [result] = await pool.query(
       `INSERT INTO users
-       (name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+       (name, email, password, role, position, phone, whatsapp, department, permissions, action_permissions, active, must_change_password)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
       [
         String(name).trim(),
         normalizedEmail,
@@ -7874,6 +7994,7 @@ app.post('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
         normalizedWhatsapp,
         String(department || '').trim() || null,
         JSON.stringify(allowedPermissions),
+        JSON.stringify(allowedActionPermissions),
         requirePasswordChangeOnFirstLogin ? 1 : 0
       ]
     );
@@ -7981,6 +8102,9 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
     const permissions = Array.isArray(req.body.permissions)
       ? req.body.permissions.filter((permission) => screenPermissions[permission])
       : defaultPermissionsForRole(nextRole);
+    const nextActionPermissions = Array.isArray(req.body.actionPermissions)
+      ? req.body.actionPermissions.filter((permission) => actionPermissions[permission])
+      : getUserActionPermissions({ ...current, role: nextRole });
 
     await pool.query(
       `UPDATE users
@@ -7992,6 +8116,7 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
               whatsapp = ?,
               department = ?,
               permissions = ?,
+              action_permissions = ?,
               active = ?
         WHERE id = ?`,
       [
@@ -8003,6 +8128,7 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
         normalizedWhatsapp,
         req.body.department || current.department,
         JSON.stringify(permissions),
+        JSON.stringify(nextActionPermissions),
         req.body.active === undefined ? current.active : (req.body.active ? 1 : 0),
         current.id
       ]
