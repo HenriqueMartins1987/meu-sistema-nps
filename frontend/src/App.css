@@ -7941,6 +7941,21 @@ a {
   grid-column: span 2;
 }
 
+.financial-commission-note {
+  align-self: end;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  padding: 11px 13px;
+  border: 1px solid rgba(151, 111, 55, 0.24);
+  border-radius: 8px;
+  background: rgba(212, 167, 100, 0.1);
+  color: #6c4f2d;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .financial-total-line {
   display: inline-flex;
   width: fit-content;
