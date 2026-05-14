@@ -139,6 +139,10 @@ function MasterControlCenter() {
     controlledPermissions: screenPermissions.length
   }), [users]);
 
+  const selectedRoleLabel = roleOptions.find((role) => role.value === selectedUser?.role)?.label || selectedUser?.role || 'Perfil não definido';
+  const selectedClinicIds = normalizeClinicIds(selectedUser || {});
+  const selectedPermissionCount = selectedUser?.permissions?.length || 0;
+
   const patchUser = (userId, changes) => {
     setUsers((current) => current.map((user) => (
       String(user.id) === String(userId) ? { ...user, ...changes } : user
@@ -288,6 +292,31 @@ function MasterControlCenter() {
             <article><span>Telas controladas</span><strong>{summary.controlledPermissions}</strong></article>
           </section>
 
+          {selectedUser && (
+            <section className="master-operational-map">
+              <article>
+                <span>Usuário selecionado</span>
+                <strong>{selectedUser.name}</strong>
+                <small>{selectedUser.email}</small>
+              </article>
+              <article>
+                <span>Perfil de acesso</span>
+                <strong>{selectedRoleLabel}</strong>
+                <small>{selectedUser.position || selectedUser.department || 'Sem cargo vinculado'}</small>
+              </article>
+              <article>
+                <span>Autorizações</span>
+                <strong>{selectedPermissionCount}/{screenPermissions.length}</strong>
+                <small>Telas liberadas no sistema</small>
+              </article>
+              <article>
+                <span>Clínicas vinculadas</span>
+                <strong>{selectedClinicIds.length}</strong>
+                <small>{selectedClinicIds.length ? 'Acesso por unidade definido' : 'Sem limitação por clínica'}</small>
+              </article>
+            </section>
+          )}
+
           <section className="master-user-control-layout">
             <aside className="management-panel master-user-list-panel">
               <div className="panel-heading">
@@ -397,7 +426,9 @@ function MasterControlCenter() {
               </section>
             )}
 
-            <aside className="master-control-sidebar">
+          </section>
+
+          <section className="master-control-sidebar">
               <article className="management-panel master-actions-panel">
                 <div className="panel-heading">
                   <div>
@@ -432,7 +463,6 @@ function MasterControlCenter() {
                   {!collaborators.length && <p className="empty-state">Nenhum colaborador cadastrado.</p>}
                 </div>
               </article>
-            </aside>
           </section>
 
           {settings && (

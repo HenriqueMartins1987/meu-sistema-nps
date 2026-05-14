@@ -8185,12 +8185,57 @@ a {
   font-size: 26px;
 }
 
+.master-operational-map {
+  width: min(var(--page-shell-width), calc(100vw - 48px));
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1.35fr 1fr 0.85fr 0.85fr;
+  gap: 12px;
+}
+
+.master-operational-map article {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdfa;
+  box-shadow: var(--shadow-sm);
+}
+
+.master-operational-map span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.master-operational-map strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.master-operational-map small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .master-user-control-layout {
   width: min(var(--page-shell-width), calc(100vw - 48px));
   margin: 0 auto;
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
-  gap: 16px;
+  grid-template-columns: minmax(280px, 320px) minmax(0, 1fr);
+  gap: 18px;
   align-items: start;
 }
 
@@ -8209,12 +8254,12 @@ a {
 }
 
 .master-user-list-panel {
-  position: sticky;
-  top: 12px;
+  position: static;
 }
 
 .master-control-sidebar {
-  grid-column: 1 / -1;
+  width: min(var(--page-shell-width), calc(100vw - 48px));
+  margin: 0 auto;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 }
 
@@ -8268,18 +8313,27 @@ a {
 .master-user-editor {
   display: grid;
   gap: 16px;
-  overflow: hidden;
+  overflow: visible;
+}
+
+.master-user-editor > .panel-heading {
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.master-user-editor > .panel-heading .primary-action {
+  flex: 0 0 auto;
 }
 
 .master-user-form-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
 .master-user-form-grid label:nth-child(1),
 .master-user-form-grid label:nth-child(2) {
-  grid-column: span 3;
+  grid-column: span 1;
 }
 
 .master-user-form-grid .field,
@@ -8308,7 +8362,7 @@ a {
 
 .master-permission-matrix {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -8330,7 +8384,7 @@ a {
 .master-permission-group > div,
 .master-clinic-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
   max-height: 220px;
   overflow: auto;
@@ -8497,10 +8551,11 @@ a {
   .financial-campaign-dashboard-grid,
   .financial-executive-overview,
   .financial-insight-grid,
+  .master-operational-map,
   .master-user-control-layout,
   .master-control-sidebar,
   .financial-management-layout {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: 1fr;
   }
 
   .master-user-list-panel {
@@ -8536,6 +8591,7 @@ a {
   .financial-executive-overview,
   .financial-insight-grid,
   .master-summary-grid,
+  .master-operational-map,
   .master-user-control-layout,
   .master-user-form-grid,
   .master-permission-matrix,
@@ -8557,6 +8613,7 @@ a {
   .financial-sheet-summary,
   .financial-executive-overview,
   .financial-insight-grid,
+  .master-operational-map,
   .financial-campaign-matrix,
   .financial-diagnostic-panel,
   .financial-margins-panel,
@@ -8566,6 +8623,7 @@ a {
   .financial-campaign-dashboard-grid,
   .financial-management-layout,
   .financial-record-layout,
+  .master-operational-map,
   .master-summary-grid,
   .master-user-control-layout,
   .master-control-grid,
