@@ -133,6 +133,8 @@ const DEFAULT_FINANCIAL_RULES = {
   crcRoiExcellent: 150,
   netMarginHealthyMin: 20,
   selicComparisonTolerance: 1,
+  taxRatePercent: 0,
+  costAllocationPercent: 100,
   expectedMargins
 };
 
@@ -199,6 +201,10 @@ function normalizeFinancialRules(rules = {}) {
     crcRoiExcellent: toNumber(rules.crcRoiExcellent) || DEFAULT_FINANCIAL_RULES.crcRoiExcellent,
     netMarginHealthyMin: toNumber(rules.netMarginHealthyMin) || DEFAULT_FINANCIAL_RULES.netMarginHealthyMin,
     selicComparisonTolerance: toNumber(rules.selicComparisonTolerance) || DEFAULT_FINANCIAL_RULES.selicComparisonTolerance,
+    taxRatePercent: Math.max(0, toNumber(rules.taxRatePercent)),
+    costAllocationPercent: toNumber(rules.costAllocationPercent) > 0
+      ? toNumber(rules.costAllocationPercent)
+      : DEFAULT_FINANCIAL_RULES.costAllocationPercent,
     expectedMargins: expected
   };
 }
@@ -232,11 +238,13 @@ function calculateFinancialMetrics(row, rules = DEFAULT_FINANCIAL_RULES) {
   const revenue = toNumber(row.revenue);
   // Lançamentos registram produção/campanha. Custos de colaborador e operação são mensais,
   // aplicados no resumo consolidado para não multiplicar custo por linha lançada.
-  const totalCollaboratorCost = toNumber(row.total_collaborator_cost_override);
-  const totalOperationalCost = toNumber(row.total_operational_cost_override);
+  const allocationFactor = Math.max(0, toNumber(normalizedRules.costAllocationPercent)) / 100;
+  const totalCollaboratorCost = toNumber(row.total_collaborator_cost_override) * allocationFactor;
+  const totalOperationalCost = toNumber(row.total_operational_cost_override) * allocationFactor;
   const totalMarketingCost = sumFields(row, marketingCostFields);
-  const totalAdministrativeCost = toNumber(row.total_administrative_cost_override);
-  const totalCrcCost = totalMarketingCost + totalCollaboratorCost + totalOperationalCost + totalAdministrativeCost;
+  const totalAdministrativeCost = toNumber(row.total_administrative_cost_override) * allocationFactor;
+  const totalTaxCost = revenue * (toNumber(normalizedRules.taxRatePercent) / 100);
+  const totalCrcCost = totalMarketingCost + totalCollaboratorCost + totalOperationalCost + totalAdministrativeCost + totalTaxCost;
   const profit = revenue - totalCrcCost;
   const selicRate = toNumber(row.selic_rate) || DEFAULT_SELIC_RATE;
   const metrics = {
@@ -244,6 +252,7 @@ function calculateFinancialMetrics(row, rules = DEFAULT_FINANCIAL_RULES) {
     total_operational_cost: round(totalOperationalCost),
     total_marketing_cost: round(totalMarketingCost),
     total_administrative_cost: round(totalAdministrativeCost),
+    total_tax_cost: round(totalTaxCost),
     total_crc_cost: round(totalCrcCost),
     profit: round(profit),
     roi_crc: safeDivide(profit, totalCrcCost, 100),
@@ -396,14 +405,21 @@ function normalizeMonthlyCostContext(monthlyCosts = {}) {
   };
 }
 
-function buildSummary(rows, monthlyCosts = {}) {
+function buildSummary(rows, monthlyCosts = {}, rules = DEFAULT_FINANCIAL_RULES) {
   const monthly = normalizeMonthlyCostContext(monthlyCosts);
+  const normalizedRules = normalizeFinancialRules(rules);
+  const allocationFactor = Math.max(0, toNumber(normalizedRules.costAllocationPercent)) / 100;
+  const allocatedCollaboratorCost = monthly.totalCollaboratorCost * allocationFactor;
+  const allocatedOperationalCost = monthly.totalOperationalCost * allocationFactor;
+  const allocatedAdministrativeCost = monthly.totalAdministrativeCost * allocationFactor;
   const revenue = rows.reduce((total, row) => total + toNumber(row.revenue), 0);
   const marketingCost = rows.reduce((total, row) => total + toNumber(row.total_marketing_cost), 0);
+  const taxCost = rows.reduce((total, row) => total + toNumber(row.total_tax_cost), 0);
   const cost = marketingCost
-    + monthly.totalCollaboratorCost
-    + monthly.totalOperationalCost
-    + monthly.totalAdministrativeCost;
+    + allocatedCollaboratorCost
+    + allocatedOperationalCost
+    + allocatedAdministrativeCost
+    + taxCost;
   const profit = revenue - cost;
   const leads = rows.reduce((total, row) => total + toNumber(row.leads), 0);
   const appointments = rows.reduce((total, row) => total + toNumber(row.appointments), 0);
@@ -434,9 +450,10 @@ function buildSummary(rows, monthlyCosts = {}) {
     revenueByClinic: 0,
     costByClinic: 0,
     profitByClinic: 0,
-    totalCollaboratorCost: monthly.totalCollaboratorCost,
-    totalOperationalCost: monthly.totalOperationalCost,
-    totalAdministrativeCost: monthly.totalAdministrativeCost,
+    totalCollaboratorCost: round(allocatedCollaboratorCost),
+    totalOperationalCost: round(allocatedOperationalCost),
+    totalAdministrativeCost: round(allocatedAdministrativeCost),
+    totalTaxCost: round(taxCost),
     averageCollaboratorCost: 0,
     revenueByCollaborator: 0,
     roiByCollaborator: 0,
@@ -506,7 +523,7 @@ function buildFinancialIntelligencePayload(rawRows, rules = DEFAULT_FINANCIAL_RU
   const normalizedRules = normalizeFinancialRules(rules);
   const monthly = normalizeMonthlyCostContext(monthlyCosts);
   const table = rawRows.map((row) => enrichFinancialRow(row, normalizedRules));
-  const summary = buildSummary(table, monthly);
+  const summary = buildSummary(table, monthly, normalizedRules);
   const clinicFinancials = groupFinancialRows(table, (row) => row.clinic_name).sort(sortBy('profit'));
   const collaboratorFinancials = buildCollaboratorFinancials(monthly);
   const operatorFinancials = groupFinancialRows(table, (row) => row.operator_name).sort(sortBy('closings'));

@@ -4,6 +4,29 @@ import api from './api';
 import { hasPermission, isMasterAdmin, readUser, statusLabels } from './constants';
 
 const pageSizeOptions = [10, 25, 50, 100];
+const dayMs = 24 * 60 * 60 * 1000;
+
+function toDateInputValue(date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function getWeekRange(date = new Date()) {
+  const start = new Date(date);
+  start.setHours(0, 0, 0, 0);
+  const day = start.getDay();
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  start.setDate(start.getDate() + diffToMonday);
+
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+
+  return { start, end };
+}
+
+function formatWeekRangeLabel(start, end) {
+  return `${new Intl.DateTimeFormat('pt-BR').format(start)} a ${new Intl.DateTimeFormat('pt-BR').format(end)}`;
+}
 
 function formatProtocol(item) {
   if (item.protocol) return item.protocol;
@@ -122,6 +145,7 @@ function WeeklyComplaintReport() {
   const [feedback, setFeedback] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [selectedWeekStart, setSelectedWeekStart] = useState(() => toDateInputValue(getWeekRange().start));
 
   useEffect(() => {
     if (!canAccess) return undefined;
@@ -146,21 +170,47 @@ function WeeklyComplaintReport() {
 
   useEffect(() => {
     setPage(1);
-  }, [pageSize]);
+  }, [pageSize, selectedWeekStart]);
+
+  const weekOptions = useMemo(() => {
+    const weeks = new Map();
+    complaints
+      .filter((item) => !item.deleted_at)
+      .forEach((item) => {
+        const createdAt = new Date(item.created_at || 0);
+        if (Number.isNaN(createdAt.getTime())) return;
+        const range = getWeekRange(createdAt);
+        const key = toDateInputValue(range.start);
+        const current = weeks.get(key) || { value: key, count: 0, start: range.start };
+        weeks.set(key, { ...current, count: current.count + 1 });
+      });
+
+    if (!weeks.has(selectedWeekStart)) {
+      const range = getWeekRange(new Date(`${selectedWeekStart}T12:00:00`));
+      weeks.set(selectedWeekStart, { value: selectedWeekStart, count: 0, start: range.start });
+    }
+
+    return Array.from(weeks.values())
+      .sort((a, b) => b.start.getTime() - a.start.getTime())
+      .map((item) => ({
+        ...item,
+        label: `${formatWeekRangeLabel(item.start, new Date(item.start.getTime() + (6 * dayMs)))} (${item.count})`
+      }));
+  }, [complaints, selectedWeekStart]);
 
   const weeklyComplaints = useMemo(() => {
-    const start = new Date();
-    start.setHours(0, 0, 0, 0);
-    start.setDate(start.getDate() - 6);
+    const range = getWeekRange(new Date(`${selectedWeekStart}T12:00:00`));
 
     return complaints
       .filter((item) => !item.deleted_at)
       .filter((item) => {
         const createdAt = new Date(item.created_at || 0);
-        return !Number.isNaN(createdAt.getTime()) && createdAt >= start;
+        return !Number.isNaN(createdAt.getTime()) && createdAt >= range.start && createdAt <= range.end;
       })
       .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
-  }, [complaints]);
+  }, [complaints, selectedWeekStart]);
+
+  const selectedWeekRange = useMemo(() => getWeekRange(new Date(`${selectedWeekStart}T12:00:00`)), [selectedWeekStart]);
 
   const summaryRows = useMemo(() => weeklyComplaints.map((item) => ({
     id: item.id,
@@ -368,8 +418,8 @@ function WeeklyComplaintReport() {
       <section className="management-panel weekly-report-panel">
         <div className="panel-heading">
           <div>
-            <p className="eyebrow">Ultimos 7 dias</p>
-            <h2>Reclamacoes registradas na semana atual</h2>
+            <p className="eyebrow">Segunda a domingo</p>
+            <h2>Reclamacoes registradas na semana selecionada</h2>
             <p className="panel-supporting-copy">
               Leitura consolidada da carteira semanal com foco em unidade, responsável atual e motivo central de cada protocolo.
             </p>
@@ -385,6 +435,18 @@ function WeeklyComplaintReport() {
               <span>Baixar PDF</span>
             </button>
           </div>
+        </div>
+
+        <div className="weekly-report-filter-bar">
+          <label>
+            Semana de referencia
+            <select className="field" value={selectedWeekStart} onChange={(event) => setSelectedWeekStart(event.target.value)}>
+              {weekOptions.map((week) => (
+                <option key={week.value} value={week.value}>{week.label}</option>
+              ))}
+            </select>
+          </label>
+          <small>Periodo analisado: {formatWeekRangeLabel(selectedWeekRange.start, selectedWeekRange.end)}. O historico permanece disponivel para semanas anteriores.</small>
         </div>
 
         <div className="weekly-report-metrics">

@@ -609,7 +609,9 @@ function MasterControlCenter() {
         ...settings,
         crcRoiExcellent: toNumber(settings?.crcRoiExcellent),
         netMarginHealthyMin: toNumber(settings?.netMarginHealthyMin),
-        selicComparisonTolerance: toNumber(settings?.selicComparisonTolerance)
+        selicComparisonTolerance: toNumber(settings?.selicComparisonTolerance),
+        taxRatePercent: toNumber(settings?.taxRatePercent),
+        costAllocationPercent: toNumber(settings?.costAllocationPercent)
       };
       const { data } = await api.put('/admin/financial-settings', payload);
       setSettings(data);
@@ -1202,6 +1204,21 @@ function MasterControlCenter() {
                   <p>Parametros usados para status, diagnosticos, margens e comparativos do painel financeiro. A SELIC permanece travada em 15% ao ano.</p>
                 </div>
                 <button className="primary-action" onClick={saveSettings} disabled={savingSettings}>{savingSettings ? 'Salvando...' : 'Salvar regras'}</button>
+              </div>
+
+              <div className="master-financial-policy-box">
+                <article>
+                  <span>Impostos</span>
+                  <strong>{Number(settings.taxRatePercent || 0).toFixed(2)}%</strong>
+                  <small>Percentual aplicado sobre a receita para calcular o custo tributario do CRC.</small>
+                  <label>Percentual de impostos (%)<input className="field" type="number" step="0.01" min="0" value={settings.taxRatePercent ?? ''} onChange={(event) => updateSetting('taxRatePercent', event.target.value)} /></label>
+                </article>
+                <article>
+                  <span>Rateio de custos</span>
+                  <strong>{Number(settings.costAllocationPercent || 100).toFixed(2)}%</strong>
+                  <small>Define quanto dos custos compartilhados entra no CRC. Preparado para novos departamentos.</small>
+                  <label>Percentual de rateio do CRC (%)<input className="field" type="number" step="0.01" min="0" value={settings.costAllocationPercent ?? ''} onChange={(event) => updateSetting('costAllocationPercent', event.target.value)} /></label>
+                </article>
               </div>
 
               <div className="master-form-grid compact">

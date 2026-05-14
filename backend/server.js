@@ -2756,40 +2756,62 @@ async function backfillComplaintAssignments() {
       row.assigned_responsible_role = null;
     }
 
+    const currentForwardRole = String(row.forwarded_to_role || '').toLowerCase();
+    const currentResponsibleRole = String(row.assigned_responsible_role || '').toLowerCase();
+
     if (
       row.assigned_coordinator_name
       && row.clinic_snapshot_name
-      && (row.assigned_responsible_role || !row.forwarded_to_role)
+      && (!currentForwardRole || currentResponsibleRole === currentForwardRole)
     ) {
       return null;
     }
 
     const assignment = await resolveCoordinatorAssignment(row.clinic_id);
-    const shouldBackfillResponsible = ['coordinator', 'manager', 'supervisor_crc'].includes(
-      String(row.forwarded_to_role || '').toLowerCase()
+    const shouldBackfillResponsible = ['coordinator', 'manager', 'supervisor_crc', 'sac_operator'].includes(
+      currentForwardRole
     );
     const responsibleAssignment = shouldBackfillResponsible
       ? await resolveComplaintResponsibleAssignment(
           row.clinic_id,
-          String(row.forwarded_to_role || '').toLowerCase()
+          currentForwardRole,
+          { preferredName: row.forwarded_by }
         )
       : null;
+
+    if (shouldBackfillResponsible) {
+      return pool.query(
+        `UPDATE complaints
+             SET assigned_coordinator_user_id = COALESCE(assigned_coordinator_user_id, ?),
+                 assigned_coordinator_name = COALESCE(assigned_coordinator_name, ?),
+                 assigned_responsible_user_id = ?,
+                 assigned_responsible_name = ?,
+                 assigned_responsible_role = ?,
+                 forwarded_to_label = ?,
+                 clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)
+          WHERE id = ?`,
+        [
+          assignment.coordinatorUserId,
+          assignment.coordinatorName || null,
+          responsibleAssignment?.userId || null,
+          responsibleAssignment?.name || null,
+          row.forwarded_to_role || 'coordinator',
+          responsibleAssignment?.label || responsibleAssignment?.name || row.forwarded_to_label || null,
+          assignment.clinicSnapshotName || null,
+          row.id
+        ]
+      );
+    }
 
     return pool.query(
       `UPDATE complaints
            SET assigned_coordinator_user_id = COALESCE(assigned_coordinator_user_id, ?),
                assigned_coordinator_name = COALESCE(assigned_coordinator_name, ?),
-               assigned_responsible_user_id = COALESCE(assigned_responsible_user_id, ?),
-               assigned_responsible_name = COALESCE(assigned_responsible_name, ?),
-               assigned_responsible_role = COALESCE(assigned_responsible_role, ?),
                clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)
         WHERE id = ?`,
       [
         assignment.coordinatorUserId,
         assignment.coordinatorName || null,
-        shouldBackfillResponsible ? responsibleAssignment?.userId || null : null,
-        shouldBackfillResponsible ? responsibleAssignment?.name || null : null,
-        shouldBackfillResponsible ? row.forwarded_to_role || 'coordinator' : null,
         assignment.clinicSnapshotName || null,
         row.id
       ]
@@ -5914,7 +5936,7 @@ async function resolveManagerAssignment(clinicId) {
   };
 }
 
-async function resolveComplaintResponsibleAssignment(clinicId, forwardRole) {
+async function resolveComplaintResponsibleAssignment(clinicId, forwardRole, options = {}) {
   if (forwardRole === 'coordinator') {
     const assignment = await resolveCoordinatorAssignment(clinicId);
     return {
@@ -5958,21 +5980,27 @@ async function resolveComplaintResponsibleAssignment(clinicId, forwardRole) {
   }
 
   if (forwardRole === 'sac_operator') {
+    const preferredName = String(options.preferredName || '').trim();
     const [rows] = await pool.query(
       `SELECT id, name
          FROM users
         WHERE deleted_at IS NULL
           AND active = 1
           AND role = 'sac_operator'
-        ORDER BY name ASC
-        LIMIT 1`
+        ORDER BY CASE
+          WHEN ? <> '' AND LOWER(TRIM(name)) = LOWER(TRIM(?)) THEN 0
+          ELSE 1
+        END,
+        name ASC
+        LIMIT 1`,
+      [preferredName, preferredName]
     );
 
     return {
       userId: rows[0]?.id || null,
-      name: rows[0]?.name || 'Operador de SAC',
+      name: rows[0]?.name || preferredName || 'Operador de SAC',
       role: 'sac_operator',
-      label: rows[0]?.name || 'Operador de SAC',
+      label: rows[0]?.name || preferredName || 'Operador de SAC',
       clinicSnapshotName: null
     };
   }
@@ -10257,6 +10285,16 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         return res.status(400).json({ error: 'Selecione o responsável que receberá a reclamação após o contato com o paciente.' });
       }
 
+      const patientContactForwardRoles = {
+        coordinator: 'Coordenador',
+        manager: 'Gerente',
+        supervisor_crc: 'Supervisor do CRC'
+      };
+
+      if (requiresForwardSelection && !first_attendance && !patientContactForwardRoles[forward_to_role]) {
+        return res.status(400).json({ error: 'Selecione Coordenador, Gerente ou Supervisor do CRC para receber a reclamação.' });
+      }
+
       updates.push('patient_contacted_at = COALESCE(patient_contacted_at, NOW())');
       updates.push('patient_contacted_by = COALESCE(patient_contacted_by, ?)');
       values.push(actorName);
@@ -10266,6 +10304,47 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         action: 'patient_contacted',
         message: 'Contato Realizado'
       });
+
+      if (requiresForwardSelection && !first_attendance) {
+        const assignment = await resolveComplaintResponsibleAssignment(complaint.clinic_id, forward_to_role);
+        const forwardedLabel = forward_to_role === 'coordinator'
+          ? assignment.name || complaint.assigned_coordinator_name || patientContactForwardRoles[forward_to_role]
+          : assignment.label || patientContactForwardRoles[forward_to_role];
+
+        updates.push('first_attendance_at = COALESCE(first_attendance_at, NOW())');
+        updates.push('first_attendance_by = COALESCE(first_attendance_by, ?)');
+        values.push(actorName);
+        updates.push('first_attendance_by_role = COALESCE(first_attendance_by_role, ?)');
+        values.push(req.user.role);
+        updates.push('deadline_locked_at = COALESCE(deadline_locked_at, NOW())');
+        updates.push('forwarded_to_role = ?');
+        values.push(forward_to_role);
+        updates.push('forwarded_to_label = ?');
+        values.push(forwardedLabel);
+        updates.push('forwarded_at = NOW()');
+        updates.push('forwarded_by = ?');
+        values.push(actorName);
+        updates.push('assigned_responsible_user_id = ?');
+        values.push(assignment?.userId || null);
+        updates.push('assigned_responsible_name = ?');
+        values.push(assignment?.name || forwardedLabel);
+        updates.push('assigned_responsible_role = ?');
+        values.push(assignment?.role || forward_to_role);
+
+        if (forward_to_role === 'coordinator') {
+          updates.push('assigned_coordinator_user_id = ?');
+          values.push(assignment?.userId || null);
+          updates.push('assigned_coordinator_name = ?');
+          values.push(assignment?.name || forwardedLabel);
+          updates.push('clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)');
+          values.push(assignment?.clinicSnapshotName || null);
+        }
+
+        logEntries.push({
+          action: 'patient_contact_forwarded',
+          message: `Contato com paciente registrado e protocolo encaminhado para ${forwardedLabel}.`
+        });
+      }
     }
 
     if (first_attendance) {
@@ -10288,7 +10367,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
 
       assignment = await resolveComplaintResponsibleAssignment(complaint.clinic_id, forward_to_role);
       if (forward_to_role === 'coordinator') {
-        forwardedLabel = complaint.assigned_coordinator_name || assignment.name || allowedForwardRoles[forward_to_role];
+        forwardedLabel = assignment.name || complaint.assigned_coordinator_name || allowedForwardRoles[forward_to_role];
       } else {
         forwardedLabel = assignment.label || allowedForwardRoles[forward_to_role];
       }
@@ -10359,9 +10438,11 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         });
       }
 
-      const assignment = await resolveComplaintResponsibleAssignment(complaint.clinic_id, forward_to_role);
+      const assignment = await resolveComplaintResponsibleAssignment(complaint.clinic_id, forward_to_role, {
+        preferredName: complaint.first_attendance_by || complaint.patient_contacted_by || complaint.forwarded_by
+      });
       const forwardedLabel = forward_to_role === 'coordinator'
-        ? complaint.assigned_coordinator_name || assignment.name || allowedReassignRoles[forward_to_role]
+        ? assignment.name || complaint.assigned_coordinator_name || allowedReassignRoles[forward_to_role]
         : assignment.label || allowedReassignRoles[forward_to_role];
 
       updates.push('forwarded_to_role = ?');
@@ -10383,6 +10464,9 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         values.push(assignment?.userId || null);
         updates.push('assigned_coordinator_name = ?');
         values.push(assignment?.name || forwardedLabel);
+      } else if (forward_to_role === 'sac_operator') {
+        updates.push('assigned_coordinator_user_id = NULL');
+        updates.push('assigned_coordinator_name = NULL');
       }
 
       logEntries.push({

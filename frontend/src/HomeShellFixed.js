@@ -639,6 +639,30 @@ function HomeShellFixed() {
     }
   };
 
+  const handleMarkAllNotificationsRead = async () => {
+    if (!notificationGroups.unread.length) {
+      setFeedback('Nao ha notificacoes nao lidas.');
+      return;
+    }
+
+    try {
+      const unread = notificationGroups.unread;
+      await Promise.all(unread.map((notification) => api.post(`/notifications/${notification.id}/read`)));
+      const readAt = new Date().toISOString();
+      setNotificationGroups((prev) => ({
+        unread: [],
+        read: [
+          ...unread.map((notification) => ({ ...notification, status: 'read', read_at: readAt })),
+          ...prev.read
+        ].filter((item, index, list) => list.findIndex((candidate) => candidate.id === item.id) === index).slice(0, 500)
+      }));
+      setNotificationTab('read');
+      setFeedback('Todas as notificacoes foram marcadas como lidas.');
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Nao foi possivel marcar todas como lidas.');
+    }
+  };
+
   const updatePasswordField = (field, value) => {
     setPasswordForm((prev) => ({ ...prev, [field]: value }));
   };
@@ -833,6 +857,14 @@ function HomeShellFixed() {
               <div className="notification-read-actions">
                 <button type="button" className="outline-action subtle-action" onClick={handleClearReadNotifications}>
                   Limpar lidas
+                </button>
+              </div>
+            )}
+
+            {notificationTab === 'unread' && notificationGroups.unread.length > 0 && (
+              <div className="notification-read-actions">
+                <button type="button" className="outline-action subtle-action" onClick={handleMarkAllNotificationsRead}>
+                  Ler todas
                 </button>
               </div>
             )}

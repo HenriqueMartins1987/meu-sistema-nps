@@ -1652,6 +1652,32 @@ a {
   gap: 20px;
 }
 
+.weekly-report-filter-bar {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: end;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdfa;
+}
+
+.weekly-report-filter-bar label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.weekly-report-filter-bar small {
+  color: var(--muted);
+  font-weight: 800;
+  line-height: 1.45;
+}
+
 .panel-supporting-copy {
   margin: 6px 0 0;
   color: var(--muted);
@@ -7614,10 +7640,18 @@ a {
   box-shadow: none;
 }
 
+.export-actions .outline-action,
+.financial-export-bar .outline-action {
+  min-height: 40px;
+  border-radius: 8px;
+  font-weight: 900;
+}
+
 .icon-action {
   gap: 8px;
 }
 
+.export-badge,
 .file-icon {
   min-width: 34px;
   height: 24px;
@@ -7629,10 +7663,12 @@ a {
   font-weight: 950;
 }
 
+.export-badge.excel,
 .file-icon.xls {
   background: #2f6e4f;
 }
 
+.export-badge.pdf,
 .file-icon.pdf {
   background: #a9382d;
 }
@@ -9385,6 +9421,41 @@ a {
   padding-right: 4px;
 }
 
+.master-financial-policy-box {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.master-financial-policy-box article {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffdfa, #f8f3eb);
+}
+
+.master-financial-policy-box span,
+.master-financial-policy-box label {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.master-financial-policy-box strong {
+  color: var(--ink);
+  font-size: 28px;
+}
+
+.master-financial-policy-box small {
+  color: var(--muted);
+  font-weight: 800;
+  line-height: 1.4;
+}
+
 .master-margin-board article {
   min-width: 0;
   display: grid;
@@ -9596,6 +9667,7 @@ a {
   .master-profile-grid,
   .master-permission-board,
   .master-system-panel,
+  .master-financial-policy-box,
   .master-margin-board,
   .master-form-grid.compact,
   .master-authority-grid,
@@ -9665,6 +9737,7 @@ a {
   .master-permission-board,
   .master-clinic-board,
   .master-system-panel,
+  .master-financial-policy-box,
   .master-action-grid,
   .master-margin-board,
   .master-authority-grid,
@@ -9677,6 +9750,10 @@ a {
   .master-margin-grid,
   .financial-editor-grid,
   .financial-calculated-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .weekly-report-filter-bar {
     grid-template-columns: 1fr;
   }
 

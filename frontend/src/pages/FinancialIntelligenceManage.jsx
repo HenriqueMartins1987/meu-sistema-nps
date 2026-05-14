@@ -90,6 +90,7 @@ const allExportFields = [
   ['total_operational_cost', 'Custo Total Operacional'],
   ['total_marketing_cost', 'Custo Total Marketing'],
   ['total_administrative_cost', 'Custo Total Administrativo'],
+  ['total_tax_cost', 'Impostos estimados'],
   ['total_crc_cost', 'Custo Total CRC'],
   ['profit', 'Lucro/Prejuízo'],
   ['roi_crc', 'ROI CRC'],
@@ -222,7 +223,8 @@ function calculate(row) {
   const totalOperational = 0;
   const totalMarketing = toNumber(row.marketing_investment) + sum(row, marketingCostFields);
   const totalAdministrative = 0;
-  const total = totalCollaborator + totalOperational + totalMarketing + totalAdministrative;
+  const totalTax = toNumber(row.total_tax_cost);
+  const total = totalCollaborator + totalOperational + totalMarketing + totalAdministrative + totalTax;
   const profit = toNumber(row.revenue) - total;
   const roi = divide(profit, total, 100);
   const selic = toNumber(row.selic_rate) || DEFAULT_SELIC;
@@ -232,6 +234,7 @@ function calculate(row) {
     total_operational_cost: totalOperational,
     total_marketing_cost: totalMarketing,
     total_administrative_cost: totalAdministrative,
+    total_tax_cost: totalTax,
     total_crc_cost: total,
     profit,
     roi_crc: roi,
@@ -1162,6 +1165,7 @@ function FinancialIntelligenceManage() {
               {openGroups.results && (
                 <div className="financial-calculated-grid">
                   <span>Custo Total Marketing<strong>{formatCurrency(selectedRecord.total_marketing_cost)}</strong></span>
+                  <span>Impostos estimados<strong>{formatCurrency(selectedRecord.total_tax_cost)}</strong></span>
                   <span>Custo do Lançamento<strong>{formatCurrency(selectedRecord.total_crc_cost)}</strong></span>
                   <span>Lucro/Prejuízo<strong>{formatCurrency(selectedRecord.profit)}</strong></span>
                   <span>ROI CRC<strong>{formatPercent(selectedRecord.roi_crc)}</strong></span>
