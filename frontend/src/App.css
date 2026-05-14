@@ -7659,7 +7659,7 @@ a {
 
 .financial-insight-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(360px, 0.9fr);
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.8fr) minmax(320px, 0.8fr);
   gap: 14px;
   border: 0;
   background: transparent;
@@ -7667,7 +7667,8 @@ a {
 }
 
 .financial-campaign-panel,
-.financial-collaborator-cost-panel {
+.financial-collaborator-cost-panel,
+.financial-monthly-expense-panel {
   display: grid;
   gap: 14px;
   align-content: start;
@@ -7763,6 +7764,108 @@ a {
 
 .financial-collaborator-cost-panel .collaborator-list .financial-mini-row {
   grid-template-columns: minmax(120px, 1fr) minmax(130px, 1fr) minmax(120px, 1fr) 110px;
+}
+
+.financial-expense-kpis {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.financial-expense-kpis span {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.financial-expense-kpis strong {
+  color: var(--ink);
+  font-size: 18px;
+  text-transform: none;
+}
+
+.financial-expense-list {
+  display: grid;
+  gap: 8px;
+  max-height: 320px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.financial-expense-list article {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.financial-expense-list article.active {
+  border-color: rgba(200, 154, 87, 0.55);
+  background: #fff7e8;
+}
+
+.financial-expense-list article > button {
+  display: grid;
+  grid-template-columns: 84px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.financial-expense-list span,
+.financial-expense-list strong,
+.financial-expense-list em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.financial-expense-list strong {
+  color: var(--brand-strong);
+}
+
+.financial-expense-list em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+}
+
+.financial-expense-breakdown {
+  display: grid;
+  gap: 6px;
+}
+
+.financial-expense-breakdown div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdfa;
+}
+
+.financial-expense-breakdown small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-weight: 750;
 }
 
 .financial-page .financial-sheet-summary {

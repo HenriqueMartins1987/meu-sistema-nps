@@ -202,6 +202,10 @@ function collaboratorMonthlyCost(collaborator = {}) {
     + toNumber(collaborator.other_costs_default);
 }
 
+function operationalMonthlyCost(row = {}) {
+  return operationalCostFields.reduce((total, [field]) => total + toNumber(row[field]), 0);
+}
+
 function applyCollaboratorDefaults(record, collaborator) {
   if (!collaborator) return record;
 
@@ -281,6 +285,7 @@ function FinancialIntelligenceManage() {
   const [records, setRecords] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [collaborators, setCollaborators] = useState([]);
+  const [operationalCosts, setOperationalCosts] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [filters, setFilters] = useState({ search: '', clinicId: '', clinicName: '', status: '' });
   const [openGroups, setOpenGroups] = useState({
@@ -356,10 +361,11 @@ function FinancialIntelligenceManage() {
     setFeedback('');
 
     try {
-      const [financialRes, collaboratorsRes, clinicsRes, selicRes] = await Promise.all([
+      const [financialRes, collaboratorsRes, clinicsRes, operationalCostsRes, selicRes] = await Promise.all([
         api.get('/financial-intelligence'),
         api.get('/crc-collaborators'),
         api.get('/clinics'),
+        api.get('/crc-operational-costs'),
         api.get('/financial-intelligence/selic').catch(() => ({ data: null }))
       ]);
       const selicValue = toNumber(selicRes.data?.value) || DEFAULT_SELIC;
@@ -371,6 +377,7 @@ function FinancialIntelligenceManage() {
       setSelectedId((current) => current || rows[0]?.id || null);
       setCollaborators(Array.isArray(collaboratorsRes.data) ? collaboratorsRes.data : []);
       setClinics(Array.isArray(clinicsRes.data) ? clinicsRes.data : []);
+      setOperationalCosts(Array.isArray(operationalCostsRes.data) ? operationalCostsRes.data : []);
       setSelicInfo({
         value: selicValue,
         source: selicRes.data?.source || 'fallback',
@@ -441,6 +448,46 @@ function FinancialIntelligenceManage() {
   const collaboratorCostTotal = useMemo(
     () => collaboratorCostRows.reduce((total, item) => total + toNumber(item.monthlyCost), 0),
     [collaboratorCostRows]
+  );
+
+  const monthlyExpenseRows = useMemo(() => {
+    const grouped = new Map();
+
+    operationalCosts.forEach((item) => {
+      const month = item.reference_month || 'Sem mês';
+      const current = grouped.get(month) || {
+        reference_month: month,
+        rows: [],
+        total: 0,
+        lastUpdated: ''
+      };
+      const total = operationalMonthlyCost(item);
+      current.rows.push({ ...item, total });
+      current.total += total;
+      current.lastUpdated = [current.lastUpdated, item.updated_at || item.created_at || '']
+        .filter(Boolean)
+        .sort()
+        .pop() || '';
+      grouped.set(month, current);
+    });
+
+    return Array.from(grouped.values())
+      .map((item) => ({
+        ...item,
+        total: Math.round(item.total * 100) / 100,
+        mainRows: item.rows.sort((a, b) => String(b.updated_at || b.created_at || '').localeCompare(String(a.updated_at || a.created_at || '')))
+      }))
+      .sort((a, b) => String(b.reference_month).localeCompare(String(a.reference_month)));
+  }, [operationalCosts]);
+
+  const currentMonthExpenses = useMemo(() => {
+    const row = monthlyExpenseRows.find((item) => item.reference_month === currentMonth) || monthlyExpenseRows[0];
+    return row || { reference_month: currentMonth, rows: [], mainRows: [], total: 0 };
+  }, [currentMonth, monthlyExpenseRows]);
+
+  const totalOperationalExpenses = useMemo(
+    () => operationalCosts.reduce((total, item) => total + operationalMonthlyCost(item), 0),
+    [operationalCosts]
   );
 
   const patchRecord = (id, changes) => {
@@ -916,7 +963,7 @@ function FinancialIntelligenceManage() {
         <article><span>Receita</span><strong>{formatCurrency(totals.revenue)}</strong></article>
         <article><span>Custo</span><strong>{formatCurrency(totals.cost)}</strong></article>
         <article><span>Lucro</span><strong>{formatCurrency(totals.profit)}</strong></article>
-        <article><span>Linhas</span><strong>{totals.rows}</strong></article>
+        <article><span>Despesas mensais CRC</span><strong>{formatCurrency(currentMonthExpenses.total)}</strong></article>
       </section>
 
       <section className="financial-insight-grid">
@@ -973,6 +1020,43 @@ function FinancialIntelligenceManage() {
             ))}
             {!collaboratorCostRows.length && <p className="empty-state">Nenhum colaborador cadastrado.</p>}
           </div>
+        </article>
+
+        <article className="financial-monthly-expense-panel">
+          <div className="financial-card-heading">
+            <p className="eyebrow">Despesas mensais</p>
+            <h2>CRC operacional</h2>
+            <p>Acompanhe os custos mensais que entram uma única vez no ROI geral do CRC.</p>
+          </div>
+          <div className="financial-expense-kpis">
+            <span>Mês em destaque<strong>{currentMonthExpenses.reference_month}</strong></span>
+            <span>Total do mês<strong>{formatCurrency(currentMonthExpenses.total)}</strong></span>
+            <span>Total lançado<strong>{formatCurrency(totalOperationalExpenses)}</strong></span>
+          </div>
+          <div className="financial-expense-list">
+            {monthlyExpenseRows.map((month) => (
+              <article key={month.reference_month} className={month.reference_month === currentMonthExpenses.reference_month ? 'active' : ''}>
+                <button type="button" onClick={() => setOperationalCostDraft((current) => ({ ...current, reference_month: month.reference_month }))}>
+                  <span>{month.reference_month}</span>
+                  <strong>{formatCurrency(month.total)}</strong>
+                  <em>{month.rows.length} lançamento(s)</em>
+                </button>
+                {month.reference_month === currentMonthExpenses.reference_month && (
+                  <div className="financial-expense-breakdown">
+                    {month.mainRows.slice(0, 3).map((row) => (
+                      <div key={row.id}>
+                        <span>{row.created_by || 'Sistema'}</span>
+                        <strong>{formatCurrency(row.total)}</strong>
+                        <small>{row.notes || 'Sem observações'}</small>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </article>
+            ))}
+            {!monthlyExpenseRows.length && <p className="empty-state">Nenhuma despesa mensal lançada para o CRC.</p>}
+          </div>
+          <button className="outline-action" onClick={() => setOperationalCostModalOpen(true)}>Lançar despesas mensais</button>
         </article>
       </section>
 
