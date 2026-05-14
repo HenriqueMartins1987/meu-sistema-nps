@@ -7651,26 +7651,30 @@ a {
   gap: 8px;
 }
 
-.export-badge,
 .file-icon {
-  min-width: 34px;
-  height: 24px;
-  display: inline-grid;
+  min-width: 42px;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   place-items: center;
-  border-radius: 6px;
-  color: #fff;
-  font-size: 11px;
-  font-weight: 950;
+  border-radius: 8px;
+  padding: 0 9px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0;
 }
 
-.export-badge.excel,
 .file-icon.xls {
-  background: #2f6e4f;
+  background: rgba(76, 149, 108, 0.14);
+  color: #2b6a49;
+  border: 1px solid rgba(76, 149, 108, 0.22);
 }
 
-.export-badge.pdf,
 .file-icon.pdf {
-  background: #a9382d;
+  background: rgba(196, 69, 54, 0.12);
+  color: var(--danger);
+  border: 1px solid rgba(196, 69, 54, 0.2);
 }
 
 .financial-sheet-summary {
