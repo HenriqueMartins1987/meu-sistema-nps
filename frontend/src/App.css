@@ -7956,6 +7956,68 @@ a {
   line-height: 1.35;
 }
 
+.financial-vacation-question {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  margin: 14px 0;
+  border: 1px solid rgba(151, 111, 55, 0.24);
+  border-radius: 10px;
+  background: rgba(212, 167, 100, 0.1);
+}
+
+.financial-vacation-question strong,
+.financial-vacation-question span {
+  display: block;
+}
+
+.financial-vacation-question span {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.financial-collaborator-picker {
+  max-height: 240px;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+  padding: 10px;
+  border: 1px solid rgba(151, 111, 55, 0.18);
+  border-radius: 10px;
+  background: #fffaf3;
+}
+
+.financial-collaborator-picker button {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(151, 111, 55, 0.18);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.financial-collaborator-picker button.active {
+  border-color: rgba(151, 111, 55, 0.55);
+  background: rgba(212, 167, 100, 0.14);
+}
+
+.financial-collaborator-picker strong,
+.financial-collaborator-picker span {
+  display: block;
+}
+
+.financial-collaborator-picker span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .financial-total-line {
   display: inline-flex;
   width: fit-content;

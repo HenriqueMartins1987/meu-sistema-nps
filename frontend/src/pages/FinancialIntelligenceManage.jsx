@@ -216,13 +216,14 @@ function getUserFunctionLabel(user = {}) {
 
 function collaboratorMonthlyCost(collaborator = {}, referenceMonth = '', monthlyCost = null) {
   const commission = toBooleanFlag(collaborator.receives_commission) ? toNumber(monthlyCost?.commission) : 0;
+  const vacationAmount = toBooleanFlag(monthlyCost?.vacation_paid) ? toNumber(monthlyCost?.vacation_amount) : 0;
   return toNumber(collaborator.salary)
     + toNumber(collaborator.charges)
     + toNumber(collaborator.benefits)
     + commission
     + calculateDsrOnCommission(commission)
     + calculateThirteenthSalary(collaborator, referenceMonth)
-    + (toBooleanFlag(collaborator.vacation_taken) ? toNumber(collaborator.vacation_amount) : 0)
+    + vacationAmount
     + toNumber(collaborator.other_costs_default);
 }
 
@@ -327,6 +328,7 @@ function FinancialIntelligenceManage() {
   const [toast, setToast] = useState('');
   const [collaboratorModalOpen, setCollaboratorModalOpen] = useState(false);
   const [commissionModalOpen, setCommissionModalOpen] = useState(false);
+  const [vacationCostModalOpen, setVacationCostModalOpen] = useState(false);
   const [operationalCostModalOpen, setOperationalCostModalOpen] = useState(false);
   const [editorModalOpen, setEditorModalOpen] = useState(false);
   const [expandedCampaign, setExpandedCampaign] = useState('');
@@ -347,9 +349,6 @@ function FinancialIntelligenceManage() {
     receives_commission: false,
     commission_default: '',
     dsr_commission: '',
-    thirteenth_salary: '',
-    vacation_taken: false,
-    vacation_amount: '',
     has_other_costs: false,
     other_costs_default: '',
     other_costs_description: '',
@@ -359,10 +358,15 @@ function FinancialIntelligenceManage() {
     collaborator_id: '',
     reference_month: currentMonth,
     commission: '',
-    vacation_paid: false,
-    vacation_amount: '',
     has_other_costs: false,
     other_costs: '',
+    notes: ''
+  });
+  const [commissionVacationAnswer, setCommissionVacationAnswer] = useState('');
+  const [vacationDraft, setVacationDraft] = useState({
+    collaborator_id: '',
+    reference_month: currentMonth,
+    vacation_amount: '',
     notes: ''
   });
   const [operationalCostDraft, setOperationalCostDraft] = useState({
@@ -482,10 +486,12 @@ function FinancialIntelligenceManage() {
       .map((item) => {
         const monthlyCost = monthlyByCollaborator[String(item.id)] || null;
         const commission = toBooleanFlag(item.receives_commission) ? toNumber(monthlyCost?.commission) : 0;
+        const vacationAmount = toBooleanFlag(monthlyCost?.vacation_paid) ? toNumber(monthlyCost?.vacation_amount) : 0;
         return {
           ...item,
           monthlyCommission: commission,
           dsrCommission: calculateDsrOnCommission(commission),
+          monthlyVacation: vacationAmount,
           monthlyCost: collaboratorMonthlyCost(item, selectedMonth, monthlyCost)
         };
       })
@@ -499,6 +505,11 @@ function FinancialIntelligenceManage() {
 
   const commissionEligibleCollaborators = useMemo(
     () => collaborators.filter((item) => toBooleanFlag(item.receives_commission) && item.status !== 'inativo'),
+    [collaborators]
+  );
+
+  const activeCollaborators = useMemo(
+    () => collaborators.filter((item) => item.name),
     [collaborators]
   );
 
@@ -700,9 +711,6 @@ function FinancialIntelligenceManage() {
       receives_commission: false,
       commission_default: '',
       dsr_commission: '',
-      thirteenth_salary: '',
-      vacation_taken: false,
-      vacation_amount: '',
       has_other_costs: false,
       other_costs_default: '',
       other_costs_description: '',
@@ -717,6 +725,8 @@ function FinancialIntelligenceManage() {
     try {
       const payload = { ...collaboratorDraft };
       payload.commission_default = '';
+      payload.vacation_taken = false;
+      payload.vacation_amount = '';
       if (!payload.has_other_costs) {
         payload.other_costs_default = '';
         payload.other_costs_description = '';
@@ -740,15 +750,39 @@ function FinancialIntelligenceManage() {
     }
   };
 
+  const findMonthlyCollaboratorCost = (collaboratorId, referenceMonth) => monthlyCollaboratorCosts.find((item) => (
+    String(item.collaborator_id) === String(collaboratorId)
+    && String(item.reference_month || '') === String(referenceMonth || '')
+  )) || null;
+
+  const openCommissionModal = () => {
+    setCommissionVacationAnswer('');
+    setCommissionModalOpen(true);
+  };
+
+  const openVacationCostModal = () => {
+    setVacationDraft({
+      collaborator_id: '',
+      reference_month: commissionDraft.reference_month || currentMonth,
+      vacation_amount: '',
+      notes: ''
+    });
+    setCommissionVacationAnswer('sim');
+    setVacationCostModalOpen(true);
+  };
+
   const saveCommission = async () => {
     setSaving(true);
     setFeedback('');
 
     try {
       const payload = { ...commissionDraft };
+      const existing = findMonthlyCollaboratorCost(payload.collaborator_id, payload.reference_month);
+      payload.vacation_paid = Boolean(Number(existing?.vacation_paid || 0));
+      payload.vacation_amount = existing?.vacation_amount || '';
       if (!payload.has_other_costs) {
-        payload.other_costs = '';
-        payload.notes = '';
+        payload.other_costs = existing?.other_costs || '';
+        payload.notes = existing?.notes || '';
       }
       delete payload.has_other_costs;
       await api.post('/crc-collaborator-monthly-costs', payload);
@@ -757,16 +791,58 @@ function FinancialIntelligenceManage() {
         collaborator_id: '',
         reference_month: currentMonth,
         commission: '',
-        vacation_paid: false,
-        vacation_amount: '',
         has_other_costs: false,
         other_costs: '',
         notes: ''
       });
+      setCommissionVacationAnswer('');
       setToast('Comissão mensal lançada com sucesso.');
       await loadData();
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível lançar a comissão.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveVacationCost = async () => {
+    setSaving(true);
+    setFeedback('');
+
+    try {
+      if (!vacationDraft.collaborator_id) {
+        throw new Error('Selecione o colaborador que teve férias no mês.');
+      }
+      if (!vacationDraft.reference_month) {
+        throw new Error('Informe o mês de referência das férias.');
+      }
+      if (toNumber(vacationDraft.vacation_amount) <= 0) {
+        throw new Error('Informe o valor das férias para lançar o custo mensal.');
+      }
+
+      const existing = findMonthlyCollaboratorCost(vacationDraft.collaborator_id, vacationDraft.reference_month);
+      const selectedCollaborator = collaborators.find((item) => String(item.id) === String(vacationDraft.collaborator_id));
+      const mergedNotes = [existing?.notes, vacationDraft.notes].filter(Boolean).join('\n');
+      await api.post('/crc-collaborator-monthly-costs', {
+        collaborator_id: vacationDraft.collaborator_id,
+        reference_month: vacationDraft.reference_month,
+        commission: toBooleanFlag(selectedCollaborator?.receives_commission) ? (existing?.commission || 0) : 0,
+        vacation_paid: true,
+        vacation_amount: vacationDraft.vacation_amount,
+        other_costs: existing?.other_costs || '',
+        notes: mergedNotes
+      });
+      setVacationCostModalOpen(false);
+      setVacationDraft({
+        collaborator_id: '',
+        reference_month: currentMonth,
+        vacation_amount: '',
+        notes: ''
+      });
+      setToast('Férias do mês lançadas no custo do colaborador.');
+      await loadData();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || error.message || 'Não foi possível lançar o custo de férias.');
     } finally {
       setSaving(false);
     }
@@ -992,7 +1068,7 @@ function FinancialIntelligenceManage() {
       <section className="financial-toolbar">
         <button className="primary-action" onClick={addRecord}>+ Novo Lançamento</button>
         <button className="secondary-action" onClick={() => setCollaboratorModalOpen(true)}>+ Cadastrar Colaborador</button>
-        <button className="secondary-action" onClick={() => setCommissionModalOpen(true)}>Lançar comissão</button>
+        <button className="secondary-action" onClick={openCommissionModal}>Lançar comissão</button>
         <button className="secondary-action" onClick={() => setOperationalCostModalOpen(true)}>Custos operacionais</button>
         <button className="outline-action" onClick={() => navigate('/home/financial-intelligence/manage/collaborators')}>Gestão de colaboradores</button>
         <button className="outline-action" onClick={() => setFilters({ search: '', clinicId: '', clinicName: '', status: '' })}>Limpar filtros</button>
@@ -1264,9 +1340,7 @@ function FinancialIntelligenceManage() {
               <label>Benefícios<input className="field" type="number" step="0.01" value={collaboratorDraft.benefits} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, benefits: event.target.value }))} /></label>
               <label>Recebe comissão?<select className="field" value={collaboratorDraft.receives_commission ? 'sim' : 'nao'} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, receives_commission: event.target.value === 'sim', commission_default: '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
               {collaboratorDraft.receives_commission && <div className="financial-commission-note wide-field">Colaborador habilitado para lançamento mensal de comissão. O valor não é informado neste cadastro.</div>}
-              <label>13º proporcional<input className="field" value={formatCurrency(calculateThirteenthSalary(collaboratorDraft, collaboratorDraft.reference_month))} readOnly /></label>
-              <label>Férias no mês?<select className="field" value={collaboratorDraft.vacation_taken ? 'sim' : 'nao'} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, vacation_taken: event.target.value === 'sim', vacation_amount: event.target.value === 'sim' ? current.vacation_amount : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
-              {collaboratorDraft.vacation_taken && <label>Valor das férias<input className="field" type="number" step="0.01" value={collaboratorDraft.vacation_amount} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, vacation_amount: event.target.value }))} /></label>}
+              <div className="financial-commission-note wide-field">O 13º é provisionado automaticamente mês a mês pela data de contratação. Férias são lançadas separadamente no custo mensal.</div>
               <label>Possui outros custos?<select className="field" value={collaboratorDraft.has_other_costs ? 'sim' : 'nao'} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, has_other_costs: event.target.value === 'sim', other_costs_default: event.target.value === 'sim' ? current.other_costs_default : '', other_costs_description: event.target.value === 'sim' ? current.other_costs_description : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
               {collaboratorDraft.has_other_costs && <label>Valor de outros custos<input className="field" type="number" step="0.01" value={collaboratorDraft.other_costs_default} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, other_costs_default: event.target.value }))} /></label>}
               {collaboratorDraft.has_other_costs && <label className="wide-field">Descrição de outros custos<input className="field" value={collaboratorDraft.other_costs_description} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, other_costs_description: event.target.value }))} placeholder="Descreva o custo adicional" /></label>}
@@ -1287,13 +1361,21 @@ function FinancialIntelligenceManage() {
               <h2>Lançar comissão mensal</h2>
               <p>Use este lançamento para ajustar comissões variáveis por mês sem alterar o cadastro base do colaborador.</p>
             </div>
+            <div className="financial-vacation-question">
+              <div>
+                <strong>Houve férias no mês?</strong>
+                <span>Se houver, lance o custo em uma janela separada escolhendo qualquer colaborador cadastrado.</span>
+              </div>
+              <div className="row-actions">
+                <button type="button" className={`outline-action mini-action ${commissionVacationAnswer === 'nao' ? 'active' : ''}`} onClick={() => setCommissionVacationAnswer('nao')}>Não</button>
+                <button type="button" className="secondary-action mini-action" onClick={openVacationCostModal}>Sim, lançar férias</button>
+              </div>
+            </div>
             <div className="financial-editor-grid">
               <label>Colaborador<select className="field" value={commissionDraft.collaborator_id} onChange={(event) => setCommissionDraft((current) => ({ ...current, collaborator_id: event.target.value }))}><option value="">Selecione</option>{commissionEligibleCollaborators.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
               <label>Mês/Ano<input className="field" type="month" value={commissionDraft.reference_month} onChange={(event) => setCommissionDraft((current) => ({ ...current, reference_month: event.target.value }))} /></label>
               <label>Comissão<input className="field" type="number" step="0.01" value={commissionDraft.commission} onChange={(event) => setCommissionDraft((current) => ({ ...current, commission: event.target.value }))} /></label>
               <label>DSR sobre comissão<input className="field" value={formatCurrency(calculateDsrOnCommission(commissionDraft.commission))} readOnly /></label>
-              <label>Férias pagas?<select className="field" value={commissionDraft.vacation_paid ? 'sim' : 'nao'} onChange={(event) => setCommissionDraft((current) => ({ ...current, vacation_paid: event.target.value === 'sim', vacation_amount: event.target.value === 'sim' ? current.vacation_amount : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
-              {commissionDraft.vacation_paid && <label>Valor das férias<input className="field" type="number" step="0.01" value={commissionDraft.vacation_amount} onChange={(event) => setCommissionDraft((current) => ({ ...current, vacation_amount: event.target.value }))} /></label>}
               <label>Houve outros custos?<select className="field" value={commissionDraft.has_other_costs ? 'sim' : 'nao'} onChange={(event) => setCommissionDraft((current) => ({ ...current, has_other_costs: event.target.value === 'sim', other_costs: event.target.value === 'sim' ? current.other_costs : '', notes: event.target.value === 'sim' ? current.notes : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
               {commissionDraft.has_other_costs && <label>Valor de outros custos<input className="field" type="number" step="0.01" value={commissionDraft.other_costs} onChange={(event) => setCommissionDraft((current) => ({ ...current, other_costs: event.target.value }))} /></label>}
             </div>
@@ -1301,6 +1383,41 @@ function FinancialIntelligenceManage() {
             <div className="row-actions">
               <button className="outline-action" onClick={() => setCommissionModalOpen(false)} disabled={saving}>Cancelar</button>
               <button className="primary-action" onClick={saveCommission} disabled={saving}>{saving ? 'Salvando...' : 'Salvar comissão'}</button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {vacationCostModalOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setVacationCostModalOpen(false)}>
+          <section className="modal-panel financial-collaborator-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="financial-card-heading">
+              <p className="eyebrow">Férias no mês</p>
+              <h2>Lançar custo de férias</h2>
+              <p>Selecione o colaborador cadastrado e informe o custo de férias para o mês analisado.</p>
+            </div>
+            <div className="financial-editor-grid">
+              <label>Colaborador<select className="field" value={vacationDraft.collaborator_id} onChange={(event) => setVacationDraft((current) => ({ ...current, collaborator_id: event.target.value }))}><option value="">Selecione</option>{activeCollaborators.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+              <label>Mês/Ano<input className="field" type="month" value={vacationDraft.reference_month} onChange={(event) => setVacationDraft((current) => ({ ...current, reference_month: event.target.value }))} /></label>
+              <label>Valor das férias<input className="field" type="number" step="0.01" value={vacationDraft.vacation_amount} onChange={(event) => setVacationDraft((current) => ({ ...current, vacation_amount: event.target.value }))} /></label>
+            </div>
+            <div className="financial-collaborator-picker">
+              {activeCollaborators.map((item) => (
+                <button
+                  type="button"
+                  key={item.id}
+                  className={String(vacationDraft.collaborator_id) === String(item.id) ? 'active' : ''}
+                  onClick={() => setVacationDraft((current) => ({ ...current, collaborator_id: item.id }))}
+                >
+                  <strong>{item.name}</strong>
+                  <span>{item.function_name || 'Função não informada'} · {item.clinic_name || 'Clínica não informada'}</span>
+                </button>
+              ))}
+            </div>
+            <label className="financial-notes-field">Observações<textarea className="field textarea" value={vacationDraft.notes} onChange={(event) => setVacationDraft((current) => ({ ...current, notes: event.target.value }))} /></label>
+            <div className="row-actions">
+              <button className="outline-action" onClick={() => setVacationCostModalOpen(false)} disabled={saving}>Cancelar</button>
+              <button className="primary-action" onClick={saveVacationCost} disabled={saving}>{saving ? 'Salvando...' : 'Salvar férias'}</button>
             </div>
           </section>
         </div>

@@ -10685,9 +10685,9 @@ function collaboratorBaseMonthlyCost(collaborator = {}, monthly = null, referenc
   const commissionCost = receivesCommission ? monthlyCommission : 0;
   const dsrCommission = receivesCommission ? calculateDsrOnCommission(monthlyCommission) : 0;
   const thirteenthSalary = calculateThirteenthProvision(collaborator, referenceMonth || monthly?.reference_month || collaborator.reference_month);
-  const vacationAmount = monthly
-    ? (Number(monthly.vacation_paid || 0) ? toFinancialNumber(monthly.vacation_amount) : 0)
-    : (Number(collaborator.vacation_taken || 0) ? toFinancialNumber(collaborator.vacation_amount) : 0);
+  const vacationAmount = monthly && Number(monthly.vacation_paid || 0)
+    ? toFinancialNumber(monthly.vacation_amount)
+    : 0;
 
   return toFinancialNumber(collaborator.salary)
     + toFinancialNumber(collaborator.charges)
@@ -11280,8 +11280,8 @@ async function buildCrcCollaboratorPayload(body = {}, user = {}) {
     phone_cost_default: toFinancialNumber(body.phone_cost_default),
     system_cost_default: toFinancialNumber(body.system_cost_default),
     infrastructure_cost_default: toFinancialNumber(body.infrastructure_cost_default),
-    vacation_taken: toFinancialBoolean(body.vacation_taken ?? body.vacationTaken) ? 1 : 0,
-    vacation_amount: toFinancialNumber(body.vacation_amount || body.vacationAmount),
+    vacation_taken: 0,
+    vacation_amount: 0,
     other_costs_default: toFinancialNumber(body.other_costs_default),
     other_costs_description: sanitizeFinancialString(body.other_costs_description || body.otherCostsDescription, 500),
     status: sanitizeFinancialString(body.status, 40) || 'ativo',
@@ -11428,7 +11428,8 @@ async function handleUpsertCrcCollaboratorMonthlyCost(req, res) {
       return res.status(404).json({ error: 'Colaborador não encontrado.' });
     }
 
-    if (!Number(collaborator.receives_commission || 0)) {
+    const commission = toFinancialNumber(req.body.commission);
+    if (commission > 0 && !Number(collaborator.receives_commission || 0)) {
       return res.status(400).json({ error: 'Este colaborador não está marcado para receber comissão.' });
     }
 
@@ -11437,7 +11438,7 @@ async function handleUpsertCrcCollaboratorMonthlyCost(req, res) {
       collaboratorId: collaborator.id,
       collaboratorName: collaborator.name,
       referenceMonth,
-      commission: toFinancialNumber(req.body.commission),
+      commission,
       vacationPaid: toFinancialBoolean(req.body.vacation_paid ?? req.body.vacationPaid) ? 1 : 0,
       vacationAmount: toFinancialNumber(req.body.vacation_amount || req.body.vacationAmount),
       otherCosts: toFinancialNumber(req.body.other_costs || req.body.otherCosts),

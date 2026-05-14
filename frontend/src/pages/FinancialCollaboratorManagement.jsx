@@ -69,13 +69,14 @@ function calculateThirteenthSalary(item = {}, referenceMonth = '') {
 
 function collaboratorCost(item, referenceMonth = '', monthlyCost = null) {
   const commission = toFlag(item.receives_commission) ? toNumber(monthlyCost?.commission) : 0;
+  const vacationAmount = toFlag(monthlyCost?.vacation_paid) ? toNumber(monthlyCost?.vacation_amount) : 0;
   return toNumber(item.salary)
     + toNumber(item.charges)
     + toNumber(item.benefits)
     + commission
     + calculateDsrOnCommission(commission)
     + calculateThirteenthSalary(item, referenceMonth)
-    + (toFlag(item.vacation_taken) ? toNumber(item.vacation_amount) : 0)
+    + vacationAmount
     + toNumber(item.other_costs_default);
 }
 
@@ -95,9 +96,6 @@ function emptyDraft(referenceMonth) {
     receives_commission: false,
     commission_default: '',
     dsr_commission: '',
-    thirteenth_salary: '',
-    vacation_taken: false,
-    vacation_amount: '',
     has_other_costs: false,
     other_costs_default: '',
     other_costs_description: '',
@@ -159,10 +157,12 @@ function FinancialCollaboratorManagement() {
       .map((item) => {
         const monthly = monthlyByCollaborator[String(item.id)] || null;
         const commission = toFlag(item.receives_commission) ? toNumber(monthly?.commission) : 0;
+        const vacationAmount = toFlag(monthly?.vacation_paid) ? toNumber(monthly?.vacation_amount) : 0;
         return {
           ...item,
           monthlyCommission: commission,
           dsrCommission: calculateDsrOnCommission(commission),
+          monthlyVacation: vacationAmount,
           monthlyCost: collaboratorCost(item, referenceMonth, monthly)
         };
       })
@@ -183,7 +183,6 @@ function FinancialCollaboratorManagement() {
       ...emptyDraft(referenceMonth || currentMonth),
       ...item,
       receives_commission: toFlag(item.receives_commission),
-      vacation_taken: toFlag(item.vacation_taken),
       has_other_costs: toNumber(item.other_costs_default) > 0 || Boolean(item.other_costs_description)
     });
     setModalOpen(true);
@@ -214,6 +213,8 @@ function FinancialCollaboratorManagement() {
     try {
       const payload = { ...draft };
       payload.commission_default = '';
+      payload.vacation_taken = false;
+      payload.vacation_amount = '';
       if (!payload.has_other_costs) {
         payload.other_costs_default = '';
         payload.other_costs_description = '';
@@ -274,7 +275,7 @@ function FinancialCollaboratorManagement() {
         toFlag(row.receives_commission) ? row.monthlyCommission : 'Não recebe',
         toFlag(row.receives_commission) ? row.dsrCommission : 0,
         calculateThirteenthSalary(row, referenceMonth),
-        row.vacation_amount,
+        row.monthlyVacation,
         row.other_costs_default,
         row.other_costs_description,
         row.monthlyCost
@@ -312,7 +313,7 @@ function FinancialCollaboratorManagement() {
         <article class="card"><span>Custo mensal</span><strong>${formatCurrency(totalCost)}</strong></article>
       </section>
       <table><thead><tr><th>Nome</th><th>Função</th><th>Clínica</th><th>Contratação</th><th>Mês/Ano</th><th>Comissão</th><th>DSR</th><th>13º</th><th>Férias</th><th>Custo mensal</th><th>Status</th></tr></thead>
-      <tbody>${rows.map((row) => `<tr><td>${row.name || ''}</td><td>${row.function_name || ''}</td><td>${row.clinic_name || ''}</td><td>${String(row.hire_date || '').slice(0, 10)}</td><td>${row.reference_month || ''}</td><td>${toFlag(row.receives_commission) ? formatCurrency(row.monthlyCommission) : 'Não'}</td><td>${toFlag(row.receives_commission) ? formatCurrency(row.dsrCommission) : 'Não'}</td><td>${formatCurrency(calculateThirteenthSalary(row, referenceMonth))}</td><td>${toFlag(row.vacation_taken) ? formatCurrency(row.vacation_amount) : 'Não'}</td><td>${formatCurrency(row.monthlyCost)}</td><td>${row.status || ''}</td></tr>`).join('')}</tbody></table>
+      <tbody>${rows.map((row) => `<tr><td>${row.name || ''}</td><td>${row.function_name || ''}</td><td>${row.clinic_name || ''}</td><td>${String(row.hire_date || '').slice(0, 10)}</td><td>${row.reference_month || ''}</td><td>${toFlag(row.receives_commission) ? formatCurrency(row.monthlyCommission) : 'Não'}</td><td>${toFlag(row.receives_commission) ? formatCurrency(row.dsrCommission) : 'Não'}</td><td>${formatCurrency(calculateThirteenthSalary(row, referenceMonth))}</td><td>${row.monthlyVacation > 0 ? formatCurrency(row.monthlyVacation) : 'Não'}</td><td>${formatCurrency(row.monthlyCost)}</td><td>${row.status || ''}</td></tr>`).join('')}</tbody></table>
       </body></html>
     `);
     printWindow.document.close();
@@ -396,7 +397,7 @@ function FinancialCollaboratorManagement() {
                   <td><span className={item.dsrCommission > 0 ? 'financial-dsr-highlight' : ''}>{toFlag(item.receives_commission) ? formatCurrency(item.dsrCommission) : 'Não'}</span></td>
                   <td>{formatCurrency(calculateThirteenthSalary(item, referenceMonth))}</td>
                   <td>{toNumber(item.other_costs_default) > 0 ? formatCurrency(item.other_costs_default) : 'Não'}</td>
-                  <td>{toFlag(item.vacation_taken) ? formatCurrency(item.vacation_amount) : 'Não'}</td>
+                  <td>{item.monthlyVacation > 0 ? formatCurrency(item.monthlyVacation) : 'Não'}</td>
                   <td>{formatCurrency(item.monthlyCost)}</td>
                   <td><span className={`financial-status-badge ${item.status === 'ativo' ? 'excelente' : 'atencao'}`}>{item.status}</span></td>
                   <td>
@@ -431,9 +432,7 @@ function FinancialCollaboratorManagement() {
               <label>Benefícios<input className="field" type="number" step="0.01" value={draft.benefits || ''} onChange={(event) => setDraft((current) => ({ ...current, benefits: event.target.value }))} /></label>
               <label>Recebe comissão?<select className="field" value={toFlag(draft.receives_commission) ? 'sim' : 'nao'} onChange={(event) => setDraft((current) => ({ ...current, receives_commission: event.target.value === 'sim', commission_default: '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
               {toFlag(draft.receives_commission) && <div className="financial-commission-note wide-field">Colaborador habilitado para lançamento mensal de comissão. O valor não é informado neste cadastro.</div>}
-              <label>13º proporcional<input className="field" value={formatCurrency(calculateThirteenthSalary(draft, draft.reference_month || referenceMonth))} readOnly /></label>
-              <label>Férias?<select className="field" value={toFlag(draft.vacation_taken) ? 'sim' : 'nao'} onChange={(event) => setDraft((current) => ({ ...current, vacation_taken: event.target.value === 'sim' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
-              {toFlag(draft.vacation_taken) && <label>Valor das férias<input className="field" type="number" step="0.01" value={draft.vacation_amount || ''} onChange={(event) => setDraft((current) => ({ ...current, vacation_amount: event.target.value }))} /></label>}
+              <div className="financial-commission-note wide-field">O 13º é provisionado automaticamente mês a mês pela data de contratação. Férias são lançadas nos custos mensais.</div>
               <label>Houve outros custos?<select className="field" value={toFlag(draft.has_other_costs) ? 'sim' : 'nao'} onChange={(event) => setDraft((current) => ({ ...current, has_other_costs: event.target.value === 'sim', other_costs_default: event.target.value === 'sim' ? current.other_costs_default : '', other_costs_description: event.target.value === 'sim' ? current.other_costs_description : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
               {toFlag(draft.has_other_costs) && <label>Valor de outros custos<input className="field" type="number" step="0.01" value={draft.other_costs_default || ''} onChange={(event) => setDraft((current) => ({ ...current, other_costs_default: event.target.value }))} /></label>}
               {toFlag(draft.has_other_costs) && <label className="wide-field">Descrição dos outros custos<input className="field" value={draft.other_costs_description || ''} onChange={(event) => setDraft((current) => ({ ...current, other_costs_description: event.target.value }))} /></label>}
