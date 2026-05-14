@@ -8543,6 +8543,391 @@ a {
   font-weight: 900;
 }
 
+.master-console-page {
+  gap: 16px;
+}
+
+.master-console-heading,
+.master-console-shell,
+.master-console-feedback {
+  width: min(var(--page-shell-width), calc(100vw - 48px));
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.master-console-heading {
+  border-left: 6px solid var(--gold);
+}
+
+.master-console-shell {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.master-console-summary,
+.master-selected-strip {
+  display: grid;
+  gap: 12px;
+}
+
+.master-console-summary {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.master-selected-strip {
+  grid-template-columns: 1.35fr 1fr 0.8fr 0.8fr;
+}
+
+.master-console-summary article,
+.master-selected-strip article {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffdfa, var(--surface-soft));
+  box-shadow: var(--shadow-sm);
+}
+
+.master-selected-strip article {
+  background: #fffdfa;
+}
+
+.master-console-summary span,
+.master-selected-strip span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.master-console-summary strong,
+.master-selected-strip strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 22px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.master-selected-strip strong {
+  font-size: 17px;
+}
+
+.master-console-summary small,
+.master-selected-strip small {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.master-console-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.master-console-tabs button {
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.master-console-tabs button.active {
+  border-color: rgba(200, 154, 87, 0.45);
+  background: #fff5e4;
+  color: var(--ink);
+}
+
+.master-console-panel {
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.master-users-panel {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.master-user-directory,
+.master-user-workspace,
+.master-action-card,
+.master-clinic-card {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdfa;
+}
+
+.master-section-heading {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.master-section-heading h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 20px;
+}
+
+.master-section-heading p:not(.eyebrow),
+.master-permission-command p,
+.master-clinic-card p {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.master-filter-stack {
+  display: grid;
+  gap: 8px;
+}
+
+.master-filter-stack .field,
+.master-form-grid .field {
+  width: 100%;
+  min-width: 0;
+}
+
+.master-scroll-list,
+.master-collaborator-scroll,
+.master-clinic-board {
+  display: grid;
+  gap: 8px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.master-scroll-list {
+  max-height: 520px;
+}
+
+.master-collaborator-scroll {
+  max-height: 430px;
+}
+
+.master-user-option {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.master-user-option.selected {
+  border-color: var(--gold);
+  background: #fff7e8;
+  box-shadow: inset 4px 0 0 var(--gold);
+}
+
+.master-user-option strong,
+.master-user-option span,
+.master-user-option em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.master-user-option span,
+.master-user-option em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.master-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.master-form-grid.compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.master-form-grid label,
+.master-margin-board label {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.master-permissions-panel,
+.master-financial-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.master-permission-command {
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdfa;
+}
+
+.master-command-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.master-permission-board {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.master-permission-card {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdfa;
+}
+
+.master-permission-card header,
+.master-clinic-card header {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.master-permission-card header strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.master-permission-card header span {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.master-permission-card > div {
+  display: grid;
+  gap: 8px;
+  max-height: 230px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.master-check-row {
+  min-width: 0;
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.master-check-row input {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.master-check-row span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.25;
+}
+
+.master-clinic-board {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  max-height: 260px;
+}
+
+.master-system-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 14px;
+}
+
+.master-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.master-margin-board {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  max-height: 520px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.master-margin-board article {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdfa;
+}
+
+.master-margin-board strong {
+  color: var(--ink);
+}
+
 @media (max-width: 1180px) {
   .financial-filter-panel,
   .financial-filter-panel.compact,
@@ -8554,6 +8939,13 @@ a {
   .master-operational-map,
   .master-user-control-layout,
   .master-control-sidebar,
+  .master-console-summary,
+  .master-selected-strip,
+  .master-users-panel,
+  .master-permission-board,
+  .master-system-panel,
+  .master-margin-board,
+  .master-form-grid.compact,
   .financial-management-layout {
     grid-template-columns: 1fr;
   }
@@ -8598,6 +8990,17 @@ a {
   .master-permission-group > div,
   .master-clinic-grid,
   .master-control-sidebar,
+  .master-console-summary,
+  .master-selected-strip,
+  .master-console-tabs,
+  .master-users-panel,
+  .master-form-grid,
+  .master-form-grid.compact,
+  .master-permission-board,
+  .master-clinic-board,
+  .master-system-panel,
+  .master-action-grid,
+  .master-margin-board,
   .financial-management-layout,
   .financial-record-layout,
   .master-control-grid,
@@ -8627,6 +9030,9 @@ a {
   .master-summary-grid,
   .master-user-control-layout,
   .master-control-grid,
+  .master-console-heading,
+  .master-console-shell,
+  .master-console-feedback,
   .master-financial-rules,
   .financial-skeleton {
     width: min(100%, calc(100vw - 24px));
