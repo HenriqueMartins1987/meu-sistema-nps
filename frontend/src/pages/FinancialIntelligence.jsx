@@ -57,6 +57,24 @@ function metricTone(value, type = 'neutral') {
   return 'neutral';
 }
 
+function ebitdaTone(status) {
+  const normalized = String(status || '').toLowerCase();
+  if (normalized === 'excelente' || normalized === 'adequado') return 'success';
+  if (normalized === 'atencao') return 'warning';
+  if (normalized === 'critico') return 'danger';
+  return 'neutral';
+}
+
+function ebitdaStatusLabel(status) {
+  const labels = {
+    excelente: 'Excelente',
+    adequado: 'Adequado',
+    atencao: 'Atenção',
+    critico: 'Crítico'
+  };
+  return labels[String(status || '').toLowerCase()] || 'Sem dados';
+}
+
 function toNumber(value) {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   let normalized = String(value ?? 0)
@@ -111,6 +129,7 @@ function CustomTooltip({ active, payload, label }) {
             : String(item.dataKey || '').toLowerCase().includes('cost')
               || String(item.dataKey || '').toLowerCase().includes('revenue')
               || String(item.dataKey || '').toLowerCase().includes('profit')
+              || String(item.dataKey || '').toLowerCase().includes('ebitda')
               || String(item.name || '').includes('R$')
                 ? formatCurrency(item.value)
                 : formatNumber(item.value)}
@@ -296,6 +315,27 @@ function FinancialIntelligence() {
       explanation: 'Receita total menos o custo total do CRC. Valor positivo indica lucro operacional; valor negativo indica prejuízo no período.'
     },
     {
+      label: 'EBITDA CRC',
+      value: formatCurrency(summary.ebitdaCrc),
+      detail: 'Geração operacional antes de impostos',
+      tone: metricTone(summary.ebitdaCrc, 'money'),
+      explanation: 'Receita operacional do CRC menos custos e despesas operacionais do CRC, sem considerar impostos, juros, depreciação ou amortização.'
+    },
+    {
+      label: 'Margem EBITDA CRC',
+      value: formatPercent(summary.ebitdaMarginCrc),
+      detail: 'EBITDA sobre receita do CRC',
+      tone: ebitdaTone(summary.ebitdaStatus),
+      explanation: 'Percentual do EBITDA em relação à receita operacional do CRC. Ajuda a medir a força operacional real do departamento.'
+    },
+    {
+      label: 'Status EBITDA CRC',
+      value: ebitdaStatusLabel(summary.ebitdaStatus),
+      detail: `Margem EBITDA ${formatPercent(summary.ebitdaMarginCrc)}`,
+      tone: ebitdaTone(summary.ebitdaStatus),
+      explanation: 'Classificação automática: Crítico abaixo de 5% ou EBITDA negativo; Atenção entre 5% e 15%; Adequado entre 15% e 30%; Excelente acima de 30%.'
+    },
+    {
       label: 'ROI CRC',
       value: formatPercent(summary.roiCrc),
       detail: 'Retorno sobre o custo total',
@@ -408,7 +448,7 @@ function FinancialIntelligence() {
   );
 
   const exportExcel = () => {
-    const header = ['Data', 'Clínica', 'Unidade', 'Campanha', 'Canal', 'Receita', 'Custo Marketing', 'Lucro', 'ROI', 'Status'];
+    const header = ['Data', 'Clínica', 'Unidade', 'Campanha', 'Canal', 'Receita', 'Custo Marketing', 'Lucro', 'EBITDA', 'Margem EBITDA', 'ROI', 'Status'];
     const rows = table.map((row) => [
       row.date,
       row.clinic_name,
@@ -418,6 +458,8 @@ function FinancialIntelligence() {
       row.revenue,
       row.total_marketing_cost,
       row.profit,
+      row.ebitda_crc,
+      row.ebitda_margin_crc,
       row.roi_crc,
       row.status
     ]);
@@ -426,6 +468,9 @@ function FinancialIntelligence() {
       ['Receita Total CRC', summary.totalRevenue],
       ['Custo Total CRC', summary.totalCost],
       ['Lucro/Prejuízo CRC', summary.profit],
+      ['EBITDA CRC', summary.ebitdaCrc],
+      ['Margem EBITDA CRC', summary.ebitdaMarginCrc],
+      ['Status EBITDA CRC', ebitdaStatusLabel(summary.ebitdaStatus)],
       ['ROI CRC', summary.roiCrc],
       ['SELIC anual fixa', realSelicRate],
       ['Custo mensal colaboradores', summary.totalCollaboratorCost],
@@ -469,10 +514,13 @@ function FinancialIntelligence() {
         <article class="card"><span>Receita</span><strong>${formatCurrency(summary.totalRevenue)}</strong></article>
         <article class="card"><span>Custo</span><strong>${formatCurrency(summary.totalCost)}</strong></article>
         <article class="card"><span>Lucro</span><strong>${formatCurrency(summary.profit)}</strong></article>
+        <article class="card"><span>EBITDA CRC</span><strong>${formatCurrency(summary.ebitdaCrc)}</strong></article>
+        <article class="card"><span>Margem EBITDA</span><strong>${formatPercent(summary.ebitdaMarginCrc)}</strong></article>
+        <article class="card"><span>Status EBITDA</span><strong>${ebitdaStatusLabel(summary.ebitdaStatus)}</strong></article>
         <article class="card"><span>ROI CRC</span><strong>${formatPercent(summary.roiCrc)}</strong></article>
       </section>
-      <table><thead><tr><th>Data</th><th>Clínica</th><th>Unidade/Campanha</th><th>Campanha</th><th>Receita</th><th>Custo Marketing</th><th>Lucro</th><th>ROI</th><th>Status</th></tr></thead>
-      <tbody>${table.map((row) => `<tr><td>${row.date || ''}</td><td>${row.clinic_name || ''}</td><td>${row.campaign_target_unit || row.unit_name || ''}</td><td>${row.campaign || ''}</td><td>${formatCurrency(row.revenue)}</td><td>${formatCurrency(row.total_marketing_cost)}</td><td>${formatCurrency(row.profit)}</td><td>${formatPercent(row.roi_crc)}</td><td>${row.status || ''}</td></tr>`).join('')}</tbody></table>
+      <table><thead><tr><th>Data</th><th>Clínica</th><th>Unidade/Campanha</th><th>Campanha</th><th>Receita</th><th>Custo Marketing</th><th>Lucro</th><th>EBITDA</th><th>Margem EBITDA</th><th>ROI</th><th>Status</th></tr></thead>
+      <tbody>${table.map((row) => `<tr><td>${row.date || ''}</td><td>${row.clinic_name || ''}</td><td>${row.campaign_target_unit || row.unit_name || ''}</td><td>${row.campaign || ''}</td><td>${formatCurrency(row.revenue)}</td><td>${formatCurrency(row.total_marketing_cost)}</td><td>${formatCurrency(row.profit)}</td><td>${formatCurrency(row.ebitda_crc)}</td><td>${formatPercent(row.ebitda_margin_crc)}</td><td>${formatPercent(row.roi_crc)}</td><td>${row.status || ''}</td></tr>`).join('')}</tbody></table>
       </body></html>
     `);
     printWindow.document.close();
@@ -547,7 +595,7 @@ function FinancialIntelligence() {
         <article>
           <p className="eyebrow">Eficiência do CRC</p>
           <strong>{formatPercent(summary.roiCrc)}</strong>
-          <span>Margem líquida {formatPercent(summary.netMargin)} · ROAS {Number(summary.roas || 0).toFixed(2)}x</span>
+          <span>EBITDA {formatCurrency(summary.ebitdaCrc)} · Margem EBITDA {formatPercent(summary.ebitdaMarginCrc)}</span>
         </article>
         <article className={realSelicStatus}>
           <p className="eyebrow">Comparativo SELIC</p>
@@ -604,6 +652,15 @@ function FinancialIntelligence() {
           <ResponsiveContainer><ComposedChart data={data?.charts?.revenueCostProfit || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Legend /><Bar dataKey="revenue" name="Receita" fill="#1f7a8c" /><Bar dataKey="cost" name="Custo" fill="#c89a57" /><Line type="monotone" dataKey="profit" name="Lucro" stroke="#4c956c" strokeWidth={3} /></ComposedChart></ResponsiveContainer>
         </ChartCard>
 
+        <ChartCard title="Evolução mensal do EBITDA CRC" subtitle="Geração operacional antes de impostos" className="large">
+          <ResponsiveContainer><AreaChart data={data?.charts?.ebitdaEvolution || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Area type="monotone" dataKey="ebitda" name="EBITDA R$" stroke="#4c956c" fill="#4c956633" /></AreaChart></ResponsiveContainer>
+        </ChartCard>
+
+        <ChartCard title="EBITDA CRC x Custo Total CRC"><ResponsiveContainer><ComposedChart data={data?.charts?.ebitdaCostComparison || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Legend /><Bar dataKey="cost" name="Custo Total R$" fill="#c89a57" /><Line type="monotone" dataKey="ebitda" name="EBITDA R$" stroke="#4c956c" strokeWidth={3} /></ComposedChart></ResponsiveContainer></ChartCard>
+        <ChartCard title="Receita CRC x EBITDA CRC"><ResponsiveContainer><ComposedChart data={data?.charts?.revenueEbitdaComparison || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Legend /><Bar dataKey="revenue" name="Receita R$" fill="#1f7a8c" /><Line type="monotone" dataKey="ebitda" name="EBITDA R$" stroke="#4c956c" strokeWidth={3} /></ComposedChart></ResponsiveContainer></ChartCard>
+        <ChartCard title="Margem EBITDA CRC por período"><ResponsiveContainer><LineChart data={data?.charts?.ebitdaMarginByPeriod || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Line type="monotone" dataKey="ebitdaMargin" name="Margem EBITDA %" stroke="#8e6731" strokeWidth={3} /></LineChart></ResponsiveContainer></ChartCard>
+        <ChartCard title="EBITDA CRC por clínica"><ResponsiveContainer><BarChart data={data?.charts?.ebitdaByClinic || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Bar dataKey="ebitda" name="EBITDA R$" fill="#4c956c" /></BarChart></ResponsiveContainer></ChartCard>
+
         <ChartCard title="ROI por campanha"><ResponsiveContainer><BarChart data={data?.charts?.campaignRoi || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Bar dataKey="roi" name="ROI %" fill="#8e6731" /></BarChart></ResponsiveContainer></ChartCard>
         <ChartCard title="CAC por campanha"><ResponsiveContainer><BarChart data={data?.charts?.campaignCac || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Bar dataKey="cac" name="CAC R$" fill="#c44536" /></BarChart></ResponsiveContainer></ChartCard>
         <ChartCard title="CPL por campanha"><ResponsiveContainer><BarChart data={data?.charts?.campaignCpl || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip content={<CustomTooltip />} /><Bar dataKey="cpl" name="CPL R$" fill="#d4a764" /></BarChart></ResponsiveContainer></ChartCard>
@@ -655,3 +712,4 @@ function FinancialIntelligence() {
 }
 
 export default FinancialIntelligence;
+

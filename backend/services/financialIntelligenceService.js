@@ -178,6 +178,13 @@ function safeDivide(numerator, denominator, multiplier = 1) {
   return round((toNumber(numerator) / divisor) * multiplier);
 }
 
+function classifyEbitdaStatus(ebitda, margin) {
+  if (toNumber(ebitda) < 0 || toNumber(margin) < 5) return 'critico';
+  if (toNumber(margin) < 15) return 'atencao';
+  if (toNumber(margin) <= 30) return 'adequado';
+  return 'excelente';
+}
+
 function sumFields(row, fields) {
   return fields.reduce((total, field) => total + toNumber(row[field]), 0);
 }
@@ -246,6 +253,9 @@ function calculateFinancialMetrics(row, rules = DEFAULT_FINANCIAL_RULES) {
   const totalTaxCost = revenue * (toNumber(normalizedRules.taxRatePercent) / 100);
   const totalCrcCost = totalMarketingCost + totalCollaboratorCost + totalOperationalCost + totalAdministrativeCost + totalTaxCost;
   const profit = revenue - totalCrcCost;
+  const ebitdaCost = totalCrcCost - totalTaxCost;
+  const ebitdaCrc = revenue - ebitdaCost;
+  const ebitdaMarginCrc = safeDivide(ebitdaCrc, revenue, 100);
   const selicRate = toNumber(row.selic_rate) || DEFAULT_SELIC_RATE;
   const metrics = {
     total_collaborator_cost: round(totalCollaboratorCost),
@@ -255,6 +265,9 @@ function calculateFinancialMetrics(row, rules = DEFAULT_FINANCIAL_RULES) {
     total_tax_cost: round(totalTaxCost),
     total_crc_cost: round(totalCrcCost),
     profit: round(profit),
+    ebitda_crc: round(ebitdaCrc),
+    ebitda_margin_crc: ebitdaMarginCrc,
+    ebitda_status: classifyEbitdaStatus(ebitdaCrc, ebitdaMarginCrc),
     roi_crc: safeDivide(profit, totalCrcCost, 100),
     roi_crc_vs_selic: round(safeDivide(profit, totalCrcCost, 100) - selicRate),
     marketing_roi: safeDivide(revenue - totalMarketingCost, totalMarketingCost, 100),
@@ -300,6 +313,8 @@ function groupFinancialRows(rows, getKey) {
       revenue: 0,
       cost: 0,
       profit: 0,
+      ebitda: 0,
+      taxCost: 0,
       marketingCost: 0,
       collaboratorCost: 0,
       leads: 0,
@@ -313,6 +328,8 @@ function groupFinancialRows(rows, getKey) {
     current.revenue += toNumber(row.revenue);
     current.cost += toNumber(row.total_crc_cost);
     current.profit += toNumber(row.profit);
+    current.ebitda += toNumber(row.ebitda_crc);
+    current.taxCost += toNumber(row.total_tax_cost);
     current.marketingCost += toNumber(row.total_marketing_cost);
     current.collaboratorCost += toNumber(row.total_collaborator_cost);
     current.leads += toNumber(row.leads);
@@ -329,6 +346,10 @@ function groupFinancialRows(rows, getKey) {
     revenue: round(item.revenue),
     cost: round(item.cost),
     profit: round(item.profit),
+    ebitda: round(item.ebitda),
+    taxCost: round(item.taxCost),
+    ebitdaMargin: safeDivide(item.ebitda, item.revenue, 100),
+    ebitdaStatus: classifyEbitdaStatus(item.ebitda, safeDivide(item.ebitda, item.revenue, 100)),
     marketingCost: round(item.marketingCost),
     collaboratorCost: round(item.collaboratorCost),
     roi: safeDivide(item.profit, item.cost, 100),
@@ -356,6 +377,18 @@ function buildFinancialDiagnostics(summary, clinicFinancials, collaboratorFinanc
   const diagnostics = [];
   diagnostics.push(summary.profit >= 0 ? 'CRC lucrativo no período.' : 'CRC deficitário no período.');
   diagnostics.push(summary.roiCrc >= summary.selicRate ? 'ROI do CRC acima da SELIC.' : 'ROI do CRC abaixo da SELIC.');
+  diagnostics.push(summary.ebitdaCrc >= 0 ? 'EBITDA CRC positivo no período analisado.' : 'EBITDA CRC negativo no período analisado.');
+
+  if (summary.ebitdaStatus === 'excelente') {
+    diagnostics.push('O CRC apresenta boa geração operacional.');
+  } else if (summary.ebitdaStatus === 'adequado') {
+    diagnostics.push('Margem EBITDA CRC adequada.');
+  } else if (summary.ebitdaStatus === 'atencao') {
+    diagnostics.push('Margem EBITDA CRC abaixo da margem prevista.');
+    diagnostics.push('O CRC possui custos operacionais elevados em relação à receita.');
+  } else if (summary.ebitdaStatus === 'critico') {
+    diagnostics.push('O CRC exige revisão dos custos operacionais.');
+  }
 
   if (summary.marketingRoi < margins.marketingRoi.min && summary.totalMarketingCost > 0) diagnostics.push('ROI de marketing abaixo da margem prevista.');
   if (summary.cac > margins.cac.max) diagnostics.push('CAC elevado.');
@@ -421,6 +454,9 @@ function buildSummary(rows, monthlyCosts = {}, rules = DEFAULT_FINANCIAL_RULES) 
     + allocatedAdministrativeCost
     + taxCost;
   const profit = revenue - cost;
+  const ebitdaCost = cost - taxCost;
+  const ebitdaCrc = revenue - ebitdaCost;
+  const ebitdaMarginCrc = safeDivide(ebitdaCrc, revenue, 100);
   const leads = rows.reduce((total, row) => total + toNumber(row.leads), 0);
   const appointments = rows.reduce((total, row) => total + toNumber(row.appointments), 0);
   const attendances = rows.reduce((total, row) => total + toNumber(row.attendances), 0);
@@ -434,6 +470,9 @@ function buildSummary(rows, monthlyCosts = {}, rules = DEFAULT_FINANCIAL_RULES) 
     totalRevenue: round(revenue),
     totalCost: round(cost),
     profit: round(profit),
+    ebitdaCrc: round(ebitdaCrc),
+    ebitdaMarginCrc,
+    ebitdaStatus: classifyEbitdaStatus(ebitdaCrc, ebitdaMarginCrc),
     roiCrc,
     selicRate,
     roiCrcVsSelic: round(roiCrc - selicRate),
@@ -472,6 +511,8 @@ function applySharedMonthlyCostsToSeries(series, monthlyCosts = {}) {
     const sharedCost = toNumber(extra.total);
     const cost = toNumber(item.cost) + sharedCost;
     const profit = toNumber(item.revenue) - cost;
+    const ebitda = toNumber(item.revenue) - (cost - toNumber(item.taxCost));
+    const ebitdaMargin = safeDivide(ebitda, item.revenue, 100);
     const roi = safeDivide(profit, cost, 100);
 
     return {
@@ -482,6 +523,9 @@ function applySharedMonthlyCostsToSeries(series, monthlyCosts = {}) {
       sharedMonthlyCost: round(sharedCost),
       cost: round(cost),
       profit: round(profit),
+      ebitda: round(ebitda),
+      ebitdaMargin,
+      ebitdaStatus: classifyEbitdaStatus(ebitda, ebitdaMargin),
       roi,
       roiVsSelic: round(roi - toNumber(item.selicRate))
     };
@@ -574,6 +618,11 @@ function buildFinancialIntelligencePayload(rawRows, rules = DEFAULT_FINANCIAL_RU
       channelRanking: channelFinancials,
       monthlyEvolution: monthlySeries,
       roiVsSelic: monthlySeries,
+      ebitdaEvolution: monthlySeries,
+      ebitdaCostComparison: monthlySeries,
+      revenueEbitdaComparison: monthlySeries,
+      ebitdaMarginByPeriod: monthlySeries,
+      ebitdaByClinic: clinicFinancials,
       costByCollaborator: collaboratorFinancials,
       roiByCollaborator: collaboratorFinancials,
       revenueByCollaborator: collaboratorFinancials,
