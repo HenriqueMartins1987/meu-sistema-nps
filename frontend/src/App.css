@@ -8928,6 +8928,183 @@ a {
   color: var(--ink);
 }
 
+.master-authority-panel,
+.master-access-map-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.master-authority-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  max-height: 680px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.master-authority-card,
+.master-map-card,
+.master-alert-grid article {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdfa;
+}
+
+.master-authority-card header,
+.master-map-card header {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.master-authority-card header span,
+.master-alert-grid span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.master-authority-card header em,
+.master-map-card header span {
+  color: var(--brand-strong);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 900;
+  text-align: right;
+}
+
+.master-authority-card > strong,
+.master-map-card header strong,
+.master-alert-grid strong {
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.master-role-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.master-role-chip-list small,
+.master-role-permission-grid span {
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.master-authority-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.master-alert-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.master-alert-grid strong {
+  font-size: 24px;
+}
+
+.master-alert-grid small {
+  color: var(--muted);
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.master-map-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.master-map-card.wide {
+  grid-column: 1 / -1;
+}
+
+.master-map-scroll {
+  display: grid;
+  gap: 8px;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.master-map-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  align-items: center;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.master-map-row strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.master-map-row span {
+  color: var(--brand-strong);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.master-map-row small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-weight: 750;
+}
+
+.master-role-permission-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.master-role-permission-grid section {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.master-role-permission-grid section > strong {
+  color: var(--ink);
+}
+
+.master-role-permission-grid section > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 @media (max-width: 1180px) {
   .financial-filter-panel,
   .financial-filter-panel.compact,
@@ -8946,6 +9123,10 @@ a {
   .master-system-panel,
   .master-margin-board,
   .master-form-grid.compact,
+  .master-authority-grid,
+  .master-alert-grid,
+  .master-map-grid,
+  .master-role-permission-grid,
   .financial-management-layout {
     grid-template-columns: 1fr;
   }
@@ -9001,6 +9182,10 @@ a {
   .master-system-panel,
   .master-action-grid,
   .master-margin-board,
+  .master-authority-grid,
+  .master-alert-grid,
+  .master-map-grid,
+  .master-role-permission-grid,
   .financial-management-layout,
   .financial-record-layout,
   .master-control-grid,

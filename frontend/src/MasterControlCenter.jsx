@@ -19,6 +19,8 @@ const roleOptions = [
 const tabs = [
   { id: 'users', label: 'Usuarios' },
   { id: 'permissions', label: 'Permissoes' },
+  { id: 'authority', label: 'Alcadas' },
+  { id: 'map', label: 'Mapa de acesso' },
   { id: 'system', label: 'Sistema' },
   { id: 'financial', label: 'Financeiro' }
 ];
@@ -29,6 +31,42 @@ const permissionGroups = [
   { key: 'nps', title: 'NPS', match: (value) => value.startsWith('nps') },
   { key: 'patients', title: 'Pacientes e CRM', match: (value) => ['patient_management', 'crm_relationship'].includes(value) },
   { key: 'financial', title: 'Financeiro CRC', match: (value) => value.startsWith('financial') }
+];
+
+const defaultRolePermissions = {
+  master_admin: screenPermissions.map((permission) => permission.value),
+  admin: screenPermissions.map((permission) => permission.value),
+  sac_operator: ['home', 'complaints_register', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'crm_relationship'],
+  supervisor_crc: ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management'],
+  manager: ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management'],
+  coordinator: ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship'],
+  viewer: ['home', 'complaints_management', 'nps_management']
+};
+
+const authorityRules = [
+  { area: 'Protocolos', action: 'Visualizar todas as demandas', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'viewer'], note: 'Gerente e coordenador dependem das clinicas vinculadas e/ou atribuicao da demanda.' },
+  { area: 'Protocolos', action: 'Cadastrar protocolo', permission: 'complaints_register', roles: ['master_admin', 'admin', 'sac_operator'], note: 'Liberado por permissao de tela de cadastro.' },
+  { area: 'Protocolos', action: 'Fechar protocolo', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator'], note: 'Coordenador, gerente e marketing nao finalizam protocolo.' },
+  { area: 'Protocolos', action: 'Reabilitar protocolo finalizado/cancelado', roles: ['master_admin', 'supervisor_crc'], note: 'Exige justificativa operacional.' },
+  { area: 'Protocolos', action: 'Alterar unidade cadastrada', roles: ['master_admin', 'supervisor_crc', 'sac_operator'], note: 'Alcada restrita para preservar lastro da demanda.' },
+  { area: 'Protocolos', action: 'Alterar telefone do paciente', roles: ['master_admin', 'supervisor_crc', 'sac_operator'], note: 'Usado dentro da ficha executiva.' },
+  { area: 'Protocolos', action: 'Encaminhar/reencaminhar demanda', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager'], note: 'Coordenador e gerente devolvem ao Operador de SAC.' },
+  { area: 'Protocolos', action: 'Notificar responsaveis novamente', roles: ['master_admin', 'supervisor_crc', 'sac_operator'], note: 'Reenvio manual de e-mail/WhatsApp quando permitido.' },
+  { area: 'Evidencias', action: 'Anexar evidencias', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager', 'viewer'], note: 'Marketing pode anexar, mas sem alcadas de fechamento.' },
+  { area: 'Evidencias', action: 'Excluir evidencias', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager'], note: 'Marketing nao exclui evidencias; exclusao deve preservar lastro.' },
+  { area: 'Tratativas', action: 'Registrar tratativa', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager'], note: 'Coordenador e gerente devem relatar antes de registrar contato com paciente.' },
+  { area: 'Tratativas', action: 'Registrar contato com paciente', roles: ['master_admin', 'supervisor_crc', 'sac_operator'], note: 'Regra principal do atendimento SAC/CRC.' },
+  { area: 'Tratamento do paciente', action: 'Cadastrar tratamento/agendamento', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator'], note: 'Dados alimentam a gestao de pacientes e agenda da Home.' },
+  { area: 'NPS', action: 'Gerir registros NPS', permission: 'nps_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'manager', 'coordinator', 'viewer'], note: 'Controle principal por permissao de tela.' },
+  { area: 'NPS', action: 'Finalizar NPS', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator'], note: 'Botao de finalizar fica restrito a perfis operacionais.' },
+  { area: 'Excluidos', action: 'Visualizar aba excluidos', roles: ['master_admin'], note: 'Exclusivo do Administrador Master.' },
+  { area: 'Relatorios', action: 'Relatorio semanal de reclamacoes', permission: 'complaints_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'manager'], note: 'Depende tambem de acesso ao painel de gestao de reclamacoes.' },
+  { area: 'Financeiro CRC', action: 'Dashboard executivo', permission: 'financial_dashboard', roles: ['master_admin', 'admin'], note: 'Visao de diretoria.' },
+  { area: 'Financeiro CRC', action: 'Unidade x campanha', permission: 'financial_campaigns', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Analise por unidade/campanha.' },
+  { area: 'Financeiro CRC', action: 'Gestao financeira e lancamentos', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Permite lancar/editar dados conforme perfil.' },
+  { area: 'Financeiro CRC', action: 'Excluir lancamento financeiro', roles: ['master_admin'], note: 'Exclusao definitiva restrita ao Master.' },
+  { area: 'Financeiro CRC', action: 'Excluir colaborador CRC', roles: ['master_admin'], note: 'Preserva a base do ROI.' },
+  { area: 'Painel Gerencial', action: 'Acessar Centro Master e administracao', permission: 'admin_panel', roles: ['master_admin'], note: 'Apenas Administrador Master altera usuarios e permissoes.' }
 ];
 
 function toNumber(value) {
@@ -155,6 +193,35 @@ function MasterControlCenter() {
     clinics: clinics.length,
     collaborators: collaborators.length
   }), [clinics.length, collaborators.length, users]);
+
+  const roleStats = useMemo(() => roleOptions.map((role) => {
+    const roleUsers = users.filter((user) => user.role === role.value);
+    return {
+      ...role,
+      users: roleUsers.length,
+      active: roleUsers.filter((user) => user.active).length,
+      defaultPermissions: defaultRolePermissions[role.value] || ['home']
+    };
+  }), [users]);
+
+  const permissionStats = useMemo(() => screenPermissions.map((permission) => ({
+    ...permission,
+    users: users.filter((user) => Array.isArray(user.permissions) && user.permissions.includes(permission.value)).length
+  })), [users]);
+
+  const authorizationAlerts = useMemo(() => {
+    const missingPhone = users.filter((user) => !String(user.phone || '').trim() || String(user.phone || '').trim() === defaultBrazilPhone);
+    const missingWhatsapp = users.filter((user) => !String(user.whatsapp || '').trim() || String(user.whatsapp || '').trim() === defaultBrazilPhone);
+    const inactiveWithPermissions = users.filter((user) => !user.active && Array.isArray(user.permissions) && user.permissions.length > 1);
+    const leadershipWithoutClinic = users.filter((user) => ['coordinator', 'manager'].includes(user.role) && !normalizeClinicIds(user).length);
+
+    return [
+      { title: 'Usuarios sem telefone', value: missingPhone.length, detail: 'Impacta contato operacional e cadastro completo.' },
+      { title: 'Usuarios sem WhatsApp', value: missingWhatsapp.length, detail: 'Impacta testes e notificacoes.' },
+      { title: 'Inativos com permissoes', value: inactiveWithPermissions.length, detail: 'Revisar se devem ficar sem acesso.' },
+      { title: 'Gerencia/coordenacao sem clinica', value: leadershipWithoutClinic.length, detail: 'Pode bloquear visao por unidade.' }
+    ];
+  }, [users]);
 
   const patchUser = (userId, changes) => {
     setUsers((current) => current.map((user) => (
@@ -468,6 +535,109 @@ function MasterControlCenter() {
                   {!clinics.length && <p className="empty-state">Nenhuma clinica encontrada.</p>}
                 </div>
               </article>
+            </section>
+          )}
+
+          {activeTab === 'authority' && (
+            <section className="master-console-panel master-authority-panel">
+              <div className="master-section-heading">
+                <div>
+                  <p className="eyebrow">Alcadas operacionais</p>
+                  <h2>Regras que exigem autorizacao</h2>
+                  <p>Resumo das acoes sensiveis do sistema, perfis autorizados e dependencia de permissao de tela quando existir.</p>
+                </div>
+              </div>
+
+              <div className="master-authority-grid">
+                {authorityRules.map((rule) => (
+                  <article className="master-authority-card" key={`${rule.area}-${rule.action}`}>
+                    <header>
+                      <span>{rule.area}</span>
+                      {rule.permission && <em>{screenPermissions.find((item) => item.value === rule.permission)?.label || rule.permission}</em>}
+                    </header>
+                    <strong>{rule.action}</strong>
+                    <div className="master-role-chip-list">
+                      {rule.roles.map((role) => <small key={role}>{roleLabel(role)}</small>)}
+                    </div>
+                    <p>{rule.note}</p>
+                  </article>
+                ))}
+              </div>
+            </section>
+          )}
+
+          {activeTab === 'map' && (
+            <section className="master-console-panel master-access-map-panel">
+              <div className="master-section-heading">
+                <div>
+                  <p className="eyebrow">Mapa de acesso</p>
+                  <h2>Perfis, permissoes e pontos de atencao</h2>
+                  <p>Use esta visao para revisar rapidamente quem possui acesso, quais telas estao mais liberadas e onde falta dado operacional.</p>
+                </div>
+              </div>
+
+              <div className="master-alert-grid">
+                {authorizationAlerts.map((item) => (
+                  <article key={item.title}>
+                    <span>{item.title}</span>
+                    <strong>{item.value}</strong>
+                    <small>{item.detail}</small>
+                  </article>
+                ))}
+              </div>
+
+              <div className="master-map-grid">
+                <article className="master-map-card">
+                  <header>
+                    <strong>Perfis cadastrados</strong>
+                    <span>{users.length} usuario(s)</span>
+                  </header>
+                  <div className="master-map-scroll">
+                    {roleStats.map((role) => (
+                      <div className="master-map-row" key={role.value}>
+                        <strong>{role.label}</strong>
+                        <span>{role.active}/{role.users} ativos</span>
+                        <small>{role.defaultPermissions.length} permissoes padrao</small>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="master-map-card">
+                  <header>
+                    <strong>Telas por quantidade de usuarios</strong>
+                    <span>{screenPermissions.length} tela(s)</span>
+                  </header>
+                  <div className="master-map-scroll">
+                    {permissionStats.map((permission) => (
+                      <div className="master-map-row" key={permission.value}>
+                        <strong>{permission.label}</strong>
+                        <span>{permission.users} usuario(s)</span>
+                        <small>{permission.value}</small>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+
+                <article className="master-map-card wide">
+                  <header>
+                    <strong>Permissoes padrao por perfil</strong>
+                    <span>Referencia para auditoria</span>
+                  </header>
+                  <div className="master-role-permission-grid">
+                    {roleStats.map((role) => (
+                      <section key={role.value}>
+                        <strong>{role.label}</strong>
+                        <div>
+                          {role.defaultPermissions.map((permission) => (
+                            <span key={permission}>{screenPermissions.find((item) => item.value === permission)?.label || permission}</span>
+                          ))}
+                        </div>
+                      </section>
+                    ))}
+                  </div>
+                </article>
+              </div>
             </section>
           )}
 
