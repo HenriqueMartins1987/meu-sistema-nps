@@ -7803,7 +7803,16 @@ a {
 }
 
 .financial-collaborator-cost-panel .collaborator-list .financial-mini-row {
-  grid-template-columns: minmax(120px, 1fr) minmax(130px, 1fr) minmax(120px, 1fr) 110px;
+  grid-template-columns: minmax(120px, 1fr) 110px 110px 110px;
+}
+
+.financial-dsr-highlight {
+  color: #8e6731;
+  font-weight: 950;
+  padding: 4px 8px;
+  border: 1px solid rgba(212, 167, 100, 0.38);
+  border-radius: 8px;
+  background: rgba(212, 167, 100, 0.14);
 }
 
 .financial-expense-kpis {

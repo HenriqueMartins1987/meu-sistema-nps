@@ -214,8 +214,8 @@ function getUserFunctionLabel(user = {}) {
   return labels[String(user?.role || '').toLowerCase()] || 'Profissional CRC';
 }
 
-function collaboratorMonthlyCost(collaborator = {}, referenceMonth = '') {
-  const commission = toBooleanFlag(collaborator.receives_commission) ? toNumber(collaborator.commission_default) : 0;
+function collaboratorMonthlyCost(collaborator = {}, referenceMonth = '', monthlyCost = null) {
+  const commission = toBooleanFlag(collaborator.receives_commission) ? toNumber(monthlyCost?.commission) : 0;
   return toNumber(collaborator.salary)
     + toNumber(collaborator.charges)
     + toNumber(collaborator.benefits)
@@ -311,6 +311,7 @@ function FinancialIntelligenceManage() {
   const [records, setRecords] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [collaborators, setCollaborators] = useState([]);
+  const [monthlyCollaboratorCosts, setMonthlyCollaboratorCosts] = useState([]);
   const [operationalCosts, setOperationalCosts] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [filters, setFilters] = useState({ search: '', clinicId: '', clinicName: '', status: '' });
@@ -390,11 +391,12 @@ function FinancialIntelligenceManage() {
     setFeedback('');
 
     try {
-      const [financialRes, collaboratorsRes, clinicsRes, operationalCostsRes, selicRes] = await Promise.all([
+      const [financialRes, collaboratorsRes, clinicsRes, operationalCostsRes, monthlyCostsRes, selicRes] = await Promise.all([
         api.get('/financial-intelligence'),
         api.get('/crc-collaborators'),
         api.get('/clinics'),
         api.get('/crc-operational-costs'),
+        api.get('/crc-collaborator-monthly-costs'),
         api.get('/financial-intelligence/selic').catch(() => ({ data: null }))
       ]);
       const selicValue = toNumber(selicRes.data?.value) || DEFAULT_SELIC;
@@ -407,6 +409,7 @@ function FinancialIntelligenceManage() {
       setCollaborators(Array.isArray(collaboratorsRes.data) ? collaboratorsRes.data : []);
       setClinics(Array.isArray(clinicsRes.data) ? clinicsRes.data : []);
       setOperationalCosts(Array.isArray(operationalCostsRes.data) ? operationalCostsRes.data : []);
+      setMonthlyCollaboratorCosts(Array.isArray(monthlyCostsRes.data) ? monthlyCostsRes.data : []);
       setSelicInfo({
         value: selicValue,
         source: selicRes.data?.source || 'fallback',
@@ -464,19 +467,39 @@ function FinancialIntelligenceManage() {
 
   const collaboratorCostRows = useMemo(() => {
     const selectedMonth = collaboratorMonth || currentMonth;
+    const monthlyByCollaborator = monthlyCollaboratorCosts.reduce((acc, item) => {
+      if (String(item.reference_month || '') === String(selectedMonth || '')) {
+        acc[String(item.collaborator_id)] = item;
+      }
+      return acc;
+    }, {});
 
     return collaborators
       .filter((item) => {
         if (!selectedMonth || !item.created_at) return true;
         return String(item.created_at).slice(0, 7) <= selectedMonth;
       })
-      .map((item) => ({ ...item, monthlyCost: collaboratorMonthlyCost(item, collaboratorMonth) }))
+      .map((item) => {
+        const monthlyCost = monthlyByCollaborator[String(item.id)] || null;
+        const commission = toBooleanFlag(item.receives_commission) ? toNumber(monthlyCost?.commission) : 0;
+        return {
+          ...item,
+          monthlyCommission: commission,
+          dsrCommission: calculateDsrOnCommission(commission),
+          monthlyCost: collaboratorMonthlyCost(item, selectedMonth, monthlyCost)
+        };
+      })
       .sort((a, b) => b.monthlyCost - a.monthlyCost || String(a.name).localeCompare(String(b.name)));
-  }, [collaborators, collaboratorMonth, currentMonth]);
+  }, [collaborators, collaboratorMonth, currentMonth, monthlyCollaboratorCosts]);
 
   const collaboratorCostTotal = useMemo(
     () => collaboratorCostRows.reduce((total, item) => total + toNumber(item.monthlyCost), 0),
     [collaboratorCostRows]
+  );
+
+  const commissionEligibleCollaborators = useMemo(
+    () => collaborators.filter((item) => toBooleanFlag(item.receives_commission) && item.status !== 'inativo'),
+    [collaborators]
   );
 
   const monthlyExpenseRows = useMemo(() => {
@@ -693,9 +716,7 @@ function FinancialIntelligenceManage() {
 
     try {
       const payload = { ...collaboratorDraft };
-      if (!payload.receives_commission) {
-        payload.commission_default = '';
-      }
+      payload.commission_default = '';
       if (!payload.has_other_costs) {
         payload.other_costs_default = '';
         payload.other_costs_description = '';
@@ -1041,12 +1062,12 @@ function FinancialIntelligenceManage() {
           <label>Mês de referência<input className="field" type="month" value={collaboratorMonth} onChange={(event) => setCollaboratorMonth(event.target.value)} /></label>
           <strong className="financial-total-line">{formatCurrency(collaboratorCostTotal)}</strong>
           <div className="financial-mini-table collaborator-list">
-            <div className="financial-mini-row header"><span>Nome</span><span>Função</span><span>Clínica</span><span>Custo</span></div>
+            <div className="financial-mini-row header"><span>Nome</span><span>Comissão</span><span>DSR</span><span>Custo</span></div>
             {collaboratorCostRows.map((item) => (
               <div className="financial-mini-row" key={item.id}>
                 <span>{item.name}</span>
-                <span>{item.function_name || '-'}</span>
-                <span>{item.clinic_name || '-'}</span>
+                <span>{toBooleanFlag(item.receives_commission) ? formatCurrency(item.monthlyCommission) : 'Não recebe'}</span>
+                <span className={item.dsrCommission > 0 ? 'financial-dsr-highlight' : ''}>{formatCurrency(item.dsrCommission)}</span>
                 <span>{formatCurrency(item.monthlyCost)}</span>
               </div>
             ))}
@@ -1241,9 +1262,8 @@ function FinancialIntelligenceManage() {
               <label>Status<select className="field" value={collaboratorDraft.status} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, status: event.target.value }))}><option value="ativo">Ativo</option><option value="inativo">Inativo</option></select></label>
               <label>Encargos<input className="field" type="number" step="0.01" value={collaboratorDraft.charges} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, charges: event.target.value }))} /></label>
               <label>Benefícios<input className="field" type="number" step="0.01" value={collaboratorDraft.benefits} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, benefits: event.target.value }))} /></label>
-              <label>Recebe comissão?<select className="field" value={collaboratorDraft.receives_commission ? 'sim' : 'nao'} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, receives_commission: event.target.value === 'sim', commission_default: event.target.value === 'sim' ? current.commission_default : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
-              {collaboratorDraft.receives_commission && <label>Comissão<input className="field" type="number" step="0.01" value={collaboratorDraft.commission_default} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, commission_default: event.target.value }))} /></label>}
-              {collaboratorDraft.receives_commission && <label>DSR sobre comissão<input className="field" value={formatCurrency(calculateDsrOnCommission(collaboratorDraft.commission_default))} readOnly /></label>}
+              <label>Recebe comissão?<select className="field" value={collaboratorDraft.receives_commission ? 'sim' : 'nao'} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, receives_commission: event.target.value === 'sim', commission_default: '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
+              {collaboratorDraft.receives_commission && <label className="wide-field">Lançamento de comissão<input className="field" value="Disponível na lista de lançamento mensal de comissão" readOnly /></label>}
               <label>13º proporcional<input className="field" value={formatCurrency(calculateThirteenthSalary(collaboratorDraft, collaboratorDraft.reference_month))} readOnly /></label>
               <label>Férias no mês?<select className="field" value={collaboratorDraft.vacation_taken ? 'sim' : 'nao'} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, vacation_taken: event.target.value === 'sim', vacation_amount: event.target.value === 'sim' ? current.vacation_amount : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
               {collaboratorDraft.vacation_taken && <label>Valor das férias<input className="field" type="number" step="0.01" value={collaboratorDraft.vacation_amount} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, vacation_amount: event.target.value }))} /></label>}
@@ -1268,9 +1288,10 @@ function FinancialIntelligenceManage() {
               <p>Use este lançamento para ajustar comissões variáveis por mês sem alterar o cadastro base do colaborador.</p>
             </div>
             <div className="financial-editor-grid">
-              <label>Colaborador<select className="field" value={commissionDraft.collaborator_id} onChange={(event) => setCommissionDraft((current) => ({ ...current, collaborator_id: event.target.value }))}><option value="">Selecione</option>{collaborators.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+              <label>Colaborador<select className="field" value={commissionDraft.collaborator_id} onChange={(event) => setCommissionDraft((current) => ({ ...current, collaborator_id: event.target.value }))}><option value="">Selecione</option>{commissionEligibleCollaborators.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
               <label>Mês/Ano<input className="field" type="month" value={commissionDraft.reference_month} onChange={(event) => setCommissionDraft((current) => ({ ...current, reference_month: event.target.value }))} /></label>
               <label>Comissão<input className="field" type="number" step="0.01" value={commissionDraft.commission} onChange={(event) => setCommissionDraft((current) => ({ ...current, commission: event.target.value }))} /></label>
+              <label>DSR sobre comissão<input className="field" value={formatCurrency(calculateDsrOnCommission(commissionDraft.commission))} readOnly /></label>
               <label>Férias pagas?<select className="field" value={commissionDraft.vacation_paid ? 'sim' : 'nao'} onChange={(event) => setCommissionDraft((current) => ({ ...current, vacation_paid: event.target.value === 'sim', vacation_amount: event.target.value === 'sim' ? current.vacation_amount : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
               {commissionDraft.vacation_paid && <label>Valor das férias<input className="field" type="number" step="0.01" value={commissionDraft.vacation_amount} onChange={(event) => setCommissionDraft((current) => ({ ...current, vacation_amount: event.target.value }))} /></label>}
               <label>Houve outros custos?<select className="field" value={commissionDraft.has_other_costs ? 'sim' : 'nao'} onChange={(event) => setCommissionDraft((current) => ({ ...current, has_other_costs: event.target.value === 'sim', other_costs: event.target.value === 'sim' ? current.other_costs : '', notes: event.target.value === 'sim' ? current.notes : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>

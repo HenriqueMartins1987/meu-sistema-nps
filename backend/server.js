@@ -10681,7 +10681,7 @@ function calculateThirteenthProvision(collaborator = {}, referenceMonth = '') {
 
 function collaboratorBaseMonthlyCost(collaborator = {}, monthly = null, referenceMonth = '') {
   const receivesCommission = Boolean(Number(collaborator.receives_commission || 0));
-  const monthlyCommission = monthly ? toFinancialNumber(monthly.commission) : toFinancialNumber(collaborator.commission_default);
+  const monthlyCommission = monthly ? toFinancialNumber(monthly.commission) : 0;
   const commissionCost = receivesCommission ? monthlyCommission : 0;
   const dsrCommission = receivesCommission ? calculateDsrOnCommission(monthlyCommission) : 0;
   const thirteenthSalary = calculateThirteenthProvision(collaborator, referenceMonth || monthly?.reference_month || collaborator.reference_month);
@@ -10805,6 +10805,9 @@ async function getFinancialMonthlyCostContext(rows = []) {
         collaborator_name: collaborator.name,
         function_name: collaborator.function_name,
         clinic_name: collaborator.clinic_name,
+        commission: monthly ? toFinancialNumber(monthly.commission) : 0,
+        dsr_commission: monthly ? calculateDsrOnCommission(monthly.commission) : 0,
+        thirteenth_salary: calculateThirteenthProvision(collaborator, month),
         total_cost: totalCost
       });
     });
@@ -11253,7 +11256,7 @@ async function buildCrcCollaboratorPayload(body = {}, user = {}) {
   }
 
   const receivesCommission = toFinancialBoolean(body.receives_commission ?? body.receivesCommission) ? 1 : 0;
-  const defaultCommission = toFinancialNumber(body.commission_default);
+  const defaultCommission = 0;
 
   return {
     name,
@@ -11423,6 +11426,10 @@ async function handleUpsertCrcCollaboratorMonthlyCost(req, res) {
     const collaborator = await getCrcCollaboratorById(req.body.collaborator_id || req.body.collaboratorId);
     if (!collaborator) {
       return res.status(404).json({ error: 'Colaborador não encontrado.' });
+    }
+
+    if (!Number(collaborator.receives_commission || 0)) {
+      return res.status(400).json({ error: 'Este colaborador não está marcado para receber comissão.' });
     }
 
     const referenceMonth = normalizeFinancialMonth(req.body.reference_month || req.body.referenceMonth);
