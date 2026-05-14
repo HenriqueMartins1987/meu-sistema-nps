@@ -19,6 +19,7 @@ const roleOptions = [
 const tabs = [
   { id: 'users', label: 'Usuarios' },
   { id: 'permissions', label: 'Permissoes' },
+  { id: 'releases', label: 'Liberacoes' },
   { id: 'authority', label: 'Alcadas' },
   { id: 'map', label: 'Mapa de acesso' },
   { id: 'system', label: 'Sistema' },
@@ -69,6 +70,43 @@ const authorityRules = [
   { area: 'Painel Gerencial', action: 'Acessar Centro Master e administracao', permission: 'admin_panel', roles: ['master_admin'], note: 'Apenas Administrador Master altera usuarios e permissoes.' }
 ];
 
+const routeControls = [
+  { area: 'Home', type: 'Caminho', title: 'Home', path: '/home', permission: 'home', note: 'Tela inicial do sistema.' },
+  { area: 'Home', type: 'Caminho', title: 'Minha conta', path: '/perfil', permission: 'home', note: 'Dados do proprio usuario.' },
+  { area: 'Protocolos', type: 'Caminho', title: 'Novo protocolo', path: '/cadastro', permission: 'complaints_register', note: 'Cadastro de nova reclamacao/demanda.' },
+  { area: 'Protocolos', type: 'Caminho', title: 'Painel de gestao de reclamacoes', path: '/gestao', permission: 'complaints_management', note: 'Lista, filtros e abas de reclamacoes.' },
+  { area: 'Protocolos', type: 'Caminho', title: 'Ficha executiva do protocolo', path: '/gestao/:id', permission: 'complaints_management', note: 'Abertura da demanda, evidencias e tratativas.' },
+  { area: 'Protocolos', type: 'Caminho', title: 'Relatorio semanal', path: '/gestao/relatorio-semanal', permission: 'complaints_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'manager'], note: 'Relatorio semanal das reclamacoes.' },
+  { area: 'Dashboards', type: 'Caminho', title: 'Dashboard de reclamacoes', path: '/dashboard', permission: 'complaints_dashboard', note: 'Indicadores gerenciais de reclamacoes.' },
+  { area: 'Dashboards', type: 'Caminho', title: 'BI de reclamacoes', path: '/bi', permission: 'complaints_dashboard', note: 'Analises complementares.' },
+  { area: 'NPS', type: 'Caminho', title: 'Painel de gestao NPS', path: '/gestao-nps', permission: 'nps_management', note: 'Gestao dos registros NPS.' },
+  { area: 'NPS', type: 'Caminho', title: 'Dashboard NPS', path: '/dashboard-nps', permission: 'nps_dashboard', note: 'Indicadores de NPS.' },
+  { area: 'Pacientes', type: 'Caminho', title: 'Gestao do paciente', path: '/pacientes', permission: 'patient_management', note: 'Pacientes oriundos de reclamacoes e tratamentos.' },
+  { area: 'Pacientes', type: 'Caminho', title: 'Cadastro de paciente', path: '/pacientes/cadastro', permission: 'patient_management', note: 'Entrada operacional de paciente.' },
+  { area: 'Pacientes', type: 'Caminho', title: 'Dashboard do paciente', path: '/pacientes/dashboard', permission: 'patient_management', note: 'Agenda e acompanhamento de pacientes.' },
+  { area: 'CRM', type: 'Caminho', title: 'CRM de relacionamento', path: '/crm', permission: 'crm_relationship', note: 'Relacionamento e acompanhamento comercial.' },
+  { area: 'Financeiro CRC', type: 'Caminho', title: 'Dashboard executivo CRC', path: '/home/financial-intelligence', permission: 'financial_dashboard', roles: ['master_admin', 'admin'], note: 'Visao financeira executiva.' },
+  { area: 'Financeiro CRC', type: 'Caminho', title: 'Unidade x campanha', path: '/home/financial-intelligence/campaigns', permission: 'financial_campaigns', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Analise por unidade e campanha.' },
+  { area: 'Financeiro CRC', type: 'Caminho', title: 'Gestao financeira CRC', path: '/home/financial-intelligence/manage', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Lancamentos, edicoes e despesas mensais.' },
+  { area: 'Financeiro CRC', type: 'Caminho', title: 'Gestao de colaboradores CRC', path: '/home/financial-intelligence/manage/collaborators', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Cadastro e custos dos colaboradores.' },
+  { area: 'Financeiro CRC', type: 'Caminho', title: 'Detalhe do lancamento financeiro', path: '/home/financial-intelligence/manage/:id', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Analise individual do lancamento.' },
+  { area: 'Painel Gerencial', type: 'Caminho', title: 'Gestao de usuarios', path: '/admin', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Administracao de usuarios.' },
+  { area: 'Painel Gerencial', type: 'Caminho', title: 'Centro Master do Sistema', path: '/admin/controle-master', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Controle completo de autorizacoes.' },
+  { area: 'Painel Gerencial', type: 'Caminho', title: 'Monitoria Master', path: '/admin/monitoria', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Monitoramento operacional.' }
+];
+
+const actionControls = authorityRules.map((rule) => ({
+  area: rule.area,
+  type: 'Botao/acao',
+  title: rule.action,
+  path: rule.action,
+  permission: rule.permission,
+  roles: rule.roles,
+  note: rule.note
+}));
+
+const accessControls = [...routeControls, ...actionControls];
+
 function toNumber(value) {
   const parsed = Number(String(value || 0).replace(',', '.'));
   return Number.isFinite(parsed) ? parsed : 0;
@@ -107,6 +145,25 @@ function normalizeUser(user = {}) {
 
 function roleLabel(value) {
   return roleOptions.find((role) => role.value === value)?.label || value || 'Perfil nao definido';
+}
+
+function controlPermissionLabel(permission) {
+  return screenPermissions.find((item) => item.value === permission)?.label || permission || 'Alcada por perfil';
+}
+
+function userCanAccessControl(user, control) {
+  if (!user || !user.active) return false;
+  if (isMasterAdmin(user)) return true;
+  if (control.masterOnly) return false;
+
+  const permissions = Array.isArray(user.permissions) ? user.permissions : [];
+  const permissionAllowed = !control.permission
+    || control.permission === 'home'
+    || user.role === 'admin'
+    || permissions.includes(control.permission);
+  const roleAllowed = !Array.isArray(control.roles) || control.roles.includes(user.role);
+
+  return permissionAllowed && roleAllowed;
 }
 
 function MasterControlCenter() {
@@ -183,6 +240,11 @@ function MasterControlCenter() {
 
   const selectedClinicIds = normalizeClinicIds(selectedUser || {});
   const selectedPermissionCount = selectedUser?.permissions?.length || 0;
+  const selectedAccessStats = useMemo(() => {
+    if (!selectedUser) return { released: 0, blocked: accessControls.length };
+    const released = accessControls.filter((control) => userCanAccessControl(selectedUser, control)).length;
+    return { released, blocked: accessControls.length - released };
+  }, [selectedUser]);
 
   const summary = useMemo(() => ({
     users: users.length,
@@ -535,6 +597,125 @@ function MasterControlCenter() {
                   {!clinics.length && <p className="empty-state">Nenhuma clinica encontrada.</p>}
                 </div>
               </article>
+            </section>
+          )}
+
+          {activeTab === 'releases' && (
+            <section className="master-console-panel master-release-panel">
+              <aside className="master-release-users">
+                <div className="master-section-heading">
+                  <div>
+                    <p className="eyebrow">Liberar ou bloquear</p>
+                    <h2>Usuarios</h2>
+                    <p>Selecione um usuario para controlar telas, caminhos e botoes operacionais.</p>
+                  </div>
+                </div>
+
+                <div className="master-filter-stack">
+                  <input className="field" placeholder="Buscar usuario" value={filters.search} onChange={(event) => setFilters((current) => ({ ...current, search: event.target.value }))} />
+                  <select className="field" value={filters.role} onChange={(event) => setFilters((current) => ({ ...current, role: event.target.value }))}>
+                    <option value="">Todos os perfis</option>
+                    {roleOptions.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+                  </select>
+                  <select className="field" value={filters.status} onChange={(event) => setFilters((current) => ({ ...current, status: event.target.value }))}>
+                    <option value="">Todos os status</option>
+                    <option value="active">Ativos</option>
+                    <option value="inactive">Inativos</option>
+                  </select>
+                </div>
+
+                <div className="master-release-user-list">
+                  {filteredUsers.map((user) => {
+                    const released = accessControls.filter((control) => userCanAccessControl(user, control)).length;
+                    return (
+                      <button
+                        type="button"
+                        key={user.id}
+                        className={`master-release-user ${String(selectedUser?.id) === String(user.id) ? 'selected' : ''}`}
+                        onClick={() => setSelectedUserId(user.id)}
+                      >
+                        <strong>{user.name}</strong>
+                        <span>{roleLabel(user.role)}</span>
+                        <small>{released}/{accessControls.length} liberacoes | {user.active ? 'Ativo' : 'Bloqueado'}</small>
+                      </button>
+                    );
+                  })}
+                  {!filteredUsers.length && <p className="empty-state">Nenhum usuario encontrado.</p>}
+                </div>
+              </aside>
+
+              {selectedUser && (
+                <article className="master-release-workspace">
+                  <div className="master-release-header">
+                    <div>
+                      <p className="eyebrow">Matriz completa</p>
+                      <h2>{selectedUser.name}</h2>
+                      <p>Todos os caminhos e botoes conhecidos ficam listados aqui. Itens com permissao podem ser liberados direto; itens por alcada seguem o perfil operacional selecionado.</p>
+                    </div>
+                    <div className="master-release-actions">
+                      <select className="field" value={selectedUser.role || ''} onChange={(event) => patchUser(selectedUser.id, { role: event.target.value })}>
+                        {roleOptions.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+                      </select>
+                      <select className="field" value={selectedUser.active ? 'active' : 'inactive'} onChange={(event) => patchUser(selectedUser.id, { active: event.target.value === 'active' })}>
+                        <option value="active">Usuario ativo</option>
+                        <option value="inactive">Usuario bloqueado</option>
+                      </select>
+                      <button className="outline-action" onClick={() => applyAllPermissions(selectedUser.id)}>Liberar telas</button>
+                      <button className="outline-action" onClick={() => clearPermissions(selectedUser.id)}>Bloquear telas</button>
+                      <button className="primary-action" onClick={() => saveUser(selectedUser)} disabled={savingUserId === String(selectedUser.id)}>
+                        {savingUserId === String(selectedUser.id) ? 'Salvando...' : 'Salvar liberacoes'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="master-release-kpis">
+                    <article><span>Liberados</span><strong>{selectedAccessStats.released}</strong><small>Caminhos e botoes ativos</small></article>
+                    <article><span>Bloqueados</span><strong>{selectedAccessStats.blocked}</strong><small>Pelo perfil, status ou permissao</small></article>
+                    <article><span>Perfil atual</span><strong>{roleLabel(selectedUser.role)}</strong><small>{selectedUser.active ? 'Usuario ativo' : 'Usuario bloqueado'}</small></article>
+                  </div>
+
+                  <div className="master-release-board">
+                    {accessControls.map((control) => {
+                      const allowed = userCanAccessControl(selectedUser, control);
+                      const editable = Boolean(control.permission) && !control.masterOnly && control.permission !== 'home';
+                      const checked = control.permission === 'home'
+                        ? true
+                        : Array.isArray(selectedUser.permissions) && selectedUser.permissions.includes(control.permission);
+                      return (
+                        <article className={`master-release-card ${allowed ? 'allowed' : 'blocked'}`} key={`${control.type}-${control.area}-${control.path}`}>
+                          <header>
+                            <div>
+                              <span>{control.area}</span>
+                              <strong>{control.title}</strong>
+                            </div>
+                            <em className={allowed ? 'allowed' : 'blocked'}>{allowed ? 'Liberado' : 'Bloqueado'}</em>
+                          </header>
+                          <div className="master-release-meta">
+                            <small>{control.type}</small>
+                            <code>{control.path}</code>
+                          </div>
+                          <p>{control.note}</p>
+                          <footer>
+                            <small>{controlPermissionLabel(control.permission)}</small>
+                            {editable ? (
+                              <label className="master-release-switch">
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => toggleUserPermission(selectedUser.id, control.permission)}
+                                />
+                                <span>{checked ? 'Permissao ativa' : 'Permissao bloqueada'}</span>
+                              </label>
+                            ) : (
+                              <span className="master-release-lock">{control.masterOnly ? 'Apenas Master' : 'Controlado por perfil'}</span>
+                            )}
+                          </footer>
+                        </article>
+                      );
+                    })}
+                  </div>
+                </article>
+              )}
             </section>
           )}
 
