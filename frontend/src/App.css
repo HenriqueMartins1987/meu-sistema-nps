@@ -9010,6 +9010,107 @@ a {
   gap: 14px;
 }
 
+.master-profile-control {
+  grid-column: 1 / -1;
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffdfa 0%, #fff8ef 100%);
+}
+
+.master-profile-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 12px;
+}
+
+.master-profile-card {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.master-profile-card header {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.master-profile-card header strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.master-profile-card header span {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand-strong);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.master-profile-scroll {
+  display: grid;
+  gap: 8px;
+  max-height: 330px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.master-profile-action {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-left-width: 4px;
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.master-profile-action.allowed {
+  border-left-color: #2f8f5b;
+}
+
+.master-profile-action.blocked {
+  border-left-color: #c94f3d;
+}
+
+.master-profile-action strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.master-profile-action span {
+  color: var(--brand-strong);
+  font-size: 11px;
+  font-weight: 900;
+  text-align: right;
+}
+
+.master-profile-action small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
 .master-release-users {
   position: sticky;
   top: 16px;
@@ -9487,6 +9588,7 @@ a {
   .master-release-panel,
   .master-release-header,
   .master-release-board,
+  .master-profile-grid,
   .master-permission-board,
   .master-system-panel,
   .master-margin-board,
@@ -9552,6 +9654,7 @@ a {
   .master-release-actions,
   .master-release-kpis,
   .master-release-board,
+  .master-profile-grid,
   .master-form-grid,
   .master-form-grid.compact,
   .master-permission-board,

@@ -174,6 +174,8 @@ function MasterControlCenter() {
   const [collaborators, setCollaborators] = useState([]);
   const [settings, setSettings] = useState(null);
   const [selectedUserId, setSelectedUserId] = useState('');
+  const [selectedProfile, setSelectedProfile] = useState('supervisor_crc');
+  const [profilePermissionDraft, setProfilePermissionDraft] = useState(() => ({ ...defaultRolePermissions }));
   const [activeTab, setActiveTab] = useState('users');
   const [filters, setFilters] = useState({ search: '', role: '', status: '' });
   const [feedback, setFeedback] = useState('');
@@ -246,6 +248,25 @@ function MasterControlCenter() {
     return { released, blocked: accessControls.length - released };
   }, [selectedUser]);
 
+  const selectedProfileUsers = useMemo(
+    () => users.filter((user) => user.role === selectedProfile),
+    [selectedProfile, users]
+  );
+
+  const selectedProfilePermissions = useMemo(
+    () => profilePermissionDraft[selectedProfile] || ['home'],
+    [profilePermissionDraft, selectedProfile]
+  );
+  const selectedProfileStats = useMemo(() => {
+    const profileUser = {
+      role: selectedProfile,
+      active: true,
+      permissions: selectedProfilePermissions
+    };
+    const released = accessControls.filter((control) => userCanAccessControl(profileUser, control)).length;
+    return { released, blocked: accessControls.length - released };
+  }, [selectedProfile, selectedProfilePermissions]);
+
   const summary = useMemo(() => ({
     users: users.length,
     active: users.filter((user) => user.active).length,
@@ -312,6 +333,62 @@ function MasterControlCenter() {
 
   const clearPermissions = (userId) => {
     patchUser(userId, { permissions: ['home'] });
+  };
+
+  const toggleProfilePermission = (role, permission) => {
+    setProfilePermissionDraft((current) => {
+      const permissions = new Set(current[role] || ['home']);
+      permissions.has(permission) ? permissions.delete(permission) : permissions.add(permission);
+      permissions.add('home');
+      return { ...current, [role]: Array.from(permissions) };
+    });
+  };
+
+  const applyAllProfilePermissions = (role) => {
+    setProfilePermissionDraft((current) => ({
+      ...current,
+      [role]: screenPermissions.map((permission) => permission.value)
+    }));
+  };
+
+  const clearProfilePermissions = (role) => {
+    setProfilePermissionDraft((current) => ({ ...current, [role]: ['home'] }));
+  };
+
+  const applyProfileToUsers = async (role) => {
+    const roleUsers = users.filter((user) => user.role === role);
+    const permissions = profilePermissionDraft[role] || ['home'];
+
+    if (!roleUsers.length) {
+      setFeedback(`Nenhum usuario encontrado no perfil ${roleLabel(role)}.`);
+      return;
+    }
+
+    if (!window.confirm(`Aplicar este modelo de permissoes para ${roleUsers.length} usuario(s) do perfil ${roleLabel(role)}?`)) return;
+
+    setSavingUserId(`profile:${role}`);
+    setFeedback('');
+
+    try {
+      await Promise.all(roleUsers.map((user) => api.patch(`/admin/users/${user.id}`, {
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        position: user.position,
+        phone: user.phone ? formatBrazilPhoneInput(user.phone) : defaultBrazilPhone,
+        whatsapp: user.whatsapp ? formatBrazilPhoneInput(user.whatsapp) : defaultBrazilPhone,
+        department: user.department,
+        active: Boolean(user.active),
+        permissions,
+        clinicIds: normalizeClinicIds(user)
+      })));
+      setFeedback(`Modelo do perfil ${roleLabel(role)} aplicado em ${roleUsers.length} usuario(s).`);
+      await loadData();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Nao foi possivel aplicar o modelo do perfil.');
+    } finally {
+      setSavingUserId('');
+    }
   };
 
   const saveUser = async (user) => {
@@ -602,6 +679,73 @@ function MasterControlCenter() {
 
           {activeTab === 'releases' && (
             <section className="master-console-panel master-release-panel">
+              <article className="master-profile-control">
+                <div className="master-release-header">
+                  <div>
+                    <p className="eyebrow">Controle por perfil</p>
+                    <h2>Modelo de acesso por cargo</h2>
+                    <p>Defina o que cada perfil deve acessar e aplique o modelo nos usuarios daquele perfil. As telas sao gravadas como permissao real do usuario; os botoes por alcada seguem o perfil operacional exibido na matriz.</p>
+                  </div>
+                  <div className="master-release-actions">
+                    <select className="field" value={selectedProfile} onChange={(event) => setSelectedProfile(event.target.value)}>
+                      {roleOptions.map((role) => <option key={role.value} value={role.value}>{role.label}</option>)}
+                    </select>
+                    <button className="outline-action" onClick={() => applyAllProfilePermissions(selectedProfile)}>Liberar telas do perfil</button>
+                    <button className="outline-action" onClick={() => clearProfilePermissions(selectedProfile)}>Bloquear telas do perfil</button>
+                    <button className="primary-action" onClick={() => applyProfileToUsers(selectedProfile)} disabled={savingUserId === `profile:${selectedProfile}`}>
+                      {savingUserId === `profile:${selectedProfile}` ? 'Aplicando...' : 'Aplicar aos usuarios'}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="master-release-kpis">
+                  <article><span>Perfil selecionado</span><strong>{roleLabel(selectedProfile)}</strong><small>{selectedProfileUsers.length} usuario(s) neste perfil</small></article>
+                  <article><span>Telas liberadas</span><strong>{selectedProfilePermissions.length}/{screenPermissions.length}</strong><small>Modelo que sera aplicado</small></article>
+                  <article><span>Acessos do perfil</span><strong>{selectedProfileStats.released}</strong><small>{selectedProfileStats.blocked} bloqueado(s) por perfil/permissao</small></article>
+                </div>
+
+                <div className="master-profile-grid">
+                  <section className="master-profile-card">
+                    <header>
+                      <strong>Telas e caminhos do perfil</strong>
+                      <span>{selectedProfilePermissions.length}/{screenPermissions.length}</span>
+                    </header>
+                    <div className="master-profile-scroll">
+                      {screenPermissions.map((permission) => (
+                        <label className="master-check-row" key={permission.value}>
+                          <input
+                            type="checkbox"
+                            checked={permission.value === 'home' || selectedProfilePermissions.includes(permission.value)}
+                            disabled={permission.value === 'home'}
+                            onChange={() => toggleProfilePermission(selectedProfile, permission.value)}
+                          />
+                          <span>{permission.label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </section>
+
+                  <section className="master-profile-card">
+                    <header>
+                      <strong>Botoes e acoes por perfil</strong>
+                      <span>{authorityRules.filter((rule) => rule.roles.includes(selectedProfile)).length}/{authorityRules.length}</span>
+                    </header>
+                    <div className="master-profile-scroll">
+                      {authorityRules.map((rule) => {
+                        const allowed = rule.roles.includes(selectedProfile);
+                        return (
+                          <div className={`master-profile-action ${allowed ? 'allowed' : 'blocked'}`} key={`${rule.area}-${rule.action}`}>
+                            <strong>{rule.action}</strong>
+                            <span>{rule.area}</span>
+                            <small>{allowed ? 'Perfil autorizado' : 'Perfil bloqueado'} | {rule.permission ? controlPermissionLabel(rule.permission) : 'Alcada por perfil'}</small>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                </div>
+              </article>
+
               <aside className="master-release-users">
                 <div className="master-section-heading">
                   <div>
