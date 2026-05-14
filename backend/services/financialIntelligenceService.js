@@ -106,12 +106,15 @@ const editableFinancialFields = [
 ];
 
 const collaboratorDefaultFields = [
+  'hire_date',
   'reference_month',
   'salary',
   'charges',
   'benefits',
   'receives_commission',
   'commission_default',
+  'dsr_commission',
+  'thirteenth_salary',
   'vacation_taken',
   'vacation_amount',
   'other_costs_default'

@@ -1866,12 +1866,15 @@ async function ensureDatabaseSchema() {
       clinic_id INT NULL,
       clinic_name VARCHAR(180) NULL,
       unit_name VARCHAR(180) NULL,
+      hire_date DATE NULL,
       reference_month CHAR(7) NULL,
       salary DECIMAL(14,2) NOT NULL DEFAULT 0,
       charges DECIMAL(14,2) NOT NULL DEFAULT 0,
       benefits DECIMAL(14,2) NOT NULL DEFAULT 0,
       receives_commission TINYINT(1) NOT NULL DEFAULT 0,
       commission_default DECIMAL(14,2) NOT NULL DEFAULT 0,
+      dsr_commission DECIMAL(14,2) NOT NULL DEFAULT 0,
+      thirteenth_salary DECIMAL(14,2) NOT NULL DEFAULT 0,
       phone_cost_default DECIMAL(14,2) NOT NULL DEFAULT 0,
       system_cost_default DECIMAL(14,2) NOT NULL DEFAULT 0,
       infrastructure_cost_default DECIMAL(14,2) NOT NULL DEFAULT 0,
@@ -1893,7 +1896,10 @@ async function ensureDatabaseSchema() {
   `);
 
   await ensureColumn('crc_collaborators', 'reference_month', 'CHAR(7) NULL');
+  await ensureColumn('crc_collaborators', 'hire_date', 'DATE NULL');
   await ensureColumn('crc_collaborators', 'receives_commission', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn('crc_collaborators', 'dsr_commission', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+  await ensureColumn('crc_collaborators', 'thirteenth_salary', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
   await ensureColumn('crc_collaborators', 'vacation_taken', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn('crc_collaborators', 'vacation_amount', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
   await ensureColumn('crc_collaborators', 'other_costs_description', 'VARCHAR(500) NULL');
@@ -10650,9 +10656,35 @@ function expandFinancialRowMonthKeys(row = {}) {
   return months;
 }
 
-function collaboratorBaseMonthlyCost(collaborator = {}, monthly = null) {
+function calculateDsrOnCommission(commission) {
+  return toFinancialNumber(commission) / 6;
+}
+
+function calculateThirteenthProvision(collaborator = {}, referenceMonth = '') {
+  const salary = toFinancialNumber(collaborator.salary);
+  if (!salary) return 0;
+
+  const month = normalizeFinancialMonth(referenceMonth);
+  const hireDateText = collaborator.hire_date ? String(collaborator.hire_date).slice(0, 10) : '';
+  if (!month || !hireDateText) return salary / 12;
+
+  const hireDate = new Date(`${hireDateText}T12:00:00`);
+  const [year, monthNumber] = month.split('-').map(Number);
+  const endOfReferenceMonth = new Date(year, monthNumber, 0, 23, 59, 59);
+
+  if (Number.isNaN(hireDate.getTime()) || Number.isNaN(endOfReferenceMonth.getTime())) return salary / 12;
+  if (hireDate > endOfReferenceMonth) return 0;
+  if (hireDate.getFullYear() === year && hireDate.getMonth() === monthNumber - 1 && hireDate.getDate() > 16) return 0;
+
+  return salary / 12;
+}
+
+function collaboratorBaseMonthlyCost(collaborator = {}, monthly = null, referenceMonth = '') {
   const receivesCommission = Boolean(Number(collaborator.receives_commission || 0));
   const monthlyCommission = monthly ? toFinancialNumber(monthly.commission) : toFinancialNumber(collaborator.commission_default);
+  const commissionCost = receivesCommission ? monthlyCommission : 0;
+  const dsrCommission = receivesCommission ? calculateDsrOnCommission(monthlyCommission) : 0;
+  const thirteenthSalary = calculateThirteenthProvision(collaborator, referenceMonth || monthly?.reference_month || collaborator.reference_month);
   const vacationAmount = monthly
     ? (Number(monthly.vacation_paid || 0) ? toFinancialNumber(monthly.vacation_amount) : 0)
     : (Number(collaborator.vacation_taken || 0) ? toFinancialNumber(collaborator.vacation_amount) : 0);
@@ -10660,7 +10692,9 @@ function collaboratorBaseMonthlyCost(collaborator = {}, monthly = null) {
   return toFinancialNumber(collaborator.salary)
     + toFinancialNumber(collaborator.charges)
     + toFinancialNumber(collaborator.benefits)
-    + (receivesCommission ? monthlyCommission : 0)
+    + commissionCost
+    + dsrCommission
+    + thirteenthSalary
     + vacationAmount
     + toFinancialNumber(collaborator.other_costs_default)
     + (monthly ? toFinancialNumber(monthly.other_costs) : 0);
@@ -10761,7 +10795,7 @@ async function getFinancialMonthlyCostContext(rows = []) {
       if (referenceMonth && compareMonthKey(referenceMonth, month) > 0) return;
 
       const monthly = monthlyByCollaborator[`${month}:${collaborator.id}`] || null;
-      const totalCost = collaboratorBaseMonthlyCost(collaborator, monthly);
+      const totalCost = collaboratorBaseMonthlyCost(collaborator, monthly, month);
       if (!totalCost) return;
 
       byMonth[month].collaboratorCost += totalCost;
@@ -11218,6 +11252,9 @@ async function buildCrcCollaboratorPayload(body = {}, user = {}) {
     throw new Error('Informe o salário do colaborador.');
   }
 
+  const receivesCommission = toFinancialBoolean(body.receives_commission ?? body.receivesCommission) ? 1 : 0;
+  const defaultCommission = toFinancialNumber(body.commission_default);
+
   return {
     name,
     role: sanitizeFinancialString(body.role),
@@ -11225,12 +11262,18 @@ async function buildCrcCollaboratorPayload(body = {}, user = {}) {
     clinic_id: clinic?.id || null,
     clinic_name: clinic?.name || sanitizeFinancialString(body.clinic_name),
     unit_name: unitName,
+    hire_date: body.hire_date || body.hireDate || null,
     reference_month: normalizeFinancialMonth(body.reference_month || body.referenceMonth),
     salary: toFinancialNumber(body.salary),
     charges: toFinancialNumber(body.charges),
     benefits: toFinancialNumber(body.benefits),
-    receives_commission: toFinancialBoolean(body.receives_commission ?? body.receivesCommission) ? 1 : 0,
-    commission_default: toFinancialNumber(body.commission_default),
+    receives_commission: receivesCommission,
+    commission_default: defaultCommission,
+    dsr_commission: receivesCommission ? calculateDsrOnCommission(defaultCommission) : 0,
+    thirteenth_salary: calculateThirteenthProvision(
+      { salary: body.salary, hire_date: body.hire_date || body.hireDate },
+      body.reference_month || body.referenceMonth
+    ),
     phone_cost_default: toFinancialNumber(body.phone_cost_default),
     system_cost_default: toFinancialNumber(body.system_cost_default),
     infrastructure_cost_default: toFinancialNumber(body.infrastructure_cost_default),
