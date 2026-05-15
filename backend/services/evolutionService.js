@@ -82,6 +82,11 @@ async function getConnectionState(instanceName) {
   return response.data;
 }
 
+async function restartInstance(instanceName) {
+  const response = await client().put(`/instance/restart/${encodeURIComponent(instanceName)}`);
+  return response.data;
+}
+
 async function sendText(instanceName, number, text, options = {}) {
   const response = await client().post(`/message/sendText/${encodeURIComponent(instanceName)}`, {
     number,
@@ -118,5 +123,6 @@ module.exports = {
   getConfig,
   getConnectionState,
   logoutInstance,
+  restartInstance,
   sendText
 };

@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { io as createSocket } from 'socket.io-client';
 import {
   Bar,
   BarChart,
@@ -16,8 +17,9 @@ import {
   YAxis
 } from 'recharts';
 
-import api from '../api';
+import api, { apiBaseUrl } from '../api';
 import { hasPermission, isMasterAdmin, readUser } from '../constants';
+import { readToken } from '../session';
 
 const sections = [
   { id: 'dashboard', label: 'Dashboard', path: '/home/whatsapp-management/dashboard' },
@@ -55,6 +57,14 @@ function normalizePhone(value) {
 
 function todayDate() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function getSocketBaseUrl() {
+  if (apiBaseUrl && apiBaseUrl !== '/api') return String(apiBaseUrl).replace(/\/api\/?$/, '');
+  if (typeof window !== 'undefined' && ['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+    return 'http://localhost:3001';
+  }
+  return 'https://meu-sistema-nps-backend.onrender.com';
 }
 
 function statusTone(status) {
@@ -158,6 +168,8 @@ function WhatsAppManagement() {
   const [instances, setInstances] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [conversations, setConversations] = useState([]);
+  const [queue, setQueue] = useState([]);
+  const [operators, setOperators] = useState([]);
   const [messages, setMessages] = useState([]);
   const [absent, setAbsent] = useState([]);
   const [history, setHistory] = useState([]);
@@ -170,10 +182,14 @@ function WhatsAppManagement() {
   const [flowDraft, setFlowDraft] = useState(emptyFlow());
   const [attendanceMessage, setAttendanceMessage] = useState('');
   const [historyFilters, setHistoryFilters] = useState({ startDate: todayDate(), endDate: todayDate(), status: '', patient: '' });
+  const [transferTargetId, setTransferTargetId] = useState('');
+  const [realtimeStatus, setRealtimeStatus] = useState('Conectando tempo real');
   const [qrResult, setQrResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState('');
+  const socketRef = useRef(null);
+  const selectedConversationIdRef = useRef('');
 
   const selectedConversation = useMemo(
     () => conversations.find((item) => String(item.id) === String(selectedConversationId)) || conversations[0] || null,
@@ -185,11 +201,13 @@ function WhatsAppManagement() {
     setLoading(true);
     setFeedback('');
     try {
-      const [dashboardRes, instancesRes, templatesRes, conversationsRes, absentRes, historyRes, flowsRes, clinicsRes] = await Promise.all([
+      const [dashboardRes, instancesRes, templatesRes, conversationsRes, queueRes, operatorsRes, absentRes, historyRes, flowsRes, clinicsRes] = await Promise.all([
         api.get('/api/whatsapp/dashboard'),
         api.get('/api/whatsapp/instances'),
         api.get('/api/whatsapp/templates'),
         api.get('/api/whatsapp/conversations'),
+        api.get('/api/whatsapp/queue'),
+        api.get('/api/whatsapp/operators'),
         api.get('/api/whatsapp/absent'),
         api.get('/api/whatsapp/history', { params: historyFilters }),
         api.get('/api/whatsapp/chatbot/flows'),
@@ -199,6 +217,8 @@ function WhatsAppManagement() {
       setInstances(Array.isArray(instancesRes.data) ? instancesRes.data : []);
       setTemplates(Array.isArray(templatesRes.data) ? templatesRes.data : []);
       setConversations(Array.isArray(conversationsRes.data) ? conversationsRes.data : []);
+      setQueue(Array.isArray(queueRes.data) ? queueRes.data : []);
+      setOperators(Array.isArray(operatorsRes.data) ? operatorsRes.data : []);
       setAbsent(Array.isArray(absentRes.data) ? absentRes.data : []);
       setHistory(Array.isArray(historyRes.data) ? historyRes.data : []);
       setFlows(Array.isArray(flowsRes.data) ? flowsRes.data : []);
@@ -228,6 +248,47 @@ function WhatsAppManagement() {
   }, [loadBaseData]);
 
   useEffect(() => {
+    selectedConversationIdRef.current = selectedConversationId;
+  }, [selectedConversationId]);
+
+  useEffect(() => {
+    if (!allowed) return undefined;
+    const token = readToken();
+    if (!token) {
+      setRealtimeStatus('Tempo real sem sessão');
+      return undefined;
+    }
+
+    const socket = createSocket(getSocketBaseUrl(), {
+      path: '/socket.io',
+      auth: { token },
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 8,
+      reconnectionDelay: 1200
+    });
+    socketRef.current = socket;
+
+    const refreshAll = () => {
+      loadBaseData();
+      if (selectedConversationIdRef.current) loadMessages(selectedConversationIdRef.current);
+    };
+
+    socket.on('connect', () => setRealtimeStatus('Tempo real ativo'));
+    socket.on('disconnect', () => setRealtimeStatus('Tempo real desconectado'));
+    socket.on('connect_error', (error) => setRealtimeStatus(`Tempo real indisponível: ${error.message}`));
+    socket.on('whatsapp:dashboard:refresh', refreshAll);
+    socket.on('whatsapp:conversation:changed', refreshAll);
+    socket.on('whatsapp:message:changed', refreshAll);
+    socket.on('whatsapp:queue:changed', refreshAll);
+    socket.on('whatsapp:dispatch:queued', refreshAll);
+
+    return () => {
+      socket.disconnect();
+      socketRef.current = null;
+    };
+  }, [allowed, loadBaseData, loadMessages]);
+
+  useEffect(() => {
     if (!allowed) return undefined;
     const refreshTimer = window.setInterval(() => {
       loadBaseData();
@@ -239,6 +300,7 @@ function WhatsAppManagement() {
   useEffect(() => {
     if (selectedConversation?.id) {
       setSelectedConversationId(String(selectedConversation.id));
+      socketRef.current?.emit('whatsapp:join-conversation', selectedConversation.id);
       loadMessages(selectedConversation.id);
     }
   }, [selectedConversation?.id, loadMessages]);
@@ -289,6 +351,16 @@ function WhatsAppManagement() {
     }
   };
 
+  const reconnectInstance = async (instanceName) => {
+    try {
+      await api.post(`/api/whatsapp/instances/${instanceName}/reconnect`);
+      setFeedback('Reconexão solicitada e registrada nos logs.');
+      await loadBaseData();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível reconectar.');
+    }
+  };
+
   const deleteInstance = async (instanceName) => {
     if (!window.confirm(`Excluir a instância ${instanceName}?`)) return;
     try {
@@ -312,10 +384,43 @@ function WhatsAppManagement() {
         message_type: 'teste',
         message_text: 'Envio de mensagem teste'
       });
-      setFeedback('Mensagem teste enviada e registrada.');
+      setFeedback('Mensagem teste entrou na fila anti-ban.');
       await loadBaseData();
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível enviar a mensagem teste.');
+    }
+  };
+
+  const claimConversation = async (conversationId) => {
+    try {
+      const { data } = await api.post(`/api/whatsapp/conversations/${conversationId}/claim`);
+      setFeedback('Atendimento assumido com sucesso.');
+      setSelectedConversationId(String(data?.conversation?.id || conversationId));
+      await loadBaseData();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível assumir o atendimento.');
+    }
+  };
+
+  const transferConversation = async (conversationId, operatorId = transferTargetId) => {
+    try {
+      await api.post(`/api/whatsapp/conversations/${conversationId}/transfer`, { operator_id: operatorId || null });
+      setFeedback(operatorId ? 'Atendimento transferido.' : 'Atendimento devolvido para a fila.');
+      setTransferTargetId('');
+      await loadBaseData();
+      if (conversationId) await loadMessages(conversationId);
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível transferir o atendimento.');
+    }
+  };
+
+  const runAutoAssign = async () => {
+    try {
+      const { data } = await api.post('/api/whatsapp/queue/auto-assign');
+      setFeedback(`${data?.assigned?.length || 0} atendimento(s) distribuído(s) automaticamente.`);
+      await loadBaseData();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível executar a fila automática.');
     }
   };
 
@@ -374,7 +479,7 @@ function WhatsAppManagement() {
       } else {
         await api.post('/api/whatsapp/send', payload);
       }
-      setFeedback('Mensagem enviada e registrada no histórico.');
+      setFeedback('Mensagem registrada e colocada na fila anti-ban.');
       setSendDraft(emptySend(user));
       setAttendanceMessage('');
       await loadBaseData();
@@ -464,7 +569,10 @@ function WhatsAppManagement() {
       ['Aguardando resposta', summary.waitingPatients, 'Fila operacional', summary.waitingPatients > 10 ? 'danger' : 'warning'],
       ['Pacientes ausentes', summary.absentPatients, 'Recuperação ativa', summary.absentPatients > 0 ? 'warning' : 'success'],
       ['SLA vencido', summary.slaExpired, `${summary.slaOk || 0} dentro do prazo`, summary.slaExpired > 0 ? 'danger' : 'success'],
-      ['Taxa de leitura', formatPercent(summary.readRate), `${formatPercent(summary.errorRate)} erro`, summary.errorRate > 3 ? 'danger' : 'success']
+      ['Taxa de leitura', formatPercent(summary.readRate), `${formatPercent(summary.errorRate)} erro`, summary.errorRate > 3 ? 'danger' : 'success'],
+      ['Fila aguardando', summary.queueWaiting, `${summary.queueInProgress || 0} em atendimento`, summary.queueWaiting > 8 ? 'danger' : summary.queueWaiting > 0 ? 'warning' : 'success'],
+      ['Fila de disparo', summary.dispatchPending, `${summary.dispatchSent24h || 0} enviados em 24h`, summary.dispatchErrors24h > 0 ? 'danger' : 'neutral'],
+      ['Anti-ban', `${summary.antiBan?.rateLimitPerMinute || 0}/min`, `${summary.antiBan?.minDelayMs || 0}-${summary.antiBan?.maxDelayMs || 0}ms`, 'neutral']
     ];
 
     return (
@@ -490,6 +598,9 @@ function WhatsAppManagement() {
           </ChartCard>
           <ChartCard title="Atendimentos por status">
             <ResponsiveContainer><PieChart><Pie data={dashboard?.charts?.attendanceByStatus || []} dataKey="attendances" nameKey="label" outerRadius={92}>{(dashboard?.charts?.attendanceByStatus || []).map((entry, index) => <Cell key={entry.label} fill={COLORS[index % COLORS.length]} />)}</Pie><Tooltip /><Legend /></PieChart></ResponsiveContainer>
+          </ChartCard>
+          <ChartCard title="Fila de atendimento">
+            <ResponsiveContainer><BarChart data={dashboard?.charts?.queueByStatus || []}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="label" /><YAxis /><Tooltip /><Bar dataKey="attendances" fill="#1f7a8c" /></BarChart></ResponsiveContainer>
           </ChartCard>
           <ChartCard title="Ranking de operadores">
             <div className="whatsapp-ranking-list">{(dashboard?.charts?.rankingOperators || []).map((item, index) => <p key={item.label}><span>{index + 1}. {item.label}</span><strong>{item.messages}</strong></p>)}</div>
@@ -531,6 +642,7 @@ function WhatsAppManagement() {
                   <td><div className="whatsapp-row-actions">
                     <button className="outline-action mini-action" onClick={() => checkInstanceStatus(item.instance_name)}>Status</button>
                     {canConfigure && <button className="outline-action mini-action" onClick={() => generateQrCode(item.instance_name)}>QR Code</button>}
+                    {canConfigure && <button className="outline-action mini-action" onClick={() => reconnectInstance(item.instance_name)}>Reconectar</button>}
                     <button className="outline-action mini-action" onClick={() => testInstanceMessage(item.instance_name)}>Teste</button>
                     {canConfigure && <button className="outline-action mini-action" onClick={() => logoutInstance(item.instance_name)}>Desconectar</button>}
                     {canConfigure && <button className="outline-action danger-action mini-action" onClick={() => deleteInstance(item.instance_name)}>Excluir</button>}
@@ -547,6 +659,22 @@ function WhatsAppManagement() {
   const renderAttendance = () => (
     <section className="whatsapp-attendance-layout">
       <aside className="whatsapp-conversation-list">
+        <div className="whatsapp-side-heading">
+          <h2>Fila</h2>
+          {canConfigure && <button className="outline-action mini-action" onClick={runAutoAssign}>Distribuir</button>}
+        </div>
+        <div className="whatsapp-queue-list">
+          {queue.filter((item) => item.status === 'aguardando').slice(0, 8).map((item) => (
+            <button key={item.id} onClick={() => setSelectedConversationId(String(item.conversation_id))}>
+              <strong>{item.patient_name}</strong>
+              <span>{item.patient_phone}</span>
+              <em>{item.status}</em>
+              <small>{item.clinic_name || 'Sem clínica'} · {String(item.queued_at || '').slice(0, 16).replace('T', ' ')}</small>
+              <span className="whatsapp-claim-link" onClick={(event) => { event.stopPropagation(); claimConversation(item.conversation_id); }}>Assumir atendimento</span>
+            </button>
+          ))}
+          {!queue.filter((item) => item.status === 'aguardando').length && <p className="empty-state">Fila sem pacientes aguardando.</p>}
+        </div>
         <h2>Conversas</h2>
         {conversations.map((conversation) => (
           <button key={conversation.id} className={String(selectedConversation?.id) === String(conversation.id) ? 'active' : ''} onClick={() => setSelectedConversationId(String(conversation.id))}>
@@ -599,6 +727,19 @@ function WhatsAppManagement() {
             <p><span>Operador</span><strong>{selectedConversation.operator_name || '-'}</strong></p>
             <label>Status<select className="field" value={selectedConversation.status} onChange={(event) => updateConversation(selectedConversation, { status: event.target.value })}>{attendanceStatuses.map((item) => <option key={item}>{item}</option>)}</select></label>
             <label>Próximo retorno<input className="field" type="datetime-local" onBlur={(event) => updateConversation(selectedConversation, { next_follow_up_at: event.target.value })} /></label>
+            <div className="whatsapp-transfer-box">
+              <button className="outline-action" onClick={() => claimConversation(selectedConversation.id)}>Assumir atendimento</button>
+              <label>Transferir para
+                <select className="field" value={transferTargetId} onChange={(event) => setTransferTargetId(event.target.value)}>
+                  <option value="">Selecionar operador</option>
+                  {operators.map((operator) => (
+                    <option key={operator.id} value={operator.id}>{operator.name} · {operator.available}/{operator.maxSimultaneous}</option>
+                  ))}
+                </select>
+              </label>
+              <button className="outline-action" onClick={() => transferConversation(selectedConversation.id)} disabled={!transferTargetId}>Transferir atendimento</button>
+              <button className="outline-action" onClick={() => transferConversation(selectedConversation.id, '')}>Devolver para fila</button>
+            </div>
             <div className="whatsapp-quick-actions">
               <button className="outline-action" onClick={() => markAbsent(selectedConversation)}>Marcar ausente</button>
               <button className="outline-action" onClick={() => updateConversation(selectedConversation, { status: 'Retornar depois' })}>Retornar depois</button>
@@ -793,6 +934,7 @@ function WhatsAppManagement() {
           <p className="eyebrow">Central de Atendimento</p>
           <h1>Gestão WhatsApp CRC</h1>
           <p>Atendimento operacional, múltiplas instâncias, mensagens padrão, chatbot, ausentes, histórico e métricas.</p>
+          <span className={`whatsapp-realtime-pill ${realtimeStatus.includes('ativo') ? 'online' : 'offline'}`}>{realtimeStatus}</span>
         </div>
         <div className="heading-actions">
           <button className="outline-action" onClick={loadBaseData}>Atualizar</button>
