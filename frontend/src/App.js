@@ -26,6 +26,7 @@ import FinancialIntelligence from './pages/FinancialIntelligence';
 import FinancialIntelligenceManage from './pages/FinancialIntelligenceManage';
 import FinancialIntelligenceRecord from './pages/FinancialIntelligenceRecord';
 import WhatsAppManagement from './pages/WhatsAppManagement';
+import WhatsAppServiceSettings from './pages/WhatsAppServiceSettings';
 import { PermissionRoute, ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
 import './App.css';
 
@@ -132,6 +133,7 @@ function App() {
           <Route path="/admin" element={<AdminPanel />} />
           <Route path="/admin/controle-master" element={<MasterControlCenter />} />
           <Route path="/admin/monitoria" element={<MasterMonitoring />} />
+          <Route path="/admin/configuracoes/whatsapp" element={<WhatsAppServiceSettings />} />
         </Route>
         <Route element={<PermissionRoute permission="patient_management" />}>
           <Route path="/pacientes" element={<PatientManagement />} />

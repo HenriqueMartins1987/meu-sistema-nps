@@ -23,6 +23,7 @@ const { Server } = require('socket.io');
 const { clinicSeed, legacyDefaultClinicNames } = require('./clinicSeed');
 const emailService = require('./services/emailService');
 const evolutionService = require('./services/evolutionService');
+const whatsappVpsService = require('./services/whatsappVpsService');
 const {
   DEFAULT_SELIC_RATE,
   DEFAULT_FINANCIAL_RULES,
@@ -229,6 +230,7 @@ const pool = mysql.createPool({
 
 const WHATSAPP_EVOLUTION_SETTINGS_KEY = 'whatsapp_evolution_settings';
 let whatsappSettingsCache = null;
+const WHATSAPP_SERVICE_DEFAULT_BASE_URL = 'http://2.24.101.6:3005';
 
 const complaintTypeSuggestions = [
   'Atendimento e acolhimento',
@@ -2158,6 +2160,47 @@ async function ensureDatabaseSchema() {
       setting_value LONGTEXT NULL,
       updated_by VARCHAR(180) NULL,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS whatsapp_service_sessions (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      session_id VARCHAR(120) NOT NULL UNIQUE,
+      display_name VARCHAR(180) NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      unit_name VARCHAR(180) NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'iniciando',
+      last_status_payload LONGTEXT NULL,
+      last_status_check_at DATETIME NULL,
+      notes TEXT NULL,
+      created_by VARCHAR(180) NULL,
+      updated_by VARCHAR(180) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_whatsapp_service_sessions_status (status),
+      INDEX idx_whatsapp_service_sessions_clinic (clinic_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS whatsapp_service_message_history (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      session_id VARCHAR(120) NOT NULL,
+      patient_phone VARCHAR(40) NOT NULL,
+      message_text TEXT NOT NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'pendente',
+      provider_message_id VARCHAR(180) NULL,
+      response_payload LONGTEXT NULL,
+      error_message TEXT NULL,
+      created_by VARCHAR(180) NULL,
+      sent_at DATETIME NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_whatsapp_service_history_session (session_id),
+      INDEX idx_whatsapp_service_history_phone (patient_phone),
+      INDEX idx_whatsapp_service_history_status (status),
+      INDEX idx_whatsapp_service_history_created (created_at)
     )
   `);
 
@@ -8810,6 +8853,292 @@ async function handleTestWhatsAppAdminSettings(req, res) {
   }
 }
 
+function normalizeWhatsAppServiceSessionId(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9._-]/g, '')
+    .slice(0, 120);
+}
+
+function mapWhatsAppServiceStatus(payload, fallback = 'iniciando') {
+  const raw = String(
+    payload?.status
+    || payload?.state
+    || payload?.connection
+    || payload?.data?.status
+    || payload?.data?.state
+    || payload?.session?.status
+    || fallback
+    || ''
+  ).trim().toLowerCase();
+
+  if (['connected', 'conectado', 'open', 'ready', 'authenticated', 'online'].some((item) => raw.includes(item))) return 'conectado';
+  if (['qr', 'qrcode', 'scan', 'aguardando', 'pairing'].some((item) => raw.includes(item))) return 'aguardando_qrcode';
+  if (['starting', 'iniciando', 'loading', 'initializing', 'connecting', 'criando'].some((item) => raw.includes(item))) return 'iniciando';
+  if (['disconnect', 'desconect', 'close', 'closed', 'offline', 'stopped', 'not_found'].some((item) => raw.includes(item))) return 'desconectado';
+
+  return fallback || 'iniciando';
+}
+
+function getWhatsAppServiceConfigStatus() {
+  const config = whatsappVpsService.getConfig({
+    baseURL: process.env.WHATSAPP_SERVICE_BASE_URL || WHATSAPP_SERVICE_DEFAULT_BASE_URL
+  });
+
+  return {
+    configured: config.configured,
+    baseUrlConfigured: config.baseUrlConfigured,
+    apiKeyConfigured: config.apiKeyConfigured,
+    missing: config.missing,
+    baseUrl: config.baseURL,
+    qrRoutePattern: `${config.baseURL}/public/sessions/{sessionId}/qr-image`
+  };
+}
+
+function getWhatsAppServiceMessageId(response) {
+  return response?.id
+    || response?.messageId
+    || response?.message_id
+    || response?.data?.id
+    || response?.data?.messageId
+    || response?.key?.id
+    || response?.data?.key?.id
+    || null;
+}
+
+async function refreshWhatsAppServiceSessionStatus(row) {
+  try {
+    const statusResponse = await whatsappVpsService.getSessionStatus(row.session_id);
+    const status = mapWhatsAppServiceStatus(statusResponse, row.status || 'iniciando');
+    await pool.query(
+      `UPDATE whatsapp_service_sessions
+          SET status = ?,
+              last_status_payload = ?,
+              last_status_check_at = NOW(),
+              updated_at = NOW()
+        WHERE session_id = ?`,
+      [status, JSON.stringify(statusResponse), row.session_id]
+    );
+    return {
+      ...row,
+      status,
+      status_payload: statusResponse,
+      last_status_check_at: new Date().toISOString(),
+      status_error: null
+    };
+  } catch (error) {
+    return {
+      ...row,
+      status_error: whatsappVpsService.friendlyApiError(error)
+    };
+  }
+}
+
+async function handleListWhatsAppServiceSessions(req, res) {
+  try {
+    const config = getWhatsAppServiceConfigStatus();
+    const [rows] = await pool.query(
+      `SELECT ws.*,
+              (SELECT COUNT(*) FROM whatsapp_service_message_history h WHERE h.session_id = ws.session_id) AS message_count,
+              (SELECT MAX(h.created_at) FROM whatsapp_service_message_history h WHERE h.session_id = ws.session_id) AS last_message_at
+         FROM whatsapp_service_sessions ws
+        ORDER BY ws.clinic_name ASC, ws.session_id ASC`
+    );
+
+    const sessions = config.configured
+      ? await Promise.all(rows.map((row) => refreshWhatsAppServiceSessionStatus(row)))
+      : rows.map((row) => ({ ...row, status_error: 'WHATSAPP_SERVICE_API_KEY ausente.' }));
+
+    return res.json({ config, sessions });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar sessões do whatsapp-service.' });
+  }
+}
+
+async function handleCreateWhatsAppServiceSession(req, res) {
+  try {
+    const sessionId = normalizeWhatsAppServiceSessionId(req.body.sessionId || req.body.session_id);
+    if (!sessionId || sessionId.length < 3) {
+      return res.status(400).json({ error: 'Informe um sessionId com pelo menos 3 caracteres.' });
+    }
+
+    const clinic = req.body.clinic_id ? await getClinicSnapshot(req.body.clinic_id) : null;
+    const displayName = sanitizeFinancialString(req.body.display_name || req.body.displayName || sessionId);
+    const unitName = sanitizeFinancialString(req.body.unit_name || req.body.unitName || clinic?.city);
+    const actorName = getActorName(req.user);
+    let serviceResponse = null;
+    let warning = null;
+
+    try {
+      serviceResponse = await whatsappVpsService.createSession(sessionId, {
+        clinicId: clinic?.id || req.body.clinic_id || null,
+        clinicName: clinic?.name || sanitizeFinancialString(req.body.clinic_name),
+        unitName,
+        displayName
+      });
+    } catch (error) {
+      warning = whatsappVpsService.friendlyApiError(error);
+    }
+
+    const status = serviceResponse ? mapWhatsAppServiceStatus(serviceResponse, 'iniciando') : 'iniciando';
+    await pool.query(
+      `INSERT INTO whatsapp_service_sessions
+       (session_id, display_name, clinic_id, clinic_name, unit_name, status, last_status_payload, last_status_check_at, notes, created_by, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         display_name = VALUES(display_name),
+         clinic_id = VALUES(clinic_id),
+         clinic_name = VALUES(clinic_name),
+         unit_name = VALUES(unit_name),
+         status = VALUES(status),
+         last_status_payload = VALUES(last_status_payload),
+         last_status_check_at = NOW(),
+         notes = VALUES(notes),
+         updated_by = VALUES(updated_by)`,
+      [
+        sessionId,
+        displayName,
+        clinic?.id || req.body.clinic_id || null,
+        clinic?.name || sanitizeFinancialString(req.body.clinic_name),
+        unitName,
+        status,
+        serviceResponse ? JSON.stringify(serviceResponse) : null,
+        sanitizeFinancialString(req.body.notes, 2000),
+        actorName,
+        actorName
+      ]
+    );
+
+    const [rows] = await pool.query('SELECT * FROM whatsapp_service_sessions WHERE session_id = ? LIMIT 1', [sessionId]);
+    return res.status(201).json({
+      session: rows[0],
+      serviceResponse,
+      warning,
+      qrImageUrl: whatsappVpsService.getQrImageUrl(sessionId, { baseURL: process.env.WHATSAPP_SERVICE_BASE_URL || WHATSAPP_SERVICE_DEFAULT_BASE_URL })
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao criar sessão do whatsapp-service.' });
+  }
+}
+
+async function handleGetWhatsAppServiceSessionStatus(req, res) {
+  try {
+    const sessionId = normalizeWhatsAppServiceSessionId(req.params.sessionId);
+    const statusResponse = await whatsappVpsService.getSessionStatus(sessionId);
+    const status = mapWhatsAppServiceStatus(statusResponse, 'iniciando');
+    await pool.query(
+      `UPDATE whatsapp_service_sessions
+          SET status = ?,
+              last_status_payload = ?,
+              last_status_check_at = NOW(),
+              updated_by = ?
+        WHERE session_id = ?`,
+      [status, JSON.stringify(statusResponse), getActorName(req.user), sessionId]
+    );
+    return res.json({ sessionId, status, service: statusResponse });
+  } catch (error) {
+    console.error(error);
+    return res.status(502).json({ error: whatsappVpsService.friendlyApiError(error) || 'Erro ao verificar status da sessão.' });
+  }
+}
+
+async function handleGetWhatsAppServiceQrImage(req, res) {
+  try {
+    const sessionId = normalizeWhatsAppServiceSessionId(req.params.sessionId);
+    const image = await whatsappVpsService.getQrImage(sessionId, {
+      baseURL: process.env.WHATSAPP_SERVICE_BASE_URL || WHATSAPP_SERVICE_DEFAULT_BASE_URL
+    });
+    res.setHeader('Content-Type', image.contentType);
+    res.setHeader('Cache-Control', 'no-store');
+    return res.end(image.bytes);
+  } catch (error) {
+    console.error(error);
+    return res.status(502).json({ error: whatsappVpsService.friendlyApiError(error) || 'Erro ao carregar QR Code.' });
+  }
+}
+
+async function handleSendWhatsAppServiceMessage(req, res) {
+  let historyId = null;
+  try {
+    const sessionId = normalizeWhatsAppServiceSessionId(req.body.sessionId || req.body.session_id);
+    const phone = normalizeWhatsAppPhone(req.body.patient_phone || req.body.phone || req.body.number);
+    const message = String(req.body.message || req.body.message_text || '').trim();
+
+    if (!sessionId) return res.status(400).json({ error: 'Selecione a sessão de envio.' });
+    if (!phone) return res.status(400).json({ error: 'Número inválido. Use DDI e DDD. Exemplo: 5562999999999.' });
+    if (!message) return res.status(400).json({ error: 'Informe a mensagem de teste.' });
+
+    const [sessionRows] = await pool.query('SELECT session_id FROM whatsapp_service_sessions WHERE session_id = ? LIMIT 1', [sessionId]);
+    if (!sessionRows[0]) return res.status(404).json({ error: 'Sessão não cadastrada no sistema.' });
+
+    const [insert] = await pool.query(
+      `INSERT INTO whatsapp_service_message_history
+       (session_id, patient_phone, message_text, status, created_by)
+       VALUES (?, ?, ?, 'pendente', ?)`,
+      [sessionId, phone, message, getActorName(req.user)]
+    );
+    historyId = insert.insertId;
+
+    const serviceResponse = await whatsappVpsService.sendMessage({ sessionId, number: phone, message });
+    const providerMessageId = getWhatsAppServiceMessageId(serviceResponse);
+    await pool.query(
+      `UPDATE whatsapp_service_message_history
+          SET status = 'enviado',
+              provider_message_id = ?,
+              response_payload = ?,
+              sent_at = NOW()
+        WHERE id = ?`,
+      [providerMessageId, JSON.stringify(serviceResponse), historyId]
+    );
+
+    return res.status(202).json({
+      success: true,
+      message: 'Mensagem enviada pelo whatsapp-service.',
+      historyId,
+      providerMessageId,
+      serviceResponse
+    });
+  } catch (error) {
+    console.error(error);
+    if (historyId) {
+      await pool.query(
+        `UPDATE whatsapp_service_message_history
+            SET status = 'erro',
+                error_message = ?,
+                response_payload = ?
+          WHERE id = ?`,
+        [
+          whatsappVpsService.friendlyApiError(error),
+          error.response?.data ? JSON.stringify(error.response.data) : null,
+          historyId
+        ]
+      );
+    }
+    return res.status(502).json({ error: whatsappVpsService.friendlyApiError(error) || 'Erro ao enviar mensagem pelo whatsapp-service.' });
+  }
+}
+
+async function handleListWhatsAppServiceHistory(req, res) {
+  try {
+    const limit = Math.min(100, Math.max(10, Number(req.query.limit || 50)));
+    const [rows] = await pool.query(
+      `SELECT *
+         FROM whatsapp_service_message_history
+        ORDER BY created_at DESC
+        LIMIT ${limit}`
+    );
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar histórico de mensagens do whatsapp-service.' });
+  }
+}
+
 async function handleGetWhatsAppInstances(req, res) {
   try {
     const [rows] = await pool.query(
@@ -10452,6 +10781,12 @@ app.get('/api/admin/whatsapp-settings', authenticate, handleGetWhatsAppAdminSett
 app.put('/api/admin/whatsapp-settings', authenticate, handleUpdateWhatsAppAdminSettings);
 app.post('/api/admin/whatsapp-settings/test', authenticate, handleTestWhatsAppAdminSettings);
 app.delete('/api/admin/whatsapp-management/data', authenticate, handleClearWhatsAppManagementData);
+app.get('/api/admin/whatsapp-service/sessions', authenticate, requireMasterAdmin, handleListWhatsAppServiceSessions);
+app.post('/api/admin/whatsapp-service/sessions', authenticate, requireMasterAdmin, handleCreateWhatsAppServiceSession);
+app.get('/api/admin/whatsapp-service/sessions/:sessionId/status', authenticate, requireMasterAdmin, handleGetWhatsAppServiceSessionStatus);
+app.get('/api/admin/whatsapp-service/sessions/:sessionId/qr-image', authenticate, requireMasterAdmin, handleGetWhatsAppServiceQrImage);
+app.post('/api/admin/whatsapp-service/messages/send', authenticate, requireMasterAdmin, handleSendWhatsAppServiceMessage);
+app.get('/api/admin/whatsapp-service/messages/history', authenticate, requireMasterAdmin, handleListWhatsAppServiceHistory);
 
 app.get('/api/whatsapp/instances', authenticate, requireWhatsAppView, handleGetWhatsAppInstances);
 app.post('/api/whatsapp/instances', authenticate, requireWhatsAppView, handleCreateWhatsAppInstance);

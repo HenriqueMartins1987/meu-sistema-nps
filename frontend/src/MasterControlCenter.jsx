@@ -174,6 +174,7 @@ const routeControls = [
   { area: 'WhatsApp CRC', type: 'Caminho', title: 'Configurações WhatsApp', path: '/home/whatsapp-management/settings', permission: 'whatsapp_settings', roles: ['master_admin'], masterOnly: true, note: 'Evolution API, anti-ban, status e diagnóstico.' },
   { area: 'Painel Gerencial', type: 'Caminho', title: 'Gestao de usuarios', path: '/admin', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Administracao de usuarios.' },
   { area: 'Painel Gerencial', type: 'Caminho', title: 'Centro Master do Sistema', path: '/admin/controle-master', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Controle completo de autorizacoes.' },
+  { area: 'Painel Gerencial', type: 'Caminho', title: 'Configurações > WhatsApp', path: '/admin/configuracoes/whatsapp', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Sessões do whatsapp-service, QR Code, status e mensagens de teste.' },
   { area: 'Painel Gerencial', type: 'Caminho', title: 'Monitoria Master', path: '/admin/monitoria', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Monitoramento operacional.' }
 ];
 
