@@ -215,8 +215,6 @@ function WhatsAppManagement() {
   const [settingsDraft, setSettingsDraft] = useState({ baseUrl: '', apiKey: '', antiBan: {} });
   const [operatorStatus, setOperatorStatus] = useState({ status: 'online', reason: '' });
   const [attendanceMessage, setAttendanceMessage] = useState('');
-  const [audioFile, setAudioFile] = useState(null);
-  const [attendanceAudioFile, setAttendanceAudioFile] = useState(null);
   const [historyFilters, setHistoryFilters] = useState({ startDate: todayDate(), endDate: todayDate(), status: '', patient: '' });
   const [dashboardFilters, setDashboardFilters] = useState({ operatorId: '', clinicId: '', instanceName: '', status: '', campaign: '' });
   const [operatorClinicEditorId, setOperatorClinicEditorId] = useState('');
@@ -651,37 +649,6 @@ function WhatsAppManagement() {
     }
   };
 
-  const sendAudioMessage = async (draft = sendDraft, file = audioFile) => {
-    if (!evolutionConfigured) {
-      setFeedback('Configure a Evolution API antes de enviar audio.');
-      return;
-    }
-    if (!file) {
-      setFeedback('Selecione um arquivo de audio para envio.');
-      return;
-    }
-    setSaving(true);
-    setFeedback('');
-    try {
-      const formData = new FormData();
-      Object.entries({ ...draft, patient_phone: normalizePhone(draft.patient_phone), operator_name: user?.name || draft.operator_name }).forEach(([key, value]) => {
-        if (value !== undefined && value !== null) formData.append(key, value);
-      });
-      formData.append('audio', file);
-      await api.post('/api/whatsapp/send-audio', formData, { headers: { 'Content-Type': 'multipart/form-data' } });
-      setFeedback('Audio registrado e colocado na fila anti-ban.');
-      setAudioFile(null);
-      setAttendanceAudioFile(null);
-      setSendDraft(emptySend(user));
-      await loadBaseData();
-      if (selectedConversation?.id) await loadMessages(selectedConversation.id);
-    } catch (error) {
-      setFeedback(error.response?.data?.error || 'Nao foi possivel enviar o audio.');
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const deleteMessage = async (messageId) => {
     if (!window.confirm('Apagar esta mensagem tambem no WhatsApp quando a Evolution permitir?')) return;
     try {
@@ -1088,10 +1055,6 @@ function WhatsAppManagement() {
               </select>
               <button className="primary-action" onClick={() => sendManualMessage({ ...sendDraft, conversation_id: selectedConversation.id, instance_name: selectedConversation.instance_name || instances[0]?.instance_name, patient_phone: selectedConversation.patient_phone, patient_name: selectedConversation.patient_name, message_text: attendanceMessage })} disabled={!evolutionConfigured}>Enviar</button>
             </div>
-            <div className="row-actions">
-              <input className="field" type="file" accept="audio/*" onChange={(event) => setAttendanceAudioFile(event.target.files?.[0] || null)} />
-              <button className="outline-action" onClick={() => sendAudioMessage({ ...sendDraft, conversation_id: selectedConversation.id, instance_name: selectedConversation.instance_name || instances[0]?.instance_name, patient_phone: selectedConversation.patient_phone, patient_name: selectedConversation.patient_name, message_text: attendanceMessage || 'Áudio enviado pelo CRC' }, attendanceAudioFile)} disabled={!evolutionConfigured || !attendanceAudioFile}>Enviar áudio</button>
-            </div>
           </div>
         )}
       </article>
@@ -1146,11 +1109,9 @@ function WhatsAppManagement() {
         <label>Operador responsável<input className="field" value={user?.name || sendDraft.operator_name} readOnly /></label>
       </div>
       <label>Mensagem<textarea className="field textarea" value={sendDraft.message_text} onChange={(event) => setSendDraft((current) => ({ ...current, message_text: event.target.value }))} /></label>
-      <label>Enviar áudio<input className="field" type="file" accept="audio/*" onChange={(event) => setAudioFile(event.target.files?.[0] || null)} /></label>
       <label>Observações<textarea className="field textarea" value={sendDraft.notes} onChange={(event) => setSendDraft((current) => ({ ...current, notes: event.target.value }))} /></label>
       <div className="row-actions">
         <button className="primary-action" onClick={() => sendManualMessage({ ...sendDraft, operator_name: user?.name || sendDraft.operator_name })} disabled={saving || !evolutionConfigured}>{saving ? 'Enviando...' : 'Enviar mensagem'}</button>
-        <button className="outline-action" onClick={() => sendAudioMessage({ ...sendDraft, operator_name: user?.name || sendDraft.operator_name, message_text: sendDraft.message_text || 'Áudio enviado pelo CRC' })} disabled={saving || !evolutionConfigured || !audioFile}>Enviar áudio</button>
       </div>
     </section>
   );

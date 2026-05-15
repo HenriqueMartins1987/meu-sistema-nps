@@ -8521,21 +8521,12 @@ async function processWhatsAppDispatchQueue() {
       const startedAt = performance.now();
       try {
         const evolutionConfig = await getEvolutionServiceConfig();
-        const queuedPayload = parseSerializedPayload(item.payload);
-        const evolution = item.message_type === 'audio' && queuedPayload.audioUrl
-          ? await evolutionService.sendAudio(item.instance_name, item.recipient_phone, queuedPayload.audioUrl, {
-              delay: item.anti_ban_delay_ms || undefined,
-              mimetype: queuedPayload.mimetype,
-              fileName: queuedPayload.fileName,
-              caption: item.message_text,
-              config: evolutionConfig
-            })
-          : await evolutionService.sendText(item.instance_name, item.recipient_phone, item.message_text, {
-              delay: item.anti_ban_delay_ms || undefined,
-              presence: 'composing',
-              linkPreview: true,
-              config: evolutionConfig
-            });
+        const evolution = await evolutionService.sendText(item.instance_name, item.recipient_phone, item.message_text, {
+          delay: item.anti_ban_delay_ms || undefined,
+          presence: 'composing',
+          linkPreview: true,
+          config: evolutionConfig
+        });
         const evolutionMessageId = getEvolutionMessageId(evolution);
         await pool.query(
           `UPDATE whatsapp_dispatch_queue
@@ -9361,83 +9352,6 @@ async function handleSendWhatsAppTemplate(req, res) {
   } catch (error) {
     console.error(error);
     return res.status(400).json({ error: error.message || 'Erro ao enviar mensagem padrão.' });
-  }
-}
-
-async function handleSendWhatsAppAudio(req, res) {
-  try {
-    const phone = normalizeWhatsAppPhone(req.body.patient_phone || req.body.phone || req.body.to);
-    if (!phone) return res.status(400).json({ error: 'Número inválido. Use DDI e DDD. Exemplo: 5562999999999.' });
-    const defaultInstance = await getDefaultWhatsAppInstance(req.user);
-    const instanceName = sanitizeFinancialString(req.body.instance_name || req.body.instanceName || defaultInstance?.instance_name);
-    if (!instanceName) return res.status(400).json({ error: 'Selecione um número WhatsApp para envio.' });
-
-    let mediaUrl = String(req.body.audio_url || req.body.audioUrl || '').trim();
-    let mediaMimeType = req.body.audio_mime_type || req.body.audioMimeType || null;
-    let fileName = req.body.file_name || req.body.fileName || 'audio.mp3';
-
-    if (req.file) {
-      await persistUploadedFile(req.file);
-      mediaUrl = `${publicBaseUrl}/uploads/${req.file.filename}`;
-      mediaMimeType = req.file.mimetype || 'audio/mpeg';
-      fileName = normalizeUploadedOriginalName(req.file) || req.file.originalname || req.file.filename;
-    }
-
-    if (!mediaUrl) return res.status(400).json({ error: 'Informe ou anexe um áudio para envio.' });
-    const caption = String(req.body.caption || req.body.message_text || 'Áudio enviado pelo CRC').trim();
-    const conversation = await findOrCreateWhatsAppConversation({
-      ...req.body,
-      patient_phone: phone,
-      instance_name: instanceName,
-      status: req.body.status || 'Em atendimento'
-    }, req.user);
-    const messageId = await insertWhatsAppMessage({
-      conversation_id: conversation.id,
-      instance_name: instanceName,
-      patient_phone: phone,
-      direction: 'outbound',
-      message_text: caption,
-      message_type: 'audio',
-      status: 'pendente',
-      operator_id: req.user?.id || null,
-      operator_name: getActorName(req.user),
-      clinic_id: conversation.clinic_id,
-      clinic_name: conversation.clinic_name,
-      campaign: conversation.campaign,
-      media_url: mediaUrl,
-      media_mime_type: mediaMimeType
-    });
-
-    await pool.query(
-      `UPDATE whatsapp_conversations
-          SET last_message_at = NOW(),
-              status = CASE WHEN status = 'Novo' THEN 'Em atendimento' ELSE status END,
-              operator_id = COALESCE(operator_id, ?),
-              operator_name = COALESCE(operator_name, ?),
-              instance_name = ?
-        WHERE id = ?`,
-      [req.user?.id || null, getActorName(req.user), instanceName, conversation.id]
-    );
-
-    const dispatch = await enqueueWhatsAppDispatch({
-      message_id: messageId,
-      conversation_id: conversation.id,
-      instance_name: instanceName,
-      recipient_phone: phone,
-      message_text: caption,
-      message_type: 'audio',
-      operator_id: req.user?.id || null,
-      operator_name: getActorName(req.user),
-      payload: { source: 'audio_upload', audioUrl: mediaUrl, mimetype: mediaMimeType, fileName }
-    });
-
-    const updatedConversation = await getWhatsAppConversationById(conversation.id);
-    await syncWhatsAppAttendanceQueue(updatedConversation, updatedConversation.operator_id ? 'em_atendimento' : 'aguardando');
-    emitWhatsAppConversationChange('audio_queued', updatedConversation);
-    return res.status(202).json({ success: true, queued: true, messageId, dispatchId: dispatch.id, audioUrl: mediaUrl });
-  } catch (error) {
-    console.error(error);
-    return res.status(400).json({ error: error.message || 'Erro ao enviar áudio WhatsApp.' });
   }
 }
 
@@ -10550,7 +10464,6 @@ app.delete('/api/whatsapp/instances/:instanceName', authenticate, requireWhatsAp
 
 app.post('/api/whatsapp/send', authenticate, requireWhatsAppView, handleSendWhatsAppManagementMessage);
 app.post('/api/whatsapp/send-template', authenticate, requireWhatsAppView, handleSendWhatsAppTemplate);
-app.post('/api/whatsapp/send-audio', authenticate, requireWhatsAppView, upload.single('audio'), handleSendWhatsAppAudio);
 app.delete('/api/whatsapp/messages/:id', authenticate, requireWhatsAppView, handleDeleteWhatsAppMessage);
 
 app.get('/api/whatsapp/operators', authenticate, requireWhatsAppView, handleGetWhatsAppOperators);

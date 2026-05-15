@@ -144,22 +144,6 @@ async function sendText(instanceName, number, text, options = {}) {
   return response.data;
 }
 
-async function sendAudio(instanceName, number, audioUrl, options = {}) {
-  const response = await withRetry(() => client(options.config).post(`/message/sendMedia/${encodeURIComponent(instanceName)}`, {
-    number,
-    mediatype: 'audio',
-    media: audioUrl,
-    mimetype: options.mimetype || 'audio/mpeg',
-    fileName: options.fileName || 'audio.mp3',
-    caption: options.caption || '',
-    options: {
-      delay: options.delay || 800,
-      presence: options.presence || 'recording'
-    }
-  }), options.retryOptions);
-  return response.data;
-}
-
 async function deleteMessage(instanceName, payload = {}, config = {}) {
   const response = await withRetry(() => client(config).delete(`/message/delete/${encodeURIComponent(instanceName)}`, {
     data: payload
@@ -241,6 +225,5 @@ module.exports = {
   getConnectionState,
   logoutInstance,
   restartInstance,
-  sendAudio,
   sendText
 };
