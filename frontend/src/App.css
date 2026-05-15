@@ -10197,6 +10197,64 @@ a {
   font-weight: 760;
 }
 
+.whatsapp-audio-player {
+  width: min(320px, 100%);
+  height: 34px;
+  margin-top: 8px;
+}
+
+.whatsapp-message-delete {
+  width: fit-content;
+  min-height: 28px;
+  margin-top: 8px;
+  padding: 4px 8px;
+  border: 1px solid rgba(196, 69, 54, 0.2);
+  border-radius: 8px;
+  background: rgba(196, 69, 54, 0.08);
+  color: #9f3328;
+  font-size: 11px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.compact-select {
+  min-width: 170px;
+  min-height: 34px;
+}
+
+.whatsapp-settings-panel,
+.whatsapp-monitor-panel {
+  align-self: start;
+}
+
+.whatsapp-diagnostic-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.whatsapp-diagnostic-grid p {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid rgba(221, 207, 188, 0.78);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.whatsapp-diagnostic-grid span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.whatsapp-diagnostic-grid strong {
+  color: var(--ink);
+  font-size: 16px;
+}
+
 .whatsapp-chat-composer {
   display: grid;
   gap: 10px;

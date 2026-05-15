@@ -162,6 +162,8 @@ function canAccessFinancialManagement(user) {
 }
 
 function canAccessWhatsAppManagement(user) {
+  if (['manager', 'coordinator', 'viewer'].includes(String(user?.role || '').toLowerCase())) return false;
+  if (['crc_leader', 'crc_manager', 'crc_operator'].includes(String(user?.role || '').toLowerCase())) return true;
   return hasPermission(user, 'whatsapp_management');
 }
 

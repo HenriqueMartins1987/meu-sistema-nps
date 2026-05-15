@@ -71,6 +71,9 @@ export const accessProfiles = [
   { value: 'admin', label: 'Administrador' },
   { value: 'sac_operator', label: 'Operador de SAC' },
   { value: 'supervisor_crc', label: 'Supervisor do CRC' },
+  { value: 'crc_leader', label: 'Lider de CRC' },
+  { value: 'crc_manager', label: 'Gerente de CRC' },
+  { value: 'crc_operator', label: 'Operador de CRC' },
   { value: 'coordinator', label: 'Coordenador' },
   { value: 'manager', label: 'Gerente' },
   { value: 'viewer', label: 'Marketing' }
@@ -89,6 +92,16 @@ export const screenPermissions = [
   { value: 'financial_campaigns', label: 'Financeiro CRC - Unidade x Campanha' },
   { value: 'financial_management', label: 'Financeiro CRC - Gestão financeira' },
   { value: 'whatsapp_management', label: 'Gestão WhatsApp CRC' },
+  { value: 'whatsapp_dashboard', label: 'WhatsApp CRC - Dashboard' },
+  { value: 'whatsapp_instances', label: 'WhatsApp CRC - Cadastro de Número' },
+  { value: 'whatsapp_attendance', label: 'WhatsApp CRC - Atendimento' },
+  { value: 'whatsapp_send', label: 'WhatsApp CRC - Envio manual' },
+  { value: 'whatsapp_templates', label: 'WhatsApp CRC - Mensagens padrão' },
+  { value: 'whatsapp_chatbot', label: 'WhatsApp CRC - Chatbot' },
+  { value: 'whatsapp_absent', label: 'WhatsApp CRC - Ausentes' },
+  { value: 'whatsapp_history', label: 'WhatsApp CRC - Histórico' },
+  { value: 'whatsapp_reports', label: 'WhatsApp CRC - Relatórios' },
+  { value: 'whatsapp_settings', label: 'WhatsApp CRC - Configurações' },
   { value: 'admin_panel', label: 'Painel gerencial' }
 ];
 
@@ -108,7 +121,12 @@ export const actionPermissions = [
   { value: 'nps_finish', label: 'Finalizar NPS', area: 'NPS' },
   { value: 'deleted_view', label: 'Visualizar aba excluidos', area: 'Excluidos' },
   { value: 'financial_record_delete', label: 'Excluir lancamento financeiro', area: 'Financeiro CRC' },
-  { value: 'financial_collaborator_delete', label: 'Excluir colaborador CRC', area: 'Financeiro CRC' }
+  { value: 'financial_collaborator_delete', label: 'Excluir colaborador CRC', area: 'Financeiro CRC' },
+  { value: 'whatsapp_config_manage', label: 'Configurar WhatsApp CRC', area: 'WhatsApp CRC' },
+  { value: 'whatsapp_instance_delete', label: 'Excluir instancia WhatsApp', area: 'WhatsApp CRC' },
+  { value: 'whatsapp_template_delete', label: 'Excluir mensagem padrao', area: 'WhatsApp CRC' },
+  { value: 'whatsapp_chatbot_delete', label: 'Excluir fluxo chatbot', area: 'WhatsApp CRC' },
+  { value: 'whatsapp_antiban_manage', label: 'Alterar anti-ban WhatsApp', area: 'WhatsApp CRC' }
 ];
 
 export function defaultActionPermissionsForRole(role) {
@@ -149,6 +167,19 @@ export function defaultActionPermissionsForRole(role) {
       'patient_treatment_manage',
       'nps_finish'
     ];
+  }
+
+  if (role === 'crc_leader' || role === 'crc_manager') {
+    return [
+      'whatsapp_config_manage',
+      'whatsapp_template_delete',
+      'whatsapp_chatbot_delete',
+      'whatsapp_antiban_manage'
+    ];
+  }
+
+  if (role === 'crc_operator') {
+    return [];
   }
 
   if (role === 'manager' || role === 'coordinator') {
@@ -230,6 +261,21 @@ export function hasPermission(user, permission) {
   if (isMasterAdmin(user)) return true;
 
   const permissions = Array.isArray(user.permissions) ? user.permissions : [];
+  const role = String(user.role || '').toLowerCase();
+  const crcLeaderDefaults = ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports'];
+  const crcOperatorDefaults = ['home', 'whatsapp_management', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history'];
+
+  if (['manager', 'coordinator', 'viewer'].includes(role) && permission.startsWith('whatsapp')) {
+    return false;
+  }
+
+  if (role === 'crc_leader' || role === 'crc_manager') {
+    return crcLeaderDefaults.includes(permission);
+  }
+
+  if (role === 'crc_operator') {
+    return crcOperatorDefaults.includes(permission);
+  }
 
   if (permission === 'admin_panel') {
     return false;

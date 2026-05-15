@@ -51,7 +51,10 @@ const defaultRolePermissions = {
   admin: screenPermissions.map((permission) => permission.value),
   sac_operator: ['home', 'complaints_register', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'crm_relationship', 'whatsapp_management'],
   supervisor_crc: ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management', 'whatsapp_management'],
-  manager: ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management', 'whatsapp_management'],
+  crc_leader: ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports'],
+  crc_manager: ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports'],
+  crc_operator: ['home', 'whatsapp_management', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history'],
+  manager: ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management'],
   coordinator: ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship'],
   viewer: ['home', 'complaints_management', 'nps_management']
 };
@@ -88,6 +91,19 @@ const defaultRoleActionPermissions = {
     'patient_treatment_manage',
     'nps_finish'
   ],
+  crc_leader: [
+    'whatsapp_config_manage',
+    'whatsapp_template_delete',
+    'whatsapp_chatbot_delete',
+    'whatsapp_antiban_manage'
+  ],
+  crc_manager: [
+    'whatsapp_config_manage',
+    'whatsapp_template_delete',
+    'whatsapp_chatbot_delete',
+    'whatsapp_antiban_manage'
+  ],
+  crc_operator: [],
   manager: ['complaints_reassign', 'evidence_attach', 'evidence_delete', 'treatment_register'],
   coordinator: ['complaints_reassign', 'evidence_attach', 'evidence_delete', 'treatment_register'],
   viewer: ['complaints_view_all', 'evidence_attach']
@@ -116,7 +132,12 @@ const authorityRules = [
   { area: 'Financeiro CRC', action: 'Gestao financeira e lancamentos', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Permite lancar/editar dados conforme perfil.' },
   { area: 'Financeiro CRC', action: 'Excluir lancamento financeiro', actionPermission: 'financial_record_delete', roles: ['master_admin'], note: 'Exclusao definitiva restrita ao Master.' },
   { area: 'Financeiro CRC', action: 'Excluir colaborador CRC', actionPermission: 'financial_collaborator_delete', roles: ['master_admin'], note: 'Preserva a base do ROI.' },
-  { area: 'WhatsApp CRC', action: 'Acessar central WhatsApp', permission: 'whatsapp_management', roles: ['master_admin', 'admin', 'manager', 'supervisor_crc', 'sac_operator'], note: 'Central operacional, instâncias, mensagens, chatbot e relatórios.' },
+  { area: 'WhatsApp CRC', action: 'Acessar central WhatsApp', permission: 'whatsapp_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator'], note: 'Central operacional, cadastro de números, mensagens, chatbot e relatórios.' },
+  { area: 'WhatsApp CRC', action: 'Configurar integração Evolution API', permission: 'whatsapp_settings', actionPermission: 'whatsapp_config_manage', roles: ['master_admin'], note: 'Base URL, API Key, teste de conexão e anti-ban ficam em tela segura.' },
+  { area: 'WhatsApp CRC', action: 'Excluir instâncias', actionPermission: 'whatsapp_instance_delete', roles: ['master_admin'], note: 'Exclusão operacional de números conectados.' },
+  { area: 'WhatsApp CRC', action: 'Excluir mensagens padrão', actionPermission: 'whatsapp_template_delete', roles: ['master_admin', 'crc_leader', 'crc_manager'], note: 'Mantém biblioteca limpa sem liberar exclusão ampla.' },
+  { area: 'WhatsApp CRC', action: 'Excluir fluxos de chatbot', actionPermission: 'whatsapp_chatbot_delete', roles: ['master_admin', 'crc_leader', 'crc_manager'], note: 'Controle dos fluxos automáticos.' },
+  { area: 'WhatsApp CRC', action: 'Alterar parametros anti-ban', actionPermission: 'whatsapp_antiban_manage', roles: ['master_admin'], note: 'Delay, limite por minuto, tentativas e fila automatica.' },
   { area: 'Painel Gerencial', action: 'Acessar Centro Master e administracao', permission: 'admin_panel', roles: ['master_admin'], note: 'Apenas Administrador Master altera usuarios e permissoes.' }
 ];
 
@@ -140,7 +161,17 @@ const routeControls = [
   { area: 'Financeiro CRC', type: 'Caminho', title: 'Gestao financeira CRC', path: '/home/financial-intelligence/manage', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Lancamentos, edicoes e despesas mensais.' },
   { area: 'Financeiro CRC', type: 'Caminho', title: 'Gestao de colaboradores CRC', path: '/home/financial-intelligence/manage/collaborators', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Cadastro e custos dos colaboradores.' },
   { area: 'Financeiro CRC', type: 'Caminho', title: 'Detalhe do lancamento financeiro', path: '/home/financial-intelligence/manage/:id', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Analise individual do lancamento.' },
-  { area: 'WhatsApp CRC', type: 'Caminho', title: 'Gestao WhatsApp CRC', path: '/home/whatsapp-management/dashboard', permission: 'whatsapp_management', roles: ['master_admin', 'admin', 'manager', 'supervisor_crc', 'sac_operator'], note: 'Central de atendimento, envio, chatbot e relatorios.' },
+  { area: 'WhatsApp CRC', type: 'Caminho', title: 'Gestao WhatsApp CRC', path: '/home/whatsapp-management/dashboard', permission: 'whatsapp_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator'], note: 'Central de atendimento, envio, chatbot e relatorios.' },
+  { area: 'WhatsApp CRC', type: 'Caminho', title: 'Dashboard WhatsApp', path: '/home/whatsapp-management/dashboard', permission: 'whatsapp_dashboard', roles: ['master_admin', 'admin', 'supervisor_crc', 'crc_leader', 'crc_manager'], note: 'Métricas por operador, clínica, número e fila.' },
+  { area: 'WhatsApp CRC', type: 'Caminho', title: 'Cadastro de Número WhatsApp', path: '/home/whatsapp-management/instances', permission: 'whatsapp_instances', roles: ['master_admin', 'admin', 'supervisor_crc', 'crc_leader', 'crc_manager'], note: 'Conexão, QR Code e manutenção de números.' },
+  { area: 'WhatsApp CRC', type: 'Caminho', title: 'Atendimento WhatsApp', path: '/home/whatsapp-management/attendance', permission: 'whatsapp_attendance', roles: ['master_admin', 'admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'crc_operator'], note: 'Fila e conversa operacional.' },
+  { area: 'WhatsApp CRC', type: 'Caminho', title: 'Envio manual WhatsApp', path: '/home/whatsapp-management/send', permission: 'whatsapp_send', roles: ['master_admin', 'admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'crc_operator'], note: 'Disparo individual com histórico.' },
+  { area: 'WhatsApp CRC', type: 'Caminho', title: 'Mensagens padrão', path: '/home/whatsapp-management/templates', permission: 'whatsapp_templates', roles: ['master_admin', 'admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'crc_operator'], note: 'Biblioteca de textos operacionais.' },
+  { area: 'WhatsApp CRC', type: 'Caminho', title: 'Chatbot WhatsApp', path: '/home/whatsapp-management/chatbot', permission: 'whatsapp_chatbot', roles: ['master_admin', 'admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'crc_operator'], note: 'Fluxos, gatilhos e mensagens automáticas.' },
+  { area: 'WhatsApp CRC', type: 'Caminho', title: 'Pacientes ausentes', path: '/home/whatsapp-management/absent', permission: 'whatsapp_absent', roles: ['master_admin', 'admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'crc_operator'], note: 'Retorno e recuperação.' },
+  { area: 'WhatsApp CRC', type: 'Caminho', title: 'Histórico WhatsApp', path: '/home/whatsapp-management/history', permission: 'whatsapp_history', roles: ['master_admin', 'admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'crc_operator'], note: 'Auditoria de mensagens.' },
+  { area: 'WhatsApp CRC', type: 'Caminho', title: 'Relatórios WhatsApp', path: '/home/whatsapp-management/reports', permission: 'whatsapp_reports', roles: ['master_admin', 'admin', 'supervisor_crc', 'crc_leader', 'crc_manager'], note: 'Exportações e indicadores.' },
+  { area: 'WhatsApp CRC', type: 'Caminho', title: 'Configurações WhatsApp', path: '/home/whatsapp-management/settings', permission: 'whatsapp_settings', roles: ['master_admin'], masterOnly: true, note: 'Evolution API, anti-ban, status e diagnóstico.' },
   { area: 'Painel Gerencial', type: 'Caminho', title: 'Gestao de usuarios', path: '/admin', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Administracao de usuarios.' },
   { area: 'Painel Gerencial', type: 'Caminho', title: 'Centro Master do Sistema', path: '/admin/controle-master', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Controle completo de autorizacoes.' },
   { area: 'Painel Gerencial', type: 'Caminho', title: 'Monitoria Master', path: '/admin/monitoria', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Monitoramento operacional.' }
