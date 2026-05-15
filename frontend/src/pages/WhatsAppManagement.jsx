@@ -219,6 +219,8 @@ function WhatsAppManagement() {
   const [attendanceAudioFile, setAttendanceAudioFile] = useState(null);
   const [historyFilters, setHistoryFilters] = useState({ startDate: todayDate(), endDate: todayDate(), status: '', patient: '' });
   const [dashboardFilters, setDashboardFilters] = useState({ operatorId: '', clinicId: '', instanceName: '', status: '', campaign: '' });
+  const [operatorClinicEditorId, setOperatorClinicEditorId] = useState('');
+  const [operatorClinicIds, setOperatorClinicIds] = useState([]);
   const [transferTargetId, setTransferTargetId] = useState('');
   const [realtimeStatus, setRealtimeStatus] = useState('Conectando tempo real');
   const [qrResult, setQrResult] = useState(null);
@@ -447,6 +449,36 @@ function WhatsAppManagement() {
       await loadBaseData();
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Nao foi possivel direcionar o numero.');
+    }
+  };
+
+  const openOperatorClinicEditor = (operatorId) => {
+    const operator = operators.find((item) => String(item.id) === String(operatorId));
+    setOperatorClinicEditorId(operatorId || '');
+    setOperatorClinicIds(Array.isArray(operator?.clinicIds) ? operator.clinicIds.map(String) : []);
+  };
+
+  const toggleOperatorClinic = (clinicId) => {
+    const normalized = String(clinicId);
+    setOperatorClinicIds((current) => (
+      current.includes(normalized)
+        ? current.filter((item) => item !== normalized)
+        : [...current, normalized]
+    ));
+  };
+
+  const saveOperatorClinics = async () => {
+    if (!operatorClinicEditorId) {
+      setFeedback('Selecione um Operador CRC para vincular clínicas.');
+      return;
+    }
+    try {
+      await api.put(`/api/whatsapp/operators/${operatorClinicEditorId}/clinics`, { clinicIds: operatorClinicIds });
+      setFeedback('Clínicas do Operador CRC atualizadas.');
+      await loadBaseData();
+      openOperatorClinicEditor(operatorClinicEditorId);
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível atualizar as clínicas do operador.');
     }
   };
 
@@ -826,6 +858,7 @@ function WhatsAppManagement() {
       ['CAC WhatsApp', `R$ ${Number(summary.cac || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 'Custo por fechamento', 'neutral'],
       ['CPL WhatsApp', `R$ ${Number(summary.cpl || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 'Custo por lead', 'neutral'],
       ['EBITDA CRC', `R$ ${Number(summary.ebitdaCrc || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`, 'Indicador financeiro integrado', Number(summary.ebitdaCrc || 0) >= 0 ? 'success' : 'danger'],
+      ['NPS automático', summary.npsInvites24h || 0, `${summary.npsInvitesResponded24h || 0} resposta(s) em 24h`, summary.npsInvites24h ? 'success' : 'neutral'],
       ['Anti-ban', `${summary.antiBan?.rateLimitPerMinute || 0}/min`, `${summary.antiBan?.minDelayMs || 0}-${summary.antiBan?.maxDelayMs || 0}ms`, 'neutral']
     ];
 
@@ -920,6 +953,27 @@ function WhatsAppManagement() {
           </div>
           <label>Observações<textarea className="field textarea" value={instanceDraft.notes} onChange={(event) => setInstanceDraft((current) => ({ ...current, notes: event.target.value }))} /></label>
           <button className="primary-action" onClick={saveInstance} disabled={saving || !evolutionConfigured}>Cadastrar número</button>
+        </article>
+      )}
+      {canRouteAttendance && (
+        <article className="whatsapp-panel">
+          <h2>Clínicas do Operador CRC</h2>
+          <p className="whatsapp-panel-note">O operador só poderá enviar mensagens e assumir atendimentos das clínicas vinculadas aqui.</p>
+          <label>Operador
+            <select className="field" value={operatorClinicEditorId} onChange={(event) => openOperatorClinicEditor(event.target.value)}>
+              <option value="">Selecione</option>
+              {operators.map((operator) => <option key={operator.id} value={operator.id}>{operator.name}</option>)}
+            </select>
+          </label>
+          <div className="whatsapp-clinic-check-grid">
+            {clinics.map((clinic) => (
+              <label key={clinic.id}>
+                <input type="checkbox" checked={operatorClinicIds.includes(String(clinic.id))} onChange={() => toggleOperatorClinic(clinic.id)} disabled={!operatorClinicEditorId} />
+                <span>{clinic.name}<small>{clinic.city || 'Cidade'} / {clinic.state || 'UF'}</small></span>
+              </label>
+            ))}
+          </div>
+          <button className="primary-action" onClick={saveOperatorClinics} disabled={!operatorClinicEditorId}>Salvar clínicas do operador</button>
         </article>
       )}
       <article className="whatsapp-panel">
@@ -1079,6 +1133,7 @@ function WhatsAppManagement() {
   const renderSend = () => (
     <section className="whatsapp-panel">
       <h2>Envio manual</h2>
+      {isCrcOperator && <p className="whatsapp-panel-note">Seu envio fica travado às clínicas vinculadas ao seu usuário.</p>}
       <div className="whatsapp-form-grid">
         <label>WhatsApp de envio<select className="field" value={sendDraft.instance_name} onChange={(event) => setSendDraft((current) => ({ ...current, instance_name: event.target.value }))}><option value="">Selecione</option>{instances.map((item) => <option key={item.id} value={item.instance_name}>{item.display_name || item.instance_name}</option>)}</select></label>
         <label>Número do paciente<input className="field" value={sendDraft.patient_phone} onChange={(event) => setSendDraft((current) => ({ ...current, patient_phone: normalizePhone(event.target.value) }))} placeholder="5562999999999" /></label>
@@ -1335,6 +1390,7 @@ function WhatsAppManagement() {
             <div>
               <p className="eyebrow">QR Code</p>
               <h2>{qrResult.instanceName}</h2>
+              <p>Abra o WhatsApp no celular, acesse aparelhos conectados e escaneie este código.</p>
             </div>
             {String(qrResult.data?.base64 || qrResult.data?.qrcode || '').startsWith('data:image')
               ? <img src={qrResult.data.base64 || qrResult.data.qrcode} alt="QR Code WhatsApp" />

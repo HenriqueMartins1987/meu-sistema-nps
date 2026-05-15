@@ -38,6 +38,15 @@ const initialRecoveryForm = {
   confirm_password: ''
 };
 
+const initialCrcOperatorForm = {
+  name: '',
+  username: '',
+  phone: '+55',
+  email: '',
+  password: '',
+  confirm_password: ''
+};
+
 function Login() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -51,6 +60,9 @@ function Login() {
   const [recoveryStep, setRecoveryStep] = useState('request');
   const [recoveryForm, setRecoveryForm] = useState(initialRecoveryForm);
   const [recoveryLoading, setRecoveryLoading] = useState(false);
+  const [crcRegisterOpen, setCrcRegisterOpen] = useState(false);
+  const [crcRegisterForm, setCrcRegisterForm] = useState(initialCrcOperatorForm);
+  const [crcRegisterLoading, setCrcRegisterLoading] = useState(false);
 
   const selectedModule = useMemo(
     () => experienceModules.find((item) => item.id === activeModule) || experienceModules[0],
@@ -76,6 +88,24 @@ function Login() {
     setRecoveryOpen(false);
     setRecoveryStep('request');
     setRecoveryForm(initialRecoveryForm);
+    setError('');
+    setInfo('');
+  };
+
+  const updateCrcRegisterField = (field, value) => {
+    setCrcRegisterForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const openCrcRegister = () => {
+    setCrcRegisterOpen(true);
+    setCrcRegisterForm(initialCrcOperatorForm);
+    setError('');
+    setInfo('');
+  };
+
+  const closeCrcRegister = () => {
+    setCrcRegisterOpen(false);
+    setCrcRegisterForm(initialCrcOperatorForm);
     setError('');
     setInfo('');
   };
@@ -161,6 +191,37 @@ function Login() {
     }
   };
 
+  const handleCrcOperatorRegister = async (event) => {
+    event.preventDefault();
+    setCrcRegisterLoading(true);
+    setError('');
+    setInfo('');
+
+    if (crcRegisterForm.password !== crcRegisterForm.confirm_password) {
+      setError('A confirmação de senha não confere.');
+      setCrcRegisterLoading(false);
+      return;
+    }
+
+    try {
+      const response = await api.post('/auth/crc-operator/register', {
+        name: crcRegisterForm.name,
+        username: crcRegisterForm.username,
+        phone: crcRegisterForm.phone,
+        email: crcRegisterForm.email,
+        password: crcRegisterForm.password
+      });
+      closeCrcRegister();
+      setEmail(response.data?.username || crcRegisterForm.username);
+      setPassword('');
+      setInfo(response.data?.message || 'Operador CRC cadastrado. Faça login com seu usuário.');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Não foi possível cadastrar o Operador CRC.');
+    } finally {
+      setCrcRegisterLoading(false);
+    }
+  };
+
   return (
     <main className="login-page clean-login-page">
       <section className="login-brand">
@@ -220,14 +281,14 @@ function Login() {
           {info && <p className="form-feedback">{info}</p>}
 
           <label className="login-field">
-            E-mail corporativo
+            E-mail corporativo ou usuário
             <input
               className="field"
-              type="email"
-              placeholder="nome@empresa.com.br"
+              type="text"
+              placeholder="nome@empresa.com.br ou usuário"
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              autoComplete="email"
+              autoComplete="username"
               required
             />
           </label>
@@ -269,6 +330,14 @@ function Login() {
             onClick={() => navigate('/primeiro-cadastro')}
           >
             Solicitar cadastro
+          </button>
+
+          <button
+            className="outline-action full-width"
+            type="button"
+            onClick={openCrcRegister}
+          >
+            Cadastro Operador CRC
           </button>
         </form>
       </section>
@@ -359,6 +428,57 @@ function Login() {
                   : recoveryStep === 'request'
                     ? 'Enviar código'
                     : 'Salvar nova senha'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {crcRegisterOpen && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={closeCrcRegister}>
+          <form
+            className="modal-panel password-recovery-modal crc-operator-register-modal"
+            onClick={(event) => event.stopPropagation()}
+            onSubmit={handleCrcOperatorRegister}
+          >
+            <p className="eyebrow">Acesso WhatsApp CRC</p>
+            <h2>Cadastro de Operador CRC</h2>
+            <p>Crie seu usuário de acesso. O e-mail será usado apenas para recuperação de senha.</p>
+
+            <div className="login-modal-grid">
+              <label>
+                Nome completo
+                <input className="field" value={crcRegisterForm.name} onChange={(event) => updateCrcRegisterField('name', event.target.value)} required />
+              </label>
+              <label>
+                Usuário de acesso
+                <input className="field" value={crcRegisterForm.username} onChange={(event) => updateCrcRegisterField('username', event.target.value)} placeholder="ex.: operador.crc" autoComplete="username" required />
+              </label>
+              <label>
+                Celular
+                <input className="field" value={crcRegisterForm.phone} onChange={(event) => updateCrcRegisterField('phone', event.target.value)} placeholder="+5562999999999" required />
+              </label>
+              <label>
+                E-mail de recuperação
+                <input className="field" type="email" value={crcRegisterForm.email} onChange={(event) => updateCrcRegisterField('email', event.target.value)} placeholder="nome@empresa.com.br" required />
+              </label>
+              <label>
+                Senha
+                <input className="field" type="password" value={crcRegisterForm.password} onChange={(event) => updateCrcRegisterField('password', event.target.value)} autoComplete="new-password" required />
+              </label>
+              <label>
+                Confirmar senha
+                <input className="field" type="password" value={crcRegisterForm.confirm_password} onChange={(event) => updateCrcRegisterField('confirm_password', event.target.value)} autoComplete="new-password" required />
+              </label>
+            </div>
+
+            {error && <p className="form-error">{error}</p>}
+            {info && <p className="form-feedback">{info}</p>}
+
+            <div className="row-actions">
+              <button type="button" className="outline-action" onClick={closeCrcRegister}>Cancelar</button>
+              <button className="primary-action" type="submit" disabled={crcRegisterLoading}>
+                {crcRegisterLoading ? 'Cadastrando...' : 'Criar usuário'}
               </button>
             </div>
           </form>

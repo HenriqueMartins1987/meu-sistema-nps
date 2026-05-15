@@ -195,6 +195,12 @@ function HomeShellFixed() {
 
   const npsLink = `${window.location.origin}/pesquisa-nps`;
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(npsLink)}`;
+  const crcWhatsappHomeTarget = useMemo(() => {
+    const role = String(user?.role || '').toLowerCase();
+    if (role === 'crc_operator') return '/home/whatsapp-management/attendance';
+    if (role === 'crc_leader' || role === 'crc_manager') return '/home/whatsapp-management/dashboard';
+    return '';
+  }, [user?.role]);
 
   const menuSections = useMemo(() => ([
     {
@@ -310,6 +316,12 @@ function HomeShellFixed() {
   useEffect(() => {
     loadNotifications();
   }, [loadNotifications]);
+
+  useEffect(() => {
+    if (crcWhatsappHomeTarget && !mustChangePassword) {
+      navigate(crcWhatsappHomeTarget, { replace: true });
+    }
+  }, [crcWhatsappHomeTarget, mustChangePassword, navigate]);
 
   useEffect(() => {
     if (!notificationGroups.unread.some((item) => item.type === 'nps_duplicate_phone')) {

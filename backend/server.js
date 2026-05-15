@@ -1679,6 +1679,15 @@ function isStrongPassword(value) {
     && /[^A-Za-z0-9]/.test(password);
 }
 
+function normalizeUsername(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9._-]/g, '');
+}
+
 const adminUserCreateSchema = z.object({
   name: z.string().trim().min(1, 'Preencha o nome completo.').max(160),
   email: z.string().trim().email('Informe um e-mail válido.').max(180),
@@ -1744,6 +1753,14 @@ const passwordResetConfirmSchema = z.object({
   email: z.string().trim().email('Informe um e-mail válido.'),
   code: z.string().trim().regex(/^\d{6}$/, 'Informe o código de 6 dígitos enviado por e-mail.'),
   new_password: z.string().trim().min(8, 'A nova senha deve ter no mínimo 8 caracteres.').max(160)
+});
+
+const crcOperatorRegistrationSchema = z.object({
+  name: z.string().trim().min(3, 'Informe o nome completo.').max(160),
+  username: z.string().trim().min(4, 'O usuário deve ter pelo menos 4 caracteres.').max(80),
+  email: z.string().trim().email('Informe um e-mail válido para recuperação de senha.').max(180),
+  phone: z.string().trim().min(1, 'Informe o celular.').max(40),
+  password: z.string().trim().min(8, 'A senha deve ter no mínimo 8 caracteres.').max(160)
 });
 
 function parseBodyWithSchema(schema, payload) {
@@ -1908,6 +1925,7 @@ async function ensureDatabaseSchema() {
 
   await ensureColumn('users', 'role', "VARCHAR(60) NOT NULL DEFAULT 'viewer'");
   await pool.query("ALTER TABLE users MODIFY COLUMN role VARCHAR(60) NOT NULL DEFAULT 'viewer'");
+  await ensureColumn('users', 'username', 'VARCHAR(80) NULL');
   await ensureColumn('users', 'position', 'VARCHAR(160) NULL');
   await ensureColumn('users', 'phone', 'VARCHAR(40) NULL');
   await ensureColumn('users', 'whatsapp', 'VARCHAR(40) NULL');
@@ -2211,6 +2229,9 @@ async function ensureDatabaseSchema() {
     )
   `);
 
+  await ensureColumn('whatsapp_conversations', 'nps_invite_sent_at', 'DATETIME NULL');
+  await ensureColumn('whatsapp_conversations', 'nps_invite_message_id', 'INT NULL');
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS whatsapp_messages (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -2296,6 +2317,30 @@ async function ensureDatabaseSchema() {
       INDEX idx_whatsapp_absent_status (status),
       INDEX idx_whatsapp_absent_operator (operator_id),
       INDEX idx_whatsapp_absent_next (next_attempt_at)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS whatsapp_nps_invites (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      conversation_id INT NULL,
+      patient_name VARCHAR(180) NULL,
+      patient_phone VARCHAR(40) NOT NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      operator_id INT NULL,
+      operator_name VARCHAR(180) NULL,
+      invite_link TEXT NULL,
+      message_id INT NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'enviado',
+      sent_at DATETIME NULL,
+      responded_at DATETIME NULL,
+      nps_response_id INT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_whatsapp_nps_invites_conversation (conversation_id),
+      INDEX idx_whatsapp_nps_invites_phone (patient_phone),
+      INDEX idx_whatsapp_nps_invites_status (status)
     )
   `);
 
@@ -2624,6 +2669,8 @@ async function ensureDatabaseSchema() {
   await ensureColumn('nps_responses', 'converted_by', 'VARCHAR(160) NULL');
   await ensureColumn('nps_responses', 'contact_share_allowed', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn('nps_responses', 'linked_patient_interaction_id', 'INT NULL');
+  await ensureColumn('nps_responses', 'whatsapp_conversation_id', 'INT NULL');
+  await ensureColumn('nps_responses', 'whatsapp_nps_invite_id', 'INT NULL');
   await ensureColumn('nps_responses', 'ip_address', 'VARCHAR(120) NULL');
   await ensureColumn('nps_responses', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
 
@@ -5322,6 +5369,41 @@ async function sendWhatsappGroupNotification({ event, message, payload = null, l
   };
 }
 
+function isCrcOperatorUser(user) {
+  return String(user?.role || '').toLowerCase() === 'crc_operator';
+}
+
+function clinicIdsFromUser(user) {
+  return (Array.isArray(user?.clinicIds) ? user.clinicIds : [])
+    .map((clinicId) => Number(clinicId))
+    .filter((clinicId) => Number.isInteger(clinicId) && clinicId > 0);
+}
+
+async function getCurrentUserClinicIds(user) {
+  if (!user?.id) return [];
+  const tokenClinicIds = clinicIdsFromUser(user);
+  if (tokenClinicIds.length) return tokenClinicIds;
+  return getUserClinicIds(user.id);
+}
+
+async function assertCrcOperatorClinicAccess(user, clinicId) {
+  if (!isCrcOperatorUser(user)) return;
+  const normalizedClinicId = Number(clinicId || 0);
+  const clinicIds = await getCurrentUserClinicIds(user);
+
+  if (!clinicIds.length) {
+    throw new Error('Seu usuário de Operador CRC não possui clínicas vinculadas para envio.');
+  }
+
+  if (!Number.isInteger(normalizedClinicId) || normalizedClinicId <= 0) {
+    throw new Error('Selecione uma clínica vinculada ao seu usuário para enviar ou registrar atendimento.');
+  }
+
+  if (!clinicIds.includes(normalizedClinicId)) {
+    throw new Error('Você só pode enviar mensagens para clínicas vinculadas ao seu usuário.');
+  }
+}
+
 async function createNotification(userId, type, title, message, link = null, payload = null) {
   await pool.query(
     `INSERT INTO notification_events
@@ -6401,7 +6483,7 @@ async function resolveComplaintResponsibleAssignment(clinicId, forwardRole, opti
 async function getClinicsForUser(user) {
   if (!user) return [];
 
-  if (isAdminUser(user)) {
+  if (isAdminUser(user) || ['supervisor_crc', 'crc_leader', 'crc_manager'].includes(String(user?.role || '').toLowerCase())) {
     const [rows] = await pool.query(
       `SELECT
          id,
@@ -7345,6 +7427,14 @@ async function authenticate(req, res, next) {
       req.user.role = rows[0]?.role || req.user.role;
       req.user.permissions = parsePermissionsFromUser({ role: req.user.role, permissions: rows[0]?.permissions });
       req.user.actionPermissions = getUserActionPermissions({ role: req.user.role, action_permissions: rows[0]?.action_permissions });
+      try {
+        req.user.clinicIds = await getUserClinicIds(req.user.id);
+      } catch (clinicScopeError) {
+        if (process.env.NODE_ENV !== 'test') {
+          console.warn('Não foi possível carregar clínicas vinculadas ao usuário autenticado.', clinicScopeError?.message || clinicScopeError);
+        }
+        req.user.clinicIds = Array.isArray(req.user.clinicIds) ? req.user.clinicIds : [];
+      }
       req.user.tokenVersion = tokenVersion;
       req.user.mustChangePassword = mustChangePassword;
 
@@ -7719,6 +7809,7 @@ async function findOrCreateWhatsAppConversation(payload = {}, user = {}) {
   );
 
   if (existing[0]) {
+    await assertCrcOperatorClinicAccess(user, payload.clinic_id || existing[0].clinic_id);
     const update = {
       patient_name: sanitizeFinancialString(payload.patient_name || payload.name || existing[0].patient_name),
       clinic_id: payload.clinic_id || existing[0].clinic_id || null,
@@ -7762,6 +7853,7 @@ async function findOrCreateWhatsAppConversation(payload = {}, user = {}) {
   }
 
   const clinic = payload.clinic_id ? await getClinicSnapshot(payload.clinic_id) : null;
+  await assertCrcOperatorClinicAccess(user, clinic?.id || payload.clinic_id);
   const patientName = sanitizeFinancialString(payload.patient_name || payload.name || 'Paciente sem nome');
   const actorName = user?.id ? getActorName(user) : null;
 
@@ -7835,6 +7927,111 @@ async function insertWhatsAppMessage(payload = {}) {
     ]
   );
   return result.insertId;
+}
+
+function formatPhoneForNpsLink(phone) {
+  const normalized = normalizeWhatsAppPhone(phone);
+  return normalized ? `+${normalized}` : '';
+}
+
+async function sendWhatsAppNpsInviteForConversation(conversation, actor = {}) {
+  if (!conversation?.id || conversation.nps_invite_sent_at) return null;
+  const patientPhone = normalizeWhatsAppPhone(conversation.patient_phone);
+  if (!patientPhone || !conversation.clinic_id) return null;
+  const defaultInstance = conversation.instance_name ? null : await getDefaultWhatsAppInstance(actor);
+  const instanceName = conversation.instance_name || defaultInstance?.instance_name || null;
+  if (!instanceName) return null;
+
+  const [existing] = await pool.query(
+    'SELECT * FROM whatsapp_nps_invites WHERE conversation_id = ? ORDER BY id DESC LIMIT 1',
+    [conversation.id]
+  );
+  if (existing[0]) return existing[0];
+
+  const [inviteInsert] = await pool.query(
+    `INSERT INTO whatsapp_nps_invites
+     (conversation_id, patient_name, patient_phone, clinic_id, clinic_name, operator_id, operator_name, status, sent_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, 'pendente', NOW())`,
+    [
+      conversation.id,
+      conversation.patient_name || null,
+      patientPhone,
+      conversation.clinic_id || null,
+      conversation.clinic_name || null,
+      conversation.operator_id || actor?.id || null,
+      conversation.operator_name || getActorName(actor)
+    ]
+  );
+
+  const inviteId = inviteInsert.insertId;
+  const params = new URLSearchParams({
+    source: 'whatsapp_atendimento',
+    invite_id: String(inviteId),
+    conversation_id: String(conversation.id),
+    clinic_id: String(conversation.clinic_id || ''),
+    patient_name: conversation.patient_name || '',
+    patient_phone: formatPhoneForNpsLink(patientPhone)
+  });
+  const inviteLink = `${frontendUrl}/pesquisa-nps?${params.toString()}`;
+  const messageText = [
+    `Olá, ${conversation.patient_name || 'paciente'}!`,
+    'Seu atendimento no Grupo Sorria foi finalizado.',
+    'Para melhorarmos continuamente, responda nossa pesquisa NPS:',
+    inviteLink
+  ].join('\n');
+
+  const messageId = await insertWhatsAppMessage({
+    conversation_id: conversation.id,
+    instance_name: instanceName,
+    patient_phone: patientPhone,
+    direction: 'outbound',
+    message_text: messageText,
+    message_type: 'nps_automatico',
+    status: 'pendente',
+    operator_id: conversation.operator_id || actor?.id || null,
+    operator_name: conversation.operator_name || getActorName(actor),
+    clinic_id: conversation.clinic_id,
+    clinic_name: conversation.clinic_name,
+    campaign: conversation.campaign
+  });
+
+  const dispatch = await enqueueWhatsAppDispatch({
+    message_id: messageId,
+    conversation_id: conversation.id,
+    instance_name: instanceName,
+    recipient_phone: patientPhone,
+    message_text: messageText,
+    message_type: 'nps_automatico',
+    operator_id: conversation.operator_id || actor?.id || null,
+    operator_name: conversation.operator_name || getActorName(actor),
+    payload: { source: 'nps_after_attendance', inviteId, antiBan: getWhatsAppAntiBanConfig() }
+  });
+
+  await pool.query(
+    `UPDATE whatsapp_nps_invites
+        SET invite_link = ?,
+            message_id = ?,
+            status = 'enfileirado'
+      WHERE id = ?`,
+    [inviteLink, messageId, inviteId]
+  );
+  await pool.query(
+    `UPDATE whatsapp_conversations
+        SET nps_invite_sent_at = NOW(),
+            nps_invite_message_id = ?
+      WHERE id = ?`,
+    [messageId, conversation.id]
+  );
+
+  await logEvolutionEvent('nps_invite_queued', {
+    conversationId: conversation.id,
+    messageId,
+    queueId: dispatch.id,
+    status: 'info',
+    response: { inviteId, inviteLink }
+  });
+
+  return { inviteId, messageId, inviteLink, dispatchId: dispatch.id };
 }
 
 function sanitizeWhatsAppSettings(raw = {}) {
@@ -8021,6 +8218,26 @@ async function syncWhatsAppAttendanceQueue(conversation, status = null) {
   return rows[0] || null;
 }
 
+function buildQueueScopeWhere(user, alias = 'q') {
+  if (canViewAllWhatsAppAttendance(user)) {
+    return { clause: '1=1', params: [] };
+  }
+
+  if (isCrcOperatorUser(user)) {
+    const clinicIds = clinicIdsFromUser(user);
+    if (!clinicIds.length) return { clause: '0=1', params: [] };
+    return {
+      clause: `(${alias}.operator_id = ? OR ${alias}.status = "aguardando") AND ${alias}.clinic_id IN (${clinicIds.map(() => '?').join(',')})`,
+      params: [user?.id || 0, ...clinicIds]
+    };
+  }
+
+  return {
+    clause: `(${alias}.operator_id = ? OR ${alias}.status = "aguardando")`,
+    params: [user?.id || 0]
+  };
+}
+
 async function getWhatsAppOperatorMaxSimultaneous(userId) {
   const config = getWhatsAppAntiBanConfig();
   const [rows] = await pool.query('SELECT max_simultaneous FROM whatsapp_operator_limits WHERE user_id = ? AND active = 1 LIMIT 1', [userId]);
@@ -8055,6 +8272,7 @@ async function getWhatsAppOperatorById(userId) {
        FROM users
       WHERE id = ?
         AND active = 1
+        AND role = 'crc_operator'
         AND deleted_at IS NULL
       LIMIT 1`,
     [userId]
@@ -8067,6 +8285,15 @@ async function assignWhatsAppConversation(conversationId, operatorUser, actor, s
   if (!conversation) {
     const error = new Error('Atendimento não encontrado.');
     error.status = 404;
+    throw error;
+  }
+
+  const operatorClinicIds = await getUserClinicIds(operatorUser.id);
+  const conversationClinicId = Number(conversation.clinic_id || 0);
+  if (!operatorClinicIds.length || !operatorClinicIds.includes(conversationClinicId)) {
+    const error = new Error(`${operatorUser.name} não possui acesso à clínica deste atendimento.`);
+    error.status = 403;
+    error.details = { operatorClinicIds, conversationClinicId };
     throw error;
   }
 
@@ -8134,6 +8361,9 @@ async function autoAssignWhatsAppQueue(actor = null) {
     let chosen = null;
     let chosenCapacity = null;
     for (const operator of operators) {
+      const operatorClinicIds = await getUserClinicIds(operator.id);
+      const itemClinicId = Number(item.clinic_id || 0);
+      if (!operatorClinicIds.length || !operatorClinicIds.includes(itemClinicId)) continue;
       const capacity = await getWhatsAppOperatorCapacity(operator.id);
       if (!capacity.canAccept) continue;
       if (!chosen || capacity.activeCount < chosenCapacity.activeCount) {
@@ -8324,6 +8554,15 @@ async function processWhatsAppDispatchQueue() {
             WHERE id = ?`,
           [evolutionMessageId, item.message_id]
         );
+        if (item.message_type === 'nps_automatico') {
+          await pool.query(
+            `UPDATE whatsapp_nps_invites
+                SET status = 'enviado',
+                    sent_at = NOW()
+              WHERE message_id = ?`,
+            [item.message_id]
+          );
+        }
         await pool.query(
           `UPDATE whatsapp_instances
               SET messages_sent_today = messages_sent_today + 1,
@@ -8371,6 +8610,14 @@ async function processWhatsAppDispatchQueue() {
             WHERE id = ?`,
           [nextStatus === 'erro' ? 'erro' : 'pendente', error.response?.data?.message || error.message, item.message_id]
         );
+        if (item.message_type === 'nps_automatico') {
+          await pool.query(
+            `UPDATE whatsapp_nps_invites
+                SET status = ?
+              WHERE message_id = ?`,
+            [nextStatus === 'erro' ? 'erro' : 'pendente', item.message_id]
+          );
+        }
         await logEvolutionEvent(error.code === 'ECONNABORTED' ? 'timeout' : 'send_message_error', {
           queueId: item.id,
           messageId: item.message_id,
@@ -8396,6 +8643,17 @@ async function processWhatsAppDispatchQueue() {
 function buildWhatsAppScopeWhere(user, alias = 'c') {
   if (canViewAllWhatsAppAttendance(user)) {
     return { clause: '1=1', params: [] };
+  }
+
+  if (isCrcOperatorUser(user)) {
+    const clinicIds = clinicIdsFromUser(user);
+    if (!clinicIds.length) {
+      return { clause: '0=1', params: [] };
+    }
+    return {
+      clause: `(${alias}.operator_id = ? AND ${alias}.clinic_id IN (${clinicIds.map(() => '?').join(',')}))`,
+      params: [user?.id || 0, ...clinicIds]
+    };
   }
 
   return {
@@ -8600,6 +8858,11 @@ async function handleCreateWhatsAppInstance(req, res) {
       );
       if (!operatorRows[0]) return res.status(400).json({ error: 'Selecione um Operador de CRC ativo para direcionar o número.' });
       operatorName = operatorRows[0].name;
+      const operatorClinicIds = await getUserClinicIds(operatorId);
+      const instanceClinicId = Number(clinic?.id || req.body.clinic_id || 0);
+      if (instanceClinicId && !operatorClinicIds.includes(instanceClinicId)) {
+        return res.status(400).json({ error: 'Este Operador CRC não possui acesso à clínica vinculada ao número.' });
+      }
     }
     let evolutionResponse = null;
     let evolutionWarning = null;
@@ -8704,6 +8967,14 @@ async function handleUpdateWhatsAppInstanceAssignment(req, res) {
       );
       operator = rows[0] || null;
       if (!operator) return res.status(404).json({ error: 'Operador de CRC não encontrado ou inativo.' });
+      const [instanceRows] = await pool.query('SELECT clinic_id FROM whatsapp_instances WHERE instance_name = ? LIMIT 1', [instanceName]);
+      const instanceClinicId = Number(instanceRows[0]?.clinic_id || 0);
+      if (instanceClinicId) {
+        const operatorClinicIds = await getUserClinicIds(operatorId);
+        if (!operatorClinicIds.includes(instanceClinicId)) {
+          return res.status(400).json({ error: 'Este Operador CRC não possui acesso à clínica vinculada ao número.' });
+        }
+      }
     }
 
     await pool.query(
@@ -9176,6 +9447,9 @@ async function handleDeleteWhatsAppMessage(req, res) {
     const message = rows[0];
     if (!message) return res.status(404).json({ error: 'Mensagem não encontrada.' });
     const conversation = message.conversation_id ? await getWhatsAppConversationById(message.conversation_id) : null;
+    if (conversation?.clinic_id) {
+      await assertCrcOperatorClinicAccess(req.user, conversation.clinic_id);
+    }
     const ownsConversation = conversation?.operator_id && Number(conversation.operator_id) === Number(req.user?.id);
     const ownsMessage = message.operator_id && Number(message.operator_id) === Number(req.user?.id);
     if (!canViewAllWhatsAppAttendance(req.user) && !ownsMessage && !ownsConversation) {
@@ -9252,19 +9526,16 @@ async function handleGetWhatsAppConversations(req, res) {
 
 async function handleGetWhatsAppQueue(req, res) {
   try {
-    const where = canViewAllWhatsAppAttendance(req.user)
-      ? '1=1'
-      : '(q.operator_id = ? OR q.status = "aguardando")';
-    const params = canViewAllWhatsAppAttendance(req.user) ? [] : [req.user?.id || 0];
+    const scope = buildQueueScopeWhere(req.user, 'q');
     const [rows] = await pool.query(
       `SELECT q.*, c.status AS conversation_status, c.last_message_at, c.next_follow_up_at
          FROM whatsapp_attendance_queue q
          LEFT JOIN whatsapp_conversations c ON c.id = q.conversation_id
-        WHERE ${where}
+        WHERE ${scope.clause}
           AND q.status <> 'encerrado'
         ORDER BY q.priority DESC, q.queued_at ASC
         LIMIT 300`,
-      params
+      scope.params
     );
     return res.json(rows);
   } catch (error) {
@@ -9290,12 +9561,72 @@ async function handleGetWhatsAppOperators(req, res) {
     const enriched = [];
     for (const user of users) {
       const capacity = await getWhatsAppOperatorCapacity(user.id);
-      enriched.push({ ...user, ...capacity });
+      const [clinicRows] = await pool.query(
+        `SELECT c.id, c.name, c.city, c.state
+           FROM user_clinics uc
+           INNER JOIN clinics c ON c.id = uc.clinic_id
+          WHERE uc.user_id = ?
+            AND c.active = 1
+          ORDER BY c.name ASC`,
+        [user.id]
+      );
+      enriched.push({
+        ...user,
+        ...capacity,
+        clinicIds: clinicRows.map((clinic) => Number(clinic.id)),
+        clinics: clinicRows
+      });
     }
     return res.json(enriched);
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao carregar operadores WhatsApp.' });
+  }
+}
+
+async function handleUpdateWhatsAppOperatorClinics(req, res) {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode vincular clínicas ao Operador CRC.' });
+    }
+
+    const operatorId = Number(req.params.id || 0);
+    const [operatorRows] = await pool.query(
+      `SELECT id, name
+         FROM users
+        WHERE id = ?
+          AND role = 'crc_operator'
+          AND active = 1
+          AND deleted_at IS NULL
+        LIMIT 1`,
+      [operatorId]
+    );
+    if (!operatorRows[0]) return res.status(404).json({ error: 'Operador CRC não encontrado.' });
+
+    const clinicIds = Array.isArray(req.body.clinicIds)
+      ? req.body.clinicIds.map((clinicId) => Number(clinicId)).filter((clinicId) => Number.isInteger(clinicId) && clinicId > 0)
+      : [];
+
+    await pool.query('DELETE FROM user_clinics WHERE user_id = ?', [operatorId]);
+    if (clinicIds.length) {
+      await Promise.all(clinicIds.map((clinicId) => (
+        pool.query('INSERT INTO user_clinics (user_id, clinic_id, can_edit) VALUES (?, ?, 1)', [operatorId, clinicId])
+      )));
+    }
+
+    await createNotification(
+      operatorId,
+      'whatsapp_operator_clinics',
+      'Clínicas atualizadas',
+      'Suas clínicas de atendimento no WhatsApp CRC foram atualizadas.',
+      '/home/whatsapp-management/attendance',
+      { clinicIds }
+    );
+
+    return res.json({ success: true, clinicIds });
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao atualizar clínicas do operador.' });
   }
 }
 
@@ -9408,6 +9739,7 @@ async function handleTransferWhatsAppConversation(req, res) {
   try {
     const conversation = await getWhatsAppConversationById(req.params.id);
     if (!conversation) return res.status(404).json({ error: 'Atendimento não encontrado.' });
+    await assertCrcOperatorClinicAccess(req.user, conversation.clinic_id);
     if (!canViewAllWhatsAppAttendance(req.user) && Number(conversation.operator_id) !== Number(req.user?.id)) {
       return res.status(403).json({ error: 'Você só pode transferir atendimentos sob sua responsabilidade.' });
     }
@@ -9477,6 +9809,8 @@ async function handleUpdateWhatsAppConversation(req, res) {
     if (!canViewAllWhatsAppAttendance(req.user) && Number(conversation.operator_id) !== Number(req.user?.id)) {
       return res.status(403).json({ error: 'Você só pode editar seus atendimentos.' });
     }
+    const nextClinicId = req.body.clinic_id || conversation.clinic_id || null;
+    await assertCrcOperatorClinicAccess(req.user, nextClinicId);
     await pool.query(
       `UPDATE whatsapp_conversations
           SET patient_name = ?,
@@ -9494,7 +9828,7 @@ async function handleUpdateWhatsAppConversation(req, res) {
         WHERE id = ?`,
       [
         sanitizeFinancialString(req.body.patient_name || conversation.patient_name),
-        req.body.clinic_id || conversation.clinic_id || null,
+        nextClinicId,
         sanitizeFinancialString(req.body.clinic_name || conversation.clinic_name),
         sanitizeFinancialString(req.body.unit_name || conversation.unit_name),
         sanitizeFinancialString(req.body.campaign || conversation.campaign),
@@ -9510,6 +9844,17 @@ async function handleUpdateWhatsAppConversation(req, res) {
     );
     const updated = await getWhatsAppConversationById(req.params.id);
     await syncWhatsAppAttendanceQueue(updated, updated.status === 'Encerrado' ? 'encerrado' : (updated.operator_id ? 'em_atendimento' : 'aguardando'));
+    if (updated.status === 'Encerrado' && conversation.status !== 'Encerrado') {
+      try {
+        await sendWhatsAppNpsInviteForConversation(updated, req.user);
+      } catch (inviteError) {
+        await logEvolutionEvent('nps_invite_error', {
+          conversationId: updated.id,
+          status: 'error',
+          error: inviteError
+        });
+      }
+    }
     emitWhatsAppConversationChange('updated', updated);
     return res.json(updated);
   } catch (error) {
@@ -9872,6 +10217,7 @@ async function handleClearWhatsAppManagementData(req, res) {
     await pool.query('DELETE FROM whatsapp_templates');
     await pool.query('DELETE FROM whatsapp_evolution_logs');
     await pool.query('DELETE FROM whatsapp_operator_status');
+    await pool.query('DELETE FROM whatsapp_nps_invites');
     await ensureDefaultWhatsAppContent();
     emitWhatsAppDashboardRefresh('whatsapp_management_cleared', { actor: getActorName(req.user) });
     return res.json({ success: true, message: 'Gestão WhatsApp CRC limpa e conteúdo inicial recriado.' });
@@ -9918,7 +10264,7 @@ async function handleGetWhatsAppDashboard(req, res) {
       `SELECT a.* FROM whatsapp_absent_patients a WHERE ${absentWhere.join(' AND ')}`,
       absentParams
     );
-    const queueScope = canViewAllWhatsAppAttendance(req.user) ? { clause: '1=1', params: [] } : { clause: '(q.operator_id = ? OR q.status = "aguardando")', params: [req.user?.id || 0] };
+    const queueScope = buildQueueScopeWhere(req.user, 'q');
     const queueWhere = [queueScope.clause];
     const queueParams = [...queueScope.params];
     if (req.query.operatorId) {
@@ -9943,6 +10289,12 @@ async function handleGetWhatsAppDashboard(req, res) {
         WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
         GROUP BY status`
     );
+    const [npsInviteRows] = await pool.query(
+      `SELECT status, COUNT(*) AS total
+         FROM whatsapp_nps_invites
+        WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+        GROUP BY status`
+    );
     const [operatorStatusRows] = await pool.query(
       `SELECT u.id,
               u.name,
@@ -9953,6 +10305,10 @@ async function handleGetWhatsAppDashboard(req, res) {
           AND COALESCE(u.active, 1) = 1`
     );
     const dispatchSummary = dispatchRows.reduce((acc, row) => {
+      acc[row.status] = parseSqlCount(row, 'total');
+      return acc;
+    }, {});
+    const npsInviteSummary = npsInviteRows.reduce((acc, row) => {
       acc[row.status] = parseSqlCount(row, 'total');
       return acc;
     }, {});
@@ -10004,6 +10360,8 @@ async function handleGetWhatsAppDashboard(req, res) {
         dispatchProcessing: dispatchSummary.processando || 0,
         dispatchSent24h: dispatchSummary.enviada || 0,
         dispatchErrors24h: dispatchSummary.erro || 0,
+        npsInvites24h: Object.values(npsInviteSummary).reduce((sum, value) => sum + Number(value || 0), 0),
+        npsInvitesResponded24h: npsInviteSummary.respondido || 0,
         operatorsOnline: operatorStatusRows.filter((item) => item.status === 'online').length,
         operatorsAbsent: operatorStatusRows.filter((item) => item.status !== 'online').length,
         antiBan: getWhatsAppAntiBanConfig()
@@ -10196,6 +10554,7 @@ app.post('/api/whatsapp/send-audio', authenticate, requireWhatsAppView, upload.s
 app.delete('/api/whatsapp/messages/:id', authenticate, requireWhatsAppView, handleDeleteWhatsAppMessage);
 
 app.get('/api/whatsapp/operators', authenticate, requireWhatsAppView, handleGetWhatsAppOperators);
+app.put('/api/whatsapp/operators/:id/clinics', authenticate, requireWhatsAppView, handleUpdateWhatsAppOperatorClinics);
 app.get('/api/whatsapp/operator-status', authenticate, requireWhatsAppView, handleGetWhatsAppOperatorStatus);
 app.put('/api/whatsapp/operator-status', authenticate, requireWhatsAppView, handleUpdateWhatsAppOperatorStatus);
 app.get('/api/whatsapp/queue', authenticate, requireWhatsAppView, handleGetWhatsAppQueue);
@@ -11689,6 +12048,83 @@ app.delete('/patient-interactions/:id', authenticate, async (req, res) => {
   }
 });
 
+app.post('/auth/crc-operator/register', async (req, res) => {
+  try {
+    const parsed = parseBodyWithSchema(crcOperatorRegistrationSchema, req.body);
+    if (parsed.error) return res.status(400).json({ error: parsed.error });
+
+    const username = normalizeUsername(parsed.data.username);
+    if (!/^[a-z0-9._-]{4,80}$/.test(username)) {
+      return res.status(400).json({ error: 'Use um usuário com letras, números, ponto, hífen ou underline.' });
+    }
+
+    if (!isStrongPassword(parsed.data.password)) {
+      return res.status(400).json({
+        error: 'A senha deve ter no mínimo 8 caracteres, letra maiúscula, letra minúscula, número e caractere especial.'
+      });
+    }
+
+    const normalizedEmail = String(parsed.data.email || '').trim().toLowerCase();
+    const normalizedPhone = normalizeBrazilPhone(parsed.data.phone);
+    if (!isCompleteBrazilPhone(normalizedPhone)) {
+      return res.status(400).json({ error: 'Informe o celular completo no formato +55DDDNÚMERO.' });
+    }
+
+    const [duplicates] = await pool.query(
+      `SELECT id
+         FROM users
+        WHERE deleted_at IS NULL
+          AND (LOWER(email) = ? OR LOWER(username) = ?)
+        LIMIT 1`,
+      [normalizedEmail, username]
+    );
+    if (duplicates.length) {
+      return res.status(409).json({ error: 'Já existe um usuário ativo com este usuário ou e-mail.' });
+    }
+
+    const passwordHash = await bcrypt.hash(parsed.data.password, 10);
+    const permissions = defaultPermissionsForRole('crc_operator');
+    const actionPermissionList = defaultActionPermissionsForRole('crc_operator');
+    const [result] = await pool.query(
+      `INSERT INTO users
+       (name, username, email, password, role, position, phone, whatsapp, department, permissions, action_permissions, active, must_change_password)
+       VALUES (?, ?, ?, ?, 'crc_operator', 'Operador de CRC', ?, ?, 'CRC WhatsApp', ?, ?, 1, 0)`,
+      [
+        parsed.data.name,
+        username,
+        normalizedEmail,
+        passwordHash,
+        normalizedPhone,
+        normalizedPhone,
+        JSON.stringify(permissions),
+        JSON.stringify(actionPermissionList)
+      ]
+    );
+
+    await notifyMasterPasswordSecurityEvent(
+      'crc_operator_registered',
+      'Novo Operador CRC cadastrado',
+      `${parsed.data.name} criou acesso como Operador de CRC. Usuário: ${username}.`,
+      {
+        userId: result.insertId,
+        username,
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        role: 'crc_operator'
+      }
+    );
+
+    return res.status(201).json({
+      success: true,
+      message: 'Operador CRC cadastrado com sucesso. Faça login com o usuário e senha criados.',
+      username
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Não foi possível cadastrar o Operador CRC.' });
+  }
+});
+
 // ============================================
 // LOGIN
 // ============================================
@@ -11698,12 +12134,12 @@ app.post('/login', async (req, res) => {
     const login = String(email || username || '').trim().toLowerCase();
 
     if (!login || !password) {
-      return res.status(400).json({ message: 'Informe e-mail e senha' });
+      return res.status(400).json({ message: 'Informe e-mail/usuário e senha' });
     }
 
     const [rows] = await pool.query(
-      'SELECT * FROM users WHERE LOWER(email) = ?',
-      [login]
+      'SELECT * FROM users WHERE LOWER(email) = ? OR LOWER(username) = ? LIMIT 1',
+      [login, normalizeUsername(login)]
     );
 
     if (rows.length === 0) {
@@ -12009,7 +12445,10 @@ app.post('/nps/public', async (req, res) => {
       referral_phone,
       improvement_comment,
       detractor_reasons,
-      detractor_feedback
+      detractor_feedback,
+      source,
+      whatsapp_conversation_id,
+      whatsapp_nps_invite_id
     } = req.body;
     const numericScore = Number(score);
 
@@ -12023,6 +12462,8 @@ app.post('/nps/public', async (req, res) => {
 
     const normalizedPatientPhone = normalizeBrazilPhone(patient_phone);
     const normalizedReferralPhone = referral_phone ? normalizeBrazilPhone(referral_phone) : '';
+    const whatsappConversationId = Number(whatsapp_conversation_id || req.body.conversation_id || 0) || null;
+    const whatsappNpsInviteId = Number(whatsapp_nps_invite_id || req.body.invite_id || 0) || null;
     const npsProfile = inferNpsProfile(numericScore);
     const requestIp = getRequestIp(req);
 
@@ -12096,8 +12537,8 @@ app.post('/nps/public', async (req, res) => {
 
     const [npsInsert] = await pool.query(
       `INSERT INTO nps_responses
-       (clinic_id, patient_name, patient_phone, score, comment, feedback_type, nps_profile, recommend_yes, contact_share_allowed, referral_name, referral_phone, improvement_comment, detractor_reasons, detractor_feedback, source, ip_address)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (clinic_id, patient_name, patient_phone, score, comment, feedback_type, nps_profile, recommend_yes, contact_share_allowed, referral_name, referral_phone, improvement_comment, detractor_reasons, detractor_feedback, source, ip_address, whatsapp_conversation_id, whatsapp_nps_invite_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         clinic_id || null,
         patient_name || null,
@@ -12113,8 +12554,10 @@ app.post('/nps/public', async (req, res) => {
         improvement_comment || null,
         normalizedReasons.length ? JSON.stringify(normalizedReasons) : null,
         detractor_feedback || null,
-        'link_publico',
-        requestIp || null
+        source === 'whatsapp_atendimento' ? 'whatsapp_atendimento' : 'link_publico',
+        requestIp || null,
+        whatsappConversationId,
+        whatsappNpsInviteId
       ]
     );
 
@@ -12159,6 +12602,16 @@ app.post('/nps/public', async (req, res) => {
 
     const protocol = formatNpsProtocol(npsInsert.insertId);
     await pool.query('UPDATE nps_responses SET nps_protocol = ? WHERE id = ?', [protocol, npsInsert.insertId]);
+    if (whatsappNpsInviteId) {
+      await pool.query(
+        `UPDATE whatsapp_nps_invites
+            SET status = 'respondido',
+                responded_at = NOW(),
+                nps_response_id = ?
+          WHERE id = ?`,
+        [npsInsert.insertId, whatsappNpsInviteId]
+      );
+    }
     await insertNpsLog(npsInsert.insertId, 'created', `Pesquisa de satisfação registrada no protocolo ${protocol}.`, {
       name: 'Link público NPS',
       role: 'externo'

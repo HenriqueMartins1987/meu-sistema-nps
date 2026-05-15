@@ -545,6 +545,24 @@ a {
   max-width: 560px;
 }
 
+.crc-operator-register-modal {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.login-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.login-modal-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .register-page::before,
 .app-page::before {
   content: '';
@@ -9966,6 +9984,45 @@ a {
   padding: 18px;
 }
 
+.whatsapp-panel-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 760;
+  line-height: 1.45;
+}
+
+.whatsapp-clinic-check-grid {
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+  padding: 8px;
+  border: 1px solid rgba(221, 207, 188, 0.78);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.whatsapp-clinic-check-grid label {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 8px;
+  align-items: start;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.whatsapp-clinic-check-grid small {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 760;
+}
+
 .whatsapp-form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -10416,6 +10473,16 @@ a {
   display: grid;
   gap: 14px;
   width: min(520px, calc(100vw - 32px));
+  text-align: center;
+}
+
+.whatsapp-qr-modal p:not(.eyebrow) {
+  margin: 6px auto 0;
+  max-width: 380px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 760;
+  line-height: 1.45;
 }
 
 .whatsapp-qr-modal img {

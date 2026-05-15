@@ -31,7 +31,10 @@ const initialForm = {
   improvement_comment: '',
   detractor_reasons: [],
   detractor_other: '',
-  detractor_feedback: ''
+  detractor_feedback: '',
+  source: '',
+  whatsapp_conversation_id: '',
+  whatsapp_nps_invite_id: ''
 };
 
 function parseVcardContact(content) {
@@ -67,6 +70,28 @@ function NpsSurveyPage() {
     api.get('/public/clinics')
       .then((res) => setClinics(Array.isArray(res.data) ? res.data : []))
       .catch(() => setError('Não foi possível carregar as clínicas.'));
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search || '');
+    const clinicId = params.get('clinic_id') || '';
+    const patientName = params.get('patient_name') || '';
+    const patientPhone = params.get('patient_phone') || '';
+    const source = params.get('source') || '';
+    const conversationId = params.get('conversation_id') || '';
+    const inviteId = params.get('invite_id') || '';
+
+    if (!clinicId && !patientName && !patientPhone && !source && !conversationId && !inviteId) return;
+
+    setForm((prev) => ({
+      ...prev,
+      clinic_id: clinicId || prev.clinic_id,
+      patient_name: patientName || prev.patient_name,
+      patient_phone: patientPhone ? formatBrazilPhoneInput(patientPhone) : prev.patient_phone,
+      source: source || prev.source,
+      whatsapp_conversation_id: conversationId || prev.whatsapp_conversation_id,
+      whatsapp_nps_invite_id: inviteId || prev.whatsapp_nps_invite_id
+    }));
   }, []);
 
   const activeClinics = useMemo(() => (
@@ -241,6 +266,9 @@ function NpsSurveyPage() {
         improvement_comment: form.improvement_comment,
         detractor_reasons: detractorReasons,
         detractor_feedback: form.detractor_feedback,
+        source: form.source,
+        whatsapp_conversation_id: form.whatsapp_conversation_id,
+        whatsapp_nps_invite_id: form.whatsapp_nps_invite_id,
         comment: ''
       });
 
