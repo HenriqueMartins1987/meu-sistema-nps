@@ -232,7 +232,10 @@ function WhatsAppManagement() {
     () => conversations.find((item) => String(item.id) === String(selectedConversationId)) || conversations[0] || null,
     [conversations, selectedConversationId]
   );
-  const evolutionConfigured = Boolean(configStatus?.configured);
+  const whatsappConfigured = Boolean(configStatus?.configured);
+  const whatsappProviderLabel = configStatus?.providerLabel || (configStatus?.provider === 'whatsapp_service' ? 'whatsapp-service VPS' : 'Evolution API');
+  const usingWhatsappService = configStatus?.provider === 'whatsapp_service';
+  const evolutionConfigured = whatsappConfigured;
 
   const loadBaseData = useCallback(async () => {
     if (!allowed) return;
@@ -437,6 +440,17 @@ function WhatsAppManagement() {
       await loadBaseData();
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível enviar a mensagem teste.');
+    }
+  };
+
+  const refreshInstanceStatus = async (instanceName) => {
+    if (!whatsappConfigured) return setFeedback('Configuração WhatsApp ausente. Status desabilitado.');
+    try {
+      const { data } = await api.get(`/api/whatsapp/instances/${instanceName}/status`);
+      setFeedback(`Status atualizado: ${data?.status || 'verificado'}.`);
+      await loadBaseData();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível atualizar o status.');
     }
   };
 
@@ -902,6 +916,11 @@ function WhatsAppManagement() {
           {!evolutionConfigured && (
             <p className="whatsapp-config-alert">Configuração Evolution API ausente: {(configStatus?.missing || ['EVOLUTION_BASE_URL', 'EVOLUTION_API_KEY']).join(', ')}. Configure antes de cadastrar números ou gerar QR Code.</p>
           )}
+          {whatsappConfigured && (
+            <p className="whatsapp-panel-note">
+              Provedor ativo: {whatsappProviderLabel}{usingWhatsappService ? ' - QR Code e envio pela VPS Hostinger.' : ' - QR Code e envio pela Evolution API.'}
+            </p>
+          )}
           <div className="whatsapp-form-grid">
             <label>Identificação do número<input className="field" value={instanceDraft.instance_name} onChange={(event) => setInstanceDraft((current) => ({ ...current, instance_name: event.target.value }))} /></label>
             <label>Nome de exibição<input className="field" value={instanceDraft.display_name} onChange={(event) => setInstanceDraft((current) => ({ ...current, display_name: event.target.value }))} /></label>
@@ -968,6 +987,7 @@ function WhatsAppManagement() {
                   <td>{String(item.last_activity_at || item.last_status_check_at || '-').slice(0, 16).replace('T', ' ')}</td>
                   <td><div className="whatsapp-row-actions">
                     {canConfigure && <button className="outline-action mini-action" onClick={() => generateQrCode(item.instance_name)} disabled={!evolutionConfigured}>QR Code</button>}
+                    <button className="outline-action mini-action" onClick={() => refreshInstanceStatus(item.instance_name)} disabled={!whatsappConfigured}>Status</button>
                     {canConfigure && <button className="outline-action mini-action" onClick={() => reconnectInstance(item.instance_name)} disabled={!evolutionConfigured}>Reconectar</button>}
                     <button className="outline-action mini-action" onClick={() => testInstanceMessage(item.instance_name)} disabled={!evolutionConfigured}>Teste</button>
                     {canConfigure && <button className="outline-action mini-action" onClick={() => logoutInstance(item.instance_name)} disabled={!evolutionConfigured}>Desconectar</button>}
@@ -1281,6 +1301,7 @@ function WhatsAppManagement() {
         <p className="eyebrow">Monitor Hostinger / Evolution</p>
         <h2>Diagnóstico da integração</h2>
         <div className="whatsapp-diagnostic-grid">
+          <p><span>Provedor ativo</span><strong>{whatsappProviderLabel}</strong></p>
           <p><span>Configuração</span><strong>{configStatus?.configured ? 'Completa' : 'Pendente'}</strong></p>
           <p><span>Base URL</span><strong>{configStatus?.baseUrlConfigured ? 'Configurada' : 'Ausente'}</strong></p>
           <p><span>API Key</span><strong>{configStatus?.apiKeyConfigured ? 'Configurada' : 'Ausente'}</strong></p>

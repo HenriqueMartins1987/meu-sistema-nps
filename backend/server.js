@@ -8563,14 +8563,22 @@ async function processWhatsAppDispatchQueue() {
 
       const startedAt = performance.now();
       try {
-        const evolutionConfig = await getEvolutionServiceConfig();
-        const evolution = await evolutionService.sendText(item.instance_name, item.recipient_phone, item.message_text, {
-          delay: item.anti_ban_delay_ms || undefined,
-          presence: 'composing',
-          linkPreview: true,
-          config: evolutionConfig
-        });
-        const evolutionMessageId = getEvolutionMessageId(evolution);
+        const useServiceProvider = isWhatsAppServiceProviderConfigured();
+        const providerResponse = useServiceProvider
+          ? await whatsappVpsService.sendMessage({
+              sessionId: item.instance_name,
+              number: item.recipient_phone,
+              message: item.message_text
+            })
+          : await evolutionService.sendText(item.instance_name, item.recipient_phone, item.message_text, {
+              delay: item.anti_ban_delay_ms || undefined,
+              presence: 'composing',
+              linkPreview: true,
+              config: await getEvolutionServiceConfig()
+            });
+        const providerMessageId = useServiceProvider
+          ? getWhatsAppServiceMessageId(providerResponse)
+          : getEvolutionMessageId(providerResponse);
         await pool.query(
           `UPDATE whatsapp_dispatch_queue
               SET status = 'enviada',
@@ -8586,8 +8594,23 @@ async function processWhatsAppDispatchQueue() {
                   sent_at = NOW(),
                   error_message = NULL
             WHERE id = ?`,
-          [evolutionMessageId, item.message_id]
+          [providerMessageId, item.message_id]
         );
+        if (useServiceProvider) {
+          await pool.query(
+            `INSERT INTO whatsapp_service_message_history
+             (session_id, patient_phone, message_text, status, provider_message_id, response_payload, created_by, sent_at)
+             VALUES (?, ?, ?, 'enviado', ?, ?, ?, NOW())`,
+            [
+              item.instance_name,
+              item.recipient_phone,
+              item.message_text,
+              providerMessageId,
+              JSON.stringify(providerResponse),
+              item.operator_name || 'Fila WhatsApp CRC'
+            ]
+          );
+        }
         if (item.message_type === 'nps_automatico') {
           await pool.query(
             `UPDATE whatsapp_nps_invites
@@ -8619,8 +8642,8 @@ async function processWhatsAppDispatchQueue() {
           instanceName: item.instance_name,
           status: 'success',
           durationMs: performance.now() - startedAt,
-          request: { number: item.recipient_phone, textLength: String(item.message_text || '').length, antiBanDelayMs: item.anti_ban_delay_ms },
-          response: evolution
+          request: { provider: useServiceProvider ? 'whatsapp_service' : 'evolution', number: item.recipient_phone, textLength: String(item.message_text || '').length, antiBanDelayMs: item.anti_ban_delay_ms },
+          response: providerResponse
         });
         const message = await getWhatsAppMessageById(item.message_id);
         const conversation = item.conversation_id ? await getWhatsAppConversationById(item.conversation_id) : null;
@@ -8738,12 +8761,35 @@ function buildWhatsAppDashboardFilters(query = {}, alias = 'c') {
 
 async function handleGetWhatsAppConfigStatus(req, res) {
   try {
-    const config = await getEvolutionServiceConfig();
-    const status = await evolutionService.diagnostic(config);
-    return res.json(status);
+    const serviceStatus = getWhatsAppServiceConfigStatus();
+    const evolutionConfig = await getEvolutionServiceConfig();
+    const evolutionStatus = serviceStatus.configured
+      ? {
+          configured: evolutionConfig.configured,
+          baseUrlConfigured: evolutionConfig.baseUrlConfigured,
+          apiKeyConfigured: evolutionConfig.apiKeyConfigured,
+          missing: evolutionConfig.missing || [],
+          evolutionReachable: false,
+          skipped: true,
+          message: 'Diagnóstico Evolution ignorado porque o whatsapp-service VPS está ativo.'
+        }
+      : await evolutionService.diagnostic(evolutionConfig);
+    const provider = serviceStatus.configured ? 'whatsapp_service' : 'evolution';
+
+    return res.json({
+      ...(provider === 'whatsapp_service' ? serviceStatus : evolutionStatus),
+      configured: Boolean(serviceStatus.configured || evolutionStatus.configured),
+      provider,
+      providerLabel: provider === 'whatsapp_service' ? 'whatsapp-service VPS' : 'Evolution API',
+      missing: provider === 'whatsapp_service' ? serviceStatus.missing : (evolutionStatus.missing || serviceStatus.missing || []),
+      whatsappService: serviceStatus,
+      evolution: evolutionStatus,
+      evolutionReachable: Boolean(evolutionStatus.evolutionReachable),
+      serviceReachable: null
+    });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ configured: false, message: 'Erro ao verificar configuração Evolution API.' });
+    return res.status(500).json({ configured: false, message: 'Erro ao verificar configuração WhatsApp.' });
   }
 }
 
@@ -8898,6 +8944,10 @@ function getWhatsAppServiceConfigStatus() {
   };
 }
 
+function isWhatsAppServiceProviderConfigured() {
+  return getWhatsAppServiceConfigStatus().configured;
+}
+
 function getWhatsAppServiceMessageId(response) {
   return response?.id
     || response?.messageId
@@ -8932,6 +8982,44 @@ async function refreshWhatsAppServiceSessionStatus(row) {
   } catch (error) {
     return {
       ...row,
+      status_error: whatsappVpsService.friendlyApiError(error)
+    };
+  }
+}
+
+async function refreshWhatsAppInstanceStatusFromService(row) {
+  try {
+    const statusResponse = await whatsappVpsService.getSessionStatus(row.instance_name);
+    const status = mapWhatsAppServiceStatus(statusResponse, row.status || 'iniciando');
+    await pool.query(
+      `UPDATE whatsapp_instances
+          SET status = ?,
+              last_connection_at = CASE WHEN ? = 'conectado' THEN NOW() ELSE last_connection_at END,
+              uptime_started_at = CASE WHEN ? = 'conectado' AND uptime_started_at IS NULL THEN NOW() WHEN ? <> 'conectado' THEN NULL ELSE uptime_started_at END,
+              last_status_check_at = NOW(),
+              updated_at = NOW()
+        WHERE instance_name = ?`,
+      [status, status, status, status, row.instance_name]
+    );
+    await pool.query(
+      `UPDATE whatsapp_service_sessions
+          SET status = ?,
+              last_status_payload = ?,
+              last_status_check_at = NOW()
+        WHERE session_id = ?`,
+      [status, JSON.stringify(statusResponse), row.instance_name]
+    );
+    return {
+      ...row,
+      status,
+      provider: 'whatsapp_service',
+      status_payload: statusResponse,
+      status_error: null
+    };
+  } catch (error) {
+    return {
+      ...row,
+      provider: 'whatsapp_service',
       status_error: whatsappVpsService.friendlyApiError(error)
     };
   }
@@ -9007,6 +9095,31 @@ async function handleCreateWhatsAppServiceSession(req, res) {
         unitName,
         status,
         serviceResponse ? JSON.stringify(serviceResponse) : null,
+        sanitizeFinancialString(req.body.notes, 2000),
+        actorName,
+        actorName
+      ]
+    );
+
+    await pool.query(
+      `INSERT INTO whatsapp_instances
+       (instance_name, display_name, sector, clinic_id, clinic_name, unit_name, status, notes, created_by, updated_by)
+       VALUES (?, ?, 'CRC', ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         display_name = VALUES(display_name),
+         clinic_id = VALUES(clinic_id),
+         clinic_name = VALUES(clinic_name),
+         unit_name = VALUES(unit_name),
+         status = VALUES(status),
+         notes = VALUES(notes),
+         updated_by = VALUES(updated_by)`,
+      [
+        sessionId,
+        displayName,
+        clinic?.id || req.body.clinic_id || null,
+        clinic?.name || sanitizeFinancialString(req.body.clinic_name),
+        unitName,
+        status,
         sanitizeFinancialString(req.body.notes, 2000),
         actorName,
         actorName
@@ -9149,7 +9262,11 @@ async function handleGetWhatsAppInstances(req, res) {
          FROM whatsapp_instances wi
         ORDER BY wi.sector ASC, wi.display_name ASC, wi.instance_name ASC`
     );
-    return res.json(rows);
+    if (isWhatsAppServiceProviderConfigured()) {
+      const enriched = await Promise.all(rows.map((row) => refreshWhatsAppInstanceStatusFromService(row)));
+      return res.json(enriched);
+    }
+    return res.json(rows.map((row) => ({ ...row, provider: 'evolution' })));
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao carregar instâncias WhatsApp.' });
@@ -9184,27 +9301,53 @@ async function handleCreateWhatsAppInstance(req, res) {
         return res.status(400).json({ error: 'Este Operador CRC não possui acesso à clínica vinculada ao número.' });
       }
     }
-    let evolutionResponse = null;
-    let evolutionWarning = null;
+    const useServiceProvider = isWhatsAppServiceProviderConfigured();
+    let providerResponse = null;
+    let providerWarning = null;
+    let providerStatus = 'iniciando';
 
-    try {
-      const evolutionConfig = await getEvolutionServiceConfig();
-      evolutionResponse = await evolutionService.createInstance({
-        instanceName,
-        number: phone,
-        webhookUrl: String(process.env.EVOLUTION_WEBHOOK_URL || `${publicBaseUrl}/api/whatsapp/evolution-webhook`).trim(),
-        webhookToken: String(process.env.EVOLUTION_WEBHOOK_TOKEN || '').trim(),
-        config: evolutionConfig
-      });
-    } catch (error) {
-      evolutionWarning = error.response?.data?.message || error.response?.data?.error || error.message;
-      await logEvolutionEvent('create_instance', {
-        instanceName,
-        status: error.code === 'ECONNABORTED' ? 'timeout' : 'error',
-        durationMs: performance.now() - startedAt,
-        request: { instanceName, number: phone },
-        error
-      });
+    if (useServiceProvider) {
+      try {
+        providerResponse = await whatsappVpsService.createSession(instanceName, {
+          phone,
+          clinicId: clinic?.id || req.body.clinic_id || null,
+          clinicName: clinic?.name || sanitizeFinancialString(req.body.clinic_name),
+          unitName: sanitizeFinancialString(req.body.unit_name) || clinic?.city || null,
+          displayName: sanitizeFinancialString(req.body.display_name || req.body.displayName || instanceName)
+        });
+        providerStatus = mapWhatsAppServiceStatus(providerResponse, 'iniciando');
+      } catch (error) {
+        providerWarning = whatsappVpsService.friendlyApiError(error);
+        await logEvolutionEvent('create_whatsapp_service_session', {
+          instanceName,
+          status: error.code === 'ECONNABORTED' ? 'timeout' : 'warning',
+          durationMs: performance.now() - startedAt,
+          request: { sessionId: instanceName, number: phone },
+          error
+        });
+      }
+    } else {
+      try {
+        const evolutionConfig = await getEvolutionServiceConfig();
+        providerResponse = await evolutionService.createInstance({
+          instanceName,
+          number: phone,
+          webhookUrl: String(process.env.EVOLUTION_WEBHOOK_URL || `${publicBaseUrl}/api/whatsapp/evolution-webhook`).trim(),
+          webhookToken: String(process.env.EVOLUTION_WEBHOOK_TOKEN || '').trim(),
+          config: evolutionConfig
+        });
+        providerStatus = 'criada';
+      } catch (error) {
+        providerWarning = error.response?.data?.message || error.response?.data?.error || error.message;
+        providerStatus = 'pendente_configuracao';
+        await logEvolutionEvent('create_instance', {
+          instanceName,
+          status: error.code === 'ECONNABORTED' ? 'timeout' : 'error',
+          durationMs: performance.now() - startedAt,
+          request: { instanceName, number: phone },
+          error
+        });
+      }
     }
 
     await pool.query(
@@ -9230,7 +9373,7 @@ async function handleCreateWhatsAppInstance(req, res) {
         clinic?.name || sanitizeFinancialString(req.body.clinic_name),
         sanitizeFinancialString(req.body.unit_name) || clinic?.city || null,
         phone,
-        evolutionWarning ? 'pendente_configuracao' : 'criada',
+        providerStatus,
         operatorId,
         operatorName,
         sanitizeFinancialString(req.body.notes, 2000),
@@ -9239,18 +9382,54 @@ async function handleCreateWhatsAppInstance(req, res) {
       ]
     );
 
+    if (useServiceProvider) {
+      await pool.query(
+        `INSERT INTO whatsapp_service_sessions
+         (session_id, display_name, clinic_id, clinic_name, unit_name, status, last_status_payload, last_status_check_at, notes, created_by, updated_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           display_name = VALUES(display_name),
+           clinic_id = VALUES(clinic_id),
+           clinic_name = VALUES(clinic_name),
+           unit_name = VALUES(unit_name),
+           status = VALUES(status),
+           last_status_payload = VALUES(last_status_payload),
+           last_status_check_at = NOW(),
+           notes = VALUES(notes),
+           updated_by = VALUES(updated_by)`,
+        [
+          instanceName,
+          sanitizeFinancialString(req.body.display_name || req.body.displayName || instanceName),
+          clinic?.id || req.body.clinic_id || null,
+          clinic?.name || sanitizeFinancialString(req.body.clinic_name),
+          sanitizeFinancialString(req.body.unit_name) || clinic?.city || null,
+          providerStatus,
+          providerResponse ? JSON.stringify(providerResponse) : null,
+          sanitizeFinancialString(req.body.notes, 2000),
+          getActorName(req.user),
+          getActorName(req.user)
+        ]
+      );
+    }
+
     const [rows] = await pool.query('SELECT * FROM whatsapp_instances WHERE instance_name = ? LIMIT 1', [instanceName]);
-    if (!evolutionWarning) {
-      await logEvolutionEvent('create_instance', {
+    if (!providerWarning) {
+      await logEvolutionEvent(useServiceProvider ? 'create_whatsapp_service_session' : 'create_instance', {
         instanceName,
         status: 'success',
         durationMs: performance.now() - startedAt,
         request: { instanceName, number: phone },
-        response: evolutionResponse
+        response: providerResponse
       });
     }
     emitWhatsAppDashboardRefresh('instance_created', { instanceName });
-    return res.status(201).json({ instance: rows[0], evolution: evolutionResponse, warning: evolutionWarning });
+    return res.status(201).json({
+      instance: rows[0],
+      provider: useServiceProvider ? 'whatsapp_service' : 'evolution',
+      service: useServiceProvider ? providerResponse : null,
+      evolution: useServiceProvider ? null : providerResponse,
+      warning: providerWarning
+    });
   } catch (error) {
     console.error(error);
     await logEvolutionEvent('create_instance', {
@@ -9331,6 +9510,40 @@ async function handleWhatsAppInstanceQrCode(req, res) {
     }
 
     const [rows] = await pool.query('SELECT phone_number FROM whatsapp_instances WHERE instance_name = ? LIMIT 1', [instanceName]);
+    if (isWhatsAppServiceProviderConfigured()) {
+      const image = await whatsappVpsService.getQrImage(instanceName, {
+        baseURL: process.env.WHATSAPP_SERVICE_BASE_URL || WHATSAPP_SERVICE_DEFAULT_BASE_URL
+      });
+      const data = {
+        provider: 'whatsapp_service',
+        base64: `data:${image.contentType};base64,${image.bytes.toString('base64')}`,
+        qrImageUrl: whatsappVpsService.getQrImageUrl(instanceName, {
+          baseURL: process.env.WHATSAPP_SERVICE_BASE_URL || WHATSAPP_SERVICE_DEFAULT_BASE_URL
+        })
+      };
+      await pool.query(
+        'UPDATE whatsapp_instances SET status = ?, last_status_check_at = NOW(), updated_by = ? WHERE instance_name = ?',
+        ['aguardando_qrcode', getActorName(req.user), instanceName]
+      );
+      await pool.query(
+        `UPDATE whatsapp_service_sessions
+            SET status = 'aguardando_qrcode',
+                last_status_check_at = NOW(),
+                updated_by = ?
+          WHERE session_id = ?`,
+        [getActorName(req.user), instanceName]
+      );
+      await logEvolutionEvent('generate_whatsapp_service_qrcode', {
+        instanceName,
+        status: 'success',
+        durationMs: performance.now() - startedAt,
+        request: { sessionId: instanceName },
+        response: { contentType: image.contentType, bytes: image.bytes.length }
+      });
+      emitWhatsAppDashboardRefresh('qrcode_generated', { instanceName });
+      return res.json(data);
+    }
+
     const data = await evolutionService.connectInstance(instanceName, rows[0]?.phone_number || req.query.number || '', await getEvolutionServiceConfig());
     await pool.query(
       'UPDATE whatsapp_instances SET status = ?, last_status_check_at = NOW(), updated_by = ? WHERE instance_name = ?',
@@ -9362,6 +9575,39 @@ async function handleWhatsAppInstanceStatus(req, res) {
   const startedAt = performance.now();
   const instanceName = normalizeEvolutionInstanceName(req.params.instanceName);
   try {
+    if (isWhatsAppServiceProviderConfigured()) {
+      const data = await whatsappVpsService.getSessionStatus(instanceName);
+      const status = mapWhatsAppServiceStatus(data);
+      await pool.query(
+        `UPDATE whatsapp_instances
+            SET status = ?,
+                last_connection_at = CASE WHEN ? = 'conectado' THEN NOW() ELSE last_connection_at END,
+                uptime_started_at = CASE WHEN ? = 'conectado' AND uptime_started_at IS NULL THEN NOW() WHEN ? <> 'conectado' THEN NULL ELSE uptime_started_at END,
+                last_status_check_at = NOW(),
+                updated_by = ?
+          WHERE instance_name = ?`,
+        [status, status, status, status, getActorName(req.user), instanceName]
+      );
+      await pool.query(
+        `UPDATE whatsapp_service_sessions
+            SET status = ?,
+                last_status_payload = ?,
+                last_status_check_at = NOW(),
+                updated_by = ?
+          WHERE session_id = ?`,
+        [status, JSON.stringify(data), getActorName(req.user), instanceName]
+      );
+      await logEvolutionEvent('whatsapp_service_status', {
+        instanceName,
+        status: 'success',
+        durationMs: performance.now() - startedAt,
+        request: { sessionId: instanceName },
+        response: { status, service: data }
+      });
+      emitWhatsAppDashboardRefresh('connection_status', { instanceName, status });
+      return res.json({ status, provider: 'whatsapp_service', service: data });
+    }
+
     const data = await evolutionService.getConnectionState(instanceName, await getEvolutionServiceConfig());
     const status = mapEvolutionConnectionStatus(data);
     await pool.query(
@@ -9404,6 +9650,34 @@ async function handleWhatsAppInstanceReconnect(req, res) {
       return res.status(403).json({ error: 'Seu perfil não pode reconectar instâncias.' });
     }
 
+    if (isWhatsAppServiceProviderConfigured()) {
+      let data = null;
+      let warning = null;
+      try {
+        data = await whatsappVpsService.createSession(instanceName, { source: 'reconnect' });
+      } catch (error) {
+        warning = whatsappVpsService.friendlyApiError(error);
+      }
+      await pool.query(
+        'UPDATE whatsapp_instances SET status = ?, updated_by = ?, last_status_check_at = NOW() WHERE instance_name = ?',
+        ['iniciando', getActorName(req.user), instanceName]
+      );
+      await pool.query(
+        'UPDATE whatsapp_service_sessions SET status = ?, updated_by = ?, last_status_check_at = NOW() WHERE session_id = ?',
+        ['iniciando', getActorName(req.user), instanceName]
+      );
+      await logEvolutionEvent('whatsapp_service_reconnect', {
+        instanceName,
+        status: warning ? 'warning' : 'success',
+        durationMs: performance.now() - startedAt,
+        request: { sessionId: instanceName },
+        response: data,
+        error: warning ? new Error(warning) : null
+      });
+      emitWhatsAppDashboardRefresh('reconnect', { instanceName });
+      return res.json({ success: true, provider: 'whatsapp_service', service: data, warning });
+    }
+
     let data = null;
     try {
       data = await evolutionService.restartInstance(instanceName, await getEvolutionServiceConfig());
@@ -9442,6 +9716,26 @@ async function handleWhatsAppInstanceLogout(req, res) {
   try {
     if (!canConfigureWhatsAppManagement(req.user)) {
       return res.status(403).json({ error: 'Seu perfil não pode desconectar instâncias.' });
+    }
+
+    if (isWhatsAppServiceProviderConfigured()) {
+      await pool.query(
+        'UPDATE whatsapp_instances SET status = ?, updated_by = ?, last_status_check_at = NOW() WHERE instance_name = ?',
+        ['desconectado', getActorName(req.user), instanceName]
+      );
+      await pool.query(
+        'UPDATE whatsapp_service_sessions SET status = ?, updated_by = ?, last_status_check_at = NOW() WHERE session_id = ?',
+        ['desconectado', getActorName(req.user), instanceName]
+      );
+      await logEvolutionEvent('whatsapp_service_logout', {
+        instanceName,
+        status: 'info',
+        durationMs: performance.now() - startedAt,
+        request: { sessionId: instanceName },
+        response: { localStatusOnly: true }
+      });
+      emitWhatsAppDashboardRefresh('logout_instance', { instanceName });
+      return res.json({ success: true, provider: 'whatsapp_service', warning: 'Sessão marcada como desconectada no sistema. Use o QR Code para reconectar se necessário.' });
     }
 
     let warning = null;
@@ -9483,6 +9777,20 @@ async function handleDeleteWhatsAppInstance(req, res) {
   try {
     if (!canConfigureWhatsAppManagement(req.user)) {
       return res.status(403).json({ error: 'Seu perfil não pode excluir instâncias.' });
+    }
+
+    if (isWhatsAppServiceProviderConfigured()) {
+      await pool.query('DELETE FROM whatsapp_instances WHERE instance_name = ?', [instanceName]);
+      await pool.query('DELETE FROM whatsapp_service_sessions WHERE session_id = ?', [instanceName]);
+      await logEvolutionEvent('whatsapp_service_delete_instance', {
+        instanceName,
+        status: 'success',
+        durationMs: performance.now() - startedAt,
+        request: { sessionId: instanceName },
+        response: { localDelete: true }
+      });
+      emitWhatsAppDashboardRefresh('delete_instance', { instanceName });
+      return res.json({ success: true, provider: 'whatsapp_service', warning: 'Cadastro excluído do sistema. Se precisar remover a sessão na VPS, faça pelo painel do serviço.' });
     }
 
     let warning = null;
