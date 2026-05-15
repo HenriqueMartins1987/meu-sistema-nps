@@ -20,6 +20,7 @@ const { performance } = require('perf_hooks');
 const { z } = require('zod');
 const { clinicSeed, legacyDefaultClinicNames } = require('./clinicSeed');
 const emailService = require('./services/emailService');
+const evolutionService = require('./services/evolutionService');
 const {
   DEFAULT_SELIC_RATE,
   DEFAULT_FINANCIAL_RULES,
@@ -260,6 +261,7 @@ const screenPermissions = {
   financial_dashboard: 'Financeiro CRC - Dashboard executivo',
   financial_campaigns: 'Financeiro CRC - Unidade x Campanha',
   financial_management: 'Financeiro CRC - Gestão financeira',
+  whatsapp_management: 'Gestão WhatsApp CRC',
   admin_panel: 'Painel gerencial'
 };
 
@@ -648,15 +650,15 @@ function defaultPermissionsForRole(role) {
   }
 
   if (role === 'sac_operator') {
-    return ['home', 'complaints_register', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'crm_relationship'];
+    return ['home', 'complaints_register', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'crm_relationship', 'whatsapp_management'];
   }
 
   if (role === 'supervisor_crc') {
-    return ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management'];
+    return ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management', 'whatsapp_management'];
   }
 
   if (role === 'manager') {
-    return ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management'];
+    return ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management', 'whatsapp_management'];
   }
 
   if (['supervisor_crc', 'coordinator', 'manager'].includes(role)) {
@@ -863,6 +865,20 @@ function canManageCrcCollaborators(user) {
 
 function canDeleteCrcCollaborators(user) {
   return isMasterAdminUser(user) && hasActionPermission(user, 'financial_collaborator_delete');
+}
+
+function canViewWhatsAppManagement(user) {
+  return isAdminUser(user)
+    || hasScreenPermission(user, 'whatsapp_management')
+    || ['manager', 'supervisor_crc', 'sac_operator'].includes(String(user?.role || '').toLowerCase());
+}
+
+function canConfigureWhatsAppManagement(user) {
+  return isAdminUser(user) || ['manager', 'supervisor_crc'].includes(String(user?.role || '').toLowerCase());
+}
+
+function canViewAllWhatsAppAttendance(user) {
+  return isAdminUser(user) || ['manager', 'supervisor_crc'].includes(String(user?.role || '').toLowerCase());
 }
 
 function canRenotifyComplaint(user) {
@@ -2058,6 +2074,162 @@ async function ensureDatabaseSchema() {
       setting_value LONGTEXT NULL,
       updated_by VARCHAR(180) NULL,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS whatsapp_instances (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      instance_name VARCHAR(120) NOT NULL UNIQUE,
+      display_name VARCHAR(160) NULL,
+      sector VARCHAR(80) NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      unit_name VARCHAR(180) NULL,
+      phone_number VARCHAR(40) NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'desconectado',
+      last_connection_at DATETIME NULL,
+      last_status_check_at DATETIME NULL,
+      notes TEXT NULL,
+      created_by VARCHAR(180) NULL,
+      updated_by VARCHAR(180) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_whatsapp_instances_status (status),
+      INDEX idx_whatsapp_instances_sector (sector),
+      INDEX idx_whatsapp_instances_clinic (clinic_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS whatsapp_templates (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(180) NOT NULL,
+      category VARCHAR(120) NULL,
+      sector VARCHAR(80) NULL,
+      message_text TEXT NOT NULL,
+      variables LONGTEXT NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'ativo',
+      created_by VARCHAR(180) NULL,
+      updated_by VARCHAR(180) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_whatsapp_templates_status (status),
+      INDEX idx_whatsapp_templates_category (category)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS whatsapp_conversations (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      patient_name VARCHAR(180) NOT NULL,
+      patient_phone VARCHAR(40) NOT NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      unit_name VARCHAR(180) NULL,
+      campaign VARCHAR(180) NULL,
+      source VARCHAR(120) NULL,
+      operator_id INT NULL,
+      operator_name VARCHAR(180) NULL,
+      instance_name VARCHAR(120) NULL,
+      status VARCHAR(80) NOT NULL DEFAULT 'Novo',
+      last_message_at DATETIME NULL,
+      next_follow_up_at DATETIME NULL,
+      notes TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_whatsapp_conversations_phone (patient_phone),
+      INDEX idx_whatsapp_conversations_operator (operator_id),
+      INDEX idx_whatsapp_conversations_status (status),
+      INDEX idx_whatsapp_conversations_instance (instance_name)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS whatsapp_messages (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      conversation_id INT NULL,
+      instance_name VARCHAR(120) NULL,
+      patient_phone VARCHAR(40) NOT NULL,
+      direction VARCHAR(20) NOT NULL DEFAULT 'outbound',
+      message_text TEXT NOT NULL,
+      message_type VARCHAR(80) NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'pendente',
+      evolution_message_id VARCHAR(180) NULL,
+      operator_id INT NULL,
+      operator_name VARCHAR(180) NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      campaign VARCHAR(180) NULL,
+      sent_at DATETIME NULL,
+      delivered_at DATETIME NULL,
+      read_at DATETIME NULL,
+      responded_at DATETIME NULL,
+      error_message TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_whatsapp_messages_conversation (conversation_id),
+      INDEX idx_whatsapp_messages_status (status),
+      INDEX idx_whatsapp_messages_operator (operator_id),
+      INDEX idx_whatsapp_messages_created (created_at)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS whatsapp_chatbot_flows (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      flow_name VARCHAR(180) NOT NULL,
+      instance_name VARCHAR(120) NULL,
+      sector VARCHAR(80) NULL,
+      trigger_type VARCHAR(80) NULL,
+      trigger_value VARCHAR(180) NULL,
+      initial_message TEXT NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'ativo',
+      created_by VARCHAR(180) NULL,
+      updated_by VARCHAR(180) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_whatsapp_flows_status (status),
+      INDEX idx_whatsapp_flows_trigger (trigger_type, trigger_value)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS whatsapp_chatbot_steps (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      flow_id INT NOT NULL,
+      step_order INT NOT NULL DEFAULT 1,
+      message_text TEXT NULL,
+      option_value VARCHAR(80) NULL,
+      next_step_id INT NULL,
+      action_type VARCHAR(80) NULL,
+      action_payload LONGTEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_whatsapp_steps_flow (flow_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS whatsapp_absent_patients (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      conversation_id INT NULL,
+      patient_name VARCHAR(180) NOT NULL,
+      patient_phone VARCHAR(40) NOT NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      reason VARCHAR(180) NULL,
+      attempt_count INT NOT NULL DEFAULT 1,
+      last_attempt_at DATETIME NULL,
+      next_attempt_at DATETIME NULL,
+      operator_id INT NULL,
+      operator_name VARCHAR(180) NULL,
+      status VARCHAR(80) NOT NULL DEFAULT 'Ausente primeira tentativa',
+      notes TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_whatsapp_absent_status (status),
+      INDEX idx_whatsapp_absent_operator (operator_id),
+      INDEX idx_whatsapp_absent_next (next_attempt_at)
     )
   `);
 
@@ -7052,6 +7224,14 @@ function requireFinancialView(req, res, next) {
   return res.status(403).json({ error: 'Acesso restrito à Inteligência Financeira do CRC.' });
 }
 
+function requireWhatsAppView(req, res, next) {
+  if (canViewWhatsAppManagement(req.user)) {
+    return next();
+  }
+
+  return res.status(403).json({ error: 'Acesso restrito à Gestão WhatsApp CRC.' });
+}
+
 // ============================================
 // TESTE
 // ============================================
@@ -7114,6 +7294,1079 @@ async function handleManualWhatsAppSend(req, res, eventKey = 'manual_test') {
   }
 }
 
+function normalizeEvolutionInstanceName(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9_-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 120);
+}
+
+function normalizeWhatsAppStatus(value, fallback = 'Novo') {
+  return sanitizeFinancialString(value || fallback, 80) || fallback;
+}
+
+function getEvolutionMessageId(response = {}) {
+  return response?.key?.id
+    || response?.message?.key?.id
+    || response?.id
+    || response?.messageId
+    || null;
+}
+
+function mapEvolutionConnectionStatus(response = {}) {
+  const raw = response?.instance?.state
+    || response?.state
+    || response?.status
+    || response?.connection
+    || response?.instance?.status
+    || '';
+  const normalized = String(raw || '').toLowerCase();
+
+  if (normalized.includes('open') || normalized.includes('connect')) return 'conectado';
+  if (normalized.includes('close') || normalized.includes('disconnect')) return 'desconectado';
+  if (normalized.includes('connecting')) return 'conectando';
+  return raw ? String(raw).slice(0, 40) : 'desconhecido';
+}
+
+function renderWhatsAppTemplateText(text = '', variables = {}) {
+  const source = typeof variables === 'string'
+    ? (() => {
+      try { return JSON.parse(variables); } catch (error) { return {}; }
+    })()
+    : variables;
+
+  return String(text || '').replace(/\{\{\s*([\w_]+)\s*\}\}/g, (_, key) => {
+    const value = source?.[key] ?? source?.[key.toLowerCase()] ?? '';
+    return value === null || value === undefined ? '' : String(value);
+  });
+}
+
+function normalizeWhatsAppVariables(value) {
+  if (Array.isArray(value)) return JSON.stringify(value);
+  if (value && typeof value === 'object') return JSON.stringify(value);
+  const text = String(value || '').trim();
+  if (!text) return null;
+  try {
+    const parsed = JSON.parse(text);
+    return JSON.stringify(parsed);
+  } catch (error) {
+    return JSON.stringify(text.split(/[,\n;]+/).map((item) => item.trim()).filter(Boolean));
+  }
+}
+
+async function getWhatsAppConversationById(id) {
+  const conversationId = Number(id || 0);
+  if (!Number.isInteger(conversationId) || conversationId <= 0) return null;
+  const [rows] = await pool.query('SELECT * FROM whatsapp_conversations WHERE id = ? LIMIT 1', [conversationId]);
+  return rows[0] || null;
+}
+
+async function findOrCreateWhatsAppConversation(payload = {}, user = {}) {
+  const phone = normalizeWhatsAppPhone(payload.patient_phone || payload.phone || payload.to);
+  if (!phone) {
+    throw new Error('Informe o telefone do paciente com DDI e DDD. Exemplo: 5562999999999.');
+  }
+
+  if (payload.conversation_id) {
+    const existingById = await getWhatsAppConversationById(payload.conversation_id);
+    if (existingById) return existingById;
+  }
+
+  const [existing] = await pool.query(
+    `SELECT *
+       FROM whatsapp_conversations
+      WHERE patient_phone = ?
+        AND status <> 'Encerrado'
+      ORDER BY updated_at DESC
+      LIMIT 1`,
+    [phone]
+  );
+
+  if (existing[0]) {
+    const update = {
+      patient_name: sanitizeFinancialString(payload.patient_name || payload.name || existing[0].patient_name),
+      clinic_id: payload.clinic_id || existing[0].clinic_id || null,
+      clinic_name: sanitizeFinancialString(payload.clinic_name || existing[0].clinic_name),
+      unit_name: sanitizeFinancialString(payload.unit_name || existing[0].unit_name),
+      campaign: sanitizeFinancialString(payload.campaign || existing[0].campaign),
+      source: sanitizeFinancialString(payload.source || existing[0].source),
+      operator_id: payload.operator_id || existing[0].operator_id || user?.id || null,
+      operator_name: sanitizeFinancialString(payload.operator_name || existing[0].operator_name || getActorName(user)),
+      instance_name: sanitizeFinancialString(payload.instance_name || existing[0].instance_name),
+      status: normalizeWhatsAppStatus(payload.status || existing[0].status)
+    };
+    await pool.query(
+      `UPDATE whatsapp_conversations
+          SET patient_name = ?,
+              clinic_id = ?,
+              clinic_name = ?,
+              unit_name = ?,
+              campaign = ?,
+              source = ?,
+              operator_id = ?,
+              operator_name = ?,
+              instance_name = ?,
+              status = ?
+        WHERE id = ?`,
+      [
+        update.patient_name || existing[0].patient_name,
+        update.clinic_id,
+        update.clinic_name,
+        update.unit_name,
+        update.campaign,
+        update.source,
+        update.operator_id,
+        update.operator_name,
+        update.instance_name,
+        update.status,
+        existing[0].id
+      ]
+    );
+    return { ...existing[0], ...update };
+  }
+
+  const clinic = payload.clinic_id ? await getClinicSnapshot(payload.clinic_id) : null;
+  const patientName = sanitizeFinancialString(payload.patient_name || payload.name || 'Paciente sem nome');
+  const actorName = getActorName(user);
+
+  const [result] = await pool.query(
+    `INSERT INTO whatsapp_conversations
+     (patient_name, patient_phone, clinic_id, clinic_name, unit_name, campaign, source, operator_id, operator_name, instance_name, status, notes, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), NOW())`,
+    [
+      patientName,
+      phone,
+      clinic?.id || payload.clinic_id || null,
+      clinic?.name || sanitizeFinancialString(payload.clinic_name),
+      sanitizeFinancialString(payload.unit_name) || clinic?.city || null,
+      sanitizeFinancialString(payload.campaign),
+      sanitizeFinancialString(payload.source || 'Manual'),
+      payload.operator_id || user?.id || null,
+      sanitizeFinancialString(payload.operator_name || actorName),
+      sanitizeFinancialString(payload.instance_name),
+      normalizeWhatsAppStatus(payload.status || 'Novo'),
+      sanitizeFinancialString(payload.notes, 2000)
+    ]
+  );
+
+  return getWhatsAppConversationById(result.insertId);
+}
+
+async function getDefaultWhatsAppInstance() {
+  const [rows] = await pool.query(
+    `SELECT *
+       FROM whatsapp_instances
+      ORDER BY CASE WHEN status = 'conectado' THEN 0 ELSE 1 END, updated_at DESC
+      LIMIT 1`
+  );
+  return rows[0] || null;
+}
+
+async function insertWhatsAppMessage(payload = {}) {
+  const [result] = await pool.query(
+    `INSERT INTO whatsapp_messages
+     (conversation_id, instance_name, patient_phone, direction, message_text, message_type, status, evolution_message_id,
+      operator_id, operator_name, clinic_id, clinic_name, campaign, sent_at, delivered_at, read_at, responded_at, error_message)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      payload.conversation_id || null,
+      payload.instance_name || null,
+      payload.patient_phone,
+      payload.direction || 'outbound',
+      payload.message_text,
+      payload.message_type || 'manual',
+      payload.status || 'pendente',
+      payload.evolution_message_id || null,
+      payload.operator_id || null,
+      payload.operator_name || null,
+      payload.clinic_id || null,
+      payload.clinic_name || null,
+      payload.campaign || null,
+      payload.sent_at || null,
+      payload.delivered_at || null,
+      payload.read_at || null,
+      payload.responded_at || null,
+      payload.error_message || null
+    ]
+  );
+  return result.insertId;
+}
+
+function buildWhatsAppScopeWhere(user, alias = 'c') {
+  if (canViewAllWhatsAppAttendance(user)) {
+    return { clause: '1=1', params: [] };
+  }
+
+  return {
+    clause: `(${alias}.operator_id = ?)`,
+    params: [user?.id || 0]
+  };
+}
+
+function buildDateFilter(query = {}, column = 'created_at') {
+  const where = [];
+  const params = [];
+  if (query.startDate) {
+    where.push(`${column} >= ?`);
+    params.push(query.startDate);
+  }
+  if (query.endDate) {
+    where.push(`${column} < DATE_ADD(?, INTERVAL 1 DAY)`);
+    params.push(query.endDate);
+  }
+  return { where, params };
+}
+
+async function handleGetWhatsAppInstances(req, res) {
+  try {
+    const [rows] = await pool.query('SELECT * FROM whatsapp_instances ORDER BY sector ASC, display_name ASC, instance_name ASC');
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar instâncias WhatsApp.' });
+  }
+}
+
+async function handleCreateWhatsAppInstance(req, res) {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode configurar instâncias WhatsApp.' });
+    }
+
+    const instanceName = normalizeEvolutionInstanceName(req.body.instance_name || req.body.instanceName);
+    if (!instanceName) return res.status(400).json({ error: 'Informe o nome da instância.' });
+
+    const clinic = req.body.clinic_id ? await getClinicSnapshot(req.body.clinic_id) : null;
+    const phone = normalizeWhatsAppPhone(req.body.phone_number || req.body.phoneNumber);
+    let evolutionResponse = null;
+    let evolutionWarning = null;
+
+    try {
+      evolutionResponse = await evolutionService.createInstance({
+        instanceName,
+        number: phone,
+        webhookUrl: String(process.env.EVOLUTION_WEBHOOK_URL || `${publicBaseUrl}/api/whatsapp/evolution-webhook`).trim(),
+        webhookToken: String(process.env.EVOLUTION_WEBHOOK_TOKEN || '').trim()
+      });
+    } catch (error) {
+      evolutionWarning = error.response?.data?.message || error.response?.data?.error || error.message;
+    }
+
+    await pool.query(
+      `INSERT INTO whatsapp_instances
+       (instance_name, display_name, sector, clinic_id, clinic_name, unit_name, phone_number, status, notes, created_by, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         display_name = VALUES(display_name),
+         sector = VALUES(sector),
+         clinic_id = VALUES(clinic_id),
+         clinic_name = VALUES(clinic_name),
+         unit_name = VALUES(unit_name),
+         phone_number = VALUES(phone_number),
+         notes = VALUES(notes),
+         updated_by = VALUES(updated_by)`,
+      [
+        instanceName,
+        sanitizeFinancialString(req.body.display_name || req.body.displayName || instanceName),
+        sanitizeFinancialString(req.body.sector || 'CRC', 80),
+        clinic?.id || req.body.clinic_id || null,
+        clinic?.name || sanitizeFinancialString(req.body.clinic_name),
+        sanitizeFinancialString(req.body.unit_name) || clinic?.city || null,
+        phone,
+        evolutionWarning ? 'pendente_configuracao' : 'criada',
+        sanitizeFinancialString(req.body.notes, 2000),
+        getActorName(req.user),
+        getActorName(req.user)
+      ]
+    );
+
+    const [rows] = await pool.query('SELECT * FROM whatsapp_instances WHERE instance_name = ? LIMIT 1', [instanceName]);
+    return res.status(201).json({ instance: rows[0], evolution: evolutionResponse, warning: evolutionWarning });
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao criar instância WhatsApp.' });
+  }
+}
+
+async function handleWhatsAppInstanceQrCode(req, res) {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode gerar QR Code de instância.' });
+    }
+
+    const instanceName = normalizeEvolutionInstanceName(req.params.instanceName);
+    const [rows] = await pool.query('SELECT phone_number FROM whatsapp_instances WHERE instance_name = ? LIMIT 1', [instanceName]);
+    const data = await evolutionService.connectInstance(instanceName, rows[0]?.phone_number || req.query.number || '');
+    await pool.query(
+      'UPDATE whatsapp_instances SET status = ?, last_status_check_at = NOW(), updated_by = ? WHERE instance_name = ?',
+      ['aguardando_qrcode', getActorName(req.user), instanceName]
+    );
+    return res.json(data);
+  } catch (error) {
+    console.error(error);
+    return res.status(502).json({ error: error.response?.data?.message || error.message || 'Erro ao gerar QR Code.' });
+  }
+}
+
+async function handleWhatsAppInstanceStatus(req, res) {
+  try {
+    const instanceName = normalizeEvolutionInstanceName(req.params.instanceName);
+    const data = await evolutionService.getConnectionState(instanceName);
+    const status = mapEvolutionConnectionStatus(data);
+    await pool.query(
+      `UPDATE whatsapp_instances
+          SET status = ?,
+              last_connection_at = CASE WHEN ? = 'conectado' THEN NOW() ELSE last_connection_at END,
+              last_status_check_at = NOW(),
+              updated_by = ?
+        WHERE instance_name = ?`,
+      [status, status, getActorName(req.user), instanceName]
+    );
+    return res.json({ status, evolution: data });
+  } catch (error) {
+    console.error(error);
+    return res.status(502).json({ error: error.response?.data?.message || error.message || 'Erro ao verificar status.' });
+  }
+}
+
+async function handleWhatsAppInstanceLogout(req, res) {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode desconectar instâncias.' });
+    }
+
+    const instanceName = normalizeEvolutionInstanceName(req.params.instanceName);
+    let warning = null;
+    try {
+      await evolutionService.logoutInstance(instanceName);
+    } catch (error) {
+      warning = error.response?.data?.message || error.message;
+    }
+    await pool.query(
+      'UPDATE whatsapp_instances SET status = ?, updated_by = ?, last_status_check_at = NOW() WHERE instance_name = ?',
+      ['desconectado', getActorName(req.user), instanceName]
+    );
+    return res.json({ success: true, warning });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao desconectar instância.' });
+  }
+}
+
+async function handleDeleteWhatsAppInstance(req, res) {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode excluir instâncias.' });
+    }
+
+    const instanceName = normalizeEvolutionInstanceName(req.params.instanceName);
+    let warning = null;
+    try {
+      await evolutionService.deleteInstance(instanceName);
+    } catch (error) {
+      warning = error.response?.data?.message || error.message;
+    }
+    await pool.query('DELETE FROM whatsapp_instances WHERE instance_name = ?', [instanceName]);
+    return res.json({ success: true, warning });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao excluir instância.' });
+  }
+}
+
+async function handleGetWhatsAppTemplates(req, res) {
+  try {
+    const [rows] = await pool.query('SELECT * FROM whatsapp_templates ORDER BY status ASC, category ASC, title ASC');
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar mensagens padrão.' });
+  }
+}
+
+async function handleCreateWhatsAppTemplate(req, res) {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode criar mensagens padrão.' });
+    }
+    const title = sanitizeFinancialString(req.body.title);
+    const messageText = String(req.body.message_text || req.body.messageText || '').trim();
+    if (!title || !messageText) return res.status(400).json({ error: 'Informe título e texto da mensagem.' });
+    const [result] = await pool.query(
+      `INSERT INTO whatsapp_templates
+       (title, category, sector, message_text, variables, status, created_by, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        title,
+        sanitizeFinancialString(req.body.category, 120),
+        sanitizeFinancialString(req.body.sector || 'CRC', 80),
+        messageText,
+        normalizeWhatsAppVariables(req.body.variables),
+        normalizeWhatsAppStatus(req.body.status || 'ativo', 'ativo'),
+        getActorName(req.user),
+        getActorName(req.user)
+      ]
+    );
+    const [rows] = await pool.query('SELECT * FROM whatsapp_templates WHERE id = ? LIMIT 1', [result.insertId]);
+    return res.status(201).json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao salvar mensagem padrão.' });
+  }
+}
+
+async function handleUpdateWhatsAppTemplate(req, res) {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode editar mensagens padrão.' });
+    }
+    await pool.query(
+      `UPDATE whatsapp_templates
+          SET title = ?,
+              category = ?,
+              sector = ?,
+              message_text = ?,
+              variables = ?,
+              status = ?,
+              updated_by = ?
+        WHERE id = ?`,
+      [
+        sanitizeFinancialString(req.body.title),
+        sanitizeFinancialString(req.body.category, 120),
+        sanitizeFinancialString(req.body.sector || 'CRC', 80),
+        String(req.body.message_text || req.body.messageText || '').trim(),
+        normalizeWhatsAppVariables(req.body.variables),
+        normalizeWhatsAppStatus(req.body.status || 'ativo', 'ativo'),
+        getActorName(req.user),
+        req.params.id
+      ]
+    );
+    const [rows] = await pool.query('SELECT * FROM whatsapp_templates WHERE id = ? LIMIT 1', [req.params.id]);
+    return res.json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao atualizar mensagem padrão.' });
+  }
+}
+
+async function handleSendWhatsAppManagementMessage(req, res, options = {}) {
+  try {
+    const messageText = String(req.body.message_text || req.body.message || '').trim();
+    if (!messageText) return res.status(400).json({ error: 'Informe a mensagem para envio.' });
+
+    const phone = normalizeWhatsAppPhone(req.body.patient_phone || req.body.phone || req.body.to);
+    if (!phone) return res.status(400).json({ error: 'Número inválido. Use DDI e DDD. Exemplo: 5562999999999.' });
+
+    const defaultInstance = await getDefaultWhatsAppInstance();
+    const instanceName = sanitizeFinancialString(req.body.instance_name || req.body.instanceName || defaultInstance?.instance_name);
+    if (!instanceName) return res.status(400).json({ error: 'Selecione uma instância WhatsApp para envio.' });
+
+    const conversation = await findOrCreateWhatsAppConversation({
+      ...req.body,
+      patient_phone: phone,
+      instance_name: instanceName,
+      status: req.body.status || 'Em atendimento'
+    }, req.user);
+
+    const messageId = await insertWhatsAppMessage({
+      conversation_id: conversation.id,
+      instance_name: instanceName,
+      patient_phone: phone,
+      direction: 'outbound',
+      message_text: messageText,
+      message_type: options.messageType || req.body.message_type || 'manual',
+      status: 'pendente',
+      operator_id: req.user?.id || null,
+      operator_name: getActorName(req.user),
+      clinic_id: conversation.clinic_id,
+      clinic_name: conversation.clinic_name,
+      campaign: conversation.campaign
+    });
+
+    try {
+      const evolution = await evolutionService.sendText(instanceName, phone, messageText);
+      const evolutionMessageId = getEvolutionMessageId(evolution);
+      await pool.query(
+        `UPDATE whatsapp_messages
+            SET status = 'enviada',
+                evolution_message_id = ?,
+                sent_at = NOW()
+          WHERE id = ?`,
+        [evolutionMessageId, messageId]
+      );
+      await pool.query(
+        `UPDATE whatsapp_conversations
+            SET last_message_at = NOW(),
+                status = CASE WHEN status = 'Novo' THEN 'Em atendimento' ELSE status END,
+                operator_id = COALESCE(operator_id, ?),
+                operator_name = COALESCE(operator_name, ?),
+                instance_name = ?
+          WHERE id = ?`,
+        [req.user?.id || null, getActorName(req.user), instanceName, conversation.id]
+      );
+      return res.status(201).json({ success: true, messageId, evolutionMessageId, conversationId: conversation.id });
+    } catch (error) {
+      await pool.query(
+        'UPDATE whatsapp_messages SET status = ?, error_message = ? WHERE id = ?',
+        ['erro', error.response?.data?.message || error.message, messageId]
+      );
+      return res.status(502).json({ success: false, messageId, conversationId: conversation.id, error: error.response?.data?.message || error.message });
+    }
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao enviar mensagem WhatsApp.' });
+  }
+}
+
+async function handleSendWhatsAppTemplate(req, res) {
+  try {
+    const [rows] = await pool.query('SELECT * FROM whatsapp_templates WHERE id = ? LIMIT 1', [req.body.template_id || req.body.templateId]);
+    if (!rows[0]) return res.status(404).json({ error: 'Mensagem padrão não encontrada.' });
+    req.body.message_text = renderWhatsAppTemplateText(rows[0].message_text, req.body.variables || {});
+    req.body.message_type = 'template';
+    return handleSendWhatsAppManagementMessage(req, res, { messageType: 'template' });
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao enviar mensagem padrão.' });
+  }
+}
+
+async function handleGetWhatsAppConversations(req, res) {
+  try {
+    const scope = buildWhatsAppScopeWhere(req.user, 'c');
+    const where = [scope.clause];
+    const params = [...scope.params];
+    if (req.query.status) {
+      where.push('c.status = ?');
+      params.push(req.query.status);
+    }
+    if (req.query.search) {
+      where.push('(c.patient_name LIKE ? OR c.patient_phone LIKE ? OR c.clinic_name LIKE ?)');
+      const search = `%${req.query.search}%`;
+      params.push(search, search, search);
+    }
+    const limit = Math.min(300, Math.max(20, Number(req.query.limit || 120)));
+    const [rows] = await pool.query(
+      `SELECT c.*,
+              (SELECT message_text FROM whatsapp_messages m WHERE m.conversation_id = c.id ORDER BY m.created_at DESC LIMIT 1) AS last_message_text
+         FROM whatsapp_conversations c
+        WHERE ${where.join(' AND ')}
+        ORDER BY COALESCE(c.last_message_at, c.updated_at, c.created_at) DESC
+        LIMIT ${limit}`,
+      params
+    );
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar atendimentos WhatsApp.' });
+  }
+}
+
+async function handleCreateWhatsAppConversation(req, res) {
+  try {
+    const conversation = await findOrCreateWhatsAppConversation(req.body, req.user);
+    return res.status(201).json(conversation);
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao criar atendimento.' });
+  }
+}
+
+async function handleUpdateWhatsAppConversation(req, res) {
+  try {
+    const conversation = await getWhatsAppConversationById(req.params.id);
+    if (!conversation) return res.status(404).json({ error: 'Atendimento não encontrado.' });
+    if (!canViewAllWhatsAppAttendance(req.user) && Number(conversation.operator_id) !== Number(req.user?.id)) {
+      return res.status(403).json({ error: 'Você só pode editar seus atendimentos.' });
+    }
+    await pool.query(
+      `UPDATE whatsapp_conversations
+          SET patient_name = ?,
+              clinic_id = ?,
+              clinic_name = ?,
+              unit_name = ?,
+              campaign = ?,
+              source = ?,
+              operator_id = ?,
+              operator_name = ?,
+              instance_name = ?,
+              status = ?,
+              next_follow_up_at = ?,
+              notes = ?
+        WHERE id = ?`,
+      [
+        sanitizeFinancialString(req.body.patient_name || conversation.patient_name),
+        req.body.clinic_id || conversation.clinic_id || null,
+        sanitizeFinancialString(req.body.clinic_name || conversation.clinic_name),
+        sanitizeFinancialString(req.body.unit_name || conversation.unit_name),
+        sanitizeFinancialString(req.body.campaign || conversation.campaign),
+        sanitizeFinancialString(req.body.source || conversation.source),
+        req.body.operator_id || conversation.operator_id || req.user?.id || null,
+        sanitizeFinancialString(req.body.operator_name || conversation.operator_name || getActorName(req.user)),
+        sanitizeFinancialString(req.body.instance_name || conversation.instance_name),
+        normalizeWhatsAppStatus(req.body.status || conversation.status),
+        req.body.next_follow_up_at || null,
+        sanitizeFinancialString(req.body.notes || conversation.notes, 2000),
+        req.params.id
+      ]
+    );
+    return res.json(await getWhatsAppConversationById(req.params.id));
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao atualizar atendimento.' });
+  }
+}
+
+async function handleGetWhatsAppConversationMessages(req, res) {
+  try {
+    const conversation = await getWhatsAppConversationById(req.params.id);
+    if (!conversation) return res.status(404).json({ error: 'Atendimento não encontrado.' });
+    if (!canViewAllWhatsAppAttendance(req.user) && Number(conversation.operator_id) !== Number(req.user?.id)) {
+      return res.status(403).json({ error: 'Você só pode visualizar seus atendimentos.' });
+    }
+    const [rows] = await pool.query(
+      'SELECT * FROM whatsapp_messages WHERE conversation_id = ? ORDER BY created_at ASC, id ASC',
+      [req.params.id]
+    );
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar mensagens.' });
+  }
+}
+
+async function handleGetWhatsAppHistory(req, res) {
+  try {
+    const scope = buildWhatsAppScopeWhere(req.user, 'c');
+    const dateFilter = buildDateFilter(req.query, 'm.created_at');
+    const where = [scope.clause, ...dateFilter.where];
+    const params = [...scope.params, ...dateFilter.params];
+    if (req.query.status) {
+      where.push('m.status = ?');
+      params.push(req.query.status);
+    }
+    if (req.query.instanceName) {
+      where.push('m.instance_name = ?');
+      params.push(req.query.instanceName);
+    }
+    if (req.query.patient) {
+      where.push('(c.patient_name LIKE ? OR m.patient_phone LIKE ?)');
+      const search = `%${req.query.patient}%`;
+      params.push(search, search);
+    }
+    const limit = Math.min(500, Math.max(20, Number(req.query.limit || 200)));
+    const [rows] = await pool.query(
+      `SELECT m.*, c.patient_name, c.unit_name, c.source
+         FROM whatsapp_messages m
+         LEFT JOIN whatsapp_conversations c ON c.id = m.conversation_id
+        WHERE ${where.join(' AND ')}
+        ORDER BY m.created_at DESC
+        LIMIT ${limit}`,
+      params
+    );
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar histórico WhatsApp.' });
+  }
+}
+
+async function handleGetWhatsAppAbsent(req, res) {
+  try {
+    const scope = buildWhatsAppScopeWhere(req.user, 'a');
+    const [rows] = await pool.query(
+      `SELECT a.*
+         FROM whatsapp_absent_patients a
+        WHERE ${scope.clause}
+        ORDER BY COALESCE(a.next_attempt_at, a.updated_at) ASC
+        LIMIT 300`,
+      scope.params
+    );
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar pacientes ausentes.' });
+  }
+}
+
+async function handleCreateWhatsAppAbsent(req, res) {
+  try {
+    const conversation = req.body.conversation_id ? await getWhatsAppConversationById(req.body.conversation_id) : null;
+    const phone = normalizeWhatsAppPhone(req.body.patient_phone || conversation?.patient_phone);
+    if (!phone) return res.status(400).json({ error: 'Informe o telefone do paciente ausente.' });
+    const [result] = await pool.query(
+      `INSERT INTO whatsapp_absent_patients
+       (conversation_id, patient_name, patient_phone, clinic_id, clinic_name, reason, attempt_count, last_attempt_at, next_attempt_at, operator_id, operator_name, status, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, ?, ?, ?)`,
+      [
+        conversation?.id || req.body.conversation_id || null,
+        sanitizeFinancialString(req.body.patient_name || conversation?.patient_name || 'Paciente sem nome'),
+        phone,
+        req.body.clinic_id || conversation?.clinic_id || null,
+        sanitizeFinancialString(req.body.clinic_name || conversation?.clinic_name),
+        sanitizeFinancialString(req.body.reason || 'Sem retorno', 180),
+        Number(req.body.attempt_count || req.body.attemptCount || 1),
+        req.body.next_attempt_at || null,
+        req.body.operator_id || conversation?.operator_id || req.user?.id || null,
+        sanitizeFinancialString(req.body.operator_name || conversation?.operator_name || getActorName(req.user)),
+        normalizeWhatsAppStatus(req.body.status || 'Ausente primeira tentativa'),
+        sanitizeFinancialString(req.body.notes, 2000)
+      ]
+    );
+    if (conversation?.id) {
+      await pool.query('UPDATE whatsapp_conversations SET status = ? WHERE id = ?', ['Ausente', conversation.id]);
+    }
+    const [rows] = await pool.query('SELECT * FROM whatsapp_absent_patients WHERE id = ? LIMIT 1', [result.insertId]);
+    return res.status(201).json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao registrar paciente ausente.' });
+  }
+}
+
+async function handleUpdateWhatsAppAbsent(req, res) {
+  try {
+    const [currentRows] = await pool.query('SELECT * FROM whatsapp_absent_patients WHERE id = ? LIMIT 1', [req.params.id]);
+    if (!currentRows[0]) return res.status(404).json({ error: 'Paciente ausente não encontrado.' });
+    const current = currentRows[0];
+    if (!canViewAllWhatsAppAttendance(req.user) && Number(current.operator_id) !== Number(req.user?.id)) {
+      return res.status(403).json({ error: 'Você só pode editar seus pacientes ausentes.' });
+    }
+    await pool.query(
+      `UPDATE whatsapp_absent_patients
+          SET reason = ?,
+              attempt_count = ?,
+              last_attempt_at = ?,
+              next_attempt_at = ?,
+              operator_id = ?,
+              operator_name = ?,
+              status = ?,
+              notes = ?
+        WHERE id = ?`,
+      [
+        sanitizeFinancialString(req.body.reason || current.reason, 180),
+        Number(req.body.attempt_count || req.body.attemptCount || current.attempt_count || 1),
+        req.body.last_attempt_at || current.last_attempt_at,
+        req.body.next_attempt_at || null,
+        req.body.operator_id || current.operator_id,
+        sanitizeFinancialString(req.body.operator_name || current.operator_name),
+        normalizeWhatsAppStatus(req.body.status || current.status),
+        sanitizeFinancialString(req.body.notes || current.notes, 2000),
+        req.params.id
+      ]
+    );
+    const [rows] = await pool.query('SELECT * FROM whatsapp_absent_patients WHERE id = ? LIMIT 1', [req.params.id]);
+    return res.json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao atualizar paciente ausente.' });
+  }
+}
+
+async function handleGetWhatsAppFlows(req, res) {
+  try {
+    const [flows] = await pool.query('SELECT * FROM whatsapp_chatbot_flows ORDER BY status ASC, flow_name ASC');
+    const [steps] = await pool.query('SELECT * FROM whatsapp_chatbot_steps ORDER BY flow_id ASC, step_order ASC');
+    const byFlow = steps.reduce((acc, step) => {
+      acc[step.flow_id] = acc[step.flow_id] || [];
+      acc[step.flow_id].push(step);
+      return acc;
+    }, {});
+    return res.json(flows.map((flow) => ({ ...flow, steps: byFlow[flow.id] || [] })));
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar fluxos de chatbot.' });
+  }
+}
+
+async function saveWhatsAppFlowSteps(flowId, steps = []) {
+  await pool.query('DELETE FROM whatsapp_chatbot_steps WHERE flow_id = ?', [flowId]);
+  for (const [index, step] of steps.entries()) {
+    await pool.query(
+      `INSERT INTO whatsapp_chatbot_steps
+       (flow_id, step_order, message_text, option_value, next_step_id, action_type, action_payload)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        flowId,
+        Number(step.step_order || step.stepOrder || index + 1),
+        String(step.message_text || step.messageText || '').trim(),
+        sanitizeFinancialString(step.option_value || step.optionValue, 80),
+        step.next_step_id || step.nextStepId || null,
+        sanitizeFinancialString(step.action_type || step.actionType, 80),
+        step.action_payload ? JSON.stringify(step.action_payload) : null
+      ]
+    );
+  }
+}
+
+async function handleCreateWhatsAppFlow(req, res) {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode criar fluxos de chatbot.' });
+    }
+    const [result] = await pool.query(
+      `INSERT INTO whatsapp_chatbot_flows
+       (flow_name, instance_name, sector, trigger_type, trigger_value, initial_message, status, created_by, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        sanitizeFinancialString(req.body.flow_name || req.body.flowName),
+        sanitizeFinancialString(req.body.instance_name || req.body.instanceName),
+        sanitizeFinancialString(req.body.sector || 'CRC', 80),
+        sanitizeFinancialString(req.body.trigger_type || req.body.triggerType, 80),
+        sanitizeFinancialString(req.body.trigger_value || req.body.triggerValue),
+        String(req.body.initial_message || req.body.initialMessage || '').trim(),
+        normalizeWhatsAppStatus(req.body.status || 'ativo', 'ativo'),
+        getActorName(req.user),
+        getActorName(req.user)
+      ]
+    );
+    await saveWhatsAppFlowSteps(result.insertId, Array.isArray(req.body.steps) ? req.body.steps : []);
+    const [rows] = await pool.query('SELECT * FROM whatsapp_chatbot_flows WHERE id = ? LIMIT 1', [result.insertId]);
+    return res.status(201).json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao salvar fluxo.' });
+  }
+}
+
+async function handleUpdateWhatsAppFlow(req, res) {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode editar fluxos de chatbot.' });
+    }
+    await pool.query(
+      `UPDATE whatsapp_chatbot_flows
+          SET flow_name = ?,
+              instance_name = ?,
+              sector = ?,
+              trigger_type = ?,
+              trigger_value = ?,
+              initial_message = ?,
+              status = ?,
+              updated_by = ?
+        WHERE id = ?`,
+      [
+        sanitizeFinancialString(req.body.flow_name || req.body.flowName),
+        sanitizeFinancialString(req.body.instance_name || req.body.instanceName),
+        sanitizeFinancialString(req.body.sector || 'CRC', 80),
+        sanitizeFinancialString(req.body.trigger_type || req.body.triggerType, 80),
+        sanitizeFinancialString(req.body.trigger_value || req.body.triggerValue),
+        String(req.body.initial_message || req.body.initialMessage || '').trim(),
+        normalizeWhatsAppStatus(req.body.status || 'ativo', 'ativo'),
+        getActorName(req.user),
+        req.params.id
+      ]
+    );
+    if (Array.isArray(req.body.steps)) {
+      await saveWhatsAppFlowSteps(req.params.id, req.body.steps);
+    }
+    const [rows] = await pool.query('SELECT * FROM whatsapp_chatbot_flows WHERE id = ? LIMIT 1', [req.params.id]);
+    return res.json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao atualizar fluxo.' });
+  }
+}
+
+async function handleGetWhatsAppDashboard(req, res) {
+  try {
+    const scope = buildWhatsAppScopeWhere(req.user, 'c');
+    const [instances] = await pool.query('SELECT * FROM whatsapp_instances ORDER BY display_name ASC');
+    const [conversations] = await pool.query(
+      `SELECT * FROM whatsapp_conversations c WHERE ${scope.clause}`,
+      scope.params
+    );
+    const [messages] = await pool.query(
+      `SELECT m.*, c.status AS conversation_status
+         FROM whatsapp_messages m
+         LEFT JOIN whatsapp_conversations c ON c.id = m.conversation_id
+        WHERE ${scope.clause}`,
+      scope.params
+    );
+    const [absent] = await pool.query(
+      `SELECT a.* FROM whatsapp_absent_patients a WHERE ${buildWhatsAppScopeWhere(req.user, 'a').clause}`,
+      buildWhatsAppScopeWhere(req.user, 'a').params
+    );
+
+    const today = new Date().toISOString().slice(0, 10);
+    const isToday = (value) => String(value || '').slice(0, 10) === today;
+    const sent = messages.filter((item) => item.direction === 'outbound');
+    const received = messages.filter((item) => item.direction === 'inbound');
+    const sentToday = sent.filter((item) => isToday(item.sent_at || item.created_at));
+    const receivedToday = received.filter((item) => isToday(item.created_at));
+    const read = messages.filter((item) => item.status === 'lida' || item.read_at);
+    const erro = messages.filter((item) => item.status === 'erro');
+    const waiting = conversations.filter((item) => !['Encerrado', 'Agendado', 'Compareceu'].includes(item.status));
+    const responseRate = received.length ? Math.round((messages.filter((item) => item.status === 'respondida').length / received.length) * 10000) / 100 : 0;
+    const readRate = sent.length ? Math.round((read.length / sent.length) * 10000) / 100 : 0;
+    const errorRate = sent.length ? Math.round((erro.length / sent.length) * 10000) / 100 : 0;
+
+    const groupBy = (items, keyFn, valueKey = 'total') => {
+      const grouped = new Map();
+      items.forEach((item) => {
+        const key = keyFn(item) || 'Não informado';
+        const current = grouped.get(key) || { label: key, [valueKey]: 0 };
+        current[valueKey] += 1;
+        grouped.set(key, current);
+      });
+      return Array.from(grouped.values()).sort((a, b) => b[valueKey] - a[valueKey]);
+    };
+
+    return res.json({
+      summary: {
+        totalInstances: instances.length,
+        activeInstances: instances.filter((item) => item.status === 'conectado').length,
+        disconnectedInstances: instances.filter((item) => item.status !== 'conectado').length,
+        sentToday: sentToday.length,
+        receivedToday: receivedToday.length,
+        answered: messages.filter((item) => item.status === 'respondida').length,
+        waitingPatients: waiting.length,
+        absentPatients: absent.filter((item) => item.status !== 'Recuperado' && item.status !== 'Encerrado sem contato').length,
+        averageResponseTime: 0,
+        slaOk: conversations.filter((item) => item.next_follow_up_at && new Date(item.next_follow_up_at) >= new Date()).length,
+        slaExpired: conversations.filter((item) => item.next_follow_up_at && new Date(item.next_follow_up_at) < new Date()).length,
+        responseRate,
+        readRate,
+        errorRate,
+        scheduledConversions: conversations.filter((item) => item.status === 'Agendado').length
+      },
+      charts: {
+        messagesByDay: groupBy(messages, (item) => String(item.created_at || '').slice(0, 10), 'messages').slice(0, 30).reverse(),
+        messagesByOperator: groupBy(messages, (item) => item.operator_name, 'messages').slice(0, 15),
+        messagesByInstance: groupBy(messages, (item) => item.instance_name, 'messages').slice(0, 15),
+        attendanceByStatus: groupBy(conversations, (item) => item.status, 'attendances'),
+        absentByPeriod: groupBy(absent, (item) => String(item.created_at || '').slice(0, 10), 'absent').slice(0, 30).reverse(),
+        responseByCampaign: groupBy(conversations, (item) => item.campaign, 'attendances').slice(0, 15),
+        rankingOperators: groupBy(messages, (item) => item.operator_name, 'messages').slice(0, 10),
+        rankingNumbers: groupBy(messages, (item) => item.instance_name, 'messages').slice(0, 10)
+      },
+      instances,
+      recentMessages: messages.slice(-20).reverse()
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar dashboard WhatsApp.' });
+  }
+}
+
+function extractEvolutionInboundMessage(body = {}) {
+  const data = body.data || body;
+  const key = data.key || data.message?.key || {};
+  const message = data.message || data.messages?.[0]?.message || {};
+  const text = message.conversation
+    || message.extendedTextMessage?.text
+    || data.text
+    || data.messageText
+    || '';
+  const remote = key.remoteJid || data.remoteJid || data.from || data.sender || '';
+  const phone = normalizeWhatsAppPhone(remote);
+  const fromMe = Boolean(key.fromMe || data.fromMe);
+
+  return {
+    instanceName: body.instance || body.instanceName || data.instance || data.instanceName,
+    phone,
+    text,
+    fromMe,
+    messageId: key.id || data.id || data.messageId || null,
+    pushName: data.pushName || data.senderName || data.name || null
+  };
+}
+
+function extractEvolutionMessageStatus(body = {}) {
+  const data = body.data || body;
+  const key = data.key || data.message?.key || data.update?.key || {};
+  const rawStatus = String(data.status || data.message?.status || data.update?.status || body.status || '').toLowerCase();
+  const messageId = key.id || data.id || data.messageId || data.message?.id || data.update?.id || null;
+  let status = '';
+
+  if (rawStatus.includes('read') || rawStatus.includes('played')) status = 'lida';
+  else if (rawStatus.includes('deliver')) status = 'entregue';
+  else if (rawStatus.includes('send') || rawStatus.includes('server') || rawStatus.includes('pending')) status = 'enviada';
+  else if (rawStatus.includes('error') || rawStatus.includes('fail')) status = 'erro';
+
+  return { messageId, status };
+}
+
+async function handleEvolutionWebhook(req, res) {
+  try {
+    const configuredToken = String(process.env.EVOLUTION_WEBHOOK_TOKEN || '').trim();
+    if (configuredToken) {
+      const provided = String(req.headers.authorization || req.headers['x-webhook-token'] || '').replace(/^Bearer\s+/i, '').trim();
+      if (provided !== configuredToken) {
+        return res.status(401).json({ error: 'Webhook não autorizado.' });
+      }
+    }
+
+    const eventName = String(req.body?.event || req.body?.type || '').toUpperCase();
+
+    if (eventName.includes('MESSAGES_UPDATE') || eventName.includes('SEND_MESSAGE')) {
+      const update = extractEvolutionMessageStatus(req.body || {});
+      if (update.messageId && update.status) {
+        await pool.query(
+          `UPDATE whatsapp_messages
+              SET status = ?,
+                  delivered_at = CASE WHEN ? IN ('entregue', 'lida') THEN COALESCE(delivered_at, NOW()) ELSE delivered_at END,
+                  read_at = CASE WHEN ? = 'lida' THEN COALESCE(read_at, NOW()) ELSE read_at END
+            WHERE evolution_message_id = ?`,
+          [update.status, update.status, update.status, update.messageId]
+        );
+      }
+      return res.json({ success: true, statusUpdated: Boolean(update.messageId && update.status) });
+    }
+
+    const inbound = extractEvolutionInboundMessage(req.body || {});
+    if (!inbound.phone || !inbound.text || inbound.fromMe) {
+      return res.json({ ignored: true });
+    }
+
+    const conversation = await findOrCreateWhatsAppConversation({
+      patient_name: inbound.pushName || 'Paciente WhatsApp',
+      patient_phone: inbound.phone,
+      instance_name: inbound.instanceName,
+      source: 'WhatsApp',
+      status: 'Novo'
+    }, { id: null, name: 'Evolution API', role: 'webhook' });
+
+    await insertWhatsAppMessage({
+      conversation_id: conversation.id,
+      instance_name: inbound.instanceName,
+      patient_phone: inbound.phone,
+      direction: 'inbound',
+      message_text: inbound.text,
+      message_type: 'paciente',
+      status: 'recebida',
+      evolution_message_id: inbound.messageId,
+      clinic_id: conversation.clinic_id,
+      clinic_name: conversation.clinic_name,
+      campaign: conversation.campaign
+    });
+
+    await pool.query(
+      `UPDATE whatsapp_messages
+          SET status = 'respondida',
+              responded_at = NOW()
+        WHERE conversation_id = ?
+          AND direction = 'outbound'
+          AND status IN ('pendente', 'enviada', 'entregue', 'lida')
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [conversation.id]
+    );
+
+    await pool.query(
+      'UPDATE whatsapp_conversations SET last_message_at = NOW(), status = CASE WHEN status = "Encerrado" THEN "Novo" ELSE status END WHERE id = ?',
+      [conversation.id]
+    );
+
+    return res.json({ success: true, conversationId: conversation.id });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao processar webhook Evolution.' });
+  }
+}
+
 app.post('/api/test-whatsapp', authenticate, requireAdmin, async (req, res) => {
   return handleManualWhatsAppSend(req, res, 'manual_test');
 });
@@ -7121,6 +8374,62 @@ app.post('/api/test-whatsapp', authenticate, requireAdmin, async (req, res) => {
 app.post('/api/whatsapp/enviar', authenticate, requireMasterAdmin, async (req, res) => {
   return handleManualWhatsAppSend(req, res, 'manual_send');
 });
+
+app.get('/api/whatsapp/instances', authenticate, requireWhatsAppView, handleGetWhatsAppInstances);
+app.post('/api/whatsapp/instances', authenticate, requireWhatsAppView, handleCreateWhatsAppInstance);
+app.get('/api/whatsapp/instances/:instanceName/qrcode', authenticate, requireWhatsAppView, handleWhatsAppInstanceQrCode);
+app.get('/api/whatsapp/instances/:instanceName/status', authenticate, requireWhatsAppView, handleWhatsAppInstanceStatus);
+app.post('/api/whatsapp/instances/:instanceName/logout', authenticate, requireWhatsAppView, handleWhatsAppInstanceLogout);
+app.delete('/api/whatsapp/instances/:instanceName', authenticate, requireWhatsAppView, handleDeleteWhatsAppInstance);
+
+app.post('/api/whatsapp/send', authenticate, requireWhatsAppView, handleSendWhatsAppManagementMessage);
+app.post('/api/whatsapp/send-template', authenticate, requireWhatsAppView, handleSendWhatsAppTemplate);
+
+app.get('/api/whatsapp/templates', authenticate, requireWhatsAppView, handleGetWhatsAppTemplates);
+app.post('/api/whatsapp/templates', authenticate, requireWhatsAppView, handleCreateWhatsAppTemplate);
+app.put('/api/whatsapp/templates/:id', authenticate, requireWhatsAppView, handleUpdateWhatsAppTemplate);
+app.delete('/api/whatsapp/templates/:id', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode excluir mensagens padrão.' });
+    }
+    await pool.query('DELETE FROM whatsapp_templates WHERE id = ?', [req.params.id]);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao excluir mensagem padrão.' });
+  }
+});
+
+app.get('/api/whatsapp/conversations', authenticate, requireWhatsAppView, handleGetWhatsAppConversations);
+app.post('/api/whatsapp/conversations', authenticate, requireWhatsAppView, handleCreateWhatsAppConversation);
+app.put('/api/whatsapp/conversations/:id', authenticate, requireWhatsAppView, handleUpdateWhatsAppConversation);
+app.get('/api/whatsapp/conversations/:id/messages', authenticate, requireWhatsAppView, handleGetWhatsAppConversationMessages);
+
+app.get('/api/whatsapp/absent', authenticate, requireWhatsAppView, handleGetWhatsAppAbsent);
+app.post('/api/whatsapp/absent', authenticate, requireWhatsAppView, handleCreateWhatsAppAbsent);
+app.put('/api/whatsapp/absent/:id', authenticate, requireWhatsAppView, handleUpdateWhatsAppAbsent);
+
+app.get('/api/whatsapp/chatbot/flows', authenticate, requireWhatsAppView, handleGetWhatsAppFlows);
+app.post('/api/whatsapp/chatbot/flows', authenticate, requireWhatsAppView, handleCreateWhatsAppFlow);
+app.put('/api/whatsapp/chatbot/flows/:id', authenticate, requireWhatsAppView, handleUpdateWhatsAppFlow);
+app.delete('/api/whatsapp/chatbot/flows/:id', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode excluir fluxos de chatbot.' });
+    }
+    await pool.query('DELETE FROM whatsapp_chatbot_steps WHERE flow_id = ?', [req.params.id]);
+    await pool.query('DELETE FROM whatsapp_chatbot_flows WHERE id = ?', [req.params.id]);
+    return res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao excluir fluxo.' });
+  }
+});
+
+app.get('/api/whatsapp/dashboard', authenticate, requireWhatsAppView, handleGetWhatsAppDashboard);
+app.get('/api/whatsapp/history', authenticate, requireWhatsAppView, handleGetWhatsAppHistory);
+app.post('/api/whatsapp/evolution-webhook', handleEvolutionWebhook);
 
 app.post('/api/test-email', authenticate, requireMasterAdmin, async (req, res) => {
   try {

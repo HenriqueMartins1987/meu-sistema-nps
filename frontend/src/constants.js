@@ -88,6 +88,7 @@ export const screenPermissions = [
   { value: 'financial_dashboard', label: 'Financeiro CRC - Dashboard executivo' },
   { value: 'financial_campaigns', label: 'Financeiro CRC - Unidade x Campanha' },
   { value: 'financial_management', label: 'Financeiro CRC - Gestão financeira' },
+  { value: 'whatsapp_management', label: 'Gestão WhatsApp CRC' },
   { value: 'admin_panel', label: 'Painel gerencial' }
 ];
 

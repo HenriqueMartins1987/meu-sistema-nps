@@ -161,6 +161,10 @@ function canAccessFinancialManagement(user) {
   return hasPermission(user, 'financial_management');
 }
 
+function canAccessWhatsAppManagement(user) {
+  return hasPermission(user, 'whatsapp_management');
+}
+
 function HomeShellFixed() {
   const navigate = useNavigate();
   const user = useMemo(() => readUser(), []);
@@ -197,6 +201,12 @@ function HomeShellFixed() {
         { label: 'Dashboard Executivo CRC', path: '/home/financial-intelligence', permission: 'financial_dashboard', financialExecutiveOnly: true },
         { label: 'Unidade x Campanha', path: '/home/financial-intelligence/campaigns', permission: 'financial_campaigns', financialCampaignOnly: true },
         { label: 'Gestão Financeira CRC', path: '/home/financial-intelligence/manage', permission: 'financial_management', financialManageOnly: true }
+      ]
+    },
+    {
+      title: 'WhatsApp CRC',
+      items: [
+        { label: 'Gestão WhatsApp CRC', path: '/home/whatsapp-management/dashboard', permission: 'whatsapp_management', whatsappOnly: true }
       ]
     },
     {
@@ -256,6 +266,10 @@ function HomeShellFixed() {
         }
 
         if (item.financialManageOnly && !canAccessFinancialManagement(user)) {
+          return false;
+        }
+
+        if (item.whatsappOnly && !canAccessWhatsAppManagement(user)) {
           return false;
         }
 
