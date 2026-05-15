@@ -9527,6 +9527,26 @@ a {
   background: linear-gradient(180deg, #fffdfa, #f8f3eb);
 }
 
+.master-financial-policy-box .master-tax-policy-card {
+  grid-column: span 2;
+}
+
+.master-tax-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.master-tax-grid label {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid rgba(151, 111, 55, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 253, 250, 0.78);
+}
+
 .master-financial-policy-box span,
 .master-financial-policy-box label {
   color: var(--muted);

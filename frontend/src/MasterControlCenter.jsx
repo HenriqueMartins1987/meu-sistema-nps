@@ -28,6 +28,15 @@ const tabs = [
   { id: 'financial', label: 'Financeiro' }
 ];
 
+const defaultTaxComponents = [
+  { key: 'irpj', label: 'IRPJ', percent: 4.8 },
+  { key: 'additional_irpj', label: 'Adicional IRPJ', percent: 0.96 },
+  { key: 'csll', label: 'CSLL', percent: 2.88 },
+  { key: 'pis', label: 'PIS', percent: 0.65 },
+  { key: 'cofins', label: 'COFINS', percent: 3 },
+  { key: 'iss', label: 'ISS', percent: 5 }
+];
+
 const permissionGroups = [
   { key: 'core', title: 'Sistema', match: (value) => ['home', 'admin_panel'].includes(value) },
   { key: 'complaints', title: 'Reclamacoes e protocolos', match: (value) => value.startsWith('complaints') },
@@ -182,6 +191,18 @@ function normalizeUser(user = {}) {
     actionPermissions: Array.isArray(user.actionPermissions) ? user.actionPermissions : (defaultRoleActionPermissions[user.role] || []),
     clinicIds: normalizeClinicIds(user)
   };
+}
+
+function normalizeTaxComponentsForView(settings = {}) {
+  const current = Array.isArray(settings.taxComponents) ? settings.taxComponents : [];
+  return defaultTaxComponents.map((item) => {
+    const saved = current.find((component) => component.key === item.key) || {};
+    return {
+      ...item,
+      label: saved.label || item.label,
+      percent: saved.percent ?? item.percent
+    };
+  });
 }
 
 function roleLabel(value) {
@@ -356,6 +377,12 @@ function MasterControlCenter() {
       { title: 'Gerencia/coordenacao sem clinica', value: leadershipWithoutClinic.length, detail: 'Pode bloquear visao por unidade.' }
     ];
   }, [users]);
+
+  const taxComponents = useMemo(() => normalizeTaxComponentsForView(settings || {}), [settings]);
+  const totalTaxRate = useMemo(
+    () => taxComponents.reduce((total, item) => total + toNumber(item.percent), 0),
+    [taxComponents]
+  );
 
   const patchUser = (userId, changes) => {
     setUsers((current) => current.map((user) => (
@@ -587,6 +614,16 @@ function MasterControlCenter() {
     setSettings((current) => ({ ...current, [field]: value }));
   };
 
+  const updateTaxComponent = (key, value) => {
+    setSettings((current) => {
+      const components = normalizeTaxComponentsForView(current).map((item) => (
+        item.key === key ? { ...item, percent: value } : item
+      ));
+      const taxRatePercent = components.reduce((total, item) => total + toNumber(item.percent), 0);
+      return { ...current, taxComponents: components, taxRatePercent };
+    });
+  };
+
   const updateMargin = (key, field, value) => {
     setSettings((current) => ({
       ...current,
@@ -610,7 +647,11 @@ function MasterControlCenter() {
         crcRoiExcellent: toNumber(settings?.crcRoiExcellent),
         netMarginHealthyMin: toNumber(settings?.netMarginHealthyMin),
         selicComparisonTolerance: toNumber(settings?.selicComparisonTolerance),
-        taxRatePercent: toNumber(settings?.taxRatePercent),
+        taxComponents: normalizeTaxComponentsForView(settings).map((item) => ({
+          ...item,
+          percent: toNumber(item.percent)
+        })),
+        taxRatePercent: normalizeTaxComponentsForView(settings).reduce((total, item) => total + toNumber(item.percent), 0),
         costAllocationPercent: toNumber(settings?.costAllocationPercent)
       };
       const { data } = await api.put('/admin/financial-settings', payload);
@@ -1207,11 +1248,18 @@ function MasterControlCenter() {
               </div>
 
               <div className="master-financial-policy-box">
-                <article>
+                <article className="master-tax-policy-card">
                   <span>Impostos</span>
-                  <strong>{Number(settings.taxRatePercent || 0).toFixed(2)}%</strong>
-                  <small>Percentual aplicado sobre a receita para calcular o custo tributario do CRC.</small>
-                  <label>Percentual de impostos (%)<input className="field" type="number" step="0.01" min="0" value={settings.taxRatePercent ?? ''} onChange={(event) => updateSetting('taxRatePercent', event.target.value)} /></label>
+                  <strong>{Number(totalTaxRate || 0).toFixed(2)}%</strong>
+                  <small>Percentual consolidado aplicado sobre a receita. Edite cada tributo abaixo para atualizar o total automaticamente.</small>
+                  <div className="master-tax-grid">
+                    {taxComponents.map((tax) => (
+                      <label key={tax.key}>
+                        {tax.label}
+                        <input className="field" type="number" step="0.01" min="0" value={tax.percent ?? ''} onChange={(event) => updateTaxComponent(tax.key, event.target.value)} />
+                      </label>
+                    ))}
+                  </div>
                 </article>
                 <article>
                   <span>Rateio de custos</span>

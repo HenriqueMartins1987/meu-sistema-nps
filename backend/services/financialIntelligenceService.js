@@ -132,11 +132,23 @@ const expectedMargins = {
   crcRoi: { label: 'ROI CRC previsto', min: 150, max: null, suffix: '%' }
 };
 
+const DEFAULT_TAX_COMPONENTS = [
+  { key: 'irpj', label: 'IRPJ', percent: 4.8 },
+  { key: 'additional_irpj', label: 'Adicional IRPJ', percent: 0.96 },
+  { key: 'csll', label: 'CSLL', percent: 2.88 },
+  { key: 'pis', label: 'PIS', percent: 0.65 },
+  { key: 'cofins', label: 'COFINS', percent: 3 },
+  { key: 'iss', label: 'ISS', percent: 5 }
+];
+
+const DEFAULT_TAX_RATE_PERCENT = DEFAULT_TAX_COMPONENTS.reduce((total, item) => total + item.percent, 0);
+
 const DEFAULT_FINANCIAL_RULES = {
   crcRoiExcellent: 150,
   netMarginHealthyMin: 20,
   selicComparisonTolerance: 1,
-  taxRatePercent: 0,
+  taxRatePercent: DEFAULT_TAX_RATE_PERCENT,
+  taxComponents: DEFAULT_TAX_COMPONENTS,
   costAllocationPercent: 100,
   expectedMargins
 };
@@ -192,6 +204,29 @@ function sumFields(row, fields) {
   return fields.reduce((total, field) => total + toNumber(row[field]), 0);
 }
 
+function normalizeTaxComponents(rules = {}) {
+  const rawComponents = Array.isArray(rules.taxComponents)
+    ? rules.taxComponents
+    : (Array.isArray(rules.tax_components) ? rules.tax_components : null);
+  const componentMap = rawComponents
+    ? rawComponents.reduce((acc, item = {}, index) => {
+      const key = item.key || DEFAULT_TAX_COMPONENTS[index]?.key;
+      if (key) acc[key] = item;
+      return acc;
+    }, {})
+    : {};
+
+  return DEFAULT_TAX_COMPONENTS.map((defaultComponent) => {
+    const current = componentMap[defaultComponent.key] || {};
+    const percentValue = current.percent ?? current.value ?? current.rate ?? defaultComponent.percent;
+    return {
+      ...defaultComponent,
+      label: current.label || defaultComponent.label,
+      percent: round(Math.max(0, toNumber(percentValue)))
+    };
+  });
+}
+
 function normalizeFinancialRules(rules = {}) {
   const expected = {};
 
@@ -207,11 +242,15 @@ function normalizeFinancialRules(rules = {}) {
     };
   });
 
+  const taxComponents = normalizeTaxComponents(rules);
+  const taxRatePercent = round(taxComponents.reduce((total, item) => total + toNumber(item.percent), 0));
+
   return {
     crcRoiExcellent: toNumber(rules.crcRoiExcellent) || DEFAULT_FINANCIAL_RULES.crcRoiExcellent,
     netMarginHealthyMin: toNumber(rules.netMarginHealthyMin) || DEFAULT_FINANCIAL_RULES.netMarginHealthyMin,
     selicComparisonTolerance: toNumber(rules.selicComparisonTolerance) || DEFAULT_FINANCIAL_RULES.selicComparisonTolerance,
-    taxRatePercent: Math.max(0, toNumber(rules.taxRatePercent)),
+    taxRatePercent,
+    taxComponents,
     costAllocationPercent: toNumber(rules.costAllocationPercent) > 0
       ? toNumber(rules.costAllocationPercent)
       : DEFAULT_FINANCIAL_RULES.costAllocationPercent,
@@ -660,6 +699,7 @@ function matchesFinancialStatus(row, status) {
 module.exports = {
   DEFAULT_SELIC_RATE,
   DEFAULT_FINANCIAL_RULES,
+  DEFAULT_TAX_COMPONENTS,
   administrativeCostFields,
   buildFinancialIntelligencePayload,
   calculateFinancialMetrics,

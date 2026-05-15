@@ -3,8 +3,26 @@ const test = require('node:test');
 
 const {
   buildFinancialIntelligencePayload,
-  calculateFinancialMetrics
+  calculateFinancialMetrics,
+  normalizeFinancialRules
 } = require('../services/financialIntelligenceService');
+
+test('financial rules use detailed default tax parameters', () => {
+  const rules = normalizeFinancialRules({});
+
+  assert.equal(rules.taxRatePercent, 17.29);
+  assert.deepEqual(
+    rules.taxComponents.map((item) => [item.label, item.percent]),
+    [
+      ['IRPJ', 4.8],
+      ['Adicional IRPJ', 0.96],
+      ['CSLL', 2.88],
+      ['PIS', 0.65],
+      ['COFINS', 3],
+      ['ISS', 5]
+    ]
+  );
+});
 
 test('financial intelligence calculates campaign ROI without duplicating monthly CRC costs', () => {
   const metrics = calculateFinancialMetrics({
@@ -24,10 +42,11 @@ test('financial intelligence calculates campaign ROI without duplicating monthly
     selic_rate: 15
   });
 
-  assert.equal(metrics.total_crc_cost, 1500);
-  assert.equal(metrics.profit, 8500);
-  assert.equal(metrics.roi_crc, 566.67);
-  assert.equal(metrics.roi_crc_vs_selic, 551.67);
+  assert.equal(metrics.total_tax_cost, 1729);
+  assert.equal(metrics.total_crc_cost, 3229);
+  assert.equal(metrics.profit, 6771);
+  assert.equal(metrics.roi_crc, 209.69);
+  assert.equal(metrics.roi_crc_vs_selic, 194.69);
   assert.equal(metrics.cac, 150);
   assert.equal(metrics.cpl, 15);
   assert.equal(metrics.average_ticket, 1000);
@@ -45,7 +64,8 @@ test('financial intelligence parses decimal points without multiplying values', 
   });
 
   assert.equal(metrics.total_marketing_cost, 1000);
-  assert.equal(metrics.profit, 9000);
+  assert.equal(metrics.total_tax_cost, 1729);
+  assert.equal(metrics.profit, 7271);
   assert.equal(metrics.roas, 10);
 });
 
