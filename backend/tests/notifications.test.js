@@ -698,6 +698,29 @@ test('SAC operator keeps operational ficha permissions even with empty saved per
   assert.equal(__testables.canEditComplaintPatientPhone(sacUser), true);
 });
 
+test('Coordinator and manager keep operational ficha permissions even with empty saved permissions', () => {
+  const coordinatorUser = {
+    role: 'coordenador_unidade',
+    actionPermissions: [],
+    email: 'coordenador@example.com'
+  };
+  const managerUser = {
+    role: 'gerente_unidade',
+    actionPermissions: [],
+    email: 'gerente@example.com'
+  };
+
+  assert.equal(__testables.canAttachEvidence(coordinatorUser), true);
+  assert.equal(__testables.canDeleteEvidence(coordinatorUser), true);
+  assert.equal(__testables.canChangeComplaintUnit(coordinatorUser), false);
+  assert.equal(__testables.canEditComplaintPatientPhone(coordinatorUser), false);
+
+  assert.equal(__testables.canAttachEvidence(managerUser), true);
+  assert.equal(__testables.canDeleteEvidence(managerUser), true);
+  assert.equal(__testables.canChangeComplaintUnit(managerUser), false);
+  assert.equal(__testables.canEditComplaintPatientPhone(managerUser), false);
+});
+
 test('Marketing can edit complaint unit and patient phone with the same operational rule as SAC', () => {
   assert.equal(__testables.canChangeComplaintUnit({
     role: 'viewer',

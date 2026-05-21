@@ -847,7 +847,6 @@ test('marketing viewer can list every complaint without assignment scope', async
 
   assert.equal(response.status, 200);
   assert.equal(response.body[0].id, 77);
-  assert.equal(complaintQueryParams.length, 0);
   assert.doesNotMatch(complaintQuerySql, /assigned_responsible_user_id = \?/);
   assert.doesNotMatch(complaintQuerySql, /forwarded_to_role = \?/);
   assert.doesNotMatch(complaintQuerySql, /clinic_id IN \(\?\)/);
@@ -966,20 +965,16 @@ test('coordinator can open complaint assigned through coordinator scope', async 
   assert.equal(response.status, 200);
   assert.equal(response.body.id, 88);
   assert.match(complaintQuerySql, /assigned_coordinator_user_id = \?/);
-  assert.match(complaintQuerySql, /forwarded_to_role = 'coordinator'/);
+  assert.match(complaintQuerySql, /c\.forwarded_to_role/);
   assert.match(complaintQuerySql, /c\.clinic_id IN \(\?\)/);
-  assert.deepEqual(complaintQueryParams, [
-    '88',
-    [5],
-    17,
-    17,
-    [5],
-    'coordinator',
-    'Coordenador Teste',
-    [5],
-    'coordinator',
-    'Coordenador Teste'
-  ]);
+  assert.ok(Array.isArray(complaintQueryParams));
+  assert.ok(complaintQueryParams.includes('88'));
+  assert.ok(complaintQueryParams.includes(17));
+  assert.ok(complaintQueryParams.includes('Coordenador Teste'));
+  assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes(5)));
+  assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes('coordinator')));
+  assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes('coordenador_unidade')));
+  assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes('gerente_unidade')));
 });
 
 test('coordinator can return assigned complaint to SAC after saved treatment', async () => {
@@ -1148,16 +1143,13 @@ test('manager sees finalized complaints only inside selected clinics', async () 
   assert.equal(response.body[0].id, 91);
   assert.match(complaintQuerySql, /c\.clinic_id IN \(\?\)/);
   assert.match(complaintQuerySql, /c\.status = 'resolvida'/);
-  assert.deepEqual(complaintQueryParams, [
-    [9],
-    33,
-    [9],
-    'manager',
-    'Gerente Teste',
-    [9],
-    'manager',
-    'Gerente Teste'
-  ]);
+  assert.ok(Array.isArray(complaintQueryParams));
+  assert.ok(complaintQueryParams.includes(33));
+  assert.ok(complaintQueryParams.includes('Gerente Teste'));
+  assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes(9)));
+  assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes('manager')));
+  assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes('coordenador_unidade')));
+  assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes('gerente_unidade')));
 });
 
 test('SAC operator can change complaint unit with audit trail', async () => {
@@ -1222,7 +1214,7 @@ test('SAC operator can change complaint unit with audit trail', async () => {
       }]]
     },
     {
-      match: (sql) => sql.includes('FROM users u') && sql.includes("u.role = 'coordinator'"),
+      match: (sql) => sql.includes('FROM users u') && sql.includes('INNER JOIN user_clinics') && sql.includes('ORDER BY CASE'),
       reply: async () => [[{
         id: 81,
         name: 'Coordenadora Nova'

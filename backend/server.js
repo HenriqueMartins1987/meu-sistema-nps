@@ -385,16 +385,30 @@ function normalizeAccessRole(role) {
   return aliases[normalized] || normalized;
 }
 
-const coordinatorReminderRoleAliases = [
+const coordinatorAccessRoleAliases = [
   'coordinator',
-  'manager',
   'coordenador',
   'coordenador_unidade',
-  'coordenador_de_unidade',
+  'coordenador_de_unidade'
+];
+const managerAccessRoleAliases = [
+  'manager',
   'gerente',
   'gerente_unidade',
   'gerente_de_unidade'
 ];
+const coordinatorManagerAccessRoleAliases = [
+  ...coordinatorAccessRoleAliases,
+  ...managerAccessRoleAliases
+];
+
+function buildRoleAliasWhere(column, aliases) {
+  return `(${column} IN (?) OR LOWER(REPLACE(REPLACE(TRIM(${column}), ' ', '_'), '-', '_')) IN (?))`;
+}
+
+function getRoleAliasParams(aliases) {
+  return [aliases, aliases];
+}
 
 const whatsappOperatorRoleAliases = [
   'crc_operator',
@@ -1008,7 +1022,7 @@ function getUserActionPermissions(user = {}) {
     ? permissions.filter((permission) => actionPermissions[permission])
     : defaults;
 
-  if (normalizedRole === 'sac_operator') {
+  if (['sac_operator', 'coordinator', 'manager'].includes(normalizedRole)) {
     return Array.from(new Set([...parsedPermissions, ...defaults]));
   }
 
@@ -1025,7 +1039,8 @@ function hasActionPermission(user, permission) {
     'complaints_edit_patient_phone'
   ]);
 
-  if (normalizedRole === 'sac_operator' && defaultActionPermissionsForRole(normalizedRole).includes(permission)) return true;
+  if (['sac_operator', 'coordinator', 'manager'].includes(normalizedRole)
+    && defaultActionPermissionsForRole(normalizedRole).includes(permission)) return true;
   if (fixedComplaintUnitAndPhoneRoles.has(normalizedRole) && fixedComplaintUnitAndPhonePermissions.has(permission)) return true;
 
   const permissions = Array.isArray(user.actionPermissions)
@@ -3773,22 +3788,29 @@ async function getComplaintRows(query = {}, user = null) {
     const accessClauses = [];
     const accessParams = [];
 
+    const getComplaintRoleAliases = (targetRole) => {
+      if (targetRole === 'manager') return managerAccessRoleAliases;
+      if (targetRole === 'coordinator') return coordinatorAccessRoleAliases;
+      return [targetRole];
+    };
+
     const addNameFallback = (targetRole, scopedClinicIds = []) => {
       if (!userName) return;
 
+      const roleAliases = getComplaintRoleAliases(targetRole);
       const clinicScope = scopedClinicIds.length ? 'c.clinic_id IN (?) AND ' : '';
       const clinicParams = scopedClinicIds.length ? [scopedClinicIds] : [];
 
       accessClauses.push(`(
-        ${clinicScope}c.assigned_responsible_role = ?
+        ${clinicScope}${buildRoleAliasWhere('c.assigned_responsible_role', roleAliases)}
         AND LOWER(TRIM(c.assigned_responsible_name)) = LOWER(TRIM(?))
       )`);
-      accessParams.push(...clinicParams, targetRole, userName);
+      accessParams.push(...clinicParams, ...getRoleAliasParams(roleAliases), userName);
       accessClauses.push(`(
-        ${clinicScope}c.forwarded_to_role = ?
+        ${clinicScope}${buildRoleAliasWhere('c.forwarded_to_role', roleAliases)}
         AND LOWER(TRIM(c.forwarded_to_label)) = LOWER(TRIM(?))
       )`);
-      accessParams.push(...clinicParams, targetRole, userName);
+      accessParams.push(...clinicParams, ...getRoleAliasParams(roleAliases), userName);
     };
 
     if (role === 'manager') {
@@ -3798,11 +3820,16 @@ async function getComplaintRows(query = {}, user = null) {
           AND (
             c.status = 'resolvida'
             OR c.assigned_responsible_user_id = ?
-            OR c.assigned_responsible_role = 'manager'
-            OR c.forwarded_to_role = 'manager'
+            OR ${buildRoleAliasWhere('c.assigned_responsible_role', managerAccessRoleAliases)}
+            OR ${buildRoleAliasWhere('c.forwarded_to_role', managerAccessRoleAliases)}
           )
         )`);
-        accessParams.push(clinicIds, user.id);
+        accessParams.push(
+          clinicIds,
+          user.id,
+          ...getRoleAliasParams(managerAccessRoleAliases),
+          ...getRoleAliasParams(managerAccessRoleAliases)
+        );
         addNameFallback('manager', clinicIds);
       } else {
         accessClauses.push('1 = 0');
@@ -3815,20 +3842,30 @@ async function getComplaintRows(query = {}, user = null) {
             c.status = 'resolvida'
             OR (
               c.assigned_responsible_user_id = ?
-              AND COALESCE(c.assigned_responsible_role, c.forwarded_to_role) = 'coordinator'
+              AND ${buildRoleAliasWhere('COALESCE(c.assigned_responsible_role, c.forwarded_to_role)', coordinatorAccessRoleAliases)}
             )
-            OR c.assigned_responsible_role = 'coordinator'
-            OR c.forwarded_to_role = 'coordinator'
+            OR ${buildRoleAliasWhere('c.assigned_responsible_role', coordinatorAccessRoleAliases)}
+            OR ${buildRoleAliasWhere('c.forwarded_to_role', coordinatorAccessRoleAliases)}
             OR (
               c.assigned_coordinator_user_id = ?
               AND (
-                c.assigned_responsible_role = 'coordinator'
-                OR c.forwarded_to_role = 'coordinator'
+                c.first_attendance_at IS NOT NULL
+                OR c.patient_contacted_at IS NOT NULL
+                OR c.forwarded_to_role IS NOT NULL
+                OR ${buildRoleAliasWhere('c.assigned_responsible_role', coordinatorAccessRoleAliases)}
               )
             )
           )
         )`);
-        accessParams.push(clinicIds, user.id, user.id);
+        accessParams.push(
+          clinicIds,
+          user.id,
+          ...getRoleAliasParams(coordinatorAccessRoleAliases),
+          ...getRoleAliasParams(coordinatorAccessRoleAliases),
+          ...getRoleAliasParams(coordinatorAccessRoleAliases),
+          user.id,
+          ...getRoleAliasParams(coordinatorAccessRoleAliases)
+        );
         addNameFallback('coordinator', clinicIds);
       } else {
         accessClauses.push('1 = 0');
@@ -3913,7 +3950,7 @@ async function getComplaintRows(query = {}, user = null) {
           INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = c.clinic_id
           WHERE u.active = 1
             AND u.deleted_at IS NULL
-            AND u.role = 'coordinator'
+            AND ${buildRoleAliasWhere('u.role', coordinatorAccessRoleAliases)}
           ORDER BY u.updated_at DESC, u.id DESC
           LIMIT 1
         )
@@ -3927,7 +3964,7 @@ async function getComplaintRows(query = {}, user = null) {
           INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = c.clinic_id
           WHERE u.active = 1
             AND u.deleted_at IS NULL
-            AND u.role = 'coordinator'
+            AND ${buildRoleAliasWhere('u.role', coordinatorAccessRoleAliases)}
           ORDER BY CASE WHEN c.assigned_coordinator_user_id IS NOT NULL AND u.id = c.assigned_coordinator_user_id THEN 0 ELSE 1 END, u.updated_at DESC, u.id DESC
           LIMIT 1
         ),
@@ -3939,7 +3976,7 @@ async function getComplaintRows(query = {}, user = null) {
         INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = c.clinic_id
         WHERE u.active = 1
           AND u.deleted_at IS NULL
-          AND u.role = 'manager'
+          AND ${buildRoleAliasWhere('u.role', managerAccessRoleAliases)}
         ORDER BY u.updated_at DESC, u.id DESC
         LIMIT 1
       ) AS manager_name,
@@ -3949,7 +3986,7 @@ async function getComplaintRows(query = {}, user = null) {
         INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = c.clinic_id
         WHERE u.active = 1
           AND u.deleted_at IS NULL
-          AND u.role = 'manager'
+          AND ${buildRoleAliasWhere('u.role', managerAccessRoleAliases)}
         ORDER BY u.updated_at DESC, u.id DESC
         LIMIT 1
       ) AS manager_phone,
@@ -3962,7 +3999,13 @@ async function getComplaintRows(query = {}, user = null) {
     LEFT JOIN users aru ON aru.id = c.assigned_responsible_user_id
     ${filters.clause}
     ORDER BY c.created_at DESC, c.id DESC`,
-    filters.params
+    [
+      ...getRoleAliasParams(coordinatorAccessRoleAliases),
+      ...getRoleAliasParams(coordinatorAccessRoleAliases),
+      ...getRoleAliasParams(managerAccessRoleAliases),
+      ...getRoleAliasParams(managerAccessRoleAliases),
+      ...filters.params
+    ]
   );
 
   if (rows.length) {
@@ -4361,8 +4404,8 @@ async function getClinicCoordinatorManagerNotificationRecipients(clinicId) {
       INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = ?
       WHERE u.active = 1
         AND u.deleted_at IS NULL
-        AND u.role IN (?)`,
-    [clinicId, coordinatorReminderRoleAliases]
+        AND ${buildRoleAliasWhere('u.role', coordinatorManagerAccessRoleAliases)}`,
+    [clinicId, ...getRoleAliasParams(coordinatorManagerAccessRoleAliases)]
   );
 
   users.forEach((user) => addNotificationRecipient(recipientMap, {
@@ -5842,7 +5885,7 @@ function parsePermissionsFromUser(user) {
 
   const parsedPermissions = Array.isArray(permissions) ? permissions : defaultPermissions;
 
-  if (normalizedRole === 'sac_operator') {
+  if (['sac_operator', 'coordinator', 'manager'].includes(normalizedRole)) {
     return Array.from(new Set([...parsedPermissions, ...defaultPermissions]));
   }
 
@@ -6494,8 +6537,8 @@ async function notifyClinicResponsibles(clinicId, type, title, message, link, pa
       INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = ?
       WHERE u.active = 1
         AND u.deleted_at IS NULL
-        AND u.role IN (?)`,
-    [clinicId, coordinatorReminderRoleAliases]
+        AND ${buildRoleAliasWhere('u.role', coordinatorManagerAccessRoleAliases)}`,
+    [clinicId, ...getRoleAliasParams(coordinatorManagerAccessRoleAliases)]
   );
   const filteredUsers = users.filter((user) => (
     user.id
@@ -7182,8 +7225,8 @@ async function dispatchExpiredComplaintManagerAlerts() {
          INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = ?
         WHERE u.active = 1
           AND u.deleted_at IS NULL
-          AND u.role = 'manager'`,
-      [complaint.clinic_id]
+          AND ${buildRoleAliasWhere('u.role', managerAccessRoleAliases)}`,
+      [complaint.clinic_id, ...getRoleAliasParams(managerAccessRoleAliases)]
     );
 
     const template = buildExpiredComplaintManagerEmail(complaint);
@@ -7322,8 +7365,9 @@ async function syncClinicLeadershipNamesFromUserLinks() {
      INNER JOIN users u ON u.id = uc.user_id
      WHERE u.active = 1
        AND u.deleted_at IS NULL
-       AND u.role IN ('coordinator', 'manager')
-     ORDER BY uc.clinic_id ASC, u.updated_at DESC, u.id DESC`
+       AND ${buildRoleAliasWhere('u.role', coordinatorManagerAccessRoleAliases)}
+     ORDER BY uc.clinic_id ASC, u.updated_at DESC, u.id DESC`,
+    getRoleAliasParams(coordinatorManagerAccessRoleAliases)
   );
 
   const selected = new Map();
@@ -7378,14 +7422,14 @@ async function resolveCoordinatorAssignment(clinicId) {
      INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = ?
      WHERE u.deleted_at IS NULL
        AND u.active = 1
-       AND u.role = 'coordinator'
+       AND ${buildRoleAliasWhere('u.role', coordinatorAccessRoleAliases)}
      ORDER BY CASE
        WHEN ? <> '' AND LOWER(TRIM(u.name)) = LOWER(TRIM(?)) THEN 0
        ELSE 1
      END,
      u.name ASC
      LIMIT 1`,
-    [clinicId, configuredCoordinatorName, configuredCoordinatorName]
+    [clinicId, ...getRoleAliasParams(coordinatorAccessRoleAliases), configuredCoordinatorName, configuredCoordinatorName]
   );
 
   const coordinator = coordinatorRows[0] || null;
@@ -7413,10 +7457,10 @@ async function resolveManagerAssignment(clinicId) {
      INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = ?
      WHERE u.deleted_at IS NULL
        AND u.active = 1
-       AND u.role = 'manager'
+       AND ${buildRoleAliasWhere('u.role', managerAccessRoleAliases)}
      ORDER BY u.name ASC
      LIMIT 1`,
-    [clinicId]
+    [clinicId, ...getRoleAliasParams(managerAccessRoleAliases)]
   );
 
   return {
@@ -7990,10 +8034,10 @@ async function shouldRunDailyCoordinatorDemandReminders(jobKey, now = new Date()
 async function getActiveCoordinatorsForDailyDemandReminder() {
   const [users] = await pool.query(
     `SELECT id, name, email, phone, whatsapp, role, active
-       FROM users
+      FROM users
       WHERE active = 1
         AND deleted_at IS NULL
-        AND role IN (?)
+        AND ${buildRoleAliasWhere('role', coordinatorManagerAccessRoleAliases)}
       ORDER BY
         CASE
           WHEN role IN ('coordinator', 'coordenador', 'coordenador_unidade', 'coordenador_de_unidade') THEN 0
@@ -8001,7 +8045,7 @@ async function getActiveCoordinatorsForDailyDemandReminder() {
           ELSE 2
         END,
         name ASC`,
-    [coordinatorReminderRoleAliases]
+    getRoleAliasParams(coordinatorManagerAccessRoleAliases)
   );
 
   return users;
