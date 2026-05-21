@@ -12,6 +12,7 @@ const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
+const PDFDocument = require('pdfkit');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -40,6 +41,7 @@ const {
   toNumber: toFinancialNumber
 } = require('./services/financialIntelligenceService');
 const {
+  buildDentalCardImportTemplateBuffer,
   buildDentalDashboard,
   dentalCardStatuses,
   dentalCardTemplateSeeds,
@@ -423,6 +425,27 @@ function buildRoleAliasWhere(column, aliases) {
 
 function getRoleAliasParams(aliases) {
   return [aliases, aliases];
+}
+
+function normalizeComparableText(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function isPlaceholderCoordinatorName(value) {
+  const normalized = normalizeComparableText(value);
+  return !normalized || [
+    'coordenador',
+    'coordenador_da_unidade',
+    'sem_coordenador',
+    'responsavel',
+    'responsavel_nao_informado'
+  ].includes(normalized);
 }
 
 const whatsappOperatorRoleAliases = [
@@ -1139,10 +1162,10 @@ function hasScreenPermission(user, permission) {
   if (isAdminUser(user)) return true;
   const role = normalizeAccessRole(user.role);
   if (role === 'crc_leader' || role === 'crc_manager') {
-    return ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports'].includes(permission);
+    return ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports', 'dental_card'].includes(permission);
   }
   if (role === 'crc_operator') {
-    return ['home', 'whatsapp_management', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history'].includes(permission);
+    return ['home', 'whatsapp_management', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'dental_card'].includes(permission);
   }
   if (['manager', 'coordinator', 'viewer'].includes(role) && String(permission || '').startsWith('whatsapp')) return false;
   return getUserScreenPermissions(user).includes(permission);
@@ -3813,11 +3836,17 @@ async function backfillComplaintAssignments() {
     const currentForwardRole = inferredForwardRole || String(row.forwarded_to_role || '').toLowerCase();
     const currentResponsibleRole = normalizeAccessRole(row.assigned_responsible_role);
 
-    if (
-      row.assigned_coordinator_name
-      && row.clinic_snapshot_name
-      && (!currentForwardRole || currentResponsibleRole === currentForwardRole)
-    ) {
+    const coordinatorNameLooksFinal = row.assigned_coordinator_name
+      && !isPlaceholderCoordinatorName(row.assigned_coordinator_name);
+    const responsibleLooksFinal = !currentForwardRole
+      || (
+        currentResponsibleRole === currentForwardRole
+        && row.assigned_responsible_name
+        && !isPlaceholderCoordinatorName(row.assigned_responsible_name)
+        && (currentForwardRole !== 'coordinator' || row.assigned_responsible_user_id)
+      );
+
+    if (coordinatorNameLooksFinal && row.clinic_snapshot_name && responsibleLooksFinal) {
       return null;
     }
 
@@ -3837,7 +3866,11 @@ async function backfillComplaintAssignments() {
       return pool.query(
         `UPDATE complaints
              SET assigned_coordinator_user_id = COALESCE(assigned_coordinator_user_id, ?),
-                 assigned_coordinator_name = COALESCE(assigned_coordinator_name, ?),
+                 assigned_coordinator_name = CASE
+                   WHEN assigned_coordinator_name IS NULL OR TRIM(assigned_coordinator_name) = '' OR LOWER(TRIM(assigned_coordinator_name)) IN ('coordenador', 'coordenador da unidade', 'sem coordenador')
+                   THEN ?
+                   ELSE assigned_coordinator_name
+                 END,
                  assigned_responsible_user_id = ?,
                  assigned_responsible_name = ?,
                  assigned_responsible_role = ?,
@@ -3865,7 +3898,11 @@ async function backfillComplaintAssignments() {
     return pool.query(
       `UPDATE complaints
            SET assigned_coordinator_user_id = COALESCE(assigned_coordinator_user_id, ?),
-               assigned_coordinator_name = COALESCE(assigned_coordinator_name, ?),
+               assigned_coordinator_name = CASE
+                 WHEN assigned_coordinator_name IS NULL OR TRIM(assigned_coordinator_name) = '' OR LOWER(TRIM(assigned_coordinator_name)) IN ('coordenador', 'coordenador da unidade', 'sem coordenador')
+                 THEN ?
+                 ELSE assigned_coordinator_name
+               END,
                clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)
         WHERE id = ?`,
       [
@@ -3876,6 +3913,109 @@ async function backfillComplaintAssignments() {
       ]
     );
   }));
+}
+
+async function repairPendingCoordinatorAssignments() {
+  const [rows] = await pool.query(
+    `SELECT id, protocol, clinic_id, status, first_attendance_at, forwarded_to_role, forwarded_to_label,
+            assigned_coordinator_user_id, assigned_coordinator_name,
+            assigned_responsible_user_id, assigned_responsible_name, assigned_responsible_role,
+            clinic_snapshot_name
+       FROM complaints
+      WHERE deleted_at IS NULL
+        AND clinic_id IS NOT NULL`
+  );
+
+  const result = {
+    checked: rows.length,
+    updated: 0,
+    unresolved: 0,
+    skippedClosed: 0
+  };
+
+  for (const row of rows) {
+    if (isClosedComplaintStatus(row.status)) {
+      result.skippedClosed += 1;
+      continue;
+    }
+
+    const assignment = await resolveCoordinatorAssignment(row.clinic_id);
+    const currentForwardRole = normalizeAccessRole(row.forwarded_to_role || row.assigned_responsible_role);
+    const hasCoordinatorTarget = currentForwardRole === 'coordinator'
+      || (
+        isPlaceholderCoordinatorName(row.assigned_responsible_name)
+        && Boolean(row.first_attendance_at || row.forwarded_to_role || row.assigned_responsible_role)
+      );
+
+    if (!assignment.coordinatorUserId && isPlaceholderCoordinatorName(assignment.coordinatorName)) {
+      result.unresolved += 1;
+      continue;
+    }
+
+    const coordinatorNameDiffers = normalizeComparableText(row.assigned_coordinator_name)
+      !== normalizeComparableText(assignment.coordinatorName);
+    const coordinatorNeedsRepair = !row.assigned_coordinator_user_id
+      || (assignment.coordinatorUserId && Number(row.assigned_coordinator_user_id) !== Number(assignment.coordinatorUserId))
+      || isPlaceholderCoordinatorName(row.assigned_coordinator_name)
+      || coordinatorNameDiffers;
+    const responsibleNeedsRepair = hasCoordinatorTarget && (
+      !row.assigned_responsible_user_id
+      || (assignment.coordinatorUserId && Number(row.assigned_responsible_user_id) !== Number(assignment.coordinatorUserId))
+      || isPlaceholderCoordinatorName(row.assigned_responsible_name)
+      || normalizeComparableText(row.assigned_responsible_name) !== normalizeComparableText(assignment.coordinatorName)
+      || normalizeAccessRole(row.assigned_responsible_role) !== 'coordinator'
+    );
+
+    if (!coordinatorNeedsRepair && !responsibleNeedsRepair) {
+      continue;
+    }
+
+    const updates = [
+      'assigned_coordinator_user_id = ?',
+      'assigned_coordinator_name = ?',
+      'clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)'
+    ];
+    const params = [
+      assignment.coordinatorUserId || null,
+      assignment.coordinatorName || null,
+      assignment.clinicSnapshotName || null
+    ];
+
+    if (hasCoordinatorTarget) {
+      updates.push('assigned_responsible_user_id = ?');
+      updates.push('assigned_responsible_name = ?');
+      updates.push("assigned_responsible_role = 'coordinator'");
+      updates.push("forwarded_to_role = 'coordinator'");
+      updates.push('forwarded_to_label = ?');
+      updates.push('forwarded_at = COALESCE(forwarded_at, NOW())');
+      params.push(
+        assignment.coordinatorUserId || null,
+        assignment.coordinatorName || null,
+        assignment.coordinatorName || row.forwarded_to_label || 'Coordenador da unidade'
+      );
+    }
+
+    params.push(row.id);
+    await pool.query(
+      `UPDATE complaints
+          SET ${updates.join(', ')}
+        WHERE id = ?`,
+      params
+    );
+    result.updated += 1;
+  }
+
+  return result;
+}
+
+async function handleRepairCoordinatorAssignments(req, res) {
+  try {
+    const result = await repairPendingCoordinatorAssignments();
+    return res.json({ message: 'Encaminhamentos de coordenadores revisados.', ...result });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao revisar encaminhamentos de coordenadores.' });
+  }
 }
 
 function buildComplaintFilters(query) {
@@ -7591,7 +7731,24 @@ async function resolveCoordinatorAssignment(clinicId) {
     [clinicId, ...getRoleAliasParams(coordinatorAccessRoleAliases), configuredCoordinatorName, configuredCoordinatorName]
   );
 
-  const coordinator = coordinatorRows[0] || null;
+  let coordinator = coordinatorRows[0] || null;
+
+  if (!coordinator && configuredCoordinatorName) {
+    const [fallbackRows] = await pool.query(
+      `SELECT
+         u.id,
+         u.name
+       FROM users u
+       WHERE u.deleted_at IS NULL
+         AND u.active = 1
+         AND ${buildRoleAliasWhere('u.role', coordinatorAccessRoleAliases)}
+         AND LOWER(TRIM(u.name)) = LOWER(TRIM(?))
+       ORDER BY u.updated_at DESC, u.id DESC
+       LIMIT 1`,
+      [...getRoleAliasParams(coordinatorAccessRoleAliases), configuredCoordinatorName]
+    );
+    coordinator = fallbackRows[0] || null;
+  }
 
   return {
     coordinatorUserId: coordinator?.id || null,
@@ -14883,6 +15040,7 @@ app.delete('/api/admin/whatsapp-management/data', authenticate, handleClearWhats
 app.post('/api/admin/whatsapp-reminders/daily-open-demands/run', authenticate, requireMasterAdmin, handleRunDailyOpenDemandWhatsAppReminders);
 app.post('/api/admin/whatsapp-reports/daily-coordinator-delivery/run', authenticate, requireMasterAdmin, handleRunDailyCoordinatorDeliveryReport);
 app.post('/api/admin/whatsapp-reports/weekly-complaints/run', authenticate, requireMasterAdmin, handleRunWeeklyAdminComplaintReport);
+app.post('/api/admin/complaints/repair-coordinator-assignments', authenticate, requireMasterAdmin, handleRepairCoordinatorAssignments);
 app.get('/api/whatsapp/sessions', authenticate, requireWhatsAppView, handleListWhatsAppWebSessions);
 app.get('/api/whatsapp/sessions/:id/qr', authenticate, requireWhatsAppView, handleGetWhatsAppWebSessionQr);
 app.get('/api/admin/whatsapp-service/sessions', authenticate, requireMasterAdmin, handleListWhatsAppServiceSessions);
@@ -19670,6 +19828,166 @@ function buildDentalCardCsv(rows = []) {
   ].join('\n');
 }
 
+function formatDentalReportDate(value) {
+  if (!value) return '-';
+  const date = value instanceof Date ? value : new Date(String(value).includes('T') ? value : `${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  }).format(date);
+}
+
+function formatDentalReportMoney(value) {
+  return new Intl.NumberFormat('pt-BR', {
+    style: 'currency',
+    currency: 'BRL'
+  }).format(Number(value || 0));
+}
+
+function formatDentalReportPercent(value) {
+  return `${Number(value || 0).toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  })}%`;
+}
+
+function truncateDentalPdfText(value, maxLength = 70) {
+  const text = String(value || '-').replace(/\s+/g, ' ').trim();
+  return text.length > maxLength ? `${text.slice(0, maxLength - 3)}...` : text;
+}
+
+function buildDentalCardPdfBuffer(rows = [], query = {}) {
+  return new Promise((resolve, reject) => {
+    const dashboard = buildDentalDashboard(rows);
+    const summary = dashboard.summary || {};
+    const doc = new PDFDocument({
+      size: 'A4',
+      layout: 'landscape',
+      bufferPages: true,
+      margin: 32,
+      info: {
+        Title: 'Relatório Dental Card',
+        Author: 'Sistema NPS - Grupo Sorria'
+      }
+    });
+    const chunks = [];
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('error', reject);
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+
+    const pageWidth = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+    const gold = '#b07a35';
+    const teal = '#1f7a8c';
+    const line = '#e5d2b7';
+    const ink = '#211a16';
+    const muted = '#6b594b';
+    const filters = [
+      query.startDate ? `Início: ${formatDentalReportDate(query.startDate)}` : null,
+      query.endDate ? `Fim: ${formatDentalReportDate(query.endDate)}` : null,
+      query.unidade ? `Unidade: ${query.unidade}` : null,
+      query.status ? `Status: ${query.status}` : null,
+      query.responsavel ? `Responsável: ${query.responsavel}` : null
+    ].filter(Boolean).join(' | ') || 'Todos os registros filtrados';
+
+    doc.rect(0, 0, doc.page.width, 88).fill('#fff7eb');
+    doc.fillColor(gold).font('Helvetica-Bold').fontSize(10).text('RELATÓRIO EXECUTIVO', 32, 26);
+    doc.fillColor(ink).fontSize(24).text('Dental Card', 32, 40);
+    doc.fillColor(muted).font('Helvetica').fontSize(9).text(`Gerado em ${formatMessageDateTime(new Date())} | ${filters}`, 32, 68, { width: pageWidth });
+
+    const cards = [
+      ['Indicações', summary.totalIndicacoes],
+      ['Agendados', summary.totalAgendado],
+      ['Comparecidos', summary.totalComparecido],
+      ['Pagantes', summary.pagantes],
+      ['Receita', formatDentalReportMoney(summary.receitaTotal)],
+      ['Conversão final', formatDentalReportPercent(summary.taxaConversaoFinal)]
+    ];
+    const cardWidth = (pageWidth - 30) / 6;
+    let y = 112;
+    cards.forEach(([label, value], index) => {
+      const x = 32 + index * (cardWidth + 6);
+      doc.roundedRect(x, y, cardWidth, 56, 6).fillAndStroke('#ffffff', '#ead9c0');
+      doc.fillColor(muted).font('Helvetica-Bold').fontSize(7).text(label.toUpperCase(), x + 10, y + 10, { width: cardWidth - 20 });
+      doc.fillColor(ink).fontSize(13).text(String(value ?? 0), x + 10, y + 27, { width: cardWidth - 20 });
+    });
+
+    y += 84;
+    doc.fillColor(ink).font('Helvetica-Bold').fontSize(14).text('Base operacional', 32, y);
+    y += 20;
+
+    const columns = [
+      ['Data', 58],
+      ['Unidade', 95],
+      ['Paciente', 125],
+      ['Telefone', 82],
+      ['Responsável', 100],
+      ['Status', 92],
+      ['Próxima ação', 76],
+      ['Receita', 72],
+      ['Observação', pageWidth - 700]
+    ];
+
+    const drawTableHeader = () => {
+      let x = 32;
+      doc.rect(32, y, pageWidth, 24).fill('#f5ead9');
+      doc.fillColor('#5e4321').font('Helvetica-Bold').fontSize(7);
+      columns.forEach(([label, width]) => {
+        doc.text(label.toUpperCase(), x + 4, y + 8, { width: width - 8 });
+        x += width;
+      });
+      y += 24;
+    };
+
+    drawTableHeader();
+    doc.font('Helvetica').fontSize(7);
+    rows.forEach((row, index) => {
+      if (y > doc.page.height - 76) {
+        doc.addPage();
+        y = 36;
+        drawTableHeader();
+      }
+      const rowHeight = 42;
+      doc.rect(32, y, pageWidth, rowHeight).fill(index % 2 === 0 ? '#ffffff' : '#fffaf4');
+      doc.strokeColor(line).lineWidth(0.4).moveTo(32, y + rowHeight).lineTo(32 + pageWidth, y + rowHeight).stroke();
+      let x = 32;
+      const values = [
+        formatDentalReportDate(row.data_indicacao),
+        truncateDentalPdfText(row.unidade, 24),
+        truncateDentalPdfText(row.nome_lead, 32),
+        row.telefone || '-',
+        truncateDentalPdfText(row.responsavel, 24),
+        truncateDentalPdfText(row.status, 26),
+        formatDentalReportDate(row.data_proxima_tentativa),
+        formatDentalReportMoney(row.receita || row.valor_pago),
+        truncateDentalPdfText(row.observacoes || row.status_contato || row.motivo_falta, 54)
+      ];
+      doc.fillColor(ink);
+      values.forEach((value, valueIndex) => {
+        const width = columns[valueIndex][1];
+        doc.text(String(value), x + 4, y + 8, { width: width - 8, height: rowHeight - 12 });
+        x += width;
+      });
+      y += rowHeight;
+    });
+
+    if (!rows.length) {
+      doc.fillColor(muted).fontSize(10).text('Nenhum lead encontrado para os filtros informados.', 32, y + 12);
+    }
+
+    const range = doc.bufferedPageRange();
+    for (let i = range.start; i < range.start + range.count; i += 1) {
+      doc.switchToPage(i);
+      doc.fillColor(teal).font('Helvetica-Bold').fontSize(8)
+        .text('Sistema NPS - Grupo Sorria | Dental Card', 32, doc.page.height - 28);
+      doc.fillColor(muted).font('Helvetica').text(`Página ${i + 1} de ${range.count}`, doc.page.width - 100, doc.page.height - 28);
+    }
+
+    doc.end();
+  });
+}
+
 async function handleExportDentalCard(req, res) {
   try {
     if (!canExportDentalCard(req.user)) {
@@ -19684,6 +20002,41 @@ async function handleExportDentalCard(req, res) {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao exportar Dental Card.' });
+  }
+}
+
+async function handleExportDentalCardPdf(req, res) {
+  try {
+    if (!canExportDentalCard(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode exportar Dental Card.' });
+    }
+
+    const rows = await getDentalCardRows(req.query);
+    const buffer = await buildDentalCardPdfBuffer(rows, req.query);
+    await insertDentalCardAudit(req, 'export_pdf', null, { total: rows.length, query: req.query });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="dental-card.pdf"');
+    return res.send(buffer);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao exportar relatório PDF Dental Card.' });
+  }
+}
+
+async function handleDownloadDentalCardImportTemplate(req, res) {
+  try {
+    if (!canViewDentalCard(req.user)) {
+      return res.status(403).json({ error: 'Acesso ao modelo Dental Card não autorizado.' });
+    }
+
+    const buffer = buildDentalCardImportTemplateBuffer();
+    await insertDentalCardAudit(req, 'template_download', null, { type: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="modelo-dental-card.xlsx"');
+    return res.send(buffer);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao gerar modelo de importação Dental Card.' });
   }
 }
 
@@ -20281,6 +20634,8 @@ app.post(['/dental-card/leads/:id/attempts', '/api/dental-card/leads/:id/attempt
 app.post(['/dental-card/leads/:id/status', '/api/dental-card/leads/:id/status'], authenticate, requireDentalCardView, handleUpdateDentalCardStatus);
 app.post(['/dental-card/import', '/api/dental-card/import'], authenticate, requireDentalCardView, upload.single('file'), handleImportDentalCard);
 app.get(['/dental-card/export', '/api/dental-card/export'], authenticate, requireDentalCardView, handleExportDentalCard);
+app.get(['/dental-card/export/pdf', '/api/dental-card/export/pdf'], authenticate, requireDentalCardView, handleExportDentalCardPdf);
+app.get(['/dental-card/import-template', '/api/dental-card/import-template'], authenticate, requireDentalCardView, handleDownloadDentalCardImportTemplate);
 app.get(['/dental-card/templates', '/api/dental-card/templates'], authenticate, requireDentalCardView, handleGetDentalCardTemplates);
 app.post(['/dental-card/templates', '/api/dental-card/templates'], authenticate, requireDentalCardView, handleCreateDentalCardTemplate);
 app.put(['/dental-card/templates/:id', '/api/dental-card/templates/:id'], authenticate, requireDentalCardView, handleUpdateDentalCardTemplate);
@@ -20387,7 +20742,8 @@ async function startServer() {
     await backfillPatientProtocols();
     await backfillComplaintDeadlines();
     await backfillComplaintAssignments();
-    console.log('Backfills operacionais validados');
+    const coordinatorRepair = await repairPendingCoordinatorAssignments();
+    console.log(`Backfills operacionais validados. Coordenadores revisados: ${coordinatorRepair.updated}/${coordinatorRepair.checked}`);
   } catch (error) {
     console.warn('Não foi possível executar os backfills:', error.message);
   }

@@ -308,6 +308,10 @@
   border-collapse: collapse;
 }
 
+.dental-table-compact {
+  min-width: 760px;
+}
+
 .dental-table th,
 .dental-table td {
   padding: 13px 14px;
@@ -390,6 +394,73 @@
   padding: 22px;
 }
 
+.dental-modal-wide {
+  width: min(1180px, 100%);
+}
+
+.dental-executive-grid,
+.dental-dashboard-insights,
+.dental-weekly-report {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.dental-weekly-report {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.dental-detail-card,
+.dental-insight-card,
+.dental-weekly-report > div {
+  display: grid;
+  gap: 6px;
+  min-height: 112px;
+  border: 1px solid rgba(142, 103, 49, 0.18);
+  border-radius: 8px;
+  padding: 15px;
+  background: #fffaf4;
+}
+
+.dental-detail-card span,
+.dental-insight-card span,
+.dental-weekly-report span {
+  color: #6c5a4d;
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.dental-detail-card strong,
+.dental-insight-card strong,
+.dental-weekly-report strong {
+  color: #211a16;
+  font-size: 1.15rem;
+  line-height: 1.25;
+}
+
+.dental-detail-card small,
+.dental-insight-card small {
+  color: #78685d;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.dental-insight-card.success {
+  border-top: 3px solid #2f8f62;
+}
+
+.dental-insight-card.warning {
+  border-top: 3px solid #d89a2c;
+}
+
+.dental-detail-text {
+  min-height: 76px;
+  white-space: pre-wrap;
+  line-height: 1.55;
+}
+
 .dental-import-report {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -413,7 +484,10 @@
   }
 
   .dental-grid-2,
-  .dental-grid-3 {
+  .dental-grid-3,
+  .dental-executive-grid,
+  .dental-dashboard-insights,
+  .dental-weekly-report {
     grid-template-columns: 1fr;
   }
 

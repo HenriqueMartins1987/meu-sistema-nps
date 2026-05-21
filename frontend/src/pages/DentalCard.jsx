@@ -119,6 +119,19 @@ function formatDate(value) {
   return date.toLocaleDateString('pt-BR');
 }
 
+function formatDateTime(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
 function normalizePhone(value) {
   let digits = String(value || '').replace(/\D/g, '');
   if (digits && !digits.startsWith('55')) digits = `55${digits}`;
@@ -137,6 +150,25 @@ function toDateTimeInput(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return '';
   return date.toISOString().slice(0, 16);
+}
+
+function getCurrentWeekRange(base = new Date()) {
+  const date = new Date(base);
+  const mondayOffset = (date.getDay() + 6) % 7;
+  const start = new Date(date);
+  start.setDate(date.getDate() - mondayOffset);
+  start.setHours(0, 0, 0, 0);
+  const end = new Date(start);
+  end.setDate(start.getDate() + 6);
+  end.setHours(23, 59, 59, 999);
+  return { start, end };
+}
+
+function getLeadReferenceDate(lead) {
+  const value = lead.data_indicacao || lead.data_agendamento || lead.created_at;
+  if (!value) return null;
+  const date = new Date(String(value).includes('T') ? value : `${value}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function badgeTone(status = '') {
@@ -217,6 +249,17 @@ function DentalCard() {
   const [editingLeadId, setEditingLeadId] = useState(null);
   const [selectedLead, setSelectedLead] = useState(null);
   const [attemptLead, setAttemptLead] = useState(null);
+  const [contactLead, setContactLead] = useState(null);
+  const [contactDraft, setContactDraft] = useState({
+    status_contato: '',
+    canal_contato: 'WhatsApp',
+    responsavel: '',
+    quantidade_tentativas: 0,
+    data_primeiro_contato: '',
+    data_ultima_tentativa: '',
+    data_proxima_tentativa: '',
+    observacoes: ''
+  });
   const [attemptDraft, setAttemptDraft] = useState({
     canal: 'WhatsApp',
     resultado: 'Tentativa registrada',
@@ -408,6 +451,47 @@ function DentalCard() {
     }
   }
 
+  async function openContactFicha(lead) {
+    setError('');
+    try {
+      const response = await api.get(`/dental-card/leads/${lead.id}`);
+      const current = response.data;
+      setContactLead(current);
+      setSelectedLead(null);
+      setContactDraft({
+        status_contato: current.status_contato || '',
+        canal_contato: current.canal_contato || 'WhatsApp',
+        responsavel: current.responsavel || user?.name || '',
+        quantidade_tentativas: current.quantidade_tentativas || 0,
+        data_primeiro_contato: toDateTimeInput(current.data_primeiro_contato),
+        data_ultima_tentativa: toDateTimeInput(current.data_ultima_tentativa),
+        data_proxima_tentativa: toDateTimeInput(current.data_proxima_tentativa),
+        observacoes: current.observacoes || ''
+      });
+    } catch (err) {
+      setError(err.response?.data?.error || 'Erro ao abrir ficha de contato.');
+    }
+  }
+
+  async function saveContactFicha(event) {
+    event?.preventDefault();
+    if (!contactLead) return;
+    setError('');
+    setFeedback('');
+    try {
+      await api.put(`/dental-card/leads/${contactLead.id}`, {
+        ...contactLead,
+        ...contactDraft,
+        quantidade_tentativas: Number(contactDraft.quantidade_tentativas || 0)
+      });
+      setFeedback('Ficha de contato atualizada com sucesso.');
+      setContactLead(null);
+      await loadData();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Erro ao atualizar ficha de contato.');
+    }
+  }
+
   function openWhatsApp(lead) {
     const digits = normalizePhone(lead.telefone);
     if (!digits) {
@@ -433,6 +517,43 @@ function DentalCard() {
       setFeedback('Exportação Dental Card gerada.');
     } catch (err) {
       setError(err.response?.data?.error || 'Erro ao exportar Dental Card.');
+    }
+  }
+
+  async function exportPdf(extraParams = {}) {
+    setError('');
+    try {
+      const response = await api.get('/dental-card/export/pdf', {
+        params: { ...queryParams, ...extraParams },
+        responseType: 'blob'
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'dental-card.pdf';
+      link.click();
+      window.URL.revokeObjectURL(url);
+      setFeedback('Relatório PDF Dental Card gerado.');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Erro ao exportar PDF Dental Card.');
+    }
+  }
+
+  async function downloadImportTemplate() {
+    setError('');
+    try {
+      const response = await api.get('/dental-card/import-template', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'modelo-dental-card.xlsx';
+      link.click();
+      window.URL.revokeObjectURL(url);
+      setFeedback('Modelo de importação baixado.');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Erro ao baixar modelo Dental Card.');
     }
   }
 
@@ -494,6 +615,20 @@ function DentalCard() {
   const routine = dashboard?.routineToday || {};
   const totalPages = Math.max(1, Math.ceil(leads.length / pageSize));
   const paginatedLeads = leads.slice((page - 1) * pageSize, page * pageSize);
+  const weekRange = useMemo(() => getCurrentWeekRange(), []);
+  const weeklyLeads = useMemo(() => leads.filter((lead) => {
+    const date = getLeadReferenceDate(lead);
+    return date && date >= weekRange.start && date <= weekRange.end;
+  }), [leads, weekRange]);
+  const weeklySummary = useMemo(() => {
+    const scheduled = weeklyLeads.filter((lead) => Number(lead.agendado || 0) || lead.data_agendamento).length;
+    const attended = weeklyLeads.filter((lead) => Number(lead.compareceu || 0)).length;
+    const payers = weeklyLeads.filter((lead) => ['pagou', 'parcial', '1', 'sim'].includes(String(lead.pagou || '').toLowerCase())).length;
+    const revenue = weeklyLeads.reduce((sum, lead) => sum + Number(lead.receita || lead.valor_pago || 0), 0);
+    return { total: weeklyLeads.length, scheduled, attended, payers, revenue };
+  }, [weeklyLeads]);
+  const topUnit = (charts.byUnit || [])[0];
+  const topOperator = (charts.operatorConversion || [])[0];
 
   const kpis = [
     ['Total de indicações', formatNumber(summary.totalIndicacoes), 'Base filtrada no período.', 'neutral'],
@@ -556,6 +691,7 @@ function DentalCard() {
           <div className="dental-actions dental-span-2">
             <button type="button" className="dental-button" onClick={resetFilters}>Limpar filtros</button>
             <button type="button" className="dental-button primary" onClick={exportCsv}>Exportar CSV</button>
+            <button type="button" className="dental-button primary" onClick={() => exportPdf()}>Exportar PDF</button>
           </div>
         </section>
 
@@ -639,6 +775,30 @@ function DentalCard() {
                       <span>{label}</span>
                     </div>
                   ))}
+                </div>
+              </Panel>
+              <Panel title="Leitura executiva" note="Resumo direto para acompanhar produtividade, risco e retorno do Dental Card.">
+                <div className="dental-dashboard-insights">
+                  <div className="dental-insight-card">
+                    <span>Unidade com maior volume</span>
+                    <strong>{topUnit?.name || '-'}</strong>
+                    <small>{formatNumber(topUnit?.value || 0)} lead(s) no filtro</small>
+                  </div>
+                  <div className="dental-insight-card">
+                    <span>Responsável com maior carteira</span>
+                    <strong>{topOperator?.name || '-'}</strong>
+                    <small>{formatNumber(topOperator?.value || 0)} lead(s) acompanhado(s)</small>
+                  </div>
+                  <div className="dental-insight-card warning">
+                    <span>Pontos de atenção</span>
+                    <strong>{formatNumber((routine.followUpsAtrasados || 0) + (routine.faltososRecuperar || 0))}</strong>
+                    <small>Follow-ups atrasados e faltosos para recuperar</small>
+                  </div>
+                  <div className="dental-insight-card success">
+                    <span>Receita confirmada</span>
+                    <strong>{formatCurrency(summary.receitaTotal)}</strong>
+                    <small>Base filtrada para diretoria</small>
+                  </div>
                 </div>
               </Panel>
             </div>
@@ -742,6 +902,7 @@ function DentalCard() {
                           <div className="dental-row-actions">
                             <button type="button" className="dental-mini-button" onClick={() => loadLeadDetails(lead)}>Detalhes</button>
                             <button type="button" className="dental-mini-button" onClick={() => editLead(lead)}>Editar</button>
+                            <button type="button" className="dental-mini-button" onClick={() => openContactFicha(lead)}>Ficha contato</button>
                             <button type="button" className="dental-mini-button" onClick={() => { setAttemptLead(lead); setAttemptDraft((current) => ({ ...current, data_proxima_acao: '' })); }}>Tentativa</button>
                             <button type="button" className="dental-mini-button" onClick={() => openWhatsApp(lead)}>WhatsApp</button>
                             <button type="button" className="dental-mini-button" onClick={() => updateStatus(lead, 'Agendado Joyce/CRC')}>Agendado</button>
@@ -779,6 +940,7 @@ function DentalCard() {
               <div className="dental-form-grid">
                 <Field label="Arquivo .xlsx" className="dental-span-4"><input className="dental-input" type="file" accept=".xlsx,.xls" onChange={(event) => setImportFile(event.target.files?.[0] || null)} /></Field>
                 <div className="dental-actions dental-span-4">
+                  <button type="button" className="dental-button" onClick={downloadImportTemplate}>Baixar modelo</button>
                   <button type="button" className="dental-button" onClick={() => importSpreadsheet(false)}>Gerar prévia</button>
                   <button type="button" className="dental-button primary" onClick={() => importSpreadsheet(true)} disabled={!importResult}>Salvar importação</button>
                 </div>
@@ -804,6 +966,43 @@ function DentalCard() {
               </div>
               <div className="dental-actions" style={{ marginTop: 16 }}>
                 <button type="button" className="dental-button primary" onClick={exportCsv}>Exportar CSV</button>
+                <button
+                  type="button"
+                  className="dental-button primary"
+                  onClick={() => exportPdf({
+                    startDate: weekRange.start.toISOString().slice(0, 10),
+                    endDate: weekRange.end.toISOString().slice(0, 10)
+                  })}
+                >
+                  Exportar PDF
+                </button>
+              </div>
+            </Panel>
+
+            <Panel title="Relatório semanal Dental Card" note={`Semana de ${formatDate(weekRange.start)} a ${formatDate(weekRange.end)}. Histórico operacional para reunião de performance.`}>
+              <div className="dental-weekly-report">
+                <div><span>Leads da semana</span><strong>{formatNumber(weeklySummary.total)}</strong></div>
+                <div><span>Agendados</span><strong>{formatNumber(weeklySummary.scheduled)}</strong></div>
+                <div><span>Comparecidos</span><strong>{formatNumber(weeklySummary.attended)}</strong></div>
+                <div><span>Pagantes</span><strong>{formatNumber(weeklySummary.payers)}</strong></div>
+                <div><span>Receita</span><strong>{formatCurrency(weeklySummary.revenue)}</strong></div>
+              </div>
+              <div className="dental-actions" style={{ marginTop: 16 }}>
+                <button
+                  type="button"
+                  className="dental-button"
+                  onClick={() => {
+                    setFilters((current) => ({
+                      ...current,
+                      startDate: weekRange.start.toISOString().slice(0, 10),
+                      endDate: weekRange.end.toISOString().slice(0, 10)
+                    }));
+                    setActiveTab('pipeline');
+                  }}
+                >
+                  Ver semana no funil
+                </button>
+                <button type="button" className="dental-button primary" onClick={() => exportPdf()}>Exportar PDF</button>
               </div>
             </Panel>
 
@@ -844,31 +1043,93 @@ function DentalCard() {
 
         {selectedLead ? (
           <div className="dental-modal-backdrop" onClick={() => setSelectedLead(null)}>
-            <section className="dental-modal" onClick={(event) => event.stopPropagation()}>
+            <section className="dental-modal dental-modal-wide" onClick={(event) => event.stopPropagation()}>
               <div className="dental-panel-header">
                 <div>
-                  <p className="dental-eyebrow">Detalhes do lead</p>
+                  <p className="dental-eyebrow">Ficha executiva do contato</p>
                   <h2 className="dental-panel-title">{selectedLead.nome_lead}</h2>
                   <p className="dental-panel-note">{selectedLead.unidade} · {selectedLead.telefone}</p>
                 </div>
-                <button type="button" className="dental-button" onClick={() => setSelectedLead(null)}>Fechar</button>
+                <div className="dental-actions">
+                  <button type="button" className="dental-button" onClick={() => openContactFicha(selectedLead)}>Editar contato</button>
+                  <button type="button" className="dental-button" onClick={() => { setAttemptLead(selectedLead); setAttemptDraft((current) => ({ ...current, data_proxima_acao: '' })); }}>Registrar tentativa</button>
+                  <button type="button" className="dental-button" onClick={() => setSelectedLead(null)}>Fechar</button>
+                </div>
               </div>
               <div className="dental-grid-3">
                 <KpiCard label="Status" value={selectedLead.status} note={selectedLead.sla_status} tone={badgeTone(selectedLead.status)} />
                 <KpiCard label="Tentativas" value={formatNumber(selectedLead.quantidade_tentativas)} note={`Última: ${formatDate(selectedLead.data_ultima_tentativa)}`} tone="warning" />
                 <KpiCard label="Receita" value={formatCurrency(selectedLead.receita || selectedLead.valor_pago)} note={selectedLead.pagou} tone="success" />
               </div>
-              <Panel title="Histórico de tentativas" note="Linha do tempo operacional do lead.">
+              <div className="dental-executive-grid">
+                <div className="dental-detail-card">
+                  <span>Contato</span>
+                  <strong>{selectedLead.status_contato || 'Não informado'}</strong>
+                  <small>Canal: {selectedLead.canal_contato || '-'}</small>
+                  <small>Responsável: {selectedLead.responsavel || '-'}</small>
+                </div>
+                <div className="dental-detail-card">
+                  <span>Agenda</span>
+                  <strong>{selectedLead.data_agendamento ? `${formatDate(selectedLead.data_agendamento)} ${String(selectedLead.hora_agendamento || '').slice(0, 5)}` : 'Sem agendamento'}</strong>
+                  <small>Confirmou presença: {selectedLead.confirmou_presenca || 'pendente'}</small>
+                  <small>Reagendamento: {formatDate(selectedLead.data_reagendamento)}</small>
+                </div>
+                <div className="dental-detail-card">
+                  <span>Pagamento</span>
+                  <strong>{selectedLead.pagou || 'pendente'}</strong>
+                  <small>Valor pago: {formatCurrency(selectedLead.valor_pago)}</small>
+                  <small>Forma: {selectedLead.forma_pagamento || '-'}</small>
+                </div>
+                <div className="dental-detail-card">
+                  <span>Indicador</span>
+                  <strong>{selectedLead.nome_indicador || 'Não informado'}</strong>
+                  <small>Tipo: {selectedLead.tipo_indicador || '-'}</small>
+                  <small>Dentista: {selectedLead.dentista_responsavel || '-'}</small>
+                </div>
+              </div>
+              <Panel title="Histórico de tentativas" note="Dia, hora, responsável, canal, resultado e próxima ação para métrica do operador.">
                 {(selectedLead.attempts || []).length ? (
                   <div className="dental-table-scroll">
-                    <table className="dental-table">
+                    <table className="dental-table dental-table-compact">
                       <thead><tr><th>Data</th><th>Responsável</th><th>Canal</th><th>Resultado</th><th>Próxima ação</th></tr></thead>
-                      <tbody>{selectedLead.attempts.map((attempt) => <tr key={attempt.id}><td>{formatDate(attempt.created_at)}</td><td>{attempt.responsavel}</td><td>{attempt.canal}</td><td>{attempt.resultado}<br /><small>{attempt.observacao}</small></td><td>{attempt.proxima_acao}<br /><small>{formatDate(attempt.data_proxima_acao)}</small></td></tr>)}</tbody>
+                      <tbody>{selectedLead.attempts.map((attempt) => <tr key={attempt.id}><td>{formatDateTime(attempt.created_at)}</td><td>{attempt.responsavel}</td><td>{attempt.canal}</td><td>{attempt.resultado}<br /><small>{attempt.observacao}</small></td><td>{attempt.proxima_acao}<br /><small>{formatDateTime(attempt.data_proxima_acao)}</small></td></tr>)}</tbody>
                     </table>
                   </div>
                 ) : <div className="dental-empty">Nenhuma tentativa registrada.</div>}
               </Panel>
+              <Panel title="Observações da ficha" note="Registro consolidado para acompanhar o dia a dia do contato.">
+                <div className="dental-detail-text">{selectedLead.observacoes || 'Sem observações cadastradas.'}</div>
+              </Panel>
             </section>
+          </div>
+        ) : null}
+
+        {contactLead ? (
+          <div className="dental-modal-backdrop" onClick={() => setContactLead(null)}>
+            <form className="dental-modal dental-modal-wide" onClick={(event) => event.stopPropagation()} onSubmit={saveContactFicha}>
+              <div className="dental-panel-header">
+                <div>
+                  <p className="dental-eyebrow">Editar ficha do contato</p>
+                  <h2 className="dental-panel-title">{contactLead.nome_lead}</h2>
+                  <p className="dental-panel-note">Atualize dia, hora, responsável, status e próxima ação para manter a métrica operacional correta.</p>
+                </div>
+                <button type="button" className="dental-button" onClick={() => setContactLead(null)}>Fechar</button>
+              </div>
+              <div className="dental-form-grid">
+                <Field label="Status do contato"><input className="dental-input" value={contactDraft.status_contato} onChange={(event) => setContactDraft((current) => ({ ...current, status_contato: event.target.value }))} /></Field>
+                <Field label="Canal"><select className="dental-select" value={contactDraft.canal_contato} onChange={(event) => setContactDraft((current) => ({ ...current, canal_contato: event.target.value }))}>{contactChannels.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
+                <Field label="Responsável"><input className="dental-input" value={contactDraft.responsavel} onChange={(event) => setContactDraft((current) => ({ ...current, responsavel: event.target.value }))} /></Field>
+                <Field label="Tentativas"><input className="dental-input" type="number" min="0" value={contactDraft.quantidade_tentativas} onChange={(event) => setContactDraft((current) => ({ ...current, quantidade_tentativas: event.target.value }))} /></Field>
+                <Field label="Primeiro contato"><input className="dental-input" type="datetime-local" value={contactDraft.data_primeiro_contato} onChange={(event) => setContactDraft((current) => ({ ...current, data_primeiro_contato: event.target.value }))} /></Field>
+                <Field label="Última tentativa"><input className="dental-input" type="datetime-local" value={contactDraft.data_ultima_tentativa} onChange={(event) => setContactDraft((current) => ({ ...current, data_ultima_tentativa: event.target.value }))} /></Field>
+                <Field label="Próxima tentativa"><input className="dental-input" type="datetime-local" value={contactDraft.data_proxima_tentativa} onChange={(event) => setContactDraft((current) => ({ ...current, data_proxima_tentativa: event.target.value }))} /></Field>
+                <Field label="Observações operacionais" className="dental-span-4"><textarea className="dental-textarea" value={contactDraft.observacoes} onChange={(event) => setContactDraft((current) => ({ ...current, observacoes: event.target.value }))} /></Field>
+                <div className="dental-actions dental-span-4">
+                  <button type="button" className="dental-button" onClick={() => { setAttemptLead(contactLead); setContactLead(null); setAttemptDraft((current) => ({ ...current, data_proxima_acao: contactDraft.data_proxima_tentativa })); }}>Registrar tentativa detalhada</button>
+                  <button type="submit" className="dental-button primary">Salvar ficha do contato</button>
+                </div>
+              </div>
+            </form>
           </div>
         ) : null}
 

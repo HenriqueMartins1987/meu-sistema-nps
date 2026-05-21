@@ -320,6 +320,60 @@ const columnMap = {
   pagantes: 'pagou'
 };
 
+const dentalCardImportTemplateColumns = [
+  'Data',
+  'Unidade',
+  'Nome do paciente',
+  'Telefone',
+  'Ficha',
+  'Número de indicação',
+  'Origem',
+  'Responsável',
+  'Status',
+  'Ligações Follow',
+  'Agendamento',
+  'Agendado por',
+  'Compareceu',
+  'Pagou',
+  'Valor',
+  'Receita',
+  'Forma de pagamento',
+  'Observações'
+];
+
+function buildDentalCardImportTemplateBuffer() {
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.json_to_sheet([
+    {
+      Data: '2026-05-01',
+      Unidade: 'Garavelo',
+      'Nome do paciente': 'Maria Exemplo',
+      Telefone: '5562999999999',
+      Ficha: 'DC-0001',
+      'Número de indicação': 'Indicador ou número da indicação',
+      Origem: 'Indicação manual',
+      Responsável: 'Operador CRC',
+      Status: 'Novo Lead',
+      'Ligações Follow': 0,
+      Agendamento: '2026-05-02',
+      'Agendado por': 'Joyce/CRC',
+      Compareceu: 'não',
+      Pagou: 'pendente',
+      Valor: 0,
+      Receita: 0,
+      'Forma de pagamento': '',
+      Observações: 'Preencha uma linha por lead.'
+    }
+  ], { header: dentalCardImportTemplateColumns });
+
+  worksheet['!cols'] = dentalCardImportTemplateColumns.map((header) => ({
+    wch: Math.max(14, Math.min(28, header.length + 6))
+  }));
+
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Modelo Dental Card');
+  return XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
+}
+
 function normalizeImportedDentalRow(row, sheetName = '') {
   const normalized = {};
   Object.entries(row || {}).forEach(([key, value]) => {
@@ -408,6 +462,7 @@ function parseDentalCardWorkbook(buffer) {
 }
 
 module.exports = {
+  buildDentalCardImportTemplateBuffer,
   buildDentalDashboard,
   dentalCardStatuses,
   dentalCardTemplateSeeds,

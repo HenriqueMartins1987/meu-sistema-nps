@@ -198,10 +198,11 @@ function HomeShellFixed() {
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(npsLink)}`;
   const crcWhatsappHomeTarget = useMemo(() => {
     const role = normalizeRoleValue(user?.role);
+    if (hasPermission(user, 'dental_card')) return '';
     if (role === 'crc_operator') return '/home/whatsapp-management/attendance';
     if (role === 'crc_leader' || role === 'crc_manager') return '/home/whatsapp-management/dashboard';
     return '';
-  }, [user?.role]);
+  }, [user]);
 
   const menuSections = useMemo(() => ([
     {
@@ -1014,6 +1015,9 @@ function HomeShellFixed() {
         </div>
 
         <div className="home-actions">
+          {hasPermission(user, 'dental_card') && (
+            <button className="primary-action" onClick={() => navigate('/dental-card')}>Dental Card</button>
+          )}
           {hasPermission(user, 'complaints_register') && (
             <button className="primary-action" onClick={() => navigate('/cadastro')}>Novo Protocolo</button>
           )}
