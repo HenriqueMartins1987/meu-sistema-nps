@@ -994,7 +994,8 @@ function defaultActionPermissionsForRole(role) {
 }
 
 function getUserActionPermissions(user = {}) {
-  const defaults = defaultActionPermissionsForRole(user.role);
+  const normalizedRole = normalizeAccessRole(user.role);
+  const defaults = defaultActionPermissionsForRole(normalizedRole);
   let permissions = defaults;
 
   try {
@@ -1003,7 +1004,15 @@ function getUserActionPermissions(user = {}) {
     permissions = defaults;
   }
 
-  return Array.from(new Set(Array.isArray(permissions) ? permissions.filter((permission) => actionPermissions[permission]) : defaults));
+  const parsedPermissions = Array.isArray(permissions)
+    ? permissions.filter((permission) => actionPermissions[permission])
+    : defaults;
+
+  if (normalizedRole === 'sac_operator') {
+    return Array.from(new Set([...parsedPermissions, ...defaults]));
+  }
+
+  return Array.from(new Set(parsedPermissions));
 }
 
 function hasActionPermission(user, permission) {
@@ -1016,8 +1025,8 @@ function hasActionPermission(user, permission) {
     'complaints_edit_patient_phone'
   ]);
 
+  if (normalizedRole === 'sac_operator' && defaultActionPermissionsForRole(normalizedRole).includes(permission)) return true;
   if (fixedComplaintUnitAndPhoneRoles.has(normalizedRole) && fixedComplaintUnitAndPhonePermissions.has(permission)) return true;
-  if (normalizedRole === 'sac_operator' && permission === 'complaints_close') return true;
 
   const permissions = Array.isArray(user.actionPermissions)
     ? user.actionPermissions
@@ -5821,6 +5830,7 @@ async function fetchResendMonitoring(emailMonitoring) {
 
 function parsePermissionsFromUser(user) {
   const role = user?.role || 'viewer';
+  const normalizedRole = normalizeAccessRole(role);
   const defaultPermissions = defaultPermissionsForRole(role);
   let permissions = defaultPermissions;
 
@@ -5830,7 +5840,13 @@ function parsePermissionsFromUser(user) {
     permissions = defaultPermissions;
   }
 
-  return Array.from(new Set(Array.isArray(permissions) ? permissions : defaultPermissions));
+  const parsedPermissions = Array.isArray(permissions) ? permissions : defaultPermissions;
+
+  if (normalizedRole === 'sac_operator') {
+    return Array.from(new Set([...parsedPermissions, ...defaultPermissions]));
+  }
+
+  return Array.from(new Set(parsedPermissions));
 }
 
 function parseActionPermissionsFromUser(user) {

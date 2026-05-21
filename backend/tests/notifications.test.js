@@ -685,6 +685,19 @@ test('SAC operator can edit complaint patient phone even without individual acti
   }), false);
 });
 
+test('SAC operator keeps operational ficha permissions even with empty saved permissions', () => {
+  const sacUser = {
+    role: 'sac_operator',
+    actionPermissions: [],
+    email: 'sac@example.com'
+  };
+
+  assert.equal(__testables.canAttachEvidence(sacUser), true);
+  assert.equal(__testables.canDeleteEvidence(sacUser), true);
+  assert.equal(__testables.canChangeComplaintUnit(sacUser), true);
+  assert.equal(__testables.canEditComplaintPatientPhone(sacUser), true);
+});
+
 test('Marketing can edit complaint unit and patient phone with the same operational rule as SAC', () => {
   assert.equal(__testables.canChangeComplaintUnit({
     role: 'viewer',

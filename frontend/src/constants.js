@@ -301,8 +301,8 @@ export function hasActionPermission(user, permission) {
     'complaints_edit_patient_phone'
   ];
 
+  if (role === 'sac_operator' && defaultActionPermissionsForRole(role).includes(permission)) return true;
   if (fixedComplaintUnitAndPhoneRoles.includes(role) && fixedComplaintUnitAndPhonePermissions.includes(permission)) return true;
-  if (role === 'sac_operator' && permission === 'complaints_close') return true;
 
   const permissions = Array.isArray(user.actionPermissions) ? user.actionPermissions : defaultActionPermissionsForRole(user.role);
   return permissions.includes(permission);
@@ -314,6 +314,7 @@ export function hasPermission(user, permission) {
 
   const permissions = Array.isArray(user.permissions) ? user.permissions : [];
   const role = normalizeRoleValue(user.role);
+  const sacOperatorDefaults = ['home', 'complaints_register', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'crm_relationship', 'whatsapp_management'];
   const crcLeaderDefaults = ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports'];
   const crcOperatorDefaults = ['home', 'whatsapp_management', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history'];
 
@@ -327,6 +328,10 @@ export function hasPermission(user, permission) {
 
   if (role === 'crc_operator') {
     return crcOperatorDefaults.includes(permission);
+  }
+
+  if (role === 'sac_operator' && sacOperatorDefaults.includes(permission)) {
+    return true;
   }
 
   if (permission === 'admin_panel') {
