@@ -25,6 +25,7 @@ import FinancialCollaboratorManagement from './pages/FinancialCollaboratorManage
 import FinancialIntelligence from './pages/FinancialIntelligence';
 import FinancialIntelligenceManage from './pages/FinancialIntelligenceManage';
 import FinancialIntelligenceRecord from './pages/FinancialIntelligenceRecord';
+import DentalCard from './pages/DentalCard';
 import WhatsAppManagement from './pages/WhatsAppManagement';
 import WhatsAppServiceSettings from './pages/WhatsAppServiceSettings';
 import { PermissionRoute, ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
@@ -107,6 +108,9 @@ function App() {
         <Route element={<PermissionRoute permission="whatsapp_management" />}>
           <Route path="/home/whatsapp-management" element={<WhatsAppManagement />} />
           <Route path="/home/whatsapp-management/:section" element={<WhatsAppManagement />} />
+        </Route>
+        <Route element={<PermissionRoute permission="dental_card" />}>
+          <Route path="/dental-card" element={<DentalCard />} />
         </Route>
         <Route path="/gestao/:id" element={<ComplaintDetail />} />
         <Route element={<PermissionRoute permission="complaints_register" />}>

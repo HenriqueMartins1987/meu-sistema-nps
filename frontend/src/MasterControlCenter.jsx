@@ -43,18 +43,19 @@ const permissionGroups = [
   { key: 'nps', title: 'NPS', match: (value) => value.startsWith('nps') },
   { key: 'patients', title: 'Pacientes e CRM', match: (value) => ['patient_management', 'crm_relationship'].includes(value) },
   { key: 'financial', title: 'Financeiro CRC', match: (value) => value.startsWith('financial') },
+  { key: 'dental', title: 'Dental Card', match: (value) => value === 'dental_card' },
   { key: 'whatsapp', title: 'WhatsApp CRC', match: (value) => value.startsWith('whatsapp') }
 ];
 
 const defaultRolePermissions = {
   master_admin: screenPermissions.map((permission) => permission.value),
   admin: screenPermissions.map((permission) => permission.value),
-  sac_operator: ['home', 'complaints_register', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'crm_relationship', 'whatsapp_management'],
-  supervisor_crc: ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management', 'whatsapp_management'],
-  crc_leader: ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports'],
-  crc_manager: ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports'],
-  crc_operator: ['home', 'whatsapp_management', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history'],
-  manager: ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management'],
+  sac_operator: ['home', 'complaints_register', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'crm_relationship', 'whatsapp_management', 'dental_card'],
+  supervisor_crc: ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management', 'whatsapp_management', 'dental_card'],
+  crc_leader: ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports', 'dental_card'],
+  crc_manager: ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports', 'dental_card'],
+  crc_operator: ['home', 'whatsapp_management', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'dental_card'],
+  manager: ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management', 'dental_card'],
   coordinator: ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship'],
   viewer: ['home', 'complaints_management', 'nps_management']
 };
@@ -132,6 +133,7 @@ const authorityRules = [
   { area: 'Financeiro CRC', action: 'Gestao financeira e lancamentos', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Permite lancar/editar dados conforme perfil.' },
   { area: 'Financeiro CRC', action: 'Excluir lancamento financeiro', actionPermission: 'financial_record_delete', roles: ['master_admin'], note: 'Exclusao definitiva restrita ao Master.' },
   { area: 'Financeiro CRC', action: 'Excluir colaborador CRC', actionPermission: 'financial_collaborator_delete', roles: ['master_admin'], note: 'Preserva a base do ROI.' },
+  { area: 'Dental Card', action: 'Acessar CRM Dental Card', permission: 'dental_card', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator', 'manager'], note: 'Controle de indicacoes, follow-up, agendamento, comparecimento e receita.' },
   { area: 'WhatsApp CRC', action: 'Acessar central WhatsApp', permission: 'whatsapp_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator'], note: 'Central operacional, cadastro de números, mensagens, chatbot e relatórios.' },
   { area: 'WhatsApp CRC', action: 'Configurar whatsapp-service VPS', permission: 'whatsapp_settings', actionPermission: 'whatsapp_config_manage', roles: ['master_admin'], note: 'URL do serviço, API Key, teste de conexão e anti-ban ficam em tela segura.' },
   { area: 'WhatsApp CRC', action: 'Excluir instâncias', actionPermission: 'whatsapp_instance_delete', roles: ['master_admin'], note: 'Exclusão operacional de números conectados.' },
@@ -161,6 +163,7 @@ const routeControls = [
   { area: 'Financeiro CRC', type: 'Caminho', title: 'Gestao financeira CRC', path: '/home/financial-intelligence/manage', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Lancamentos, edicoes e despesas mensais.' },
   { area: 'Financeiro CRC', type: 'Caminho', title: 'Gestao de colaboradores CRC', path: '/home/financial-intelligence/manage/collaborators', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Cadastro e custos dos colaboradores.' },
   { area: 'Financeiro CRC', type: 'Caminho', title: 'Detalhe do lancamento financeiro', path: '/home/financial-intelligence/manage/:id', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Analise individual do lancamento.' },
+  { area: 'Dental Card', type: 'Caminho', title: 'Dental Card', path: '/dental-card', permission: 'dental_card', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator', 'manager'], note: 'CRM operacional e dashboard executivo do Programa Dental Card.' },
   { area: 'WhatsApp CRC', type: 'Caminho', title: 'Gestao WhatsApp CRC', path: '/home/whatsapp-management/dashboard', permission: 'whatsapp_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator'], note: 'Central de atendimento, envio, chatbot e relatorios.' },
   { area: 'WhatsApp CRC', type: 'Caminho', title: 'Dashboard WhatsApp', path: '/home/whatsapp-management/dashboard', permission: 'whatsapp_dashboard', roles: ['master_admin', 'admin', 'supervisor_crc', 'crc_leader', 'crc_manager'], note: 'Métricas por operador, clínica, número e fila.' },
   { area: 'WhatsApp CRC', type: 'Caminho', title: 'Cadastro de Número WhatsApp', path: '/home/whatsapp-management/instances', permission: 'whatsapp_instances', roles: ['master_admin', 'admin', 'supervisor_crc', 'crc_leader', 'crc_manager'], note: 'Conexão, QR Code e manutenção de números.' },

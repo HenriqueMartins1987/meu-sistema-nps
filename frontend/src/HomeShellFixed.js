@@ -219,6 +219,12 @@ function HomeShellFixed() {
       ]
     },
     {
+      title: 'Dental Card',
+      items: [
+        { label: 'Dental Card', path: '/dental-card', permission: 'dental_card' }
+      ]
+    },
+    {
       title: 'Reclamações',
       items: [
         { label: 'Novo Protocolo', path: '/cadastro', permission: 'complaints_register' },
