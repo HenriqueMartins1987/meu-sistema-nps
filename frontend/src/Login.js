@@ -212,7 +212,7 @@ function Login() {
         password: crcRegisterForm.password
       });
       closeCrcRegister();
-      setEmail(response.data?.username || crcRegisterForm.username);
+      setEmail(response.data?.pendingAuthorization ? '' : (response.data?.username || crcRegisterForm.username));
       setPassword('');
       setInfo(response.data?.message || 'Operador CRC cadastrado. Faça login com seu usuário.');
     } catch (err) {

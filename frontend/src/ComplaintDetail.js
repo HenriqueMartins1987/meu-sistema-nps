@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import api, { apiBaseUrl } from './api';
-import { hasActionPermission, isAdmin as isAdminUser, isMasterAdmin, priorityOptions, readUser, statusLabels } from './constants';
+import { hasActionPermission, isAdmin as isAdminUser, isMasterAdmin, normalizeRoleValue, priorityOptions, readUser, statusLabels } from './constants';
 
 const maxUploadSizeBytes = 10 * 1024 * 1024;
 const detailTablePageSize = 10;
 const treatmentRoles = ['coordinator', 'manager', 'supervisor_crc'];
 const evidenceRoles = ['coordinator', 'manager', 'supervisor_crc', 'sac_operator', 'admin', 'viewer'];
+const closingTreatmentRoles = ['coordinator', 'manager'];
 const previewableImagePattern = /\.(avif|bmp|gif|jpe?g|png|svg|webp)(\?.*)?$/i;
 
 const dentalProcedureOptions = [
@@ -120,6 +121,21 @@ function buildWhatsappUrl(phone) {
   if (!digits) return null;
   const normalized = digits.startsWith('55') ? digits : `55${digits}`;
   return `https://wa.me/${normalized}`;
+}
+
+function hasCoordinatorOrManagerTreatmentRecord(complaint) {
+  if (!complaint) return false;
+
+  const currentRole = normalizeRoleValue(complaint.treatment_by_role);
+  if (complaint.treatment_at && closingTreatmentRoles.includes(currentRole)) {
+    return true;
+  }
+
+  const logs = Array.isArray(complaint.logs) ? complaint.logs : [];
+  return logs.some((log) => (
+    log?.action === 'treatment_saved'
+    && closingTreatmentRoles.includes(normalizeRoleValue(log.actor_role))
+  ));
 }
 
 function formatPhoneDisplay(phone) {
@@ -405,7 +421,7 @@ function ComplaintDetail() {
   });
 
   const protocol = useMemo(() => formatProtocol(complaint), [complaint]);
-  const normalizedUserRole = String(user?.role || '').trim().toLowerCase();
+  const normalizedUserRole = normalizeRoleValue(user?.role);
   const deadline = useMemo(() => buildDeadlineInfo(complaint), [complaint]);
   const stage = useMemo(() => buildOperationalStage(complaint), [complaint]);
   const priority = useMemo(() => getPriorityOption(complaint?.priority), [complaint]);
@@ -428,12 +444,12 @@ function ComplaintDetail() {
   const canSupervisorAccept = normalizedUserRole === 'supervisor_crc' || isAdmin;
   const canDeleteComplaint = isMasterUser || user?.role === 'supervisor_crc';
   const canDeleteEvidence = normalizedUserRole !== 'viewer' && Boolean(user?.id || user?.email || user?.role) && hasActionPermission(user, 'evidence_delete');
-  const canChangeComplaintUnit = (isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_change_unit');
-  const canEditPatientPhone = (isMasterUser || ['sac_operator', 'supervisor_crc', 'master_admin'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_edit_patient_phone');
+  const canChangeComplaintUnit = (isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator', 'viewer'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_change_unit');
+  const canEditPatientPhone = (isMasterUser || ['sac_operator', 'supervisor_crc', 'master_admin', 'viewer'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_edit_patient_phone');
   const canRenotifyComplaint = (isMasterUser || normalizedUserRole === 'supervisor_crc' || normalizedUserRole === 'sac_operator') && hasActionPermission(user, 'complaints_renotify');
   const canReactivateComplaint = (isMasterUser || normalizedUserRole === 'supervisor_crc') && hasActionPermission(user, 'complaints_reactivate');
   const canCreatePatientTreatment = (isMasterUser || ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole)) && hasActionPermission(user, 'patient_treatment_manage');
-  const canReturnToSac = ['coordinator', 'manager'].includes(String(user?.role || '').toLowerCase());
+  const canReturnToSac = ['coordinator', 'manager'].includes(normalizedUserRole);
   const canReassignForward = (canReturnToSac || isAdmin || isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_reassign');
   const reassignOptions = canReturnToSac ? returnToSacOption : reassignForwardingOptions;
   const activeUnitOptions = useMemo(() => (
@@ -443,8 +459,7 @@ function ComplaintDetail() {
   ), [unitOptions]);
   const hasUnitChange = String(selectedClinicId || '') !== String(complaint?.clinic_id || '');
   const hasTreatment = Boolean(complaint?.treatment_at);
-  const hasCoordinatorOrManagerTreatment = hasTreatment
-    && ['coordinator', 'manager'].includes(String(complaint?.treatment_by_role || '').toLowerCase());
+  const hasCoordinatorOrManagerTreatment = hasCoordinatorOrManagerTreatmentRecord(complaint);
   const pendingTreatmentComment = comment.trim();
   const canReturnToSacWithTreatment = !canReturnToSac
     || hasCoordinatorOrManagerTreatment

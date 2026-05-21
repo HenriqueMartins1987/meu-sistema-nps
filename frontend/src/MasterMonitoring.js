@@ -222,7 +222,7 @@ function MasterMonitoring() {
   const activity = data?.activity || {};
   const providers = data?.providers || {};
   const whatsapp = data?.whatsapp || providers.twilio || {};
-  const evolution = data?.evolution || providers.evolution || {};
+  const whatsappService = data?.evolution || providers.evolution || {};
   const memoryUsagePercent = runtime.memory?.systemTotalBytes
     ? (runtime.memory.systemTotalBytes - runtime.memory.systemFreeBytes) / runtime.memory.systemTotalBytes * 100
     : null;
@@ -314,7 +314,7 @@ function MasterMonitoring() {
             <GaugeCard label="Entrega de e-mail" percent={emailSuccessPercent} value={formatPercent(emailSuccessPercent)} detail={`${formatNumber(emailTotal24h)} envios em 24h · ${formatNumber(emailFailed24h)} falhas`} tone={emailFailed24h ? 'danger' : 'neutral'} />
             <GaugeCard label="Resend API" percent={percentFromStatus(providers.resend?.status)} value={statusLabels[providers.resend?.status] || 'N/D'} detail={resendNote || 'Monitoria do provedor de e-mail'} tone={providers.resend?.status === 'error' ? 'danger' : 'neutral'} />
             <GaugeCard label="Twilio WhatsApp" percent={percentFromStatus(whatsapp?.status)} value={statusLabels[whatsapp?.status] || 'N/D'} detail={`${formatNumber(whatsapp?.metrics?.last24h)} envios em 24h · ${formatNumber(whatsapp?.metrics?.failed)} falhas`} tone={whatsapp?.status === 'error' || Number(whatsapp?.metrics?.failed || 0) ? 'danger' : 'neutral'} />
-            <GaugeCard label="Evolution Hostinger" percent={percentFromStatus(evolution?.status)} value={statusLabels[evolution?.status] || 'N/D'} detail={`${formatNumber(evolution?.metrics?.instances)} número(s) · ${formatNumber(evolution?.metrics?.messages24h)} mensagens em 24h`} tone={evolution?.status === 'error' || Number(evolution?.metrics?.errors24h || 0) ? 'danger' : 'neutral'} />
+            <GaugeCard label="WhatsApp Service" percent={percentFromStatus(whatsappService?.status)} value={statusLabels[whatsappService?.status] || 'N/D'} detail={`${formatNumber(whatsappService?.metrics?.instances)} número(s) · ${formatNumber(whatsappService?.metrics?.messages24h)} mensagens em 24h`} tone={whatsappService?.status === 'error' || Number(whatsappService?.metrics?.errors24h || 0) ? 'danger' : 'neutral'} />
             <GaugeCard label="Vercel" percent={percentFromStatus(providers.vercel?.status)} value={statusLabels[providers.vercel?.status] || 'N/D'} detail={providers.vercel?.metrics?.latestState || providers.vercel?.publicStatus || 'Frontend'} tone={providers.vercel?.status === 'error' ? 'danger' : 'neutral'} />
             <GaugeCard label="Railway API" percent={percentFromStatus(providers.railway?.status)} value={statusLabels[providers.railway?.status] || 'N/D'} detail={providers.railway?.metrics?.projectName || 'Métricas do banco'} tone={providers.railway?.status === 'error' ? 'danger' : 'neutral'} />
           </section>
@@ -368,7 +368,7 @@ function MasterMonitoring() {
             <ProviderCard provider={providers.railway} />
             <ProviderCard provider={providers.resend} />
             <ProviderCard provider={whatsapp} />
-            <ProviderCard provider={evolution} />
+            <ProviderCard provider={whatsappService} />
           </section>
 
           <section className="management-panel monitor-panel">

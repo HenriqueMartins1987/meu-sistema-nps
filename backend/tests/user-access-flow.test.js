@@ -80,7 +80,7 @@ test('admin user creation keeps the user when welcome e-mail fails', async () =>
   let insertedUserParams = null;
 
   emailService.sendWelcomeEmail = async () => {
-    throw new Error('Resend indisponÃ­vel');
+    throw new Error('Resend indisponível');
   };
 
   pool.query = buildQueryStub([
@@ -133,6 +133,72 @@ test('admin user creation keeps the user when welcome e-mail fails', async () =>
   assert.ok(insertedUserParams);
   assert.match(insertedUserParams[2], /^\$2[aby]\$/);
   assert.equal(insertedUserParams[insertedUserParams.length - 1], 1);
+});
+
+test('CRC operator self-registration stays inactive and notifies master for approval', async () => {
+  let insertedUserSql = null;
+  let insertedUserParams = null;
+  let notificationParams = null;
+  let emailSent = null;
+
+  emailService.sendEmail = async (payload) => {
+    emailSent = payload;
+    return { provider: 'test', from: 'noreply@example.com', id: 'email-1' };
+  };
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT id') && sql.includes('LOWER(username) = ?') && sql.includes('FROM users'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO users') && sql.includes("'crc_operator'"),
+      reply: async (sql, params) => {
+        insertedUserSql = sql;
+        insertedUserParams = params;
+        return [{ insertId: 155 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('SELECT id') && sql.includes('role IN') && sql.includes('deleted_at IS NULL') && sql.includes('FROM users'),
+      reply: async () => [[{ id: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO notification_events'),
+      reply: async (_sql, params) => {
+        notificationParams = params;
+        return [{ insertId: 900 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO email_delivery_logs'),
+      reply: async () => [{ insertId: 22 }]
+    }
+  ]);
+
+  const response = await request(app)
+    .post('/auth/crc-operator/register')
+    .send({
+      name: 'Paula Operadora CRC',
+      username: 'paula.crc',
+      email: 'paula.crc@example.com',
+      phone: '+5562999999999',
+      password: 'Senha@123'
+    });
+
+  assert.equal(response.status, 201);
+  assert.equal(response.body.pendingAuthorization, true);
+  assert.match(response.body.message, /Administrador Master foi notificado/i);
+  assert.match(insertedUserSql, /active,\s*must_change_password\)\s*VALUES[\s\S]+0,\s*0\)/);
+  assert.equal(insertedUserParams[0], 'Paula Operadora CRC');
+  assert.equal(insertedUserParams[1], 'paula.crc');
+  assert.equal(insertedUserParams[2], 'paula.crc@example.com');
+  assert.match(insertedUserParams[3], /^\$2[aby]\$/);
+  assert.equal(notificationParams[0], 1);
+  assert.equal(notificationParams[1], 'crc_operator_approval_required');
+  assert.match(notificationParams[3], /Paula Operadora CRC solicitou acesso/);
+  assert.ok(emailSent);
+  assert.match(emailSent.subject, /Operador de CRC aguardando autorização/);
 });
 
 test('master admin can update a user e-mail from user management', async () => {
@@ -437,7 +503,7 @@ test('test-email route sends a dedicated validation message', async () => {
     })}`)
     .send({
       to: 'teste@example.com',
-      name: 'UsuÃ¡rio Teste',
+      name: 'Usuário Teste',
       loginEmail: 'teste@example.com',
       password: 'Tmp@12345'
     });
@@ -832,7 +898,7 @@ test('marketing viewer cannot edit complaint data', async () => {
     .send({ priority: 'alta', operator_comment: 'Tentativa de alteração' });
 
   assert.equal(response.status, 403);
-  assert.match(response.body.error, /Marketing pode consultar protocolos e anexar evidências/);
+  assert.match(response.body.error, /Marketing pode consultar protocolos, anexar evidências e corrigir unidade\/telefone/);
 });
 
 test('coordinator can open complaint assigned through coordinator scope', async () => {
@@ -1245,5 +1311,99 @@ test('uploaded file route serves persisted database fallback when disk file is m
   assert.match(response.headers['content-type'], /text\/plain/);
   assert.match(response.headers['content-disposition'], /inline/);
   assert.equal(response.text, 'arquivo persistido');
+});
+
+test('sac operator can close complaint when manager treatment exists in immutable history', async () => {
+  let updateComplaintSql = '';
+  let updateComplaintParams = null;
+  let closeLogParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{
+        must_change_password: 0,
+        token_version: 1,
+        active: 1,
+        role: 'sac_operator',
+        permissions: JSON.stringify(['complaints_management']),
+        action_permissions: null
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes('WHERE') && sql.includes('c.id = ?'),
+      reply: async () => [[{
+        id: 45,
+        protocol: 'GRC-2026-000045',
+        clinic_id: 1,
+        patient_name: 'Paciente Teste',
+        status: 'em_andamento',
+        operator_comment: 'SAC acompanhando',
+        priority: 'media',
+        treatment_at: new Date('2026-05-10T12:00:00.000Z'),
+        treatment_by_role: 'sac_operator',
+        supervisor_approval_at: null,
+        deleted_at: null,
+        created_at: new Date('2026-05-09T12:00:00.000Z')
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_evidences'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_logs') && sql.includes('complaint_id IN'),
+      reply: async () => [[{
+        id: 10,
+        complaint_id: 45,
+        action: 'treatment_saved',
+        message: 'Tratativa registrada pelo gerente.',
+        actor_name: 'Gerente Unidade',
+        actor_role: 'manager',
+        created_at: new Date('2026-05-10T12:05:00.000Z')
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_logs') && sql.includes("action = 'treatment_saved'"),
+      reply: async () => [[{
+        actor_role: 'manager'
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE complaints') && sql.includes('closed_at = NOW()'),
+      reply: async (sql, params) => {
+        updateComplaintSql = sql;
+        updateComplaintParams = params;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO complaint_logs'),
+      reply: async (_sql, params) => {
+        closeLogParams = params;
+        return [{ insertId: 4 }];
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/complaints/45')
+    .set('Authorization', `Bearer ${signToken({
+      id: 9,
+      email: 'sac@example.com',
+      role: 'sac_operator',
+      name: 'Operador SAC',
+      permissions: ['complaints_management'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({ status: 'resolvida' });
+
+  assert.equal(response.status, 200);
+  assert.match(updateComplaintSql, /closed_at = NOW\(\)/);
+  assert.equal(updateComplaintParams[0], 'resolvida');
+  assert.ok(updateComplaintParams.includes('sac_operator'));
+  assert.equal(closeLogParams[1], 'closed');
+  assert.equal(closeLogParams[3], 'Operador SAC');
 });
 

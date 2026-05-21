@@ -437,7 +437,7 @@ function NpsManagement() {
         closeTreatment();
       }
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel finalizar a tratativa NPS.');
+      setFeedback(error.response?.data?.error || 'Não foi possível finalizar a tratativa NPS.');
     } finally {
       setSavingId(null);
     }

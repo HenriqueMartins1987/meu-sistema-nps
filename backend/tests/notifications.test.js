@@ -303,16 +303,168 @@ test('complaint notification templates include the complaint link and detailed W
 
   const message = __testables.buildComplaintWhatsAppMessage(complaint, complaint.protocol);
   const email = __testables.buildComplaintNotificationEmail(complaint, complaint.protocol);
-
-  assert.match(message, /NOVA RECLAMAÇÃO REGISTRADA/);
-  assert.match(message, /Protocolo: GRC-2026-000123/);
-  assert.match(message, /Unidade: Unidade Centro/);
-  assert.match(message, /Responsável: Maria Coordenadora @5562999999999/);
-  assert.match(message, /1ª ação:/);
-  assert.match(message, /Prazo final para retorno: 7 dias úteis/);
-  assert.match(message, /\/gestao\/123/);
-  assert.match(email.html, /Link da reclamação/);
   assert.match(email.html, /\/gestao\/123/);
+  assert.match(message, /NOVA RECLAMACAO REGISTRADA/);
+  assert.doesNotMatch(message, /[^\x09\x0A\x0D\x20-\x7E]/);
+  assert.match(message, /\*Protocolo:\* GRC-2026-000123/);
+  assert.match(message, /\[UNIDADE\] Unidade Centro/);
+  assert.match(message, /\[RESPONSAVEL\] Maria Coordenadora @5562999999999/);
+  assert.match(message, /\[LINK DA OCORRENCIA\]/);
+  assert.match(message, /PRAZOS DE ATENDIMENTO/);
+  assert.match(message, /- Primeira acao: ate 24h/);
+  assert.match(message, /- Atualizacao obrigatoria: ate 48h/);
+  assert.match(message, /- Prazo final: 7 dias uteis/);
+  assert.match(message, /\/gestao\/123/);
+  assert.doesNotMatch(message, /Resumo da ocorr/);
+});
+
+test('daily coordinator WhatsApp reminder is ASCII-safe and professional', () => {
+  const message = __testables.buildDailyCoordinatorDemandReminderMessage({
+    coordinator: { name: 'Joao Coordenador' },
+    summary: { total: 3, overdue: 1, withoutTreatment: 2 },
+    demands: [
+      {
+        id: 1,
+        protocol: 'GRC-2026-000001',
+        clinic_name: 'Clinica Centro',
+        status: 'em_andamento',
+        deadline_at: '2026-05-17T11:00:00.000Z'
+      }
+    ]
+  });
+
+  assert.match(message, /\[LEMBRETE DIARIO - DEMANDAS\]/);
+  assert.match(message, /Demandas abertas: 3/);
+  assert.match(message, /GRC-2026-000001/);
+  assert.match(message, /\/gestao/);
+  assert.doesNotMatch(message, /[^\x09\x0A\x0D\x20-\x7E]/);
+});
+
+test('daily coordinator delivery report includes phone, units and confirmed delivery status', () => {
+  const now = new Date('2026-05-20T12:00:00.000Z');
+  const period = __testables.buildDailyCoordinatorDeliveryReportPeriod(now);
+  const message = __testables.buildDailyCoordinatorDeliveryReportMessage([
+    {
+      name: 'Ana Coordenadora',
+      phone: '5562999999999',
+      units: [{ name: 'Garavelo' }, { name: 'Santo Hilario' }],
+      demandCount: 4,
+      deliveryStatus: 'confirmed_delivered',
+      deliveryLabel: 'CHEGOU / ENTREGUE',
+      deliveryConfirmed: true
+    },
+    {
+      name: 'Bruno Gerente',
+      phone: '5562888888888',
+      units: [{ name: 'Goiania 1' }],
+      demandCount: 2,
+      deliveryStatus: 'sent_unconfirmed',
+      deliveryLabel: 'ENVIADA SEM CONFIRMACAO',
+      deliveryConfirmed: false
+    }
+  ], { period, now });
+
+  assert.match(message, /\[RELATORIO DIARIO - WHATSAPP COORDENADORES\]/);
+  assert.match(message, /Chegada confirmada pelo WhatsApp: 1/);
+  assert.match(message, /Ana Coordenadora/);
+  assert.match(message, /Tel: 5562999999999/);
+  assert.match(message, /Unidades: Garavelo, Santo Hilario/);
+  assert.match(message, /CHEGOU \/ ENTREGUE/);
+  assert.doesNotMatch(message, /[^\x09\x0A\x0D\x20-\x7E]/);
+});
+
+test('weekly admin complaint report is ASCII-safe and summarizes the closed week', () => {
+  const now = new Date('2026-05-18T11:00:00.000Z');
+  const period = __testables.buildWeeklyAdminComplaintReportPeriod(now);
+  const message = __testables.buildWeeklyAdminComplaintReportWhatsAppMessage([
+    {
+      id: 1,
+      protocol: 'GRC-2026-000001',
+      patient_name: 'Maria',
+      clinic_name: 'Garavelo',
+      status: 'em_andamento',
+      created_at: '2026-05-14T12:00:00.000Z',
+      resolution_due_at: '2026-05-17T12:00:00.000Z',
+      assigned_responsible_name: 'Ana Admin',
+      has_treatment_log: 0
+    },
+    {
+      id: 2,
+      protocol: 'GRC-2026-000002',
+      patient_name: 'Joao',
+      clinic_name: 'Reclamacoes',
+      status: 'resolvida',
+      created_at: '2026-05-13T12:00:00.000Z',
+      assigned_responsible_name: 'Carlos Admin',
+      has_treatment_log: 1
+    }
+  ], { ...period, now });
+
+  assert.match(message, /\[RELATORIO SEMANAL - RECLAMACOES\]/);
+  assert.match(message, /Periodo: 11\/05\/2026 a 17\/05\/2026/);
+  assert.match(message, /Reclamacoes cadastradas: 2/);
+  assert.match(message, /Abertas\/em andamento: 1/);
+  assert.match(message, /Finalizadas\/canceladas: 1/);
+  assert.match(message, /Garavelo/);
+  assert.match(message, /\/gestao\/relatorio-semanal/);
+  assert.doesNotMatch(message, /[^\x09\x0A\x0D\x20-\x7E]/);
+});
+
+test('whatsapp-service webhook extracts received whatsapp-web.js message payloads', () => {
+  const event = __testables.extractWhatsAppServiceEventMessage({
+    event: 'message',
+    sessionId: 'garavelo',
+    message: {
+      id: {
+        _serialized: 'false_5562993005353@c.us_ABC',
+        id: 'ABC',
+        remote: '5562993005353@c.us',
+        fromMe: false
+      },
+      from: '5562993005353@c.us',
+      to: '5562996943245@c.us',
+      body: 'Bom dia, quero confirmar meu atendimento.',
+      type: 'chat',
+      notifyName: 'Paciente Teste'
+    }
+  });
+
+  assert.equal(event.sessionId, 'garavelo');
+  assert.equal(event.phone, '5562993005353');
+  assert.equal(event.fromMe, false);
+  assert.equal(event.text, 'Bom dia, quero confirmar meu atendimento.');
+  assert.equal(event.messageId, 'false_5562993005353@c.us_ABC');
+  assert.equal(event.pushName, 'Paciente Teste');
+});
+
+test('whatsapp-service webhook extracts nested message and ack payloads', () => {
+  const event = __testables.extractWhatsAppServiceEventMessage({
+    event: 'message',
+    sessionId: 'reclamacoes',
+    data: {
+      message: {
+        id: { id: 'MSG-1', remote: '5562999669966@c.us', fromMe: false },
+        from: '5562999669966@c.us',
+        body: 'Recebido',
+        type: 'chat'
+      }
+    }
+  });
+  const status = __testables.extractWhatsAppServiceStatusEvent({
+    event: 'message_ack',
+    sessionId: 'reclamacoes',
+    message: {
+      id: { id: 'MSG-1', remote: '5562999669966@c.us', fromMe: true },
+      ack: 3
+    }
+  });
+
+  assert.equal(event.sessionId, 'reclamacoes');
+  assert.equal(event.phone, '5562999669966');
+  assert.equal(event.text, 'Recebido');
+  assert.equal(event.messageId, 'MSG-1');
+  assert.equal(status.messageId, 'MSG-1');
+  assert.equal(status.status, 'lida');
 });
 
 test('buildWelcomeMessage includes login and temporary password', () => {
@@ -486,7 +638,7 @@ test('complaint creator audit keeps user or public origin trail', () => {
   });
 });
 
-test('canChangeComplaintUnit allows only operational admin profiles', () => {
+test('canChangeComplaintUnit allows operational and marketing profiles', () => {
   assert.equal(__testables.canChangeComplaintUnit({
     role: 'master_admin',
     email: 'henrique.martins@grcconsultoria.net.br'
@@ -504,6 +656,7 @@ test('canChangeComplaintUnit allows only operational admin profiles', () => {
 
   assert.equal(__testables.canChangeComplaintUnit({
     role: 'sac_operator',
+    actionPermissions: [],
     email: 'sac@example.com'
   }), true);
 
@@ -515,7 +668,35 @@ test('canChangeComplaintUnit allows only operational admin profiles', () => {
   assert.equal(__testables.canChangeComplaintUnit({
     role: 'viewer',
     email: 'viewer@example.com'
+  }), true);
+});
+
+test('SAC operator can edit complaint patient phone even without individual action permission', () => {
+  assert.equal(__testables.canEditComplaintPatientPhone({
+    role: 'sac_operator',
+    actionPermissions: [],
+    email: 'sac@example.com'
+  }), true);
+
+  assert.equal(__testables.canEditComplaintPatientPhone({
+    role: 'coordinator',
+    actionPermissions: ['complaints_edit_patient_phone'],
+    email: 'coordinator@example.com'
   }), false);
+});
+
+test('Marketing can edit complaint unit and patient phone with the same operational rule as SAC', () => {
+  assert.equal(__testables.canChangeComplaintUnit({
+    role: 'viewer',
+    actionPermissions: [],
+    email: 'marketing@example.com'
+  }), true);
+
+  assert.equal(__testables.canEditComplaintPatientPhone({
+    role: 'viewer',
+    actionPermissions: [],
+    email: 'marketing@example.com'
+  }), true);
 });
 
 test('normalizeStoredUploadUrl rewrites localhost upload links to the current public API host', () => {

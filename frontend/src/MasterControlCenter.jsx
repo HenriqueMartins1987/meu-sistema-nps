@@ -106,7 +106,7 @@ const defaultRoleActionPermissions = {
   crc_operator: [],
   manager: ['complaints_reassign', 'evidence_attach', 'evidence_delete', 'treatment_register'],
   coordinator: ['complaints_reassign', 'evidence_attach', 'evidence_delete', 'treatment_register'],
-  viewer: ['complaints_view_all', 'evidence_attach']
+  viewer: ['complaints_view_all', 'complaints_change_unit', 'complaints_edit_patient_phone', 'evidence_attach']
 };
 
 const authorityRules = [
@@ -114,8 +114,8 @@ const authorityRules = [
   { area: 'Protocolos', action: 'Cadastrar protocolo', permission: 'complaints_register', roles: ['master_admin', 'admin', 'sac_operator'], note: 'Liberado por permissao de tela de cadastro.' },
   { area: 'Protocolos', action: 'Fechar protocolo', actionPermission: 'complaints_close', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator'], note: 'Coordenador, gerente e marketing nao finalizam protocolo.' },
   { area: 'Protocolos', action: 'Reabilitar protocolo finalizado/cancelado', actionPermission: 'complaints_reactivate', roles: ['master_admin', 'supervisor_crc'], note: 'Exige justificativa operacional.' },
-  { area: 'Protocolos', action: 'Alterar unidade cadastrada', actionPermission: 'complaints_change_unit', roles: ['master_admin', 'supervisor_crc', 'sac_operator'], note: 'Alcada restrita para preservar lastro da demanda.' },
-  { area: 'Protocolos', action: 'Alterar telefone do paciente', actionPermission: 'complaints_edit_patient_phone', roles: ['master_admin', 'supervisor_crc', 'sac_operator'], note: 'Usado dentro da ficha executiva.' },
+  { area: 'Protocolos', action: 'Alterar unidade cadastrada', actionPermission: 'complaints_change_unit', roles: ['master_admin', 'supervisor_crc', 'sac_operator', 'viewer'], note: 'Marketing segue a mesma alçada operacional do Operador de SAC para corrigir unidade na ficha.' },
+  { area: 'Protocolos', action: 'Alterar telefone do paciente', actionPermission: 'complaints_edit_patient_phone', roles: ['master_admin', 'supervisor_crc', 'sac_operator', 'viewer'], note: 'Marketing segue a mesma alçada operacional do Operador de SAC para corrigir telefone na ficha.' },
   { area: 'Protocolos', action: 'Encaminhar/reencaminhar demanda', actionPermission: 'complaints_reassign', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager'], note: 'Coordenador e gerente devolvem ao Operador de SAC.' },
   { area: 'Protocolos', action: 'Notificar responsaveis novamente', actionPermission: 'complaints_renotify', roles: ['master_admin', 'supervisor_crc', 'sac_operator'], note: 'Reenvio manual de e-mail/WhatsApp quando permitido.' },
   { area: 'Evidencias', action: 'Anexar evidencias', actionPermission: 'evidence_attach', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'coordinator', 'manager', 'viewer'], note: 'Marketing pode anexar, mas sem alcadas de fechamento.' },
@@ -133,7 +133,7 @@ const authorityRules = [
   { area: 'Financeiro CRC', action: 'Excluir lancamento financeiro', actionPermission: 'financial_record_delete', roles: ['master_admin'], note: 'Exclusao definitiva restrita ao Master.' },
   { area: 'Financeiro CRC', action: 'Excluir colaborador CRC', actionPermission: 'financial_collaborator_delete', roles: ['master_admin'], note: 'Preserva a base do ROI.' },
   { area: 'WhatsApp CRC', action: 'Acessar central WhatsApp', permission: 'whatsapp_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator'], note: 'Central operacional, cadastro de números, mensagens, chatbot e relatórios.' },
-  { area: 'WhatsApp CRC', action: 'Configurar integração Evolution API', permission: 'whatsapp_settings', actionPermission: 'whatsapp_config_manage', roles: ['master_admin'], note: 'Base URL, API Key, teste de conexão e anti-ban ficam em tela segura.' },
+  { area: 'WhatsApp CRC', action: 'Configurar whatsapp-service VPS', permission: 'whatsapp_settings', actionPermission: 'whatsapp_config_manage', roles: ['master_admin'], note: 'URL do serviço, API Key, teste de conexão e anti-ban ficam em tela segura.' },
   { area: 'WhatsApp CRC', action: 'Excluir instâncias', actionPermission: 'whatsapp_instance_delete', roles: ['master_admin'], note: 'Exclusão operacional de números conectados.' },
   { area: 'WhatsApp CRC', action: 'Excluir mensagens padrão', actionPermission: 'whatsapp_template_delete', roles: ['master_admin', 'crc_leader', 'crc_manager'], note: 'Mantém biblioteca limpa sem liberar exclusão ampla.' },
   { area: 'WhatsApp CRC', action: 'Excluir fluxos de chatbot', actionPermission: 'whatsapp_chatbot_delete', roles: ['master_admin', 'crc_leader', 'crc_manager'], note: 'Controle dos fluxos automáticos.' },
@@ -171,10 +171,10 @@ const routeControls = [
   { area: 'WhatsApp CRC', type: 'Caminho', title: 'Pacientes ausentes', path: '/home/whatsapp-management/absent', permission: 'whatsapp_absent', roles: ['master_admin', 'admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'crc_operator'], note: 'Retorno e recuperação.' },
   { area: 'WhatsApp CRC', type: 'Caminho', title: 'Histórico WhatsApp', path: '/home/whatsapp-management/history', permission: 'whatsapp_history', roles: ['master_admin', 'admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'crc_operator'], note: 'Auditoria de mensagens.' },
   { area: 'WhatsApp CRC', type: 'Caminho', title: 'Relatórios WhatsApp', path: '/home/whatsapp-management/reports', permission: 'whatsapp_reports', roles: ['master_admin', 'admin', 'supervisor_crc', 'crc_leader', 'crc_manager'], note: 'Exportações e indicadores.' },
-  { area: 'WhatsApp CRC', type: 'Caminho', title: 'Configurações WhatsApp', path: '/home/whatsapp-management/settings', permission: 'whatsapp_settings', roles: ['master_admin'], masterOnly: true, note: 'Evolution API, anti-ban, status e diagnóstico.' },
+  { area: 'WhatsApp CRC', type: 'Caminho', title: 'Configurações WhatsApp', path: '/home/whatsapp-management/settings', permission: 'whatsapp_settings', roles: ['master_admin'], masterOnly: true, note: 'whatsapp-service VPS, anti-ban, status e diagnóstico.' },
   { area: 'Painel Gerencial', type: 'Caminho', title: 'Gestao de usuarios', path: '/admin', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Administracao de usuarios.' },
   { area: 'Painel Gerencial', type: 'Caminho', title: 'Centro Master do Sistema', path: '/admin/controle-master', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Controle completo de autorizacoes.' },
-  { area: 'Painel Gerencial', type: 'Caminho', title: 'Configurações > WhatsApp', path: '/admin/configuracoes/whatsapp', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Sessões do whatsapp-service, QR Code, status e mensagens de teste.' },
+  { area: 'Painel Gerencial', type: 'Caminho', title: 'Configurações > WhatsApp', path: '/home/whatsapp-management/instances', permission: 'whatsapp_management', roles: ['master_admin'], masterOnly: true, note: 'Sessões do whatsapp-service, QR Code, status e mensagens de teste em tela única.' },
   { area: 'Painel Gerencial', type: 'Caminho', title: 'Monitoria Master', path: '/admin/monitoria', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Monitoramento operacional.' }
 ];
 

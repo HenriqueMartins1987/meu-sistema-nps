@@ -252,7 +252,7 @@ function HomeShellFixed() {
       items: [
         { label: 'Painel Gerencial', path: '/admin', permission: 'admin_panel', adminOnly: true },
         { label: 'Monitoria Master', path: '/admin/monitoria', permission: 'admin_panel', adminOnly: true },
-        { label: 'Configurações > WhatsApp', path: '/admin/configuracoes/whatsapp', permission: 'admin_panel', adminOnly: true },
+        { label: 'Configurações > WhatsApps Conectados', path: '/home/whatsapp-management/instances', permission: 'whatsapp_management', adminOnly: true },
         { label: 'Minha conta', path: '/perfil', permission: 'home' }
       ]
     }
@@ -432,8 +432,8 @@ function HomeShellFixed() {
             key: `complaint-treatment-${item.id}`,
             title: item.patient || 'Paciente',
             protocol: item.protocol || `PAC-${item.id}`,
-            description: `${item.clinic || 'Unidade nÃ£o informada'} Â· ${item.procedureName || 'Procedimento nÃ£o informado'}`,
-            detail: `${item.status || 'Em tratamento'} Â· ${formatDateTime(item.scheduledAt)}`,
+            description: `${item.clinic || 'Unidade não informada'} · ${item.procedureName || 'Procedimento não informado'}`,
+            detail: `${item.status || 'Em tratamento'} · ${formatDateTime(item.scheduledAt)}`,
             when: scheduledAt.getTime(),
             link: `/pacientes?abrir=${item.id}`
           };

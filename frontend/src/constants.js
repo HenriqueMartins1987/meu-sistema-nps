@@ -79,6 +79,41 @@ export const accessProfiles = [
   { value: 'viewer', label: 'Marketing' }
 ];
 
+export function normalizeRoleValue(role) {
+  const normalized = String(role || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  const aliases = {
+    administrador: 'admin',
+    administrador_master: 'master_admin',
+    master: 'master_admin',
+    operador_sac: 'sac_operator',
+    operador_de_sac: 'sac_operator',
+    operador_crc: 'crc_operator',
+    operador_de_crc: 'crc_operator',
+    lider_crc: 'crc_leader',
+    lider_de_crc: 'crc_leader',
+    gerente_crc: 'crc_manager',
+    gerente_de_crc: 'crc_manager',
+    supervisor_crc: 'supervisor_crc',
+    supervisor_de_crc: 'supervisor_crc',
+    coordenador: 'coordinator',
+    coordenador_unidade: 'coordinator',
+    coordenador_de_unidade: 'coordinator',
+    gerente: 'manager',
+    gerente_unidade: 'manager',
+    gerente_de_unidade: 'manager',
+    marketing: 'viewer'
+  };
+
+  return aliases[normalized] || normalized;
+}
+
 export const screenPermissions = [
   { value: 'home', label: 'Home' },
   { value: 'complaints_register', label: 'Cadastro de protocolos' },
@@ -130,6 +165,8 @@ export const actionPermissions = [
 ];
 
 export function defaultActionPermissionsForRole(role) {
+  role = normalizeRoleValue(role);
+
   if (role === 'master_admin' || role === 'admin') {
     return actionPermissions.map((permission) => permission.value);
   }
@@ -186,6 +223,10 @@ export function defaultActionPermissionsForRole(role) {
     return ['complaints_reassign', 'evidence_attach', 'evidence_delete', 'treatment_register'];
   }
 
+  if (role === 'viewer') {
+    return ['complaints_view_all', 'complaints_change_unit', 'complaints_edit_patient_phone', 'evidence_attach'];
+  }
+
   return ['complaints_view_all', 'evidence_attach'];
 }
 
@@ -238,13 +279,14 @@ export function getUserDisplayName(user) {
 
 export function isMasterAdmin(user) {
   const email = String(user?.email || '').toLowerCase();
-  return user?.role === 'master_admin' || email === masterAdminEmail;
+  return normalizeRoleValue(user?.role) === 'master_admin' || email === masterAdminEmail;
 }
 
 export function isAdmin(user) {
   const email = String(user?.email || '').toLowerCase();
-  return user?.role === 'admin'
-    || user?.role === 'master_admin'
+  const role = normalizeRoleValue(user?.role);
+  return role === 'admin'
+    || role === 'master_admin'
     || email === 'admin@sorria.com'
     || email === masterAdminEmail;
 }
@@ -252,6 +294,16 @@ export function isAdmin(user) {
 export function hasActionPermission(user, permission) {
   if (!user || !permission) return false;
   if (isMasterAdmin(user)) return true;
+  const role = normalizeRoleValue(user.role);
+  const fixedComplaintUnitAndPhoneRoles = ['sac_operator', 'viewer'];
+  const fixedComplaintUnitAndPhonePermissions = [
+    'complaints_change_unit',
+    'complaints_edit_patient_phone'
+  ];
+
+  if (fixedComplaintUnitAndPhoneRoles.includes(role) && fixedComplaintUnitAndPhonePermissions.includes(permission)) return true;
+  if (role === 'sac_operator' && permission === 'complaints_close') return true;
+
   const permissions = Array.isArray(user.actionPermissions) ? user.actionPermissions : defaultActionPermissionsForRole(user.role);
   return permissions.includes(permission);
 }
@@ -261,7 +313,7 @@ export function hasPermission(user, permission) {
   if (isMasterAdmin(user)) return true;
 
   const permissions = Array.isArray(user.permissions) ? user.permissions : [];
-  const role = String(user.role || '').toLowerCase();
+  const role = normalizeRoleValue(user.role);
   const crcLeaderDefaults = ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports'];
   const crcOperatorDefaults = ['home', 'whatsapp_management', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history'];
 
@@ -285,7 +337,7 @@ export function hasPermission(user, permission) {
     return true;
   }
 
-  if (user.role === 'admin') {
+  if (role === 'admin') {
     return true;
   }
 
