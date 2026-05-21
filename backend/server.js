@@ -506,7 +506,7 @@ function isNoShowStatus(value) {
     .toLowerCase() === 'naocompareceu';
 }
 
-const treatmentRoles = new Set(['coordinator', 'manager', 'supervisor_crc']);
+const treatmentRoles = new Set(['coordinator', 'manager', 'supervisor_crc', 'sac_operator']);
 const evidenceRoles = new Set(['coordinator', 'manager', 'supervisor_crc', 'sac_operator', 'admin', 'viewer']);
 const complaintUnitChangeRoles = new Set(['master_admin', 'supervisor_crc', 'sac_operator', 'viewer']);
 let uploadedFilesTableReady = false;
@@ -1189,7 +1189,8 @@ function canViewAllWhatsAppAttendance(user) {
 }
 
 function canRenotifyComplaint(user) {
-  return (isMasterAdminUser(user) || user?.role === 'supervisor_crc' || user?.role === 'sac_operator') && hasActionPermission(user, 'complaints_renotify');
+  const normalizedRole = normalizeAccessRole(user?.role);
+  return (isMasterAdminUser(user) || normalizedRole === 'supervisor_crc' || normalizedRole === 'sac_operator') && hasActionPermission(user, 'complaints_renotify');
 }
 
 function canViewDeletedRecords(user) {

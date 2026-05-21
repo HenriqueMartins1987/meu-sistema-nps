@@ -1272,6 +1272,91 @@ test('SAC operator can change complaint unit with audit trail', async () => {
   assert.equal(complaintLogParams[4], 'sac_operator');
 });
 
+test('SAC operator can save formal treatment even with empty saved action permissions', async () => {
+  let updateComplaintSql = null;
+  let updateComplaintParams = null;
+  let treatmentLogParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{
+        must_change_password: 0,
+        token_version: 1,
+        active: 1,
+        role: 'sac_operator',
+        permissions: JSON.stringify(['complaints_management']),
+        action_permissions: JSON.stringify([])
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes('WHERE c.id = ?'),
+      reply: async () => [[{
+        id: 46,
+        protocol: 'GRC-2026-000046',
+        clinic_id: 1,
+        patient_name: 'Paciente SAC',
+        patient_phone: '+5562999999999',
+        status: 'aberta',
+        priority: 'media',
+        operator_comment: null,
+        treatment_at: null,
+        attachment_url: null,
+        deleted_at: null,
+        created_at: new Date(),
+        updated_at: new Date()
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_evidences') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_logs') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE complaints') && sql.includes('treatment_comment = ?'),
+      reply: async (sql, params) => {
+        updateComplaintSql = sql;
+        updateComplaintParams = params;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO complaint_logs'),
+      reply: async (_sql, params) => {
+        treatmentLogParams = params;
+        return [{ insertId: 5 }];
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/complaints/46')
+    .set('Authorization', `Bearer ${signToken({
+      id: 9,
+      email: 'sac@example.com',
+      role: 'Operador de SAC',
+      name: 'Operador SAC',
+      permissions: ['complaints_management'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({ operator_comment: 'Tratativa registrada pelo SAC antes do contato.' });
+
+  assert.equal(response.status, 200);
+  assert.match(updateComplaintSql, /treatment_comment = \?/);
+  assert.match(updateComplaintSql, /treatment_by_role = \?/);
+  assert.match(updateComplaintSql, /treatment_by_name = \?/);
+  assert.equal(updateComplaintParams[0], 'em_andamento');
+  assert.ok(updateComplaintParams.includes('Tratativa registrada pelo SAC antes do contato.'));
+  assert.ok(updateComplaintParams.includes('sac_operator'));
+  assert.ok(updateComplaintParams.includes('Operador SAC'));
+  assert.equal(treatmentLogParams[1], 'treatment_saved');
+  assert.equal(treatmentLogParams[3], 'Operador SAC');
+});
+
 test('uploaded file route serves persisted database fallback when disk file is missing', async () => {
   const content = Buffer.from('arquivo persistido');
 

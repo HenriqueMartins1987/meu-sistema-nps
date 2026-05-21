@@ -5,7 +5,7 @@ import { hasActionPermission, isAdmin as isAdminUser, isMasterAdmin, normalizeRo
 
 const maxUploadSizeBytes = 10 * 1024 * 1024;
 const detailTablePageSize = 10;
-const treatmentRoles = ['coordinator', 'manager', 'supervisor_crc'];
+const treatmentRoles = ['coordinator', 'manager', 'supervisor_crc', 'sac_operator'];
 const evidenceRoles = ['coordinator', 'manager', 'supervisor_crc', 'sac_operator', 'admin', 'viewer'];
 const closingTreatmentRoles = ['coordinator', 'manager'];
 const previewableImagePattern = /\.(avif|bmp|gif|jpe?g|png|svg|webp)(\?.*)?$/i;
