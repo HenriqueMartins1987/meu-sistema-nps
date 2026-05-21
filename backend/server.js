@@ -1193,6 +1193,27 @@ function canRenotifyComplaint(user) {
   return (isMasterAdminUser(user) || normalizedRole === 'supervisor_crc' || normalizedRole === 'sac_operator') && hasActionPermission(user, 'complaints_renotify');
 }
 
+function buildComplaintAccessPayload(user) {
+  return {
+    role: normalizeAccessRole(user?.role),
+    permissions: getUserScreenPermissions(user),
+    actionPermissions: getUserActionPermissions(user),
+    canAddTreatment: canAddTreatment(user),
+    canRecordTreatment: canAddTreatment(user),
+    canAttachEvidence: canAttachEvidence(user),
+    canDeleteEvidence: canDeleteEvidence(user),
+    canChangeComplaintUnit: canChangeComplaintUnit(user),
+    canEditPatientPhone: canEditComplaintPatientPhone(user),
+    canCloseComplaint: canCloseComplaint(user),
+    canMarkPatientContact: canMarkPatientContact(user),
+    canRegisterFirstAttendance: canRegisterFirstAttendance(user),
+    canReassignComplaint: canReassignComplaint(user),
+    canRenotifyComplaint: canRenotifyComplaint(user),
+    canReactivateComplaint: canReactivateComplaint(user),
+    canManagePatientTreatment: canManageComplaintPatientTreatment(user)
+  };
+}
+
 function canViewDeletedRecords(user) {
   return isMasterAdminUser(user) && hasActionPermission(user, 'deleted_view');
 }
@@ -7551,7 +7572,7 @@ async function resolveComplaintResponsibleAssignment(clinicId, forwardRole, opti
 async function getClinicsForUser(user) {
   if (!user) return [];
 
-  if (isAdminUser(user) || ['supervisor_crc', 'crc_leader', 'crc_manager'].includes(String(user?.role || '').toLowerCase())) {
+  if (isAdminUser(user) || ['supervisor_crc', 'crc_leader', 'crc_manager'].includes(normalizeAccessRole(user?.role))) {
     const [rows] = await pool.query(
       `SELECT
          id,
@@ -9470,7 +9491,7 @@ async function getNpsRows(query = {}, user = null) {
     params.push(query.clinic_id);
   }
 
-  if (user && !isAdminUser(user) && user?.role !== 'supervisor_crc') {
+  if (user && !isAdminUser(user) && !['supervisor_crc', 'sac_operator'].includes(normalizeAccessRole(user?.role))) {
     const clinicIds = await getUserClinicIds(user.id);
 
     if (clinicIds.length) {
@@ -16945,7 +16966,7 @@ app.get('/nps/responses', authenticate, async (req, res) => {
 
 app.get('/nps/duplicate-report', authenticate, async (req, res) => {
   try {
-    if (!isAdminUser(req.user) && req.user?.role !== 'supervisor_crc') {
+    if (!isAdminUser(req.user) && normalizeAccessRole(req.user?.role) !== 'supervisor_crc') {
       return res.status(403).json({ error: 'Apenas Supervisor do CRC, Administrador e Administrador Master podem visualizar este relatório.' });
     }
 
@@ -17043,7 +17064,7 @@ app.post('/nps/bulk-dispatch', authenticate, upload.single('file'), async (req, 
 
 app.post('/reports/coordinator-delays/dispatch', authenticate, async (req, res) => {
   try {
-    if (!isAdminUser(req.user) && req.user?.role !== 'supervisor_crc') {
+    if (!isAdminUser(req.user) && normalizeAccessRole(req.user?.role) !== 'supervisor_crc') {
       return res.status(403).json({ error: 'Acesso restrito para o disparo de alertas por coordenador.' });
     }
 
@@ -17057,7 +17078,7 @@ app.post('/reports/coordinator-delays/dispatch', authenticate, async (req, res) 
 
 app.post('/reports/coordinator-weekly/dispatch', authenticate, async (req, res) => {
   try {
-    if (!isAdminUser(req.user) && req.user?.role !== 'supervisor_crc') {
+    if (!isAdminUser(req.user) && normalizeAccessRole(req.user?.role) !== 'supervisor_crc') {
       return res.status(403).json({ error: 'Acesso restrito para o disparo do relatório semanal por coordenador.' });
     }
 
@@ -17156,7 +17177,7 @@ app.get('/patient-interactions', authenticate, async (req, res) => {
       params.push(complaintId);
     }
 
-    if (!isAdminUser(req.user) && !['sac_operator', 'supervisor_crc'].includes(req.user?.role)) {
+    if (!isAdminUser(req.user) && !['sac_operator', 'supervisor_crc'].includes(normalizeAccessRole(req.user?.role))) {
       const clinicIds = await getUserClinicIds(req.user.id);
 
       if (clinicIds.length) {
@@ -17650,7 +17671,10 @@ app.get('/complaints/:id', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'Reclamação não encontrada' });
     }
 
-    res.json(rows[0]);
+    res.json({
+      ...rows[0],
+      access: buildComplaintAccessPayload(req.user)
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao buscar reclamação' });
@@ -18436,7 +18460,7 @@ function getFinancialFunctionLabel(user = {}) {
     viewer: 'Marketing'
   };
 
-  return roleLabels[String(user?.role || '').toLowerCase()] || 'Profissional CRC';
+  return roleLabels[normalizeAccessRole(user?.role)] || 'Profissional CRC';
 }
 
 let cachedSelicRate = {
@@ -18860,7 +18884,7 @@ function buildFinancialWhere(query = {}, user = {}) {
     }
   });
 
-  if (String(user?.role || '').toLowerCase() === 'sac_operator' && !isAdminUser(user)) {
+  if (normalizeAccessRole(user?.role) === 'sac_operator' && !isAdminUser(user)) {
     where.push('(operator_id = ? OR operator_name = ? OR created_by = ?)');
     params.push(user.id || 0, getActorName(user), getActorName(user));
   }

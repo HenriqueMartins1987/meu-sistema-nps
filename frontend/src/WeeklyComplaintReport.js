@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import api from './api';
-import { hasPermission, isMasterAdmin, readUser, statusLabels } from './constants';
+import { hasPermission, isMasterAdmin, normalizeRoleValue, readUser, statusLabels } from './constants';
 
 const pageSizeOptions = [10, 25, 50, 100];
 const dayMs = 24 * 60 * 60 * 1000;
@@ -70,7 +70,7 @@ function escapeHtml(value) {
 function isWeeklyComplaintReportAllowed(user) {
   if (isMasterAdmin(user)) return true;
 
-  return ['admin', 'supervisor_crc', 'sac_operator', 'manager'].includes(String(user?.role || ''));
+  return ['admin', 'supervisor_crc', 'sac_operator', 'manager'].includes(normalizeRoleValue(user?.role));
 }
 
 function getWeeklyProfessionalLabel(item) {

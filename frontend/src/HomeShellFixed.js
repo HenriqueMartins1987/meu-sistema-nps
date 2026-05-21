@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from './api';
 import logo from './assets/logo3.png';
-import { hasPermission, isMasterAdmin, readUser } from './constants';
+import { hasPermission, isMasterAdmin, normalizeRoleValue, readUser } from './constants';
 import { clearSession, saveSession } from './session';
 
 const notificationTypeLabels = {
@@ -146,7 +146,7 @@ function complaintAgendaTone(item) {
 function canAccessWeeklyComplaintReport(user) {
   if (isMasterAdmin(user)) return true;
 
-  return ['admin', 'supervisor_crc', 'sac_operator', 'manager'].includes(String(user?.role || ''));
+  return ['admin', 'supervisor_crc', 'sac_operator', 'manager'].includes(normalizeRoleValue(user?.role));
 }
 
 function canAccessFinancialExecutive(user) {
@@ -162,8 +162,9 @@ function canAccessFinancialManagement(user) {
 }
 
 function canAccessWhatsAppManagement(user) {
-  if (['manager', 'coordinator', 'viewer'].includes(String(user?.role || '').toLowerCase())) return false;
-  if (['crc_leader', 'crc_manager', 'crc_operator'].includes(String(user?.role || '').toLowerCase())) return true;
+  const role = normalizeRoleValue(user?.role);
+  if (['manager', 'coordinator', 'viewer'].includes(role)) return false;
+  if (['crc_leader', 'crc_manager', 'crc_operator'].includes(role)) return true;
   return hasPermission(user, 'whatsapp_management');
 }
 
@@ -196,7 +197,7 @@ function HomeShellFixed() {
   const npsLink = `${window.location.origin}/pesquisa-nps`;
   const qrCodeUrl = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(npsLink)}`;
   const crcWhatsappHomeTarget = useMemo(() => {
-    const role = String(user?.role || '').toLowerCase();
+    const role = normalizeRoleValue(user?.role);
     if (role === 'crc_operator') return '/home/whatsapp-management/attendance';
     if (role === 'crc_leader' || role === 'crc_manager') return '/home/whatsapp-management/dashboard';
     return '';

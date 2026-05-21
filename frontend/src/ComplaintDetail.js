@@ -437,20 +437,26 @@ function ComplaintDetail() {
 
   const isAdmin = isAdminUser(user);
   const isMasterUser = isMasterAdmin(user);
-  const canOperationalClose = (isMasterUser || ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_close');
-  const canFormalTreatment = (treatmentRoles.includes(normalizedUserRole) || isAdmin) && hasActionPermission(user, 'treatment_register');
-  const canRecordTreatment = Boolean(user?.role) && normalizedUserRole !== 'viewer' && hasActionPermission(user, 'treatment_register');
-  const canAttachEvidence = (evidenceRoles.includes(normalizedUserRole) || isAdmin) && hasActionPermission(user, 'evidence_attach');
+  const complaintAccess = complaint?.access || {};
+  const accessFlag = (key, fallback) => (
+    Object.prototype.hasOwnProperty.call(complaintAccess, key)
+      ? Boolean(complaintAccess[key])
+      : fallback
+  );
+  const canOperationalClose = accessFlag('canCloseComplaint', (isMasterUser || ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_close'));
+  const canFormalTreatment = accessFlag('canAddTreatment', (treatmentRoles.includes(normalizedUserRole) || isAdmin) && hasActionPermission(user, 'treatment_register'));
+  const canRecordTreatment = accessFlag('canRecordTreatment', Boolean(user?.role) && normalizedUserRole !== 'viewer' && hasActionPermission(user, 'treatment_register'));
+  const canAttachEvidence = accessFlag('canAttachEvidence', (evidenceRoles.includes(normalizedUserRole) || isAdmin) && hasActionPermission(user, 'evidence_attach'));
   const canSupervisorAccept = normalizedUserRole === 'supervisor_crc' || isAdmin;
-  const canDeleteComplaint = isMasterUser || user?.role === 'supervisor_crc';
-  const canDeleteEvidence = normalizedUserRole !== 'viewer' && Boolean(user?.id || user?.email || user?.role) && hasActionPermission(user, 'evidence_delete');
-  const canChangeComplaintUnit = (isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator', 'viewer'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_change_unit');
-  const canEditPatientPhone = (isMasterUser || ['sac_operator', 'supervisor_crc', 'master_admin', 'viewer'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_edit_patient_phone');
-  const canRenotifyComplaint = (isMasterUser || normalizedUserRole === 'supervisor_crc' || normalizedUserRole === 'sac_operator') && hasActionPermission(user, 'complaints_renotify');
-  const canReactivateComplaint = (isMasterUser || normalizedUserRole === 'supervisor_crc') && hasActionPermission(user, 'complaints_reactivate');
-  const canCreatePatientTreatment = (isMasterUser || ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole)) && hasActionPermission(user, 'patient_treatment_manage');
+  const canDeleteComplaint = isMasterUser || normalizedUserRole === 'supervisor_crc';
+  const canDeleteEvidence = accessFlag('canDeleteEvidence', normalizedUserRole !== 'viewer' && Boolean(user?.id || user?.email || user?.role) && hasActionPermission(user, 'evidence_delete'));
+  const canChangeComplaintUnit = accessFlag('canChangeComplaintUnit', (isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator', 'viewer'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_change_unit'));
+  const canEditPatientPhone = accessFlag('canEditPatientPhone', (isMasterUser || ['sac_operator', 'supervisor_crc', 'master_admin', 'viewer'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_edit_patient_phone'));
+  const canRenotifyComplaint = accessFlag('canRenotifyComplaint', (isMasterUser || normalizedUserRole === 'supervisor_crc' || normalizedUserRole === 'sac_operator') && hasActionPermission(user, 'complaints_renotify'));
+  const canReactivateComplaint = accessFlag('canReactivateComplaint', (isMasterUser || normalizedUserRole === 'supervisor_crc') && hasActionPermission(user, 'complaints_reactivate'));
+  const canCreatePatientTreatment = accessFlag('canManagePatientTreatment', (isMasterUser || ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole)) && hasActionPermission(user, 'patient_treatment_manage'));
   const canReturnToSac = ['coordinator', 'manager'].includes(normalizedUserRole);
-  const canReassignForward = (canReturnToSac || isAdmin || isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_reassign');
+  const canReassignForward = accessFlag('canReassignComplaint', (canReturnToSac || isAdmin || isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_reassign'));
   const reassignOptions = canReturnToSac ? returnToSacOption : reassignForwardingOptions;
   const activeUnitOptions = useMemo(() => (
     unitOptions
@@ -469,8 +475,8 @@ function ComplaintDetail() {
   const hasSacApproval = Boolean(complaint?.sac_approval_at);
   const hasPatientContact = Boolean(complaint?.patient_contacted_at);
   const isDeletedRecord = Boolean(complaint?.deleted_at);
-  const canMarkPatientContact = hasActionPermission(user, 'patient_contact_register')
-    && (isMasterUser || ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole))
+  const canMarkPatientContact = accessFlag('canMarkPatientContact', hasActionPermission(user, 'patient_contact_register')
+    && (isMasterUser || ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole)))
     && complaint?.status !== 'resolvida'
     && !hasPatientContact
     && hasTreatment;

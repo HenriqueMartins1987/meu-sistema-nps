@@ -4,6 +4,7 @@ import api from './api';
 import {
   complaintTypes,
   isMasterAdmin,
+  normalizeRoleValue,
   priorityOptions,
   readUser,
   statusLabels,
@@ -61,7 +62,7 @@ function formatCurrency(value) {
 function isWeeklyComplaintReportAllowed(user) {
   if (isMasterAdmin(user)) return true;
 
-  return ['admin', 'supervisor_crc', 'sac_operator', 'manager'].includes(String(user?.role || ''));
+  return ['admin', 'supervisor_crc', 'sac_operator', 'manager'].includes(normalizeRoleValue(user?.role));
 }
 
 function priorityLabel(value) {
@@ -285,9 +286,10 @@ function ComplaintListItem({ item, onOpen }) {
 function DashboardManagement() {
   const navigate = useNavigate();
   const currentUser = readUser();
+  const currentUserRole = normalizeRoleValue(currentUser?.role);
   const canViewDeleted = isMasterAdmin(currentUser);
   const canFilterByLeadership = isMasterAdmin(currentUser)
-    || ['admin', 'supervisor_crc', 'manager'].includes(String(currentUser?.role || ''));
+    || ['admin', 'supervisor_crc', 'manager'].includes(currentUserRole);
   const [complaints, setComplaints] = useState([]);
   const [viewMode, setViewMode] = useState('active');
   const [filters, setFilters] = useState({

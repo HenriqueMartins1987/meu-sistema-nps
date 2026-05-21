@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from './api';
-import { hasActionPermission, isMasterAdmin, readUser } from './constants';
+import { hasActionPermission, isMasterAdmin, normalizeRoleValue, readUser } from './constants';
 
 const profileLabels = {
   detrator: 'Detrator',
@@ -132,8 +132,9 @@ function NpsManagement() {
     return Number.isFinite(parsedId) && parsedId > 0 ? parsedId : null;
   }, [location.search]);
   const currentUser = readUser();
+  const currentUserRole = normalizeRoleValue(currentUser?.role);
   const canViewDeleted = isMasterAdmin(currentUser);
-  const canDeleteRecords = isMasterAdmin(currentUser) || currentUser?.role === 'supervisor_crc';
+  const canDeleteRecords = isMasterAdmin(currentUser) || currentUserRole === 'supervisor_crc';
   const canFinishNps = hasActionPermission(currentUser, 'nps_finish');
   const [rows, setRows] = useState([]);
   const [clinics, setClinics] = useState([]);

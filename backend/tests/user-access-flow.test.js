@@ -1357,6 +1357,70 @@ test('SAC operator can save formal treatment even with empty saved action permis
   assert.equal(treatmentLogParams[3], 'Operador SAC');
 });
 
+test('complaint detail exposes normalized SAC access when role is stored as label', async () => {
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{
+        must_change_password: 0,
+        token_version: 1,
+        active: 1,
+        role: 'Operador de SAC',
+        permissions: JSON.stringify([]),
+        action_permissions: JSON.stringify([])
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes('WHERE c.id = ?'),
+      reply: async () => [[{
+        id: 47,
+        protocol: 'GRC-2026-000047',
+        clinic_id: 1,
+        patient_name: 'Paciente SAC',
+        patient_phone: '+5562999999999',
+        status: 'em_andamento',
+        priority: 'media',
+        operator_comment: null,
+        treatment_at: new Date('2026-05-10T12:00:00.000Z'),
+        treatment_by_role: 'manager',
+        attachment_url: null,
+        deleted_at: null,
+        created_at: new Date(),
+        updated_at: new Date()
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_evidences') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_logs') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    }
+  ]);
+
+  const response = await request(app)
+    .get('/complaints/47')
+    .set('Authorization', `Bearer ${signToken({
+      id: 9,
+      email: 'sac@example.com',
+      role: 'Operador de SAC',
+      name: 'Operador SAC',
+      permissions: [],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.access.role, 'sac_operator');
+  assert.equal(response.body.access.canAddTreatment, true);
+  assert.equal(response.body.access.canChangeComplaintUnit, true);
+  assert.equal(response.body.access.canEditPatientPhone, true);
+  assert.equal(response.body.access.canCloseComplaint, true);
+  assert.equal(response.body.access.canMarkPatientContact, true);
+  assert.equal(response.body.access.canReassignComplaint, true);
+});
+
 test('uploaded file route serves persisted database fallback when disk file is missing', async () => {
   const content = Buffer.from('arquivo persistido');
 

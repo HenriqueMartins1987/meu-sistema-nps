@@ -12,7 +12,8 @@ import {
   statusLabels,
   statusOptions,
   isAdmin,
-  isMasterAdmin
+  isMasterAdmin,
+  normalizeRoleValue
 } from './constants';
 
 const chartColors = ['#0b6f5f', '#1f7a8c', '#4c956c', '#d08c31', '#8a4f7d', '#5d6d7e', '#c44536', '#247ba0'];
@@ -201,9 +202,10 @@ const chartOptions = {
 function Dashboard() {
   const navigate = useNavigate();
   const currentUser = useMemo(() => readUser(), []);
+  const currentUserRole = normalizeRoleValue(currentUser?.role);
   const canViewCollaboratorWorkload = isMasterAdmin(currentUser)
     || isAdmin(currentUser)
-    || ['manager', 'sac_operator', 'supervisor_crc'].includes(String(currentUser?.role || '').trim().toLowerCase());
+    || ['manager', 'sac_operator', 'supervisor_crc'].includes(currentUserRole);
   const [rows, setRows] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [filters, setFilters] = useState(initialFilters);
