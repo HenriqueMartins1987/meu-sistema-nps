@@ -10884,6 +10884,19 @@ a {
   grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
 }
 
+.partner-video-report-toolbar,
+.partner-video-panel-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+}
+
+.partner-video-report-toolbar .whatsapp-report-actions,
+.partner-video-panel-heading .row-actions {
+  justify-content: flex-end;
+}
+
 .partner-video-weekdays {
   display: flex;
   flex-wrap: wrap;
@@ -10964,6 +10977,56 @@ a {
   font-size: 12px;
   font-weight: 760;
   line-height: 1.4;
+}
+
+.partner-video-noncompliance-panel {
+  border-left: 4px solid var(--gold);
+}
+
+.partner-video-noncompliance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 10px;
+  max-height: 360px;
+  overflow: auto;
+  padding: 4px;
+}
+
+.partner-video-noncompliance-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(221, 207, 188, 0.82);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.partner-video-noncompliance-item input {
+  width: 17px;
+  height: 17px;
+  margin-top: 2px;
+}
+
+.partner-video-noncompliance-item strong,
+.partner-video-noncompliance-item small {
+  display: block;
+}
+
+.partner-video-noncompliance-item small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 760;
+  line-height: 1.4;
+}
+
+.compact-report-table {
+  max-height: 420px;
 }
 
 .partner-video-contact-card {
@@ -11940,6 +12003,8 @@ a {
   .whatsapp-two-column,
   .partner-video-config-grid,
   .partner-video-coverage-grid,
+  .partner-video-report-toolbar,
+  .partner-video-panel-heading,
   .whatsapp-attendance-layout,
   .whatsapp-chart-grid,
   .whatsapp-filter-row {

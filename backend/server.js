@@ -6484,6 +6484,23 @@ function parsePermissionsFromUser(user) {
   }
 
   const parsedPermissions = Array.isArray(permissions) ? permissions : defaultPermissions;
+  const identity = [user?.username, user?.email, user?.name]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean);
+  const normalizedIdentity = identity.map((value) => value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '.')
+    .replace(/^\.|\.$/g, ''));
+  const hasDentalCardNamedAccess = normalizedIdentity.some((value) => (
+    value === 'joyce.crc'
+    || value === 'igor.silva.cruz'
+    || value.includes('igor.silva.cruz')
+  ));
+
+  if (hasDentalCardNamedAccess) {
+    return Array.from(new Set([...parsedPermissions, 'home', 'dental_card']));
+  }
 
   if (['sac_operator', 'coordinator', 'manager'].includes(normalizedRole)) {
     return Array.from(new Set([...parsedPermissions, ...defaultPermissions]));
@@ -11717,9 +11734,7 @@ async function dispatchPartnerVideoDailyReminders({ actor = null, force = false,
   let delayCursor = 0;
   const queued = [];
   const skipped = [];
-  const template = isTest
-    ? '✅ Teste de integração WhatsApp - Confirmação e Agendamento.\n\nEsta é uma mensagem automática enviada pelo sistema para validação da sessão confirmacao-agendamento.'
-    : settings.template;
+  const template = settings.template;
 
   if (isTest) {
     for (const phone of testNumbers.map(normalizeWhatsAppPhone).filter(Boolean)) {
@@ -16126,6 +16141,101 @@ app.post('/api/partners-video/test-send', authenticate, requireWhatsAppView, asy
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao enviar teste de Confirmação e Agendamento.' });
+  }
+});
+
+app.post('/api/partners-video/mark-not-sent-bulk', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    const rawItems = Array.isArray(req.body?.items) ? req.body.items : [];
+    const dateKey = getSaoPauloDateKey(req.body?.date) || getSaoPauloParts().dateKey;
+    const notes = sanitizeFinancialString(
+      req.body?.notes || 'Marcado pela tela de Confirmação e Agendamento como vídeo não enviado.',
+      2000
+    );
+
+    if (!rawItems.length) {
+      return res.status(400).json({ error: 'Selecione ao menos uma unidade/parceiro para marcar como não enviado.' });
+    }
+
+    const updatedItems = [];
+    const skippedItems = [];
+
+    for (const rawItem of rawItems) {
+      const controlId = rawItem?.controlId || rawItem?.control_id || null;
+      const contactId = rawItem?.contactId || rawItem?.contact_id || null;
+      let control = null;
+      let contact = null;
+
+      if (controlId) {
+        const [controlRows] = await pool.query(
+          `SELECT control.*,
+                  contact.id AS contact_id,
+                  contact.clinic_name AS contact_clinic_name,
+                  contact.partner_name AS contact_partner_name,
+                  contact.phone_number AS contact_phone_number
+             FROM partner_video_daily_controls control
+             LEFT JOIN partner_video_contacts contact ON contact.id = control.partner_id
+            WHERE control.id = ?
+            LIMIT 1`,
+          [controlId]
+        );
+        control = controlRows[0] || null;
+        if (control) {
+          contact = {
+            id: control.contact_id || control.partner_id,
+            clinic_name: control.contact_clinic_name || control.clinic_name,
+            partner_name: control.contact_partner_name || control.partner_name,
+            phone_number: control.contact_phone_number || control.phone_number
+          };
+        }
+      } else if (contactId) {
+        const [contactRows] = await pool.query('SELECT * FROM partner_video_contacts WHERE id = ? LIMIT 1', [contactId]);
+        contact = contactRows[0] || null;
+        if (contact) control = await ensurePartnerVideoDailyControl(contact, dateKey);
+      }
+
+      if (!control?.id) {
+        skippedItems.push({ controlId, contactId, reason: 'controle ou parceiro não encontrado' });
+        continue;
+      }
+
+      await pool.query(
+        `UPDATE partner_video_daily_controls
+            SET video_received = 0,
+                status = 'não enviado',
+                notes = COALESCE(?, notes),
+                updated_at = CURRENT_TIMESTAMP
+          WHERE id = ?`,
+        [notes || null, control.id]
+      );
+
+      await logPartnerVideoEvent({
+        contactId: contact?.id || control.partner_id,
+        controlId: control.id,
+        eventType: 'video_not_sent_bulk',
+        status: 'warning',
+        createdBy: getActorName(req.user),
+        responsePayload: { clinicName: contact?.clinic_name || control.clinic_name, date: dateKey }
+      });
+
+      updatedItems.push({
+        controlId: control.id,
+        contactId: contact?.id || control.partner_id,
+        clinicName: contact?.clinic_name || control.clinic_name,
+        partnerName: contact?.partner_name || control.partner_name
+      });
+    }
+
+    return res.json({
+      message: 'Unidades marcadas como vídeo não enviado.',
+      updated: updatedItems.length,
+      skipped: skippedItems.length,
+      items: updatedItems,
+      skippedItems
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao marcar vídeos não enviados em lote.' });
   }
 });
 

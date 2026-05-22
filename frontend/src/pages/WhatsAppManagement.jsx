@@ -34,14 +34,35 @@ const operatorStatuses = [
 const templateCategories = ['Primeiro contato', 'Confirmacao de consulta', 'Lembrete de avaliacao', 'Retorno de ausente', 'NPS', 'Reclamacao', 'Pos-atendimento', 'Reagendamento', 'Cobranca', 'Dentista parceiro', 'Campanha comercial'];
 const triggerTypes = ['palavra-chave', 'novo lead', 'paciente ausente', 'NPS', 'reclamacao', 'confirmacao de consulta', 'lembrete', 'pos-atendimento'];
 const partnerVideoWeekdays = [
-  { value: 1, label: 'Seg' },
-  { value: 2, label: 'Ter' },
-  { value: 3, label: 'Qua' },
-  { value: 4, label: 'Qui' },
-  { value: 5, label: 'Sex' },
-  { value: 6, label: 'Sab' },
-  { value: 0, label: 'Dom' }
+  { value: 1, label: 'Seg', fullLabel: 'Segunda-feira' },
+  { value: 2, label: 'Ter', fullLabel: 'Terça-feira' },
+  { value: 3, label: 'Qua', fullLabel: 'Quarta-feira' },
+  { value: 4, label: 'Qui', fullLabel: 'Quinta-feira' },
+  { value: 5, label: 'Sex', fullLabel: 'Sexta-feira' },
+  { value: 6, label: 'Sab', fullLabel: 'Sábado' },
+  { value: 0, label: 'Dom', fullLabel: 'Domingo' }
 ];
+
+function formatPartnerWeekdayLabels(values = []) {
+  const days = Array.isArray(values) ? values.map(Number).filter((item) => item >= 0 && item <= 6) : [];
+  const ordered = Array.from(new Set(days)).sort((a, b) => a - b);
+  if (ordered.length === 6 && [1, 2, 3, 4, 5, 6].every((day) => ordered.includes(day))) {
+    return 'Segunda a sábado, durante o mês inteiro';
+  }
+  if (!ordered.length) return 'Nenhum dia selecionado';
+  return ordered
+    .map((value) => partnerVideoWeekdays.find((day) => day.value === value)?.fullLabel || value)
+    .join(', ');
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
 
 function normalizePhone(value) {
   const digits = String(value || '').replace(/\D/g, '');
@@ -278,6 +299,7 @@ function WhatsAppManagement() {
   const [partnerSettingsDraft, setPartnerSettingsDraft] = useState(null);
   const [partnerContactDraft, setPartnerContactDraft] = useState(emptyPartnerVideoContact());
   const [editingPartnerContactId, setEditingPartnerContactId] = useState('');
+  const [partnerNoVideoSelection, setPartnerNoVideoSelection] = useState([]);
   const [transferTargetId, setTransferTargetId] = useState('');
   const [settingsDraft, setSettingsDraft] = useState({ baseUrl: '', apiKey: '', antiBan: {} });
   const [historyFilters, setHistoryFilters] = useState({ search: '', status: '', instanceName: '' });
@@ -632,6 +654,29 @@ function WhatsAppManagement() {
     return response;
   }, message, 'Nao foi possivel atualizar o controle de video.');
 
+  const togglePartnerNoVideoSelection = (key) => {
+    setPartnerNoVideoSelection((current) => (
+      current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
+    ));
+  };
+
+  const markSelectedPartnerVideosNotSent = () => {
+    if (!partnerNoVideoSelection.length) {
+      setError('Selecione ao menos uma unidade que nao enviou o video.');
+      return null;
+    }
+    return runAction('partner-video-bulk-not-sent', async () => {
+      const items = partnerNoVideoSelection.map((key) => {
+        const [type, id] = String(key).split(':');
+        return type === 'control' ? { controlId: id } : { contactId: id };
+      });
+      const response = await api.post('/api/partners-video/mark-not-sent-bulk', { items });
+      setPartnerNoVideoSelection([]);
+      await loadBaseData({ silent: true });
+      return response;
+    }, 'Unidades marcadas como video nao enviado.', 'Nao foi possivel registrar as unidades sem video.');
+  };
+
   const resendPartnerVideoControl = (controlId) => runAction(`partner-video-resend-${controlId}`, async () => {
     const response = await api.post(`/api/partners-video/${controlId}/resend`);
     await loadBaseData({ silent: true });
@@ -975,6 +1020,106 @@ function WhatsAppManagement() {
 
   const printWhatsAppReport = () => {
     window.print();
+  };
+
+  const getPartnerVideoReportRows = () => {
+    const controls = Array.isArray(partnersVideo?.controls) ? partnersVideo.controls : [];
+    const contacts = Array.isArray(partnersVideo?.contacts) ? partnersVideo.contacts : [];
+    const contactById = new Map(contacts.map((contact) => [String(contact.id), contact]));
+    return controls.map((item) => {
+      const contact = contactById.get(String(item.partner_id)) || {};
+      return {
+        data: String(item.date || '').slice(0, 10),
+        unidade: item.clinic_name || contact.clinic_name || '',
+        parceiro: item.partner_name || contact.partner_name || '',
+        telefone: item.phone_number || contact.phone_number || '',
+        status_video: item.status || '',
+        status_mensagem: item.message_status || '',
+        envio_mensagem: item.message_sent_at ? String(item.message_sent_at).slice(0, 16).replace('T', ' ') : '',
+        video_recebido: Number(item.video_received) ? 'Sim' : 'Não',
+        recebido_em: item.video_received_at ? String(item.video_received_at).slice(0, 16).replace('T', ' ') : '',
+        lider_acionado: item.leader_notified_at ? 'Sim' : 'Não',
+        coordenador_acionado: item.coordinator_notified_at ? 'Sim' : 'Não',
+        gerente_acionado: item.manager_notified_at ? 'Sim' : 'Não',
+        observacoes: item.notes || ''
+      };
+    });
+  };
+
+  const exportPartnerVideoExcel = () => {
+    const rows = getPartnerVideoReportRows();
+    if (!rows.length) {
+      setError('Nenhum controle diário encontrado para exportar.');
+      return;
+    }
+    exportCsv('confirmacao-agendamento-videos.csv', rows);
+    setSuccess('Relatório Excel de Confirmação e Agendamento gerado.');
+  };
+
+  const printPartnerVideoPdf = () => {
+    const rows = getPartnerVideoReportRows();
+    if (!rows.length) {
+      setError('Nenhum controle diário encontrado para gerar PDF.');
+      return;
+    }
+    const summary = partnersVideo?.summary || {};
+    const generatedAt = new Date().toLocaleString('pt-BR');
+    const htmlRows = rows.map((row) => `
+      <tr>
+        <td>${escapeHtml(row.unidade)}</td>
+        <td>${escapeHtml(row.parceiro)}</td>
+        <td>${escapeHtml(row.telefone)}</td>
+        <td>${escapeHtml(row.status_video)}</td>
+        <td>${escapeHtml(row.envio_mensagem)}</td>
+        <td>${escapeHtml(row.video_recebido)}</td>
+        <td>${escapeHtml(row.coordenador_acionado)}</td>
+        <td>${escapeHtml(row.gerente_acionado)}</td>
+      </tr>
+    `).join('');
+    const reportWindow = window.open('', '_blank', 'width=1120,height=780');
+    if (!reportWindow) {
+      setError('Não foi possível abrir a janela de PDF. Verifique o bloqueador de pop-up.');
+      return;
+    }
+    reportWindow.document.write(`
+      <html>
+        <head>
+          <title>Relatório Confirmação e Agendamento</title>
+          <style>
+            body { font-family: Arial, sans-serif; color: #211a16; margin: 32px; }
+            header { border-bottom: 3px solid #8e6731; padding-bottom: 16px; margin-bottom: 20px; }
+            h1 { margin: 0; font-size: 26px; }
+            p { color: #5f5146; }
+            .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 18px 0; }
+            .card { border: 1px solid #ddcfbc; border-radius: 8px; padding: 12px; background: #fbf8f2; }
+            .card span { display: block; color: #8e6731; font-size: 11px; font-weight: 800; text-transform: uppercase; }
+            .card strong { display: block; margin-top: 6px; font-size: 22px; }
+            table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+            th, td { border-bottom: 1px solid #ddcfbc; padding: 9px; text-align: left; vertical-align: top; font-size: 12px; }
+            th { background: #f4ecdf; color: #6d573b; text-transform: uppercase; }
+          </style>
+        </head>
+        <body>
+          <header>
+            <h1>Relatório de vídeos dos parceiros</h1>
+            <p>Confirmação e Agendamento · Emitido em ${escapeHtml(generatedAt)}</p>
+          </header>
+          <section class="cards">
+            <div class="card"><span>Mensagens hoje</span><strong>${Number(summary.sentToday || 0)}</strong></div>
+            <div class="card"><span>No prazo</span><strong>${Number(summary.receivedOnTime || 0)}</strong></div>
+            <div class="card"><span>Pendentes</span><strong>${Number(summary.pendingToday || 0)}</strong></div>
+            <div class="card"><span>Não enviados</span><strong>${Number(summary.pendingAfter10 || 0)}</strong></div>
+          </section>
+          <table>
+            <thead><tr><th>Unidade</th><th>Parceiro</th><th>Telefone</th><th>Status</th><th>Envio</th><th>Recebido</th><th>Coord.</th><th>Gerente</th></tr></thead>
+            <tbody>${htmlRows}</tbody>
+          </table>
+          <script>window.onload = () => { window.print(); };</script>
+        </body>
+      </html>
+    `);
+    reportWindow.document.close();
+    setSuccess('Relatório PDF de Confirmação e Agendamento preparado.');
   };
 
   const Button = ({ actionKey, children, className = 'outline-action', disabled = false, ...props }) => (
@@ -1392,6 +1537,30 @@ function WhatsAppManagement() {
     const settings = partnerSettingsDraft || normalizePartnerVideoSettingsDraft(partnersVideo?.settings || {});
     const allowedTimeList = String(settings.allowedTimes || '08:00\n18:00').split(/\n|,|;/).map((item) => item.trim()).filter(Boolean);
     const unitsWithoutPartnerNames = Array.isArray(summary.unitsWithoutPartnerNames) ? summary.unitsWithoutPartnerNames : [];
+    const weekdayDescription = formatPartnerWeekdayLabels(settings.allowedWeekdays || [1, 2, 3, 4, 5, 6]);
+    const controlsByPartnerId = new Set(controls.map((item) => String(item.partner_id || '')));
+    const noVideoOptions = [
+      ...controls.map((item) => ({
+        key: `control:${item.id}`,
+        clinicName: item.clinic_name,
+        partnerName: item.partner_name,
+        status: item.status || 'controle diario',
+        phone: item.phone_number || ''
+      })),
+      ...contacts
+        .filter((item) => Number(item.active) && !controlsByPartnerId.has(String(item.id)))
+        .map((item) => ({
+          key: `contact:${item.id}`,
+          clinicName: item.clinic_name,
+          partnerName: item.partner_name,
+          status: 'sem controle no dia',
+          phone: item.phone_number || ''
+        }))
+    ];
+    const nonComplianceRows = controls.filter((item) => {
+      const status = String(item.status || '').toLowerCase();
+      return !Number(item.video_received) || status.includes('não enviado') || status.includes('nao enviado') || status.includes('acionado');
+    });
     const qrUrl = `${(configStatus?.baseUrl || adminSettings?.baseUrl || 'http://2.24.101.6:3005').replace(/\/+$/, '')}/public/sessions/confirmacao-agendamento/qr-image`;
     const formatDateTime = (value) => String(value || '-').slice(0, 16).replace('T', ' ');
     const cards = [
@@ -1418,6 +1587,17 @@ function WhatsAppManagement() {
             </article>
           ))}
         </div>
+
+        <section className="whatsapp-panel partner-video-report-toolbar">
+          <div>
+            <h2>Relatórios e métricas de cobrança</h2>
+            <p className="whatsapp-panel-note">Acompanhe quem enviou, quem ficou pendente e quais unidades precisam de cobrança operacional.</p>
+          </div>
+          <div className="whatsapp-report-actions">
+            <button type="button" className="outline-action icon-action" onClick={exportPartnerVideoExcel}><span className="file-icon xls">XLS</span>Relatório Excel</button>
+            <button type="button" className="outline-action icon-action" onClick={printPartnerVideoPdf}><span className="file-icon pdf">PDF</span>Relatório PDF</button>
+          </div>
+        </section>
 
         <section className="whatsapp-two-column">
           <article className="whatsapp-panel">
@@ -1449,6 +1629,7 @@ function WhatsAppManagement() {
             <h2>Parametros operacionais</h2>
             <div className="whatsapp-card-list compact">
               <article><span>Horarios</span><strong>{allowedTimeList.join(' e ')}</strong><p>Disparo automatico apenas nas janelas de 08:00 e 18:00.</p></article>
+              <article><span>Calendario</span><strong>Segunda a sabado</strong><p>{weekdayDescription}</p></article>
               <article><span>Automacao</span><strong>{settings.automationEnabled ? 'Ativa' : 'Pausada'}</strong><p>Ative somente apos teste e QR conectado</p></article>
               <article><span>Anti-ban</span><strong>{settings.minDelaySeconds || 20}s - {settings.maxDelaySeconds || 60}s</strong><p>Fila com atraso aleatorio por mensagem</p></article>
               <article><span>Limite</span><strong>{settings.limitPerMinute || 2}/min</strong><p>{settings.limitPerHour || 60}/hora</p></article>
@@ -1484,6 +1665,7 @@ function WhatsAppManagement() {
             <label>Template editavel<textarea className="field partner-video-template-field" rows="10" value={settings.template || ''} onChange={(event) => updatePartnerSettingsDraft('template', event.target.value)} /></label>
             <div className="row-actions">
               <Button actionKey="partner-video-settings-save" className="primary-action" onClick={savePartnerVideoSettings}>Salvar parametros</Button>
+              <Button actionKey="partner-video-test" className="outline-action" onClick={sendPartnerVideoTests}>Testar numeros informados</Button>
               <button type="button" className="outline-action" onClick={() => setPartnerSettingsDraft(normalizePartnerVideoSettingsDraft(partnersVideo?.settings || {}))}>Restaurar tela</button>
             </div>
           </article>
@@ -1505,6 +1687,63 @@ function WhatsAppManagement() {
               {editingPartnerContactId && <button type="button" className="outline-action" onClick={cancelPartnerVideoContactEdit}>Cancelar edicao</button>}
             </div>
           </article>
+        </section>
+
+        <section className="whatsapp-panel partner-video-noncompliance-panel">
+          <div className="partner-video-panel-heading">
+            <div>
+              <h2>Baixa operacional dos vídeos não enviados</h2>
+              <p className="whatsapp-panel-note">Selecione as unidades que não enviaram vídeo para alimentar o relatório e as métricas de cobrança.</p>
+            </div>
+            <div className="row-actions">
+              <Button actionKey="partner-video-bulk-not-sent" className="primary-action" onClick={markSelectedPartnerVideosNotSent} disabled={!partnerNoVideoSelection.length}>
+                Marcar selecionados como não enviados
+              </Button>
+            </div>
+          </div>
+          <div className="partner-video-noncompliance-grid">
+            {noVideoOptions.map((item) => (
+              <label key={item.key} className="partner-video-noncompliance-item">
+                <input
+                  type="checkbox"
+                  checked={partnerNoVideoSelection.includes(item.key)}
+                  onChange={() => togglePartnerNoVideoSelection(item.key)}
+                />
+                <span>
+                  <strong>{item.clinicName}</strong>
+                  <small>{item.partnerName || 'Parceiro não informado'} · {item.phone || 'sem telefone'} · {item.status}</small>
+                </span>
+              </label>
+            ))}
+            {!noVideoOptions.length && <p className="empty-state">Nenhuma unidade/parceiro disponível para baixa no momento.</p>}
+          </div>
+        </section>
+
+        <section className="whatsapp-panel">
+          <h2>Relatório analítico de não envio</h2>
+          <div className="whatsapp-table-wrap compact-report-table">
+            <table className="whatsapp-table">
+              <thead><tr><th>Unidade</th><th>Parceiro</th><th>Status</th><th>Mensagem</th><th>Recebido</th><th>Acionamentos</th></tr></thead>
+              <tbody>{nonComplianceRows.map((item) => (
+                <tr key={item.id}>
+                  <td>{item.clinic_name}</td>
+                  <td>{item.partner_name}<small>{item.phone_number || '-'}</small></td>
+                  <td><span className={`whatsapp-badge ${statusTone(item.status)}`}>{item.status}</span></td>
+                  <td>{formatDateTime(item.message_sent_at)}<small>{item.message_status || 'pendente'}</small></td>
+                  <td>{item.video_received ? formatDateTime(item.video_received_at) : 'Não recebido'}</td>
+                  <td>
+                    <small>
+                      {item.leader_notified_at ? 'Líder ' : ''}
+                      {item.coordinator_notified_at ? 'Coordenador ' : ''}
+                      {item.manager_notified_at ? 'Gerente' : ''}
+                      {!item.leader_notified_at && !item.coordinator_notified_at && !item.manager_notified_at ? '-' : ''}
+                    </small>
+                  </td>
+                </tr>
+              ))}</tbody>
+            </table>
+            {!nonComplianceRows.length && <p className="empty-state">Nenhuma pendência de vídeo registrada no período atual.</p>}
+          </div>
         </section>
 
         <section className="whatsapp-panel">

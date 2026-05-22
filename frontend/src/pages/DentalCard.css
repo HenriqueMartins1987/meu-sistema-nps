@@ -27,7 +27,7 @@
 
 .dental-hero {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
   align-items: center;
   gap: 24px;
   padding: clamp(22px, 3vw, 34px);
@@ -57,6 +57,46 @@
   color: #5e5147;
   font-size: 1rem;
   line-height: 1.55;
+}
+
+.dental-hero-side {
+  display: grid;
+  gap: 12px;
+  align-self: stretch;
+}
+
+.dental-hero-side .dental-actions {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dental-hero-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.dental-hero-metrics article {
+  display: grid;
+  align-content: center;
+  min-height: 92px;
+  border: 1px solid rgba(142, 103, 49, 0.18);
+  border-radius: 8px;
+  padding: 12px;
+  background: linear-gradient(180deg, #fffaf4, #ffffff);
+}
+
+.dental-hero-metrics span {
+  color: #735f4f;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.dental-hero-metrics strong {
+  margin-top: 6px;
+  color: #211a16;
+  font-size: clamp(1.3rem, 2vw, 1.8rem);
+  line-height: 1;
 }
 
 .dental-actions {
@@ -207,6 +247,9 @@
   border-top-width: 3px;
   border-radius: 8px;
   padding: 18px;
+  display: grid;
+  align-content: space-between;
+  gap: 8px;
 }
 
 .dental-card.success { border-top-color: #2f8f62; }
@@ -239,6 +282,7 @@
   grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
   gap: 16px;
   margin-top: 18px;
+  align-items: stretch;
 }
 
 .dental-grid-3 {
@@ -250,6 +294,7 @@
 .dental-panel {
   border-radius: 8px;
   padding: 20px;
+  min-width: 0;
 }
 
 .dental-panel-header {
@@ -275,6 +320,7 @@
 
 .dental-chart {
   height: 300px;
+  min-height: 280px;
 }
 
 .dental-routine {
@@ -507,6 +553,12 @@
   gap: 12px;
 }
 
+.dental-priority-list {
+  max-height: 430px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
 .dental-priority-item {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
@@ -607,6 +659,10 @@
 }
 
 @media (max-width: 1180px) {
+  .dental-hero {
+    grid-template-columns: 1fr;
+  }
+
   .dental-grid-2,
   .dental-grid-3,
   .dental-executive-grid,
@@ -643,6 +699,11 @@
 
   .dental-actions {
     justify-content: stretch;
+    grid-template-columns: 1fr;
+  }
+
+  .dental-hero-side .dental-actions,
+  .dental-hero-metrics {
     grid-template-columns: 1fr;
   }
 

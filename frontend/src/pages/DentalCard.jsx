@@ -54,6 +54,7 @@ const contactChannels = ['WhatsApp', 'Ligação', 'Presencial', 'Outro'];
 const paymentOptions = ['pendente', 'pagou', 'parcial', 'nao'];
 const pageSizeOptions = [10, 25, 50, 100];
 const chartColors = ['#8e6731', '#1f7a8c', '#c79544', '#4c956c', '#c44536', '#5d6d7e', '#9a6fb0'];
+const dentalCardResponsibleUsers = ['joyce.crc', 'Igor Silva Cruz'];
 
 const defaultLead = {
   data_indicacao: new Date().toISOString().slice(0, 10),
@@ -315,7 +316,10 @@ function DentalCard() {
   }, [clinics, leads]);
 
   const responsavelOptions = useMemo(() => {
-    return Array.from(new Set(leads.map((lead) => lead.responsavel).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    return Array.from(new Set([
+      ...dentalCardResponsibleUsers,
+      ...leads.map((lead) => lead.responsavel).filter(Boolean)
+    ])).sort((a, b) => a.localeCompare(b));
   }, [leads]);
 
   const loadData = useCallback(async () => {
@@ -804,9 +808,25 @@ function DentalCard() {
               Controle de indicações, follow-up, agendamento, comparecimento, pagamento, evasão, produtividade e SLA do Programa Dental Card.
             </p>
           </div>
-          <div className="dental-actions">
-            <button type="button" className="dental-button" onClick={loadData} disabled={loading}>Atualizar</button>
-            <button type="button" className="dental-button" onClick={() => navigate('/home')}>Home</button>
+          <div className="dental-hero-side">
+            <div className="dental-actions">
+              <button type="button" className="dental-button" onClick={loadData} disabled={loading}>Atualizar</button>
+              <button type="button" className="dental-button" onClick={() => navigate('/home')}>Home</button>
+            </div>
+            <div className="dental-hero-metrics" aria-label="Resumo rápido Dental Card">
+              <article>
+                <span>Indicações</span>
+                <strong>{formatNumber(summary.totalIndicacoes || 0)}</strong>
+              </article>
+              <article>
+                <span>Retorno hoje</span>
+                <strong>{formatNumber(summary.leadsRetornoHoje || 0)}</strong>
+              </article>
+              <article>
+                <span>SLA vencido</span>
+                <strong>{formatNumber(summary.slaReturnExpired || 0)}</strong>
+              </article>
+            </div>
           </div>
         </header>
 
@@ -825,6 +845,9 @@ function DentalCard() {
 
         {feedback ? <div className="dental-feedback">{feedback}</div> : null}
         {error ? <div className="dental-feedback error">{error}</div> : null}
+        <datalist id="dental-responsaveis-options">
+          {responsavelOptions.map((item) => <option key={item} value={item} />)}
+        </datalist>
 
         <section className="dental-filters">
           <Field label="Período inicial"><input className="dental-input" type="date" value={filters.startDate} onChange={(event) => updateFilter('startDate', event.target.value)} /></Field>
@@ -998,7 +1021,7 @@ function DentalCard() {
               <h3 className="dental-section-title">Contato e SLA</h3>
               <Field label="Status do contato"><input className="dental-input" value={leadDraft.status_contato || ''} onChange={(event) => setLeadField('status_contato', event.target.value)} /></Field>
               <Field label="Canal"><select className="dental-select" value={leadDraft.canal_contato || ''} onChange={(event) => setLeadField('canal_contato', event.target.value)}>{contactChannels.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
-              <Field label="Responsável"><input className="dental-input" value={leadDraft.responsavel || ''} onChange={(event) => setLeadField('responsavel', event.target.value)} placeholder={user?.name || 'CRC'} /></Field>
+              <Field label="Responsável"><input className="dental-input" list="dental-responsaveis-options" value={leadDraft.responsavel || ''} onChange={(event) => setLeadField('responsavel', event.target.value)} placeholder={user?.name || 'CRC'} /></Field>
               <Field label="Tentativas"><input className="dental-input" type="number" min="0" value={leadDraft.quantidade_tentativas || 0} onChange={(event) => setLeadField('quantidade_tentativas', event.target.value)} /></Field>
               <Field label="Primeiro contato"><input className="dental-input" type="datetime-local" value={leadDraft.data_primeiro_contato || ''} onChange={(event) => setLeadField('data_primeiro_contato', event.target.value)} /></Field>
               <Field label="Última tentativa"><input className="dental-input" type="datetime-local" value={leadDraft.data_ultima_tentativa || ''} onChange={(event) => setLeadField('data_ultima_tentativa', event.target.value)} /></Field>
@@ -1427,7 +1450,7 @@ function DentalCard() {
               <div className="dental-form-grid">
                 <Field label="Status do contato"><input className="dental-input" value={contactDraft.status_contato} onChange={(event) => setContactDraft((current) => ({ ...current, status_contato: event.target.value }))} /></Field>
                 <Field label="Canal"><select className="dental-select" value={contactDraft.canal_contato} onChange={(event) => setContactDraft((current) => ({ ...current, canal_contato: event.target.value }))}>{contactChannels.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
-                <Field label="Responsável"><input className="dental-input" value={contactDraft.responsavel} onChange={(event) => setContactDraft((current) => ({ ...current, responsavel: event.target.value }))} /></Field>
+                <Field label="Responsável"><input className="dental-input" list="dental-responsaveis-options" value={contactDraft.responsavel} onChange={(event) => setContactDraft((current) => ({ ...current, responsavel: event.target.value }))} /></Field>
                 <Field label="Tentativas"><input className="dental-input" type="number" min="0" value={contactDraft.quantidade_tentativas} onChange={(event) => setContactDraft((current) => ({ ...current, quantidade_tentativas: event.target.value }))} /></Field>
                 <Field label="Primeiro contato"><input className="dental-input" type="datetime-local" value={contactDraft.data_primeiro_contato} onChange={(event) => setContactDraft((current) => ({ ...current, data_primeiro_contato: event.target.value }))} /></Field>
                 <Field label="Última tentativa"><input className="dental-input" type="datetime-local" value={contactDraft.data_ultima_tentativa} onChange={(event) => setContactDraft((current) => ({ ...current, data_ultima_tentativa: event.target.value }))} /></Field>

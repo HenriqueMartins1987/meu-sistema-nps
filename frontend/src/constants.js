@@ -332,6 +332,19 @@ export function hasPermission(user, permission) {
 
   const permissions = Array.isArray(user.permissions) ? user.permissions : [];
   const role = normalizeRoleValue(user.role);
+  const identity = [user.username, user.email, user.name]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean)
+    .map((value) => value
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, '.')
+      .replace(/^\.|\.$/g, ''));
+  const hasDentalCardNamedAccess = identity.some((value) => (
+    value === 'joyce.crc'
+    || value === 'igor.silva.cruz'
+    || value.includes('igor.silva.cruz')
+  ));
   const sacOperatorDefaults = ['home', 'complaints_register', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'crm_relationship', 'whatsapp_management', 'dental_card'];
   const managerDefaults = ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'dental_card'];
   const coordinatorDefaults = ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship'];
@@ -367,6 +380,10 @@ export function hasPermission(user, permission) {
   }
 
   if (permission === 'home') {
+    return true;
+  }
+
+  if (hasDentalCardNamedAccess && permission === 'dental_card') {
     return true;
   }
 
