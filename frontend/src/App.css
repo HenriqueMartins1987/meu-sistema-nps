@@ -3892,6 +3892,137 @@ a {
   align-items: start;
 }
 
+.admin-panel-tabs {
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
+  margin: 18px auto 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(200, 154, 87, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: var(--shadow-sm);
+}
+
+.admin-panel-tabs button {
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--muted);
+  background: transparent;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.admin-panel-tabs button.active {
+  color: var(--brand-strong);
+  border-color: rgba(11, 111, 95, 0.24);
+  background: var(--brand-soft);
+}
+
+.admin-panel-tabs span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 24px;
+  height: 24px;
+  margin-left: 8px;
+  border-radius: 8px;
+  color: #fff;
+  background: var(--danger);
+  font-size: 12px;
+}
+
+.admin-authorization-panel {
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
+  margin: 24px auto 0;
+  gap: 18px;
+}
+
+.admin-authorization-summary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.admin-authorization-summary article {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 15px;
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.admin-authorization-summary span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.admin-authorization-summary strong {
+  color: var(--ink);
+  font-size: 30px;
+  line-height: 1;
+}
+
+.admin-authorization-summary small {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.admin-authorization-list {
+  display: grid;
+  gap: 12px;
+  max-height: 620px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.admin-authorization-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.admin-authorization-card h3 {
+  margin: 8px 0 4px;
+  color: var(--ink);
+}
+
+.admin-authorization-card p,
+.admin-authorization-card small {
+  display: block;
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.admin-authorization-card.rejeitado {
+  border-color: rgba(196, 69, 54, 0.24);
+  background: #fff7f5;
+}
+
+.admin-authorization-card.aprovado {
+  border-color: rgba(11, 111, 95, 0.22);
+  background: rgba(244, 248, 246, 0.96);
+}
+
+.admin-authorization-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(128px, 1fr));
+  gap: 8px;
+  min-width: min(480px, 100%);
+}
+
 .admin-export-toolbar {
   width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
   margin: 18px auto 0;
@@ -3923,6 +4054,16 @@ a {
 }
 
 @media (max-width: 760px) {
+  .admin-authorization-summary,
+  .admin-authorization-card,
+  .admin-authorization-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-authorization-actions {
+    min-width: 0;
+  }
+
   .admin-export-toolbar {
     align-items: stretch;
     flex-direction: column;

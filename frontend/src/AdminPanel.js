@@ -12,6 +12,10 @@ import {
 } from './constants';
 
 const masterAdminEmail = 'henrique.martins@grcconsultoria.net.br';
+const adminPanelTabs = [
+  { id: 'users', label: 'Usuários cadastrados' },
+  { id: 'authorizations', label: 'Autorizações de cadastro' }
+];
 
 function buildNewUserDraft() {
   return {
@@ -49,9 +53,12 @@ function AdminPanel() {
   const navigate = useNavigate();
   const currentUser = useMemo(() => readUser(), []);
   const [users, setUsers] = useState([]);
+  const [registrationRequests, setRegistrationRequests] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState('');
   const [userSearch, setUserSearch] = useState('');
+  const [registrationSearch, setRegistrationSearch] = useState('');
+  const [activeAdminTab, setActiveAdminTab] = useState('users');
   const [draft, setDraft] = useState(null);
   const [feedback, setFeedback] = useState('');
   const [loading, setLoading] = useState(true);
@@ -64,6 +71,7 @@ function AdminPanel() {
   const [bulkEmailUserIds, setBulkEmailUserIds] = useState([]);
   const [sendingBulkEmail, setSendingBulkEmail] = useState(false);
   const [exportingUsers, setExportingUsers] = useState(false);
+  const [processingRegistrationId, setProcessingRegistrationId] = useState(null);
 
   const selectedUser = useMemo(() => (
     users.find((user) => String(user.id) === String(selectedUserId)) || null
@@ -81,6 +89,33 @@ function AdminPanel() {
       roleLabel(user.role)
     ].join(' ').toLowerCase().includes(term));
   }, [users, userSearch]);
+
+  const filteredRegistrationRequests = useMemo(() => {
+    const term = registrationSearch.trim().toLowerCase();
+    const pendingFirst = [...registrationRequests].sort((a, b) => {
+      const statusWeight = { pendente: 0, rejeitado: 1, aprovado: 2 };
+      const left = statusWeight[a.status] ?? 3;
+      const right = statusWeight[b.status] ?? 3;
+      if (left !== right) return left - right;
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    });
+
+    if (!term) return pendingFirst;
+
+    return pendingFirst.filter((request) => [
+      request.name,
+      request.email,
+      request.position,
+      request.department,
+      roleLabel(request.role),
+      request.status
+    ].join(' ').toLowerCase().includes(term));
+  }, [registrationRequests, registrationSearch]);
+
+  const pendingRegistrationCount = useMemo(
+    () => registrationRequests.filter((request) => request.status === 'pendente').length,
+    [registrationRequests]
+  );
 
   const bulkEmailEligibleUsers = useMemo(() => {
     const seen = new Set();
@@ -103,13 +138,15 @@ function AdminPanel() {
     setFeedback('');
 
     try {
-      const [usersRes, clinicsRes] = await Promise.all([
+      const [usersRes, clinicsRes, registrationRes] = await Promise.all([
         api.get('/admin/users'),
-        api.get('/clinics')
+        api.get('/clinics'),
+        api.get('/admin/registration-requests', { params: { status: 'todos' } }).catch(() => ({ data: [] }))
       ]);
       const userRows = Array.isArray(usersRes.data) ? usersRes.data : [];
       setUsers(userRows);
       setClinics(Array.isArray(clinicsRes.data) ? clinicsRes.data : []);
+      setRegistrationRequests(Array.isArray(registrationRes.data) ? registrationRes.data : []);
 
       if (!selectedUserId && userRows.length) {
         setSelectedUserId(String(userRows[0].id));
@@ -253,6 +290,42 @@ function AdminPanel() {
       setFeedback('Usuário excluído com lastro de auditoria.');
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível excluir o usuário.');
+    }
+  };
+
+  const handleRegistrationRequest = async (request, action) => {
+    if (!request?.id) return;
+
+    const actionLabels = {
+      approve: 'liberar acesso',
+      block: 'bloquear cadastro',
+      delete: 'excluir cadastro'
+    };
+
+    if (action !== 'approve' && !window.confirm(`Confirma ${actionLabels[action]} de ${request.name}?`)) {
+      return;
+    }
+
+    setProcessingRegistrationId(`${action}:${request.id}`);
+    setFeedback('');
+
+    try {
+      if (action === 'approve') {
+        await api.post(`/admin/registration-requests/${request.id}/approve`);
+        setFeedback(`Acesso liberado para ${request.name}.`);
+      } else if (action === 'block') {
+        await api.post(`/admin/registration-requests/${request.id}/reject`);
+        setFeedback(`Cadastro de ${request.name} bloqueado.`);
+      } else {
+        await api.delete(`/admin/registration-requests/${request.id}`);
+        setFeedback(`Cadastro de ${request.name} excluÃ­do da fila.`);
+      }
+
+      await loadData();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel processar a autorizaÃ§Ã£o.');
+    } finally {
+      setProcessingRegistrationId(null);
     }
   };
 
@@ -483,6 +556,100 @@ function AdminPanel() {
 
       {feedback && <p className="form-feedback admin-feedback">{feedback}</p>}
 
+      <nav className="admin-panel-tabs" aria-label="Gestão de usuários">
+        {adminPanelTabs.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            className={activeAdminTab === tab.id ? 'active' : ''}
+            onClick={() => setActiveAdminTab(tab.id)}
+          >
+            {tab.label}
+            {tab.id === 'authorizations' && pendingRegistrationCount > 0 ? <span>{pendingRegistrationCount}</span> : null}
+          </button>
+        ))}
+      </nav>
+
+      {activeAdminTab === 'authorizations' ? (
+        <section className="management-panel admin-authorization-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Autorizações</p>
+              <h2>Cadastros aguardando análise</h2>
+              <p className="base-subtitle">Libere, bloqueie ou exclua solicitações de cadastro feitas pela tela inicial do sistema.</p>
+            </div>
+            <button className="outline-action" type="button" onClick={loadData}>Atualizar lista</button>
+          </div>
+
+          <div className="admin-authorization-summary">
+            <article><span>Pendentes</span><strong>{pendingRegistrationCount}</strong><small>Aguardando liberação do Master</small></article>
+            <article><span>Total na lista</span><strong>{registrationRequests.length}</strong><small>Inclui aprovados e bloqueados</small></article>
+            <article><span>Usuários ativos</span><strong>{users.filter((item) => item.active).length}</strong><small>Base atual do sistema</small></article>
+          </div>
+
+          <label className="admin-selector">
+            Buscar cadastro
+            <input
+              className="field"
+              value={registrationSearch}
+              onChange={(event) => setRegistrationSearch(event.target.value)}
+              placeholder="Nome, e-mail, cargo, unidade ou status"
+            />
+          </label>
+
+          <div className="admin-authorization-list">
+            {filteredRegistrationRequests.length === 0 ? (
+              <div className="empty-state">Nenhum cadastro encontrado para autorização.</div>
+            ) : filteredRegistrationRequests.map((request) => {
+              const isPending = request.status === 'pendente';
+              const processing = processingRegistrationId?.endsWith(`:${request.id}`);
+
+              return (
+                <article key={request.id} className={`admin-authorization-card ${request.status}`}>
+                  <div>
+                    <span className={`status-pill ${request.status === 'pendente' ? 'em_andamento' : request.status === 'aprovado' ? 'resolvida' : ''}`}>
+                      {request.status || 'pendente'}
+                    </span>
+                    <h3>{request.name}</h3>
+                    <p>{request.email}</p>
+                    <small>{roleLabel(request.role)} · {request.position || 'Cargo não informado'} · {request.department || 'Sem unidade/área'}</small>
+                    <small>Telefone: {request.phone || '-'} · WhatsApp: {request.whatsapp || '-'}</small>
+                    <small>Solicitado em {request.created_at ? new Date(request.created_at).toLocaleString('pt-BR') : '-'}</small>
+                  </div>
+
+                  <div className="admin-authorization-actions">
+                    <button
+                      type="button"
+                      className="primary-action"
+                      onClick={() => handleRegistrationRequest(request, 'approve')}
+                      disabled={!isPending || processing}
+                    >
+                      Liberar acesso
+                    </button>
+                    <button
+                      type="button"
+                      className="outline-action"
+                      onClick={() => handleRegistrationRequest(request, 'block')}
+                      disabled={!isPending || processing}
+                    >
+                      Bloquear usuário
+                    </button>
+                    <button
+                      type="button"
+                      className="outline-action danger-action"
+                      onClick={() => handleRegistrationRequest(request, 'delete')}
+                      disabled={processing}
+                    >
+                      Excluir
+                    </button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      ) : (
+        <>
       <section className="admin-export-toolbar">
         <div>
           <p className="eyebrow">Exportacao</p>
@@ -797,6 +964,8 @@ function AdminPanel() {
             </section>
           )}
         </section>
+      )}
+        </>
       )}
 
       {createOpen && (

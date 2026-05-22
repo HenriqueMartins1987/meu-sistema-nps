@@ -465,6 +465,8 @@ const accessProfiles = {
   viewer: 'Marketing'
 };
 
+const dentalCardDefaultResponsible = 'Igor Silva Cruz';
+
 function normalizeAccessRole(role) {
   const normalized = String(role || '')
     .trim()
@@ -17019,12 +17021,19 @@ app.get('/admin/options', authenticate, requireMasterAdmin, (req, res) => {
 app.get('/admin/registration-requests', authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const status = req.query.status || 'pendente';
+    const params = [];
+    const statusFilter = status === 'todos' || status === 'all' ? '' : 'WHERE status = ?';
+
+    if (statusFilter) {
+      params.push(status);
+    }
+
     const [rows] = await pool.query(
-      `SELECT id, name, email, role, position, phone, whatsapp, department, status, created_at
+      `SELECT id, name, email, role, position, phone, whatsapp, department, status, approved_at, created_at
        FROM registration_requests
-       WHERE status = ?
-       ORDER BY created_at DESC`,
-      [status]
+       ${statusFilter}
+       ORDER BY FIELD(status, 'pendente', 'rejeitado', 'aprovado'), created_at DESC`,
+      params
     );
     res.json(rows);
   } catch (error) {
@@ -17133,6 +17142,33 @@ app.post('/admin/registration-requests/:id/reject', authenticate, requireMasterA
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao rejeitar cadastro.' });
+  }
+});
+
+app.delete('/admin/registration-requests/:id', authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT * FROM registration_requests WHERE id = ?',
+      [req.params.id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Cadastro não encontrado.' });
+    }
+
+    await pool.query('DELETE FROM registration_requests WHERE id = ?', [req.params.id]);
+    await createNotificationForAdmins(
+      'registration_deleted',
+      'Cadastro removido da fila',
+      `${rows[0].name} foi removido da fila de autorizações por ${getActorName(req.user)}.`,
+      '/home',
+      { requestId: rows[0].id, requestEmail: rows[0].email }
+    );
+
+    return res.json({ message: 'Cadastro removido da lista de autorizações.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao excluir cadastro da fila.' });
   }
 });
 
@@ -20868,7 +20904,7 @@ function buildDentalCardPayload(body = {}, user = {}, existing = {}) {
     tipo_indicador: normalizeDentalText(merged.tipo_indicador || merged.tipoIndicador, 80),
     dentista_responsavel: normalizeDentalText(merged.dentista_responsavel || merged.dentistaResponsavel, 180),
     origem: normalizeDentalText(merged.origem, 120) || 'Indicação manual',
-    responsavel: normalizeDentalText(merged.responsavel, 180) || getActorName(user),
+    responsavel: normalizeDentalText(merged.responsavel, 180) || dentalCardDefaultResponsible,
     responsavel_user_id: Number(merged.responsavel_user_id || merged.responsavelUserId || user?.id || 0) || null,
     status: normalizeDentalText(merged.status, 80) || deriveDentalStatus(merged),
     status_contato: normalizeDentalText(merged.status_contato || merged.statusContato, 80),

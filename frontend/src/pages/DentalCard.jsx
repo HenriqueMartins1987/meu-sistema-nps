@@ -54,7 +54,8 @@ const contactChannels = ['WhatsApp', 'Ligação', 'Presencial', 'Outro'];
 const paymentOptions = ['pendente', 'pagou', 'parcial', 'nao'];
 const pageSizeOptions = [10, 25, 50, 100];
 const chartColors = ['#8e6731', '#1f7a8c', '#c79544', '#4c956c', '#c44536', '#5d6d7e', '#9a6fb0'];
-const dentalCardResponsibleUsers = ['joyce.crc', 'Igor Silva Cruz'];
+const dentalCardDefaultResponsible = 'Igor Silva Cruz';
+const dentalCardResponsibleUsers = ['joyce.crc', dentalCardDefaultResponsible];
 
 const defaultLead = {
   data_indicacao: new Date().toISOString().slice(0, 10),
@@ -66,7 +67,7 @@ const defaultLead = {
   tipo_indicador: 'paciente',
   dentista_responsavel: '',
   origem: 'Indicação manual',
-  responsavel: '',
+  responsavel: dentalCardDefaultResponsible,
   status: 'Novo Lead',
   status_contato: '',
   canal_contato: 'WhatsApp',
@@ -418,6 +419,7 @@ function DentalCard() {
       data_primeiro_contato: toDateTimeInput(lead.data_primeiro_contato),
       data_ultima_tentativa: toDateTimeInput(lead.data_ultima_tentativa),
       data_proxima_tentativa: toDateTimeInput(lead.data_proxima_tentativa),
+      responsavel: lead.responsavel || dentalCardDefaultResponsible,
       agendado: Boolean(Number(lead.agendado)),
       ecuro_lancado: Boolean(Number(lead.ecuro_lancado)),
       endereco_enviado: Boolean(Number(lead.endereco_enviado)),
@@ -553,7 +555,7 @@ function DentalCard() {
       setContactDraft({
         status_contato: current.status_contato || '',
         canal_contato: current.canal_contato || 'WhatsApp',
-        responsavel: current.responsavel || user?.name || '',
+        responsavel: current.responsavel || dentalCardDefaultResponsible,
         quantidade_tentativas: current.quantidade_tentativas || 0,
         data_primeiro_contato: toDateTimeInput(current.data_primeiro_contato),
         data_ultima_tentativa: toDateTimeInput(current.data_ultima_tentativa),
@@ -1092,7 +1094,7 @@ function DentalCard() {
                         </td>
                         <td>{lead.telefone}</td>
                         <td>{lead.origem || '-'}</td>
-                        <td>{lead.responsavel || '-'}</td>
+                        <td>{lead.responsavel || dentalCardDefaultResponsible}</td>
                         <td><Badge>{lead.status}</Badge></td>
                         <td>{lead.data_agendamento ? `${formatDate(lead.data_agendamento)} ${String(lead.hora_agendamento || '').slice(0, 5)}` : '-'}</td>
                         <td><Badge tone={lead.pagou === 'pagou' || lead.pagou === 'parcial' ? 'success' : 'warning'}>{lead.pagou || 'pendente'}</Badge><br /><small>{formatCurrency(lead.receita || lead.valor_pago)}</small></td>
