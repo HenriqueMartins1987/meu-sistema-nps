@@ -49,6 +49,21 @@ function roleLabel(role) {
   return accessProfiles.find((profile) => profile.value === role)?.label || role || 'Perfil não informado';
 }
 
+function normalizeAuthorizationStatus(item) {
+  const explicitStatus = String(item?.authorization_status || item?.status || '').trim().toLowerCase();
+  if (explicitStatus) return explicitStatus;
+  if (item?.active) return 'aprovado';
+  return item?.role === 'crc_operator' ? 'pendente' : 'bloqueado';
+}
+
+function authorizationStatusLabel(status) {
+  const normalized = normalizeAuthorizationStatus({ status });
+  if (normalized === 'aprovado') return 'Aprovado';
+  if (normalized === 'bloqueado') return 'Bloqueado';
+  if (normalized === 'rejeitado') return 'Rejeitado';
+  return 'Pendente';
+}
+
 function AdminPanel() {
   const navigate = useNavigate();
   const currentUser = useMemo(() => readUser(), []);
@@ -84,18 +99,51 @@ function AdminPanel() {
 
     return users.filter((user) => [
       user.name,
+      user.username,
       user.email,
       user.position,
-      roleLabel(user.role)
+      roleLabel(user.role),
+      user.authorization_status
     ].join(' ').toLowerCase().includes(term));
   }, [users, userSearch]);
 
+  const authorizationItems = useMemo(() => {
+    const registrationItems = registrationRequests.map((request) => ({
+      ...request,
+      itemKey: `registration:${request.id}`,
+      source: 'registration',
+      sourceLabel: 'Cadastro pela tela inicial',
+      status: normalizeAuthorizationStatus(request)
+    }));
+    const crcUserItems = users
+      .filter((user) => user.role === 'crc_operator' && (!user.active || ['pendente', 'bloqueado'].includes(String(user.authorization_status || '').toLowerCase())))
+      .map((user) => ({
+        id: user.id,
+        itemKey: `user:${user.id}`,
+        userId: user.id,
+        source: 'user',
+        sourceLabel: 'Cadastro Operador CRC pelo login',
+        name: user.name,
+        username: user.username,
+        email: user.email,
+        role: user.role,
+        position: user.position || 'Operador de CRC',
+        phone: user.phone,
+        whatsapp: user.whatsapp,
+        department: user.department,
+        status: normalizeAuthorizationStatus(user),
+        created_at: user.created_at
+      }));
+
+    return [...registrationItems, ...crcUserItems];
+  }, [registrationRequests, users]);
+
   const filteredRegistrationRequests = useMemo(() => {
     const term = registrationSearch.trim().toLowerCase();
-    const pendingFirst = [...registrationRequests].sort((a, b) => {
-      const statusWeight = { pendente: 0, rejeitado: 1, aprovado: 2 };
-      const left = statusWeight[a.status] ?? 3;
-      const right = statusWeight[b.status] ?? 3;
+    const pendingFirst = [...authorizationItems].sort((a, b) => {
+      const statusWeight = { pendente: 0, bloqueado: 1, rejeitado: 2, aprovado: 3 };
+      const left = statusWeight[normalizeAuthorizationStatus(a)] ?? 4;
+      const right = statusWeight[normalizeAuthorizationStatus(b)] ?? 4;
       if (left !== right) return left - right;
       return new Date(b.created_at || 0) - new Date(a.created_at || 0);
     });
@@ -104,17 +152,19 @@ function AdminPanel() {
 
     return pendingFirst.filter((request) => [
       request.name,
+      request.username,
       request.email,
       request.position,
       request.department,
+      request.sourceLabel,
       roleLabel(request.role),
       request.status
     ].join(' ').toLowerCase().includes(term));
-  }, [registrationRequests, registrationSearch]);
+  }, [authorizationItems, registrationSearch]);
 
   const pendingRegistrationCount = useMemo(
-    () => registrationRequests.filter((request) => request.status === 'pendente').length,
-    [registrationRequests]
+    () => authorizationItems.filter((request) => normalizeAuthorizationStatus(request) === 'pendente').length,
+    [authorizationItems]
   );
 
   const bulkEmailEligibleUsers = useMemo(() => {
@@ -175,6 +225,7 @@ function AdminPanel() {
 
     setDraft({
       name: selectedUser.name || '',
+      username: selectedUser.username || '',
       email: selectedUser.email || '',
       role: selectedUser.role || 'viewer',
       position: selectedUser.position || '',
@@ -182,6 +233,7 @@ function AdminPanel() {
       whatsapp: selectedUser.whatsapp ? formatBrazilPhoneInput(selectedUser.whatsapp) : defaultBrazilPhone,
       department: selectedUser.department || '',
       active: Boolean(selectedUser.active),
+      authorizationStatus: selectedUser.authorization_status || (selectedUser.active ? 'aprovado' : 'pendente'),
       permissions: Array.isArray(selectedUser.permissions) ? selectedUser.permissions : [],
       clinicIds: Array.isArray(selectedUser.clinics) ? selectedUser.clinics.map((clinic) => clinic.clinic_id) : []
     });
@@ -272,11 +324,23 @@ function AdminPanel() {
     setFeedback('');
 
     try {
-      await api.patch(`/admin/users/${selectedUser.id}`, { ...draft, active: false });
+      await api.post(`/admin/users/${selectedUser.id}/block`);
       await loadData();
-      setFeedback('Usuário desabilitado.');
+      setFeedback('Usuário bloqueado.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível desabilitar o usuário.');
+      setFeedback(error.response?.data?.error || 'Não foi possível bloquear o usuário.');
+    }
+  };
+
+  const enableUser = async () => {
+    setFeedback('');
+
+    try {
+      await api.post(`/admin/users/${selectedUser.id}/activate`);
+      await loadData();
+      setFeedback('Acesso liberado para o usuário.');
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível liberar o usuário.');
     }
   };
 
@@ -306,11 +370,20 @@ function AdminPanel() {
       return;
     }
 
-    setProcessingRegistrationId(`${action}:${request.id}`);
+    setProcessingRegistrationId(`${request.source}:${action}:${request.id}`);
     setFeedback('');
 
     try {
-      if (action === 'approve') {
+      if (request.source === 'user' && action === 'approve') {
+        await api.post(`/admin/users/${request.id}/activate`);
+        setFeedback(`Acesso liberado para ${request.name}.`);
+      } else if (request.source === 'user' && action === 'block') {
+        await api.post(`/admin/users/${request.id}/block`);
+        setFeedback(`Usuário ${request.name} bloqueado.`);
+      } else if (request.source === 'user' && action === 'delete') {
+        await api.delete(`/admin/users/${request.id}`);
+        setFeedback(`Usuário ${request.name} excluído da base.`);
+      } else if (action === 'approve') {
         await api.post(`/admin/registration-requests/${request.id}/approve`);
         setFeedback(`Acesso liberado para ${request.name}.`);
       } else if (action === 'block') {
@@ -318,12 +391,12 @@ function AdminPanel() {
         setFeedback(`Cadastro de ${request.name} bloqueado.`);
       } else {
         await api.delete(`/admin/registration-requests/${request.id}`);
-        setFeedback(`Cadastro de ${request.name} excluÃ­do da fila.`);
+        setFeedback(`Cadastro de ${request.name} excluído da fila.`);
       }
 
       await loadData();
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel processar a autorizaÃ§Ã£o.');
+      setFeedback(error.response?.data?.error || 'Não foi possível processar a autorização.');
     } finally {
       setProcessingRegistrationId(null);
     }
@@ -583,7 +656,7 @@ function AdminPanel() {
 
           <div className="admin-authorization-summary">
             <article><span>Pendentes</span><strong>{pendingRegistrationCount}</strong><small>Aguardando liberação do Master</small></article>
-            <article><span>Total na lista</span><strong>{registrationRequests.length}</strong><small>Inclui aprovados e bloqueados</small></article>
+            <article><span>Total na lista</span><strong>{authorizationItems.length}</strong><small>Inclui aprovados e bloqueados</small></article>
             <article><span>Usuários ativos</span><strong>{users.filter((item) => item.active).length}</strong><small>Base atual do sistema</small></article>
           </div>
 
@@ -601,18 +674,22 @@ function AdminPanel() {
             {filteredRegistrationRequests.length === 0 ? (
               <div className="empty-state">Nenhum cadastro encontrado para autorização.</div>
             ) : filteredRegistrationRequests.map((request) => {
-              const isPending = request.status === 'pendente';
-              const processing = processingRegistrationId?.endsWith(`:${request.id}`);
+              const status = normalizeAuthorizationStatus(request);
+              const canApprove = request.source === 'user' ? status !== 'aprovado' : status === 'pendente';
+              const canBlock = request.source === 'user' ? status !== 'bloqueado' : status === 'pendente';
+              const processing = processingRegistrationId?.startsWith(`${request.source}:`) && processingRegistrationId?.endsWith(`:${request.id}`);
 
               return (
-                <article key={request.id} className={`admin-authorization-card ${request.status}`}>
+                <article key={request.itemKey || `${request.source}:${request.id}`} className={`admin-authorization-card ${status}`}>
                   <div>
-                    <span className={`status-pill ${request.status === 'pendente' ? 'em_andamento' : request.status === 'aprovado' ? 'resolvida' : ''}`}>
-                      {request.status || 'pendente'}
+                    <span className={`status-pill ${status === 'pendente' ? 'em_andamento' : status === 'aprovado' ? 'resolvida' : ''}`}>
+                      {authorizationStatusLabel(status)}
                     </span>
                     <h3>{request.name}</h3>
-                    <p>{request.email}</p>
+                    <p>{request.email || request.username || '-'}</p>
+                    <small>{request.sourceLabel}</small>
                     <small>{roleLabel(request.role)} · {request.position || 'Cargo não informado'} · {request.department || 'Sem unidade/área'}</small>
+                    {request.username ? <small>Usuário: {request.username}</small> : null}
                     <small>Telefone: {request.phone || '-'} · WhatsApp: {request.whatsapp || '-'}</small>
                     <small>Solicitado em {request.created_at ? new Date(request.created_at).toLocaleString('pt-BR') : '-'}</small>
                   </div>
@@ -622,7 +699,7 @@ function AdminPanel() {
                       type="button"
                       className="primary-action"
                       onClick={() => handleRegistrationRequest(request, 'approve')}
-                      disabled={!isPending || processing}
+                      disabled={!canApprove || processing}
                     >
                       Liberar acesso
                     </button>
@@ -630,7 +707,7 @@ function AdminPanel() {
                       type="button"
                       className="outline-action"
                       onClick={() => handleRegistrationRequest(request, 'block')}
-                      disabled={!isPending || processing}
+                      disabled={!canBlock || processing}
                     >
                       Bloquear usuário
                     </button>
@@ -694,7 +771,7 @@ function AdminPanel() {
                 {filteredUsers.length === 0 && <option value="">Nenhum colaborador encontrado</option>}
                 {filteredUsers.map((user) => (
                   <option key={user.id} value={user.id}>
-                    {user.name} · {user.email}
+                    {user.name} · {user.username || user.email || '-'} · {authorizationStatusLabel(normalizeAuthorizationStatus(user))}
                   </option>
                 ))}
               </select>
@@ -703,8 +780,8 @@ function AdminPanel() {
             {selectedUser && (
               <article className="admin-user-button active">
                 <strong>{selectedUser.name}</strong>
-                <span>{selectedUser.email}</span>
-                <small>{selectedUser.active ? 'Ativo' : 'Desabilitado'} · {roleLabel(selectedUser.role)}</small>
+                <span>{selectedUser.username || selectedUser.email}</span>
+                <small>{selectedUser.active ? 'Ativo' : authorizationStatusLabel(normalizeAuthorizationStatus(selectedUser))} · {roleLabel(selectedUser.role)}</small>
               </article>
             )}
           </aside>
@@ -742,7 +819,11 @@ function AdminPanel() {
                     )}
                   </div>
 
-                  {!isSelectedMaster && <button className="outline-action" onClick={disableUser}>Desabilitar</button>}
+                  {!isSelectedMaster && (
+                    selectedUser.active
+                      ? <button className="outline-action" onClick={disableUser}>Bloquear acesso</button>
+                      : <button className="outline-action" onClick={enableUser}>Liberar acesso</button>
+                  )}
                   {!isSelectedMaster && <button className="outline-action" onClick={resetPassword}>Reiniciar senha</button>}
                   {!isSelectedMaster && <button className="outline-action danger-action" onClick={deleteUser}>Excluir</button>}
                   <button className="primary-action" onClick={saveUser}>Salvar alterações</button>

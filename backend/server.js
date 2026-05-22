@@ -2559,9 +2559,18 @@ async function ensureDatabaseSchema() {
   await ensureColumn('users', 'must_change_password', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn('users', 'token_version', 'INT NOT NULL DEFAULT 1');
   await ensureColumn('users', 'active', 'TINYINT(1) NOT NULL DEFAULT 1');
+  await ensureColumn('users', 'authorization_status', "VARCHAR(30) NOT NULL DEFAULT 'aprovado'");
   await ensureColumn('users', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
   await ensureColumn('users', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
   await pool.query('ALTER TABLE users MODIFY COLUMN password VARCHAR(255) NOT NULL');
+  await pool.query(`
+    UPDATE users
+       SET authorization_status = 'pendente'
+     WHERE role = 'crc_operator'
+       AND active = 0
+       AND deleted_at IS NULL
+       AND (authorization_status IS NULL OR authorization_status = '' OR authorization_status = 'aprovado')
+  `);
 
   await ensureColumn('clinics', 'coordinator_name', 'VARCHAR(160) NULL');
   await ensureColumn('clinics', 'catalog_code', 'VARCHAR(220) NULL');
@@ -16982,8 +16991,8 @@ app.get('/registration-requests/:token/approve', async (req, res) => {
     const request = rows[0];
     await pool.query(
       `INSERT INTO users
-       (name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
+       (name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password, authorization_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 'aprovado')
        ON DUPLICATE KEY UPDATE
          name = VALUES(name),
          role = VALUES(role),
@@ -16993,6 +17002,7 @@ app.get('/registration-requests/:token/approve', async (req, res) => {
          department = VALUES(department),
          permissions = VALUES(permissions),
          must_change_password = 0,
+         authorization_status = 'aprovado',
          active = 1,
          deleted_at = NULL,
          deleted_by = NULL`,
@@ -17086,8 +17096,8 @@ app.post('/admin/registration-requests/:id/approve', authenticate, requireMaster
     const request = rows[0];
     await pool.query(
       `INSERT INTO users
-       (name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0)
+       (name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password, authorization_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 0, 'aprovado')
        ON DUPLICATE KEY UPDATE
          name = VALUES(name),
          role = VALUES(role),
@@ -17097,6 +17107,7 @@ app.post('/admin/registration-requests/:id/approve', authenticate, requireMaster
          department = VALUES(department),
          permissions = VALUES(permissions),
          must_change_password = 0,
+         authorization_status = 'aprovado',
          active = 1,
          deleted_at = NULL,
          deleted_by = NULL`,
@@ -17205,7 +17216,7 @@ app.delete('/admin/registration-requests/:id', authenticate, requireMasterAdmin,
 app.get('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const [users] = await pool.query(
-      `SELECT id, name, email, role, position, phone, whatsapp, department, permissions, action_permissions, active, must_change_password, created_at, updated_at
+      `SELECT id, name, username, email, role, position, phone, whatsapp, department, permissions, action_permissions, active, authorization_status, must_change_password, created_at, updated_at
        FROM users
        WHERE deleted_at IS NULL
        ORDER BY name ASC`
@@ -17271,6 +17282,7 @@ async function getAdminUsersExportRows() {
     `SELECT
         u.id,
         u.name,
+        u.username,
         u.email,
         u.role,
         u.position,
@@ -17280,6 +17292,7 @@ async function getAdminUsersExportRows() {
         u.permissions,
         u.action_permissions,
         u.active,
+        u.authorization_status,
         u.must_change_password,
         u.created_at,
         u.updated_at,
@@ -17313,6 +17326,7 @@ async function getAdminUsersExportRows() {
     return {
       id: user.id,
       nome: user.name || '',
+      usuario: user.username || '',
       email: user.email || '',
       telefone: user.phone || '',
       whatsapp: user.whatsapp || '',
@@ -17321,6 +17335,7 @@ async function getAdminUsersExportRows() {
       cargo: user.position || '',
       departamento: user.department || '',
       status: Number(user.active) ? 'Ativo' : 'Desabilitado',
+      autorizacao: user.authorization_status || (Number(user.active) ? 'aprovado' : 'pendente'),
       senha_inicial: Number(user.must_change_password) ? 'Pendente de troca' : 'Regular',
       clinicas: user.clinics || '',
       telas_liberadas: formatAdminUserPermissionList(user.permissions, defaultScreens),
@@ -17335,6 +17350,7 @@ function buildAdminUsersExcelBuffer(rows = []) {
   const data = rows.map((user) => ({
     ID: user.id,
     'Nome completo': user.nome,
+    Usuário: user.usuario,
     'E-mail': user.email,
     Telefone: user.telefone,
     WhatsApp: user.whatsapp,
@@ -17343,6 +17359,7 @@ function buildAdminUsersExcelBuffer(rows = []) {
     Cargo: user.cargo,
     'Departamento / área': user.departamento,
     Status: user.status,
+    'Status de autorização': user.autorizacao,
     'Senha inicial': user.senha_inicial,
     'Clínicas sob responsabilidade': user.clinicas,
     'Telas liberadas': user.telas_liberadas,
@@ -17355,6 +17372,7 @@ function buildAdminUsersExcelBuffer(rows = []) {
   worksheet['!cols'] = [
     { wch: 8 },
     { wch: 34 },
+    { wch: 22 },
     { wch: 34 },
     { wch: 18 },
     { wch: 18 },
@@ -17364,6 +17382,7 @@ function buildAdminUsersExcelBuffer(rows = []) {
     { wch: 24 },
     { wch: 14 },
     { wch: 20 },
+    { wch: 22 },
     { wch: 64 },
     { wch: 64 },
     { wch: 72 },
@@ -17432,7 +17451,7 @@ function buildAdminUsersPdfBuffer(rows = []) {
       doc.strokeColor(line).lineWidth(0.4).moveTo(32, y + rowHeight).lineTo(32 + pageWidth, y + rowHeight).stroke();
       let x = 32;
       const values = [
-        `${user.nome}\n${user.status} · ${user.senha_inicial}`,
+        `${user.nome}\nUsuário: ${user.usuario || '-'}\n${user.status} · ${user.autorizacao} · ${user.senha_inicial}`,
         user.email,
         `Tel.: ${user.telefone || '-'}\nWhats.: ${user.whatsapp || '-'}`,
         `${user.perfil}\n${user.cargo || '-'}\n${user.departamento || '-'}`,
@@ -17738,6 +17757,94 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao atualizar usuário.' });
+  }
+});
+
+app.post('/admin/users/:id/activate', authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, name, email, role, phone, whatsapp, active, authorization_status FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+      [req.params.id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+
+    const user = rows[0];
+
+    if (String(user.email || '').toLowerCase() === masterAdminEmail) {
+      return res.status(403).json({ error: 'O Administrador Master já possui acesso permanente.' });
+    }
+
+    await pool.query(
+      `UPDATE users
+          SET active = 1,
+              authorization_status = 'aprovado',
+              token_version = COALESCE(token_version, 1) + 1
+        WHERE id = ?`,
+      [user.id]
+    );
+
+    await createNotification(
+      user.id,
+      'access_approved',
+      'Acesso liberado',
+      'Seu acesso foi liberado pelo Administrador Master.',
+      '/home',
+      { approvedBy: getActorName(req.user) }
+    );
+
+    const notificationResult = await sendRegistrationApprovedNotifications(user);
+
+    return res.json({
+      message: 'Usuário liberado com sucesso.',
+      notifications: notificationResult
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao liberar acesso do usuário.' });
+  }
+});
+
+app.post('/admin/users/:id/block', authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    const [rows] = await pool.query(
+      'SELECT id, name, email, role FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+      [req.params.id]
+    );
+
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+
+    const user = rows[0];
+
+    if (String(user.email || '').toLowerCase() === masterAdminEmail || user.role === 'master_admin') {
+      return res.status(403).json({ error: 'O Administrador Master não pode ser bloqueado.' });
+    }
+
+    await pool.query(
+      `UPDATE users
+          SET active = 0,
+              authorization_status = 'bloqueado',
+              token_version = COALESCE(token_version, 1) + 1
+        WHERE id = ?`,
+      [user.id]
+    );
+
+    await createNotificationForAdmins(
+      'user_blocked',
+      'Usuário bloqueado',
+      `${user.name} foi bloqueado por ${getActorName(req.user)}.`,
+      '/admin',
+      { userId: user.id, userEmail: user.email }
+    );
+
+    return res.json({ message: 'Usuário bloqueado com sucesso.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao bloquear usuário.' });
   }
 });
 
@@ -18147,8 +18254,8 @@ app.post('/auth/crc-operator/register', async (req, res) => {
     const actionPermissionList = defaultActionPermissionsForRole('crc_operator');
     const [result] = await pool.query(
       `INSERT INTO users
-       (name, username, email, password, role, position, phone, whatsapp, department, permissions, action_permissions, active, must_change_password)
-       VALUES (?, ?, ?, ?, 'crc_operator', 'Operador de CRC', ?, ?, 'CRC WhatsApp', ?, ?, 0, 0)`,
+       (name, username, email, password, role, position, phone, whatsapp, department, permissions, action_permissions, active, must_change_password, authorization_status)
+       VALUES (?, ?, ?, ?, 'crc_operator', 'Operador de CRC', ?, ?, 'CRC WhatsApp', ?, ?, 0, 0, 'pendente')`,
       [
         parsed.data.name,
         username,
@@ -18205,7 +18312,8 @@ app.post('/login', async (req, res) => {
     const user = rows[0];
 
     if (!user.active || user.deleted_at) {
-      if (!user.deleted_at && normalizeAccessRole(user.role) === 'crc_operator') {
+      const authorizationStatus = String(user.authorization_status || '').toLowerCase();
+      if (!user.deleted_at && normalizeAccessRole(user.role) === 'crc_operator' && authorizationStatus !== 'bloqueado') {
         return res.status(403).json({ message: 'Cadastro de Operador CRC aguardando autorização do Administrador Master.' });
       }
 

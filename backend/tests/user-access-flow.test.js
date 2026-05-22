@@ -189,7 +189,7 @@ test('CRC operator self-registration stays inactive and notifies master for appr
   assert.equal(response.status, 201);
   assert.equal(response.body.pendingAuthorization, true);
   assert.match(response.body.message, /Administrador Master foi notificado/i);
-  assert.match(insertedUserSql, /active,\s*must_change_password\)\s*VALUES[\s\S]+0,\s*0\)/);
+  assert.match(insertedUserSql, /active,\s*must_change_password,\s*authorization_status\)\s*VALUES[\s\S]+0,\s*0,\s*'pendente'\)/);
   assert.equal(insertedUserParams[0], 'Paula Operadora CRC');
   assert.equal(insertedUserParams[1], 'paula.crc');
   assert.equal(insertedUserParams[2], 'paula.crc@example.com');
