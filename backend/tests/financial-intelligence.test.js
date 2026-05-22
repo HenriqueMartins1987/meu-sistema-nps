@@ -44,16 +44,16 @@ test('labor cost composition calculates default payroll provisions', () => {
   assert.equal(labor.components.find((component) => component.key === 'fgts').percent, 4.93);
 });
 
-test('labor cost composition respects Simples Nacional payroll toggle', () => {
+test('labor cost composition treats payroll charges as Lucro Presumido even if legacy toggle is false', () => {
   const labor = calculateLaborCostComposition(
     { salary: 2000 },
     normalizeFinancialRules({ laborCostRules: { aplicarInssPatronal: false } })
   );
 
-  assert.equal(labor.inss_patronal, 0);
-  assert.equal(labor.rat_ajustado, 0);
-  assert.equal(labor.terceiros, 0);
-  assert.equal(labor.encargos_obrigatorios, 160);
+  assert.equal(labor.inss_patronal, 400);
+  assert.equal(labor.rat_ajustado, 20);
+  assert.equal(labor.terceiros, 116);
+  assert.equal(labor.encargos_obrigatorios, 696);
 });
 
 test('financial intelligence calculates campaign ROI without duplicating monthly CRC costs', () => {
@@ -146,6 +146,7 @@ test('financial intelligence payload keeps historical monthly series with monthl
 
   assert.equal(payload.summary.totalRevenue, 3000);
   assert.equal(payload.summary.totalCollaboratorCost, 700);
+  assert.equal(payload.summary.averageWorkedHourCost, 1.59);
   assert.equal(payload.summary.totalOperationalCost, 200);
   assert.equal(payload.historicalSeries.length, 2);
   assert.deepEqual(payload.historicalSeries.map((item) => item.label), ['2026-04', '2026-05']);

@@ -308,6 +308,13 @@ function FinancialIntelligence() {
       explanation: 'Consolida custos operacionais, marketing, administrativos e custos de colaboradores vinculados ao CRC no período.'
     },
     {
+      label: 'Custo da Hora Trabalhada',
+      value: formatCurrency(summary.averageWorkedHourCost),
+      detail: `${Number(summary.totalCollaboratorWorkedHours || 0).toLocaleString('pt-BR')} h de colaboradores no periodo`,
+      tone: toNumber(summary.averageWorkedHourCost) > 0 ? 'neutral' : 'warning',
+      explanation: 'Custo total mensal dos colaboradores dividido pela carga horaria trabalhada estimada no periodo. A base de horas e configuravel no Centro Master > Financeiro > Custos Trabalhistas.'
+    },
+    {
       label: 'Lucro/Prejuízo CRC',
       value: formatCurrency(summary.profit),
       detail: 'Resultado operacional consolidado',
@@ -474,6 +481,8 @@ function FinancialIntelligence() {
       ['ROI CRC', summary.roiCrc],
       ['SELIC anual fixa', realSelicRate],
       ['Custo mensal colaboradores', summary.totalCollaboratorCost],
+      ['Custo da hora trabalhada', summary.averageWorkedHourCost],
+      ['Horas trabalhadas consideradas', summary.totalCollaboratorWorkedHours],
       ['Custo mensal operacional', summary.totalOperationalCost]
     ];
     const csv = [

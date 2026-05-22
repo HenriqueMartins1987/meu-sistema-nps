@@ -33,7 +33,8 @@ const defaultLaborCostRules = {
   percentualTerceiros: 5.8,
   percentualProvisaoRescisoria: 4,
   percentualAbsenteismo: 2,
-  percentualTurnover: 2
+  percentualTurnover: 2,
+  monthlyWorkHours: 220
 };
 
 function formatCurrency(value) {
@@ -108,10 +109,9 @@ function calculateLaborCost(item = {}, rulesSource = {}, monthlyCost = null) {
   const decimoTerceiro = round(salarioRemuneracaoBase * (toNumber(rules.percentual13) / 100));
   const ferias = round(salarioRemuneracaoBase * (toNumber(rules.percentualFerias) / 100));
   const tercoFerias = round(salarioRemuneracaoBase * (toNumber(rules.percentualTercoFerias) / 100));
-  const aplicarInss = rules.aplicarInssPatronal !== false;
-  const inssPatronal = aplicarInss ? round(salarioRemuneracaoBase * (toNumber(rules.percentualInssPatronal) / 100)) : 0;
-  const ratAjustado = aplicarInss ? round(salarioRemuneracaoBase * (toNumber(rules.percentualRat) / 100) * toNumber(rules.fatorFap || 1)) : 0;
-  const terceiros = aplicarInss ? round(salarioRemuneracaoBase * (toNumber(rules.percentualTerceiros) / 100)) : 0;
+  const inssPatronal = round(salarioRemuneracaoBase * (toNumber(rules.percentualInssPatronal) / 100));
+  const ratAjustado = round(salarioRemuneracaoBase * (toNumber(rules.percentualRat) / 100) * toNumber(rules.fatorFap || 1));
+  const terceiros = round(salarioRemuneracaoBase * (toNumber(rules.percentualTerceiros) / 100));
   const provisaoRescisoria = round(salarioRemuneracaoBase * (toNumber(rules.percentualProvisaoRescisoria) / 100));
   const custoAbsenteismo = round(salarioRemuneracaoBase * (toNumber(rules.percentualAbsenteismo) / 100));
   const custoTurnover = round(salarioRemuneracaoBase * (toNumber(rules.percentualTurnover) / 100));

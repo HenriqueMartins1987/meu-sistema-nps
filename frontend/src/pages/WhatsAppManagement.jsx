@@ -15,11 +15,12 @@ const sections = [
   { id: 'chatbot', label: 'Chatbot', path: '/home/whatsapp-management/chatbot', permission: 'whatsapp_chatbot', operator: true },
   { id: 'absent', label: 'Ausentes', path: '/home/whatsapp-management/absent', permission: 'whatsapp_absent', operator: true },
   { id: 'history', label: 'Historico', path: '/home/whatsapp-management/history', permission: 'whatsapp_history', operator: true },
+  { id: 'confirmation', label: 'Confirmacao e Agendamento', path: '/home/whatsapp-management/confirmation', permission: 'whatsapp_reports', leader: true },
   { id: 'reports', label: 'Relatorios', path: '/home/whatsapp-management/reports', permission: 'whatsapp_reports', leader: true },
   { id: 'settings', label: 'Configuracoes', path: '/home/whatsapp-management/settings', permission: 'whatsapp_settings', masterOnly: true }
 ];
 
-const sectors = ['CRC', 'SAC', 'Comercial', 'NPS', 'Reclamacoes', 'Pos-venda', 'Dentistas Parceiros'];
+const sectors = ['CRC', 'SAC', 'Comercial', 'NPS', 'Reclamacoes', 'Pos-venda', 'Dentistas Parceiros', 'Confirmacao e Agendamento'];
 const attendanceStatuses = ['Novo', 'Em atendimento', 'Aguardando paciente', 'Agendado', 'Compareceu', 'Nao compareceu', 'Ausente', 'Retornar depois', 'Encerrado', 'Reclamacao', 'NPS', 'Urgente'];
 const operatorStatuses = [
   { value: 'online', label: 'Online' },
@@ -216,6 +217,7 @@ function WhatsAppManagement() {
   const [absent, setAbsent] = useState([]);
   const [history, setHistory] = useState([]);
   const [flows, setFlows] = useState([]);
+  const [partnersVideo, setPartnersVideo] = useState(null);
   const [messages, setMessages] = useState([]);
   const [selectedConversationId, setSelectedConversationId] = useState('');
   const [qrResult, setQrResult] = useState(null);
@@ -307,7 +309,8 @@ function WhatsAppManagement() {
       queue: api.get('/api/whatsapp/queue'),
       absent: api.get('/api/whatsapp/absent'),
       history: api.get('/api/whatsapp/history', { params: historyFilters }),
-      flows: api.get('/api/whatsapp/chatbot/flows')
+      flows: api.get('/api/whatsapp/chatbot/flows'),
+      partnersVideo: api.get('/api/partners-video/dashboard')
     };
     const entries = Object.entries(requests);
     const results = await Promise.allSettled(entries.map(([, request]) => request));
@@ -335,6 +338,7 @@ function WhatsAppManagement() {
       if (key === 'absent') setAbsent(Array.isArray(data) ? data : []);
       if (key === 'history') setHistory(Array.isArray(data) ? data : []);
       if (key === 'flows') setFlows(Array.isArray(data) ? data : []);
+      if (key === 'partnersVideo') setPartnersVideo(data || null);
     });
 
     if (failed.length && !silent) {
@@ -541,6 +545,37 @@ function WhatsAppManagement() {
       return response;
     }, 'Mensagem teste enviada ou enfileirada.', 'Nao foi possivel enviar a mensagem teste.');
   };
+
+  const sendPartnerVideoTests = () => runAction('partner-video-test', async () => {
+    const response = await api.post('/api/partners-video/test-send');
+    await loadBaseData({ silent: true });
+    return response;
+  }, (data) => `${data?.queued || 0} teste(s) enfileirado(s) para Confirmação e Agendamento.`, 'Nao foi possivel enviar o teste de Confirmacao e Agendamento.');
+
+  const sendPartnerVideoDailyReminders = () => {
+    if (!window.confirm('Enfileirar agora a cobranca diaria de videos para todos os parceiros ativos?')) return null;
+    return runAction('partner-video-daily', async () => {
+      const response = await api.post('/api/partners-video/send-daily-reminders');
+      await loadBaseData({ silent: true });
+      return response;
+    }, (data) => `${data?.queued || 0} cobranca(s) enfileirada(s) com intervalo anti-ban.`, 'Nao foi possivel enfileirar cobrancas de video.');
+  };
+
+  const togglePartnerVideoAutomation = () => runAction('partner-video-settings', async () => {
+    const current = partnersVideo?.settings || {};
+    const response = await api.put('/api/partners-video/settings', {
+      ...current,
+      automationEnabled: !current.automationEnabled
+    });
+    await loadBaseData({ silent: true });
+    return response;
+  }, (data) => data?.automationEnabled ? 'Rotina automatica ativada.' : 'Rotina automatica pausada.', 'Nao foi possivel alterar a rotina automatica.');
+
+  const updatePartnerVideoControl = (controlId, action, message) => runAction(`partner-video-${action}-${controlId}`, async () => {
+    const response = await api.post(`/api/partners-video/${controlId}/${action}`);
+    await loadBaseData({ silent: true });
+    return response;
+  }, message, 'Nao foi possivel atualizar o controle de video.');
 
   const assignInstanceOperator = (instanceName, operatorId) => runAction(`assign-${instanceName}`, async () => {
     const response = await api.put(`/api/whatsapp/instances/${instanceName}/assignment`, { operator_id: operatorId || null });
@@ -1203,6 +1238,129 @@ function WhatsAppManagement() {
     </section>
   );
 
+  const renderConfirmationScheduling = () => {
+    const summary = partnersVideo?.summary || {};
+    const controls = Array.isArray(partnersVideo?.controls) ? partnersVideo.controls : [];
+    const contacts = Array.isArray(partnersVideo?.contacts) ? partnersVideo.contacts : [];
+    const logs = Array.isArray(partnersVideo?.logs) ? partnersVideo.logs : [];
+    const session = partnersVideo?.session || instances.find((item) => item.instance_name === 'confirmacao-agendamento') || {};
+    const qrUrl = `${(configStatus?.baseUrl || adminSettings?.baseUrl || 'http://2.24.101.6:3005').replace(/\/+$/, '')}/public/sessions/confirmacao-agendamento/qr-image`;
+    const cards = [
+      ['Sessao', session.status || 'nao_iniciada', 'confirmacao-agendamento'],
+      ['Parceiros ativos', summary.activeContacts || 0, `${summary.withoutPhone || 0} sem telefone`],
+      ['Mensagens hoje', summary.sentToday || 0, 'Cobrancas enfileiradas/enviadas'],
+      ['Pendencias hoje', summary.pendingToday || 0, 'Videos ainda sem baixa'],
+      ['No prazo', summary.receivedOnTime || 0, 'Videos recebidos no prazo'],
+      ['Falhas', summary.failuresToday || 0, 'Erros registrados']
+    ];
+
+    return (
+      <section className="whatsapp-confirmation-page">
+        <div className="whatsapp-kpi-grid">
+          {cards.map(([title, value, helper]) => (
+            <article className="whatsapp-kpi" key={title}>
+              <span>{title}</span>
+              <strong>{value}</strong>
+              <small>{helper}</small>
+            </article>
+          ))}
+        </div>
+
+        <section className="whatsapp-two-column">
+          <article className="whatsapp-panel">
+            <h2>Canal Confirmação e Agendamento</h2>
+            <div className="whatsapp-card-list compact">
+              <article>
+                <span>Status</span>
+                <strong>{session.status || 'nao_iniciada'}</strong>
+                <p>Numero remetente: {session.phone_number || '5562998647043'}</p>
+              </article>
+              <article>
+                <span>QR Code</span>
+                <strong>Link da VPS</strong>
+                <p>{qrUrl}</p>
+              </article>
+            </div>
+            <div className="row-actions">
+              <Button actionKey="qr-confirmacao-agendamento" className="outline-action" onClick={() => generateQrCode('confirmacao-agendamento')}>QR Code</Button>
+              <Button actionKey="reconnect-confirmacao-agendamento" className="outline-action" onClick={() => reconnectInstance('confirmacao-agendamento')}>Reiniciar sessao</Button>
+              <Button actionKey="partner-video-test" className="outline-action" onClick={sendPartnerVideoTests}>Teste obrigatorio</Button>
+              <Button actionKey="partner-video-daily" className="primary-action" onClick={sendPartnerVideoDailyReminders}>Enviar cobranca diaria</Button>
+              <Button actionKey="partner-video-settings" className="outline-action" onClick={togglePartnerVideoAutomation}>
+                {partnersVideo?.settings?.automationEnabled ? 'Pausar rotina' : 'Ativar rotina'}
+              </Button>
+            </div>
+          </article>
+
+          <article className="whatsapp-panel">
+            <h2>Parametros operacionais</h2>
+            <div className="whatsapp-card-list compact">
+              <article><span>Horario</span><strong>{partnersVideo?.settings?.standardTime || '08:00'}</strong><p>Segunda a sabado</p></article>
+              <article><span>Automacao</span><strong>{partnersVideo?.settings?.automationEnabled ? 'Ativa' : 'Pausada'}</strong><p>Ative somente apos teste e QR conectado</p></article>
+              <article><span>Anti-ban</span><strong>{partnersVideo?.settings?.minDelaySeconds || 20}s - {partnersVideo?.settings?.maxDelaySeconds || 60}s</strong><p>Fila com atraso aleatorio por mensagem</p></article>
+              <article><span>Limite</span><strong>{partnersVideo?.settings?.limitPerMinute || 2}/min</strong><p>{partnersVideo?.settings?.limitPerHour || 60}/hora</p></article>
+            </div>
+          </article>
+        </section>
+
+        <section className="whatsapp-panel">
+          <h2>Controle de Videos dos Parceiros</h2>
+          <div className="whatsapp-table-wrap">
+            <table className="whatsapp-table">
+              <thead><tr><th>Unidade</th><th>Parceiro</th><th>Telefone</th><th>Status</th><th>Envio</th><th>Recebido</th><th>Acoes</th></tr></thead>
+              <tbody>{controls.map((item) => (
+                <tr key={item.id}>
+                  <td>{item.clinic_name}</td>
+                  <td>{item.partner_name}</td>
+                  <td>{item.phone_number || '-'}</td>
+                  <td><span className={`whatsapp-badge ${statusTone(item.status)}`}>{item.status}</span></td>
+                  <td>{String(item.message_sent_at || '-').slice(0, 16).replace('T', ' ')}</td>
+                  <td>{item.video_received ? String(item.video_received_at || '-').slice(0, 16).replace('T', ' ') : 'Pendente'}</td>
+                  <td>
+                    <div className="row-actions">
+                      <Button actionKey={`partner-video-mark-video-received-${item.id}`} className="outline-action mini-action" onClick={() => updatePartnerVideoControl(item.id, 'mark-video-received', 'Video recebido registrado.')}>Recebido</Button>
+                      <Button actionKey={`partner-video-mark-not-sent-${item.id}`} className="outline-action mini-action" onClick={() => updatePartnerVideoControl(item.id, 'mark-not-sent', 'Pendencia registrada.')}>Nao enviado</Button>
+                      <Button actionKey={`partner-video-notify-coordinator-${item.id}`} className="outline-action mini-action" onClick={() => updatePartnerVideoControl(item.id, 'notify-coordinator', 'Coordenador acionado.')}>Coordenador</Button>
+                      <Button actionKey={`partner-video-notify-manager-${item.id}`} className="outline-action mini-action" onClick={() => updatePartnerVideoControl(item.id, 'notify-manager', 'Gerente acionado.')}>Gerente</Button>
+                    </div>
+                  </td>
+                </tr>
+              ))}</tbody>
+            </table>
+            {!controls.length && <p className="empty-state">Nenhum controle diario gerado ainda. Use "Enviar cobranca diaria" para iniciar o dia.</p>}
+          </div>
+        </section>
+
+        <section className="whatsapp-two-column">
+          <article className="whatsapp-panel">
+            <h2>Parceiros cadastrados</h2>
+            <div className="whatsapp-card-list compact">
+              {contacts.slice(0, 20).map((item) => (
+                <article key={item.id}>
+                  <span>{item.clinic_name}</span>
+                  <strong>{item.partner_name}</strong>
+                  <p>{item.phone_number || 'Sem telefone'} - {item.active ? 'Ativo' : 'Inativo'}</p>
+                </article>
+              ))}
+            </div>
+          </article>
+          <article className="whatsapp-panel">
+            <h2>Logs recentes</h2>
+            <div className="whatsapp-card-list compact">
+              {logs.slice(0, 12).map((item) => (
+                <article key={item.id}>
+                  <span>{item.event_type}</span>
+                  <strong>{item.status}</strong>
+                  <p>{String(item.created_at || '').slice(0, 16).replace('T', ' ')} - {item.error_message || item.recipient_phone || '-'}</p>
+                </article>
+              ))}
+            </div>
+          </article>
+        </section>
+      </section>
+    );
+  };
+
   const updateSettingsDraft = (field, value) => {
     if (field.startsWith('antiBan.')) {
       const key = field.replace('antiBan.', '');
@@ -1255,6 +1413,7 @@ function WhatsAppManagement() {
     if (currentSection === 'chatbot') return renderChatbot();
     if (currentSection === 'absent') return renderAbsent();
     if (currentSection === 'history') return renderHistory();
+    if (currentSection === 'confirmation') return renderConfirmationScheduling();
     if (currentSection === 'reports') return renderReports();
     if (currentSection === 'settings') return renderSettings();
     return renderDashboard();

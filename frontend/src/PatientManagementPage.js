@@ -1220,6 +1220,11 @@ function PatientManagementPage() {
                   </button>
                 </>
               )}
+              {(selectedRecord.status === 'Cancelado' || selectedRecord.status === 'Encerrado') && (
+                <button className="primary-action" onClick={openRescheduleModal} disabled={saving}>
+                  Voltar para agenda
+                </button>
+              )}
             </div>
 
             <div className="history-list">

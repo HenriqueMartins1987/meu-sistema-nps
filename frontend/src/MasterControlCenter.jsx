@@ -48,7 +48,8 @@ const defaultLaborCostRules = [
   { key: 'percentualTerceiros', label: 'Terceiros/Sistema S (%)', value: 5.8, step: '0.01' },
   { key: 'percentualProvisaoRescisoria', label: 'Provisao rescisoria (%)', value: 4, step: '0.01' },
   { key: 'percentualAbsenteismo', label: 'Absenteismo (%)', value: 2, step: '0.01' },
-  { key: 'percentualTurnover', label: 'Turnover (%)', value: 2, step: '0.01' }
+  { key: 'percentualTurnover', label: 'Turnover (%)', value: 2, step: '0.01' },
+  { key: 'monthlyWorkHours', label: 'Horas mensais por colaborador', value: 220, step: '1' }
 ];
 
 const permissionGroups = [
@@ -69,6 +70,7 @@ const defaultRolePermissions = {
   crc_leader: ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports', 'dental_card'],
   crc_manager: ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports', 'dental_card'],
   crc_operator: ['home', 'whatsapp_management', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'dental_card'],
+  partner: ['home'],
   manager: ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management', 'dental_card'],
   coordinator: ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship'],
   viewer: ['home', 'complaints_management', 'nps_management']
@@ -119,6 +121,7 @@ const defaultRoleActionPermissions = {
     'whatsapp_antiban_manage'
   ],
   crc_operator: [],
+  partner: ['receber_notificacao_video', 'visualizar_proprias_pendencias', 'confirmar_envio_video', 'responder_cobranca_video'],
   manager: ['complaints_reassign', 'evidence_attach', 'evidence_delete', 'treatment_register'],
   coordinator: ['complaints_reassign', 'evidence_attach', 'evidence_delete', 'treatment_register'],
   viewer: ['complaints_view_all', 'complaints_change_unit', 'complaints_edit_patient_phone', 'evidence_attach']
@@ -260,7 +263,7 @@ function normalizeTaxComponentsForView(settings = {}) {
 function normalizeLaborCostRulesForView(settings = {}) {
   const current = settings.laborCostRules || {};
   return {
-    aplicarInssPatronal: current.aplicarInssPatronal === undefined ? true : Boolean(current.aplicarInssPatronal),
+    aplicarInssPatronal: true,
     values: defaultLaborCostRules.map((item) => ({
       ...item,
       value: current[item.key] ?? item.value
@@ -698,16 +701,6 @@ function MasterControlCenter() {
     }));
   };
 
-  const updateApplyPayrollTaxes = (checked) => {
-    setSettings((current) => ({
-      ...current,
-      laborCostRules: {
-        ...(current?.laborCostRules || {}),
-        aplicarInssPatronal: checked
-      }
-    }));
-  };
-
   const updateMargin = (key, field, value) => {
     setSettings((current) => ({
       ...current,
@@ -737,7 +730,7 @@ function MasterControlCenter() {
         })),
         taxRatePercent: normalizeTaxComponentsForView(settings).reduce((total, item) => total + toNumber(item.percent), 0),
         laborCostRules: {
-          aplicarInssPatronal: Boolean(settings?.laborCostRules?.aplicarInssPatronal ?? true),
+          aplicarInssPatronal: true,
           ...Object.fromEntries(normalizeLaborCostRulesForView(settings).values.map((item) => [item.key, toNumber(item.value)]))
         },
         costAllocationPercent: toNumber(settings?.costAllocationPercent)
@@ -1361,14 +1354,9 @@ function MasterControlCenter() {
                 <span>Custos Trabalhistas</span>
                 <strong>Parametros do colaborador</strong>
                 <small>Percentuais editaveis usados na composicao automatica de salario, encargos obrigatorios, provisoes trabalhistas e provisoes gerenciais.</small>
-                <label className="master-toggle-row">
-                  <input
-                    type="checkbox"
-                    checked={laborCostRules.aplicarInssPatronal}
-                    onChange={(event) => updateApplyPayrollTaxes(event.target.checked)}
-                  />
-                  Aplicar INSS patronal, RAT/FAP e Terceiros/Sistema S
-                </label>
+                <div className="master-policy-note">
+                  Regime tributario do Grupo Sorria: Lucro Presumido. INSS patronal, RAT/FAP e Terceiros/Sistema S sao sempre calculados; os percentuais abaixo continuam editaveis para ajustes contabeis.
+                </div>
                 <div className="master-tax-grid">
                   {laborCostRules.values.map((rule) => (
                     <label key={rule.key}>

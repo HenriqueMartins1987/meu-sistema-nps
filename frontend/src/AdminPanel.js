@@ -475,6 +475,21 @@ function AdminPanel() {
 
         <div className="heading-actions">
           <button className="outline-action" onClick={() => navigate('/admin/controle-master')}>Centro Master</button>
+          <button className="outline-action" onClick={() => navigate('/admin/configuracoes/whatsapp')}>Configurações WhatsApp</button>
+          <button className="primary-action" onClick={() => setCreateOpen(true)}>Cadastrar novo usuário</button>
+          <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
+        </div>
+      </header>
+
+      {feedback && <p className="form-feedback admin-feedback">{feedback}</p>}
+
+      <section className="admin-export-toolbar">
+        <div>
+          <p className="eyebrow">Exportacao</p>
+          <strong>Relacao completa de usuarios</strong>
+          <span>Inclui dados cadastrais, perfil, cargo, clinicas vinculadas, telas liberadas e botoes autorizados.</span>
+        </div>
+        <div className="row-actions">
           <button className="outline-action icon-action" onClick={() => exportUsers('excel')} disabled={exportingUsers}>
             <span className="file-icon xls">XLS</span>
             Exportar Excel
@@ -483,13 +498,8 @@ function AdminPanel() {
             <span className="file-icon pdf">PDF</span>
             Exportar PDF
           </button>
-          <button className="outline-action" onClick={() => navigate('/admin/configuracoes/whatsapp')}>Configurações WhatsApp</button>
-          <button className="primary-action" onClick={() => setCreateOpen(true)}>Cadastrar novo usuário</button>
-          <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
         </div>
-      </header>
-
-      {feedback && <p className="form-feedback admin-feedback">{feedback}</p>}
+      </section>
 
       {loading ? (
         <section className="management-panel">

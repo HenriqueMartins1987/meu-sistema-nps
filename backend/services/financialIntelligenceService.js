@@ -166,7 +166,8 @@ const DEFAULT_LABOR_COST_RULES = {
   percentualTerceiros: 5.8,
   percentualProvisaoRescisoria: 4,
   percentualAbsenteismo: 2,
-  percentualTurnover: 2
+  percentualTurnover: 2,
+  monthlyWorkHours: 220
 };
 
 const DEFAULT_FINANCIAL_RULES = {
@@ -260,6 +261,10 @@ function normalizeLaborCostRules(rules = {}) {
 
   Object.entries(DEFAULT_LABOR_COST_RULES).forEach(([key, defaultValue]) => {
     if (typeof defaultValue === 'boolean') {
+      if (key === 'aplicarInssPatronal') {
+        normalized[key] = true;
+        return;
+      }
       const raw = source[key] ?? source[key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)];
       normalized[key] = raw === undefined || raw === null || raw === ''
         ? defaultValue
@@ -337,15 +342,9 @@ function calculateLaborCostComposition(collaborator = {}, rules = DEFAULT_FINANC
   const decimoTerceiro = round(salarioRemuneracaoBase * (normalizedRules.percentual13 / 100));
   const ferias = round(salarioRemuneracaoBase * (normalizedRules.percentualFerias / 100));
   const tercoFerias = round(salarioRemuneracaoBase * (normalizedRules.percentualTercoFerias / 100));
-  const inssPatronal = normalizedRules.aplicarInssPatronal
-    ? round(salarioRemuneracaoBase * (normalizedRules.percentualInssPatronal / 100))
-    : 0;
-  const ratAjustado = normalizedRules.aplicarInssPatronal
-    ? round(salarioRemuneracaoBase * (normalizedRules.percentualRat / 100) * normalizedRules.fatorFap)
-    : 0;
-  const terceiros = normalizedRules.aplicarInssPatronal
-    ? round(salarioRemuneracaoBase * (normalizedRules.percentualTerceiros / 100))
-    : 0;
+  const inssPatronal = round(salarioRemuneracaoBase * (normalizedRules.percentualInssPatronal / 100));
+  const ratAjustado = round(salarioRemuneracaoBase * (normalizedRules.percentualRat / 100) * normalizedRules.fatorFap);
+  const terceiros = round(salarioRemuneracaoBase * (normalizedRules.percentualTerceiros / 100));
   const provisaoRescisoria = round(salarioRemuneracaoBase * (normalizedRules.percentualProvisaoRescisoria / 100));
   const custoAbsenteismo = round(salarioRemuneracaoBase * (normalizedRules.percentualAbsenteismo / 100));
   const custoTurnover = round(salarioRemuneracaoBase * (normalizedRules.percentualTurnover / 100));
@@ -728,6 +727,8 @@ function applySharedMonthlyCostsToSeries(series, monthlyCosts = {}) {
 
 function buildCollaboratorFinancials(monthlyCosts = {}) {
   const rows = Array.isArray(monthlyCosts.collaboratorRows) ? monthlyCosts.collaboratorRows : [];
+  const laborRules = normalizeLaborCostRules(monthlyCosts.rules || {});
+  const monthlyWorkHours = toNumber(laborRules.monthlyWorkHours) || DEFAULT_LABOR_COST_RULES.monthlyWorkHours;
   const grouped = new Map();
 
   rows.forEach((row) => {
@@ -738,13 +739,15 @@ function buildCollaboratorFinancials(monthlyCosts = {}) {
       cost: 0,
       revenue: 0,
       profit: 0,
-      rows: 0
+      rows: 0,
+      workedHours: 0
     };
     const cost = toNumber(row.total_cost);
     current.collaboratorCost += cost;
     current.cost += cost;
     current.profit -= cost;
     current.rows += 1;
+    current.workedHours += monthlyWorkHours;
     grouped.set(key, current);
   });
 
@@ -753,6 +756,8 @@ function buildCollaboratorFinancials(monthlyCosts = {}) {
     collaboratorCost: round(item.collaboratorCost),
     cost: round(item.cost),
     profit: round(item.profit),
+    workedHours: round(item.workedHours),
+    hourlyCost: safeDivide(item.collaboratorCost, item.workedHours),
     roi: 0
   })).sort(sortBy('collaboratorCost'));
 }
@@ -760,6 +765,7 @@ function buildCollaboratorFinancials(monthlyCosts = {}) {
 function buildFinancialIntelligencePayload(rawRows, rules = DEFAULT_FINANCIAL_RULES, monthlyCosts = {}) {
   const normalizedRules = normalizeFinancialRules(rules);
   const monthly = normalizeMonthlyCostContext(monthlyCosts);
+  monthly.rules = normalizedRules;
   const table = rawRows.map((row) => enrichFinancialRow(row, normalizedRules));
   const summary = buildSummary(table, monthly, normalizedRules);
   const clinicFinancials = groupFinancialRows(table, (row) => row.clinic_name).sort(sortBy('profit'));
@@ -777,7 +783,13 @@ function buildFinancialIntelligencePayload(rawRows, rules = DEFAULT_FINANCIAL_RU
   summary.revenueByClinic = clinicFinancials.length ? round(summary.totalRevenue / clinicFinancials.length) : 0;
   summary.costByClinic = clinicFinancials.length ? round(clinicFinancials.reduce((total, item) => total + toNumber(item.marketingCost), 0) / clinicFinancials.length) : 0;
   summary.profitByClinic = clinicFinancials.length ? round(clinicFinancials.reduce((total, item) => total + toNumber(item.profit), 0) / clinicFinancials.length) : 0;
+  const totalCollaboratorWorkedHours = collaboratorFinancials.reduce((total, item) => total + toNumber(item.workedHours), 0);
   summary.averageCollaboratorCost = collaboratorFinancials.length ? round(summary.totalCollaboratorCost / collaboratorFinancials.length) : 0;
+  summary.totalCollaboratorWorkedHours = round(totalCollaboratorWorkedHours);
+  summary.monthlyWorkHoursPerCollaborator = normalizeLaborCostRules(normalizedRules).monthlyWorkHours;
+  summary.averageWorkedHourCost = collaboratorFinancials.length
+    ? safeDivide(summary.totalCollaboratorCost, totalCollaboratorWorkedHours)
+    : 0;
   summary.revenueByCollaborator = collaboratorFinancials.length ? round(summary.totalRevenue / collaboratorFinancials.length) : 0;
   summary.roiByCollaborator = collaboratorFinancials.length ? round(collaboratorFinancials.reduce((total, item) => total + item.roi, 0) / collaboratorFinancials.length) : 0;
 

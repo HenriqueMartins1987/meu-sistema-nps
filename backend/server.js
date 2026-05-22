@@ -315,6 +315,9 @@ let whatsappSettingsCache = null;
 const WHATSAPP_SERVICE_DEFAULT_BASE_URL = 'http://2.24.101.6:3005';
 const WHATSAPP_NOTIFICATION_INSTANCE_NAME = 'reclamacoes';
 const WHATSAPP_NOTIFICATION_SENDER_PHONE = normalizeWhatsAppPhone(process.env.WHATSAPP_NOTIFICATION_SENDER_PHONE || '+55 62 9680-7670');
+const WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME = 'confirmacao-agendamento';
+const WHATSAPP_CONFIRMATION_APPOINTMENT_DISPLAY_NAME = 'Confirmação e Agendamento';
+const WHATSAPP_CONFIRMATION_APPOINTMENT_SENDER_PHONE = normalizeWhatsAppPhone(process.env.WHATSAPP_CONFIRMATION_APPOINTMENT_SENDER_PHONE || '+55 62 99864-7043');
 const WHATSAPP_TEST_CLINIC_PHONE = normalizeWhatsAppPhone(process.env.WHATSAPP_TEST_CLINIC_PHONE || '62999669966');
 const DEFAULT_COMPLAINT_REPORT_WHATSAPP_RECIPIENTS = [
   '5562999669966',
@@ -341,7 +344,55 @@ const defaultWhatsAppCrcSessions = [
   ['porto-velho', 'Porto Velho', WHATSAPP_TEST_CLINIC_PHONE],
   ['canaa', 'Canaã', WHATSAPP_TEST_CLINIC_PHONE],
   ['maysa', 'Maysa', WHATSAPP_TEST_CLINIC_PHONE],
-  [WHATSAPP_NOTIFICATION_INSTANCE_NAME, 'Reclamações', WHATSAPP_NOTIFICATION_SENDER_PHONE]
+  [WHATSAPP_NOTIFICATION_INSTANCE_NAME, 'Reclamações', WHATSAPP_NOTIFICATION_SENDER_PHONE],
+  [WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME, WHATSAPP_CONFIRMATION_APPOINTMENT_DISPLAY_NAME, WHATSAPP_CONFIRMATION_APPOINTMENT_SENDER_PHONE]
+];
+const partnerVideoContactSeeds = [
+  ['ÁGUAS LINDAS', 'MATHEUS SHIMIZU', '5561981270634'],
+  ['BARREIRAS', 'TARDELY', '5561995094773'],
+  ['CEILÂNDIA', 'RICARDO CAIADO', '5564984791683'],
+  ['FORMOSA', 'MARCELO JUNS', '5561993779149'],
+  ['JARDIM INGÁ', 'FERNANDO FEITOSA', '5561991321556'],
+  ['LUZIÂNIA', 'DEMÉCRITO NETO', '5577998504580'],
+  ['NOVO GAMA', 'BRUNA FRAZÃO E HUMBERTO OLIVEIRA', '5564996489213'],
+  ['NÚCLEO BANDEIRANTE', 'BRUNO LACERDA', '5538992355404'],
+  ['PARACATU', 'GILBERTO', '5534991790681'],
+  ['PARANOÁ', 'CAMILA FRAZÃO', '5561995411010'],
+  ['PLANALTINA', 'MATEUS RODRIGUES', '5562992425124'],
+  ['PLANO PILOTO', 'MATHEUS CUNHA', '5561994222014'],
+  ['SANTO ANTÔNIO', 'SAMUEL COSTA', '5561993285236'],
+  ['TAGUATINGA', 'RAYANE CUNHA', '5563992600464'],
+  ['CASTELO BRANCO', 'FÁBIO RANDRYS', '5564999811495'],
+  ['GOIÂNIA 1', 'ARTHUR FAQUINETI E GEOVANNA SILVA', '5567981661856'],
+  ['GOIÂNIA 2', 'KÉVILLY MARTINS', '5538998078510'],
+  ['JACIARA', 'JOÃO PEDRO E JEFFERSON', '5517981497766'],
+  ['JATAÍ', 'JORDANA ARAUJO', '5562991747887'],
+  ['TRINDADE MAYSA', 'CLARA BORGES', '5564992450141'],
+  ['PORTO VELHO', 'SAMUEL SANTOS', '5562981332609'],
+  ['RIO VERDE 01', 'JOÃO VICTOR SOUZA', '5564981479448'],
+  ['RIO VERDE 03', 'CLÁUDIO OLIVEIRA', '5564996752025'],
+  ['VILA BRASÍLIA', 'LETÍCIA MARTINS E RARYEL UNGARETTE', '5517981718265'],
+  ['VILA CONCÓRDIA', 'EDILENE ARAUJO', '5562996999360'],
+  ['VILA NOVA', 'IANY PARAISO', '5538999170545'],
+  ['CANAÃ', 'LAYNE CARLA SILVA', '5517981637347'],
+  ['CATALÃO', 'VITÓRIA LUIZ', '5517996145410'],
+  ['GARAVELO', 'RENATO FREITAS E SUENNE PONTES', '5564992911185'],
+  ['GOIÂNIA 3', 'BRUNA MARANGONI, NATHAN ALENCAR E NATHALIA ALVES', '5517996107659'],
+  ['ITUMBIARA', 'CLÁUDIO OLIVEIRA', '5564996752025'],
+  ['MADRE GERMANA', 'ANA JÚLIA MENDONÇA', '5562981059051'],
+  ['MANGALÔ', 'JOÃO GABRIEL', '5562982427235'],
+  ['MORRINHOS', 'LUCAS OLIVEIRA', '5563984100649'],
+  ['ORAL GOLD', 'BARRUÍNO NETO', '5562991816969'],
+  ['PARQUE ANHANGUERA', 'PLÍNIO FILHO', '5562995431106'],
+  ['SANTA RITA', 'RODOLFO NETO', '5514996209824'],
+  ['TRINDADE CENTRO', 'ANA JÚLIA VIEIRA', '5564984271524'],
+  ['ANÁPOLIS 1', 'BETHÂNIA FERNANDES', '5517997672662'],
+  ['ANÁPOLIS 2', 'BETHÂNIA FERNANDES', '5517997672662'],
+  ['GOIANIRA', 'MATEUS MARTINS', '5517996548642'],
+  ['APARECIDA', 'VITOR JUNQUEIRA', '5564993065313'],
+  ['INHUMAS', 'ANA BEATRIZ', '5518981488602'],
+  ['QUIRINÓPOLIS', 'THIAGO RIBEIRO', '5534988916619'],
+  ['SENADOR CANEDO', 'GABRIEL LOPES', '5517981119054']
 ];
 const closedComplaintStatuses = new Set(['resolvida', 'cancelada', 'finalizada', 'finalizado', 'fechada', 'fechado', 'encerrada', 'encerrado']);
 
@@ -408,6 +459,7 @@ const accessProfiles = {
   crc_leader: 'Líder de CRC',
   crc_manager: 'Gerente de CRC',
   crc_operator: 'Operador de CRC',
+  partner: 'Parceiro',
   coordinator: 'Coordenador',
   manager: 'Gerente',
   viewer: 'Marketing'
@@ -434,6 +486,9 @@ function normalizeAccessRole(role) {
     lider_de_crc: 'crc_leader',
     gerente_crc: 'crc_manager',
     gerente_de_crc: 'crc_manager',
+    parceiro: 'partner',
+    dentista_parceiro: 'partner',
+    parceiro_dentista: 'partner',
     supervisor_crc: 'supervisor_crc',
     supervisor_de_crc: 'supervisor_crc',
     coordenador: 'coordinator',
@@ -993,6 +1048,10 @@ function defaultPermissionsForRole(role) {
     return ['home', 'whatsapp_management', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'dental_card'];
   }
 
+  if (role === 'partner') {
+    return ['home'];
+  }
+
   if (role === 'manager') {
     return ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'financial_campaigns', 'financial_management', 'dental_card'];
   }
@@ -1025,7 +1084,11 @@ const actionPermissions = {
   whatsapp_instance_delete: true,
   whatsapp_template_delete: true,
   whatsapp_chatbot_delete: true,
-  whatsapp_antiban_manage: true
+  whatsapp_antiban_manage: true,
+  receber_notificacao_video: true,
+  visualizar_proprias_pendencias: true,
+  confirmar_envio_video: true,
+  responder_cobranca_video: true
 };
 
 function defaultActionPermissionsForRole(role) {
@@ -1079,6 +1142,15 @@ function defaultActionPermissionsForRole(role) {
 
   if (role === 'crc_operator') {
     return [];
+  }
+
+  if (role === 'partner') {
+    return [
+      'receber_notificacao_video',
+      'visualizar_proprias_pendencias',
+      'confirmar_envio_video',
+      'responder_cobranca_video'
+    ];
   }
 
   if (role === 'manager' || role === 'coordinator') {
@@ -2273,11 +2345,18 @@ async function ensureColumn(table, column, definition) {
   }
 }
 
+function getDefaultWhatsAppSessionSector(sessionId) {
+  if (sessionId === WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME) return 'Confirmação e Agendamento';
+  if (sessionId === WHATSAPP_NOTIFICATION_INSTANCE_NAME) return 'Reclamações';
+  return 'CRC';
+}
+
 async function ensureDefaultWhatsAppCrcSessions() {
   const actor = 'Sistema';
 
   for (const [sessionId, displayName, phoneNumber = null] of defaultWhatsAppCrcSessions) {
     const normalizedPhone = phoneNumber ? normalizeWhatsAppPhone(phoneNumber) : null;
+    const sector = getDefaultWhatsAppSessionSector(sessionId);
     await pool.query(
       `INSERT INTO whatsapp_service_sessions
        (session_id, display_name, clinic_name, unit_name, phone_number, status, notes, created_by, updated_by)
@@ -2306,7 +2385,7 @@ async function ensureDefaultWhatsAppCrcSessions() {
     await pool.query(
       `INSERT INTO whatsapp_instances
        (instance_name, display_name, sector, clinic_name, unit_name, phone_number, status, notes, created_by, updated_by)
-       VALUES (?, ?, 'CRC', ?, ?, ?, 'nao_iniciada', ?, ?, ?)
+       VALUES (?, ?, ?, ?, ?, ?, 'nao_iniciada', ?, ?, ?)
        ON DUPLICATE KEY UPDATE
          display_name = COALESCE(NULLIF(display_name, ''), VALUES(display_name)),
          sector = COALESCE(NULLIF(sector, ''), VALUES(sector)),
@@ -2320,12 +2399,45 @@ async function ensureDefaultWhatsAppCrcSessions() {
       [
         sessionId,
         displayName,
+        sector,
         displayName,
         displayName,
         normalizedPhone,
         'Número padrão do CRC para conexão via whatsapp-service.',
         actor,
         actor
+      ]
+    );
+  }
+
+  await pool.query(
+    'UPDATE whatsapp_instances SET sector = ?, phone_number = ? WHERE instance_name = ?',
+    ['Confirmação e Agendamento', WHATSAPP_CONFIRMATION_APPOINTMENT_SENDER_PHONE, WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME]
+  );
+  await pool.query(
+    'UPDATE whatsapp_service_sessions SET phone_number = ? WHERE session_id = ?',
+    [WHATSAPP_CONFIRMATION_APPOINTMENT_SENDER_PHONE, WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME]
+  );
+}
+
+async function ensurePartnerVideoContactSeeds() {
+  for (const [clinicName, partnerName, phoneNumber] of partnerVideoContactSeeds) {
+    const normalizedPhone = normalizeWhatsAppPhone(phoneNumber);
+    await pool.query(
+      `INSERT INTO partner_video_contacts
+       (clinic_name, partner_name, phone_number, active, receives_automatic_message, default_send_time, allowed_weekdays, notes)
+       VALUES (?, ?, ?, 1, ?, '08:00:00', '1,2,3,4,5,6', ?)
+       ON DUPLICATE KEY UPDATE
+         phone_number = VALUES(phone_number),
+         active = 1,
+         receives_automatic_message = VALUES(receives_automatic_message),
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        clinicName,
+        partnerName,
+        normalizedPhone || null,
+        normalizedPhone ? 1 : 0,
+        'Cadastro inicial automático da rotina Confirmação e Agendamento.'
       ]
     );
   }
@@ -3186,6 +3298,71 @@ async function ensureDatabaseSchema() {
     )
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS partner_video_contacts (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      clinic_name VARCHAR(180) NOT NULL,
+      partner_name VARCHAR(220) NOT NULL,
+      phone_number VARCHAR(40) NULL,
+      active TINYINT(1) NOT NULL DEFAULT 1,
+      receives_automatic_message TINYINT(1) NOT NULL DEFAULT 1,
+      default_send_time TIME NULL DEFAULT '08:00:00',
+      allowed_weekdays VARCHAR(40) NULL DEFAULT '1,2,3,4,5,6',
+      notes TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_partner_video_contact (clinic_name, partner_name),
+      INDEX idx_partner_video_contacts_active (active),
+      INDEX idx_partner_video_contacts_clinic (clinic_name)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS partner_video_daily_controls (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      date DATE NOT NULL,
+      clinic_name VARCHAR(180) NOT NULL,
+      partner_id INT NULL,
+      partner_name VARCHAR(220) NOT NULL,
+      phone_number VARCHAR(40) NULL,
+      message_sent_at DATETIME NULL,
+      message_status VARCHAR(60) NULL,
+      video_due_time TIME NULL DEFAULT '09:30:00',
+      video_received TINYINT(1) NOT NULL DEFAULT 0,
+      video_received_at DATETIME NULL,
+      status VARCHAR(80) NOT NULL DEFAULT 'aguardando envio',
+      leader_notified_at DATETIME NULL,
+      coordinator_notified_at DATETIME NULL,
+      manager_notified_at DATETIME NULL,
+      notes TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_partner_video_daily (date, partner_id),
+      INDEX idx_partner_video_daily_date (date),
+      INDEX idx_partner_video_daily_status (status)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS partner_video_logs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      contact_id INT NULL,
+      control_id INT NULL,
+      event_type VARCHAR(80) NOT NULL,
+      channel VARCHAR(40) NULL DEFAULT 'whatsapp',
+      recipient_phone VARCHAR(40) NULL,
+      message_text TEXT NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'info',
+      response_payload LONGTEXT NULL,
+      error_message TEXT NULL,
+      created_by VARCHAR(180) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_partner_video_logs_event (event_type),
+      INDEX idx_partner_video_logs_control (control_id),
+      INDEX idx_partner_video_logs_created (created_at)
+    )
+  `);
+
   await ensureColumn('whatsapp_instances', 'warmup_level', 'INT NOT NULL DEFAULT 1');
   await ensureColumn('whatsapp_instances', 'daily_send_limit', 'INT NOT NULL DEFAULT 30');
   await ensureColumn('whatsapp_instances', 'messages_sent_today', 'INT NOT NULL DEFAULT 0');
@@ -3208,6 +3385,7 @@ async function ensureDatabaseSchema() {
   await ensureColumn('whatsapp_messages', 'whatsapp_message_id', 'VARCHAR(180) NULL');
   await ensureColumn('whatsapp_messages', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
   await ensureDefaultWhatsAppCrcSessions();
+  await ensurePartnerVideoContactSeeds();
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS whatsapp_operator_status (
@@ -11245,6 +11423,371 @@ async function enqueueWhatsAppDispatch(payload = {}) {
   return rows[0];
 }
 
+const PARTNER_VIDEO_SETTINGS_KEY = 'partner_video_settings';
+const PARTNER_VIDEO_LAST_RUN_KEY = 'partner_video_daily_last_run';
+const DEFAULT_PARTNER_VIDEO_TEST_NUMBERS = ['5562999669966', '5562998852865', '5564981598113'];
+const DEFAULT_PARTNER_VIDEO_TEMPLATE = `Bom dia, Dr(a). {{partner_name}}.
+
+Aqui é a equipe de Confirmação e Agendamento do Grupo Sorria.
+
+Conforme fluxo operacional, solicitamos o envio dos vídeos personalizados dos pacientes com avaliações/reavaliações do dia seguinte.
+
+📌 Unidade: {{clinic_name}}
+⏰ Prazo de envio: até 09:30.
+
+O vídeo deve ser único e personalizado para cada paciente, seguindo o script padrão:
+
+"Olá, {{nome_paciente}}, tudo bem?
+Aqui é o Dr(a). {{nome_dentista}}.
+
+Estou passando para avisar que nosso compromisso está confirmado para amanhã às {{horario}}.
+
+Estou deixando tudo organizado para seu atendimento.
+Te espero amanhã."
+
+Após gravar, favor enviar o vídeo para a CRC realizar o encaminhamento ao paciente.
+
+Esta é uma mensagem automática do sistema.`;
+
+function getDefaultPartnerVideoSettings() {
+  return {
+    automationEnabled: false,
+    standardTime: '08:00',
+    allowedWeekdays: [1, 2, 3, 4, 5, 6],
+    sessionId: WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME,
+    senderPhone: WHATSAPP_CONFIRMATION_APPOINTMENT_SENDER_PHONE,
+    minDelaySeconds: 20,
+    maxDelaySeconds: 60,
+    limitPerMinute: 2,
+    limitPerHour: 60,
+    testMode: false,
+    testNumbers: DEFAULT_PARTNER_VIDEO_TEST_NUMBERS,
+    template: DEFAULT_PARTNER_VIDEO_TEMPLATE
+  };
+}
+
+function sanitizePartnerVideoSettings(raw = {}) {
+  const defaults = getDefaultPartnerVideoSettings();
+  const allowedWeekdays = Array.isArray(raw.allowedWeekdays)
+    ? raw.allowedWeekdays.map((item) => Number(item)).filter((item) => item >= 0 && item <= 6)
+    : defaults.allowedWeekdays;
+  const minDelaySeconds = Math.max(20, Number(raw.minDelaySeconds || defaults.minDelaySeconds));
+  const maxDelaySeconds = Math.max(minDelaySeconds, Number(raw.maxDelaySeconds || defaults.maxDelaySeconds));
+
+  return {
+    ...defaults,
+    ...raw,
+    automationEnabled: raw.automationEnabled === undefined ? defaults.automationEnabled : Boolean(raw.automationEnabled),
+    allowedWeekdays,
+    sessionId: String(raw.sessionId || defaults.sessionId).trim() || defaults.sessionId,
+    senderPhone: normalizeWhatsAppPhone(raw.senderPhone || defaults.senderPhone),
+    minDelaySeconds,
+    maxDelaySeconds,
+    limitPerMinute: Math.max(1, Number(raw.limitPerMinute || defaults.limitPerMinute)),
+    limitPerHour: Math.max(1, Number(raw.limitPerHour || defaults.limitPerHour)),
+    testMode: Boolean(raw.testMode),
+    testNumbers: Array.isArray(raw.testNumbers)
+      ? raw.testNumbers.map(normalizeWhatsAppPhone).filter(Boolean)
+      : defaults.testNumbers,
+    template: String(raw.template || defaults.template)
+  };
+}
+
+async function getPartnerVideoSettings() {
+  const [rows] = await pool.query(
+    'SELECT setting_value FROM system_settings WHERE setting_key = ? LIMIT 1',
+    [PARTNER_VIDEO_SETTINGS_KEY]
+  );
+  if (!rows.length || !rows[0].setting_value) return getDefaultPartnerVideoSettings();
+  try {
+    return sanitizePartnerVideoSettings(JSON.parse(rows[0].setting_value));
+  } catch (error) {
+    return getDefaultPartnerVideoSettings();
+  }
+}
+
+function getSaoPauloParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    weekday: 'short',
+    hour12: false
+  }).formatToParts(date).reduce((acc, part) => {
+    acc[part.type] = part.value;
+    return acc;
+  }, {});
+  const weekdayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  return {
+    dateKey: `${parts.year}-${parts.month}-${parts.day}`,
+    hour: Number(parts.hour || 0),
+    minute: Number(parts.minute || 0),
+    weekday: weekdayMap[parts.weekday] ?? date.getDay()
+  };
+}
+
+function fillPartnerVideoTemplate(template, contact = {}) {
+  return String(template || DEFAULT_PARTNER_VIDEO_TEMPLATE)
+    .replace(/\{\{partner_name\}\}/g, contact.partner_name || contact.partnerName || 'Parceiro(a)')
+    .replace(/\{\{clinic_name\}\}/g, contact.clinic_name || contact.clinicName || 'Unidade')
+    .replace(/\{\{nome_paciente\}\}/g, '{{nome_paciente}}')
+    .replace(/\{\{nome_dentista\}\}/g, contact.partner_name || contact.partnerName || 'dentista')
+    .replace(/\{\{horario\}\}/g, '{{horario}}');
+}
+
+async function logPartnerVideoEvent(event = {}) {
+  await pool.query(
+    `INSERT INTO partner_video_logs
+     (contact_id, control_id, event_type, channel, recipient_phone, message_text, status, response_payload, error_message, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      event.contactId || null,
+      event.controlId || null,
+      event.eventType || 'info',
+      event.channel || 'whatsapp',
+      event.recipientPhone || null,
+      event.messageText || null,
+      event.status || 'info',
+      event.responsePayload ? JSON.stringify(event.responsePayload) : null,
+      event.errorMessage || null,
+      event.createdBy || 'Sistema'
+    ]
+  );
+}
+
+async function ensurePartnerVideoDailyControl(contact, dateKey) {
+  await pool.query(
+    `INSERT INTO partner_video_daily_controls
+     (date, clinic_name, partner_id, partner_name, phone_number, message_status, video_due_time, status)
+     VALUES (?, ?, ?, ?, ?, 'pendente', '09:30:00', 'aguardando envio')
+     ON DUPLICATE KEY UPDATE
+       clinic_name = VALUES(clinic_name),
+       partner_name = VALUES(partner_name),
+       phone_number = VALUES(phone_number),
+       updated_at = CURRENT_TIMESTAMP`,
+    [dateKey, contact.clinic_name, contact.id, contact.partner_name, contact.phone_number]
+  );
+  const [rows] = await pool.query(
+    'SELECT * FROM partner_video_daily_controls WHERE date = ? AND partner_id = ? LIMIT 1',
+    [dateKey, contact.id]
+  );
+  return rows[0];
+}
+
+async function enqueuePartnerVideoMessage({ contact, control, number, message, delaySeconds = 20, actor = null, type = 'partner_video_reminder' }) {
+  const normalizedPhone = normalizeWhatsAppPhone(number || contact?.phone_number);
+  if (!normalizedPhone) {
+    await logPartnerVideoEvent({
+      contactId: contact?.id,
+      controlId: control?.id,
+      eventType: `${type}_skipped`,
+      status: 'erro',
+      errorMessage: 'Parceiro sem telefone válido.',
+      createdBy: actor ? getActorName(actor) : 'Sistema'
+    });
+    return null;
+  }
+
+  const messageId = await insertWhatsAppMessage({
+    instance_name: WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME,
+    patient_phone: normalizedPhone,
+    patient_name: contact?.partner_name || 'Parceiro',
+    direction: 'outbound',
+    message_text: message,
+    message_type: type,
+    source: 'confirmacao_agendamento',
+    status: 'pendente',
+    operator_id: actor?.id || null,
+    operator_name: actor ? getActorName(actor) : 'Rotina Confirmação e Agendamento',
+    clinic_name: contact?.clinic_name || null
+  });
+  const dispatch = await enqueueWhatsAppDispatch({
+    message_id: messageId,
+    instance_name: WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME,
+    recipient_phone: normalizedPhone,
+    message_text: message,
+    message_type: type,
+    operator_id: actor?.id || null,
+    operator_name: actor ? getActorName(actor) : 'Rotina Confirmação e Agendamento',
+    scheduleDelaySeconds: delaySeconds,
+    payload: {
+      source: type,
+      contactId: contact?.id || null,
+      controlId: control?.id || null,
+      antiBan: { delaySeconds }
+    }
+  });
+
+  if (control?.id) {
+    await pool.query(
+      `UPDATE partner_video_daily_controls
+          SET message_status = 'enfileirado',
+              message_sent_at = COALESCE(message_sent_at, NOW()),
+              status = CASE WHEN status = 'aguardando envio' THEN 'aguardando envio' ELSE status END
+        WHERE id = ?`,
+      [control.id]
+    );
+  }
+  await logPartnerVideoEvent({
+    contactId: contact?.id,
+    controlId: control?.id,
+    eventType: type,
+    recipientPhone: normalizedPhone,
+    messageText: message,
+    status: 'enfileirado',
+    responsePayload: { queueId: dispatch?.id, messageId, delaySeconds },
+    createdBy: actor ? getActorName(actor) : 'Sistema'
+  });
+  return { messageId, dispatch };
+}
+
+async function dispatchPartnerVideoDailyReminders({ actor = null, force = false, testNumbers = null } = {}) {
+  const settings = await getPartnerVideoSettings();
+  const nowParts = getSaoPauloParts();
+  const dateKey = nowParts.dateKey;
+  const isTest = Array.isArray(testNumbers) && testNumbers.length > 0;
+  if (!force && !isTest && !settings.automationEnabled) {
+    return { queued: 0, skipped: 0, message: 'Rotina de vídeos desativada.' };
+  }
+
+  const [contacts] = await pool.query(
+    `SELECT *
+       FROM partner_video_contacts
+      WHERE active = 1
+        AND receives_automatic_message = 1
+      ORDER BY clinic_name ASC, partner_name ASC`
+  );
+
+  let delayCursor = 0;
+  const queued = [];
+  const skipped = [];
+  const template = isTest
+    ? '✅ Teste de integração WhatsApp - Confirmação e Agendamento.\n\nEsta é uma mensagem automática enviada pelo sistema para validação da sessão confirmacao-agendamento.'
+    : settings.template;
+
+  if (isTest) {
+    for (const phone of testNumbers.map(normalizeWhatsAppPhone).filter(Boolean)) {
+      delayCursor += randomIntegerBetween(settings.minDelaySeconds, settings.maxDelaySeconds);
+      const result = await enqueuePartnerVideoMessage({
+        contact: { id: null, partner_name: 'Teste operacional', clinic_name: WHATSAPP_CONFIRMATION_APPOINTMENT_DISPLAY_NAME, phone_number: phone },
+        control: null,
+        number: phone,
+        message: template,
+        delaySeconds: delayCursor,
+        actor,
+        type: 'partner_video_test'
+      });
+      if (result) queued.push({ phone, queueId: result.dispatch?.id });
+    }
+    return { queued: queued.length, skipped: 0, items: queued, message: 'Mensagens de teste enfileiradas com anti-ban.' };
+  }
+
+  for (const contact of contacts) {
+    const phone = normalizeWhatsAppPhone(contact.phone_number);
+    if (!phone) {
+      skipped.push({ contactId: contact.id, reason: 'sem telefone' });
+      await logPartnerVideoEvent({
+        contactId: contact.id,
+        eventType: 'partner_video_reminder_skipped',
+        status: 'erro',
+        errorMessage: 'Contato sem telefone válido.',
+        createdBy: actor ? getActorName(actor) : 'Sistema'
+      });
+      continue;
+    }
+    const control = await ensurePartnerVideoDailyControl(contact, dateKey);
+    const message = fillPartnerVideoTemplate(template, contact);
+    delayCursor += randomIntegerBetween(settings.minDelaySeconds, settings.maxDelaySeconds);
+    const result = await enqueuePartnerVideoMessage({
+      contact,
+      control,
+      number: phone,
+      message,
+      delaySeconds: delayCursor,
+      actor,
+      type: 'partner_video_reminder'
+    });
+    if (result) queued.push({ contactId: contact.id, controlId: control?.id, queueId: result.dispatch?.id, phone });
+  }
+
+  return { queued: queued.length, skipped: skipped.length, items: queued, skippedItems: skipped };
+}
+
+async function runScheduledPartnerVideoDailyReminders() {
+  const settings = await getPartnerVideoSettings();
+  if (!settings.automationEnabled) return { skipped: true, reason: 'disabled' };
+  const parts = getSaoPauloParts();
+  if (!settings.allowedWeekdays.includes(parts.weekday)) return { skipped: true, reason: 'weekday' };
+  if (parts.hour < 8) return { skipped: true, reason: 'before_schedule' };
+
+  const [rows] = await pool.query(
+    'SELECT setting_value FROM system_settings WHERE setting_key = ? LIMIT 1',
+    [PARTNER_VIDEO_LAST_RUN_KEY]
+  );
+  if (rows[0]?.setting_value === parts.dateKey) return { skipped: true, reason: 'already_ran' };
+
+  const result = await dispatchPartnerVideoDailyReminders({ force: true });
+  await pool.query(
+    `INSERT INTO system_settings (setting_key, setting_value, updated_by)
+     VALUES (?, ?, 'Sistema')
+     ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by), updated_at = CURRENT_TIMESTAMP`,
+    [PARTNER_VIDEO_LAST_RUN_KEY, parts.dateKey]
+  );
+  return result;
+}
+
+async function getPartnerVideoDashboardData() {
+  await ensurePartnerVideoContactSeeds();
+  const dateKey = getSaoPauloParts().dateKey;
+  const [[summary]] = await pool.query(
+    `SELECT
+       COUNT(*) AS totalContacts,
+       SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END) AS activeContacts,
+       SUM(CASE WHEN active = 1 AND (phone_number IS NULL OR phone_number = '') THEN 1 ELSE 0 END) AS withoutPhone
+     FROM partner_video_contacts`
+  );
+  const [controls] = await pool.query(
+    `SELECT *
+       FROM partner_video_daily_controls
+      WHERE date = ?
+      ORDER BY clinic_name ASC, partner_name ASC`,
+    [dateKey]
+  );
+  const [contacts] = await pool.query(
+    'SELECT * FROM partner_video_contacts ORDER BY active DESC, clinic_name ASC, partner_name ASC'
+  );
+  const [logs] = await pool.query(
+    `SELECT *
+       FROM partner_video_logs
+      ORDER BY created_at DESC
+      LIMIT 40`
+  );
+  const [sessionRows] = await pool.query(
+    'SELECT * FROM whatsapp_service_sessions WHERE session_id = ? LIMIT 1',
+    [WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME]
+  );
+
+  return {
+    settings: await getPartnerVideoSettings(),
+    session: sessionRows[0] || null,
+    summary: {
+      totalContacts: parseSqlCount(summary, 'totalContacts'),
+      activeContacts: parseSqlCount(summary, 'activeContacts'),
+      withoutPhone: parseSqlCount(summary, 'withoutPhone'),
+      sentToday: controls.filter((item) => ['enfileirado', 'enviada'].includes(String(item.message_status || '').toLowerCase())).length,
+      receivedOnTime: controls.filter((item) => Number(item.video_received) && String(item.status || '').includes('prazo')).length,
+      pendingToday: controls.filter((item) => !Number(item.video_received) && !String(item.status || '').includes('finalizado')).length,
+      failuresToday: logs.filter((item) => String(item.status || '').toLowerCase() === 'erro' && String(item.created_at || '').startsWith(dateKey)).length
+    },
+    contacts,
+    controls,
+    logs
+  };
+}
+
 async function ensureWhatsAppInstanceDailyWindow(instanceName) {
   await pool.query(
     `UPDATE whatsapp_instances
@@ -15261,6 +15804,229 @@ app.get('/api/whatsapp/evolution-logs', authenticate, requireWhatsAppView, async
     return res.status(500).json({ error: 'Erro ao carregar logs da integração WhatsApp.' });
   }
 });
+
+app.get('/api/partners-video/contacts', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT * FROM partner_video_contacts ORDER BY active DESC, clinic_name ASC, partner_name ASC');
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar parceiros de vídeo.' });
+  }
+});
+
+app.post('/api/partners-video/contacts', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode cadastrar parceiros.' });
+    }
+    const clinicName = sanitizeFinancialString(req.body.clinic_name || req.body.clinicName, 180);
+    const partnerName = sanitizeFinancialString(req.body.partner_name || req.body.partnerName, 220);
+    if (!clinicName || !partnerName) return res.status(400).json({ error: 'Informe unidade e parceiro.' });
+    const phone = normalizeWhatsAppPhone(req.body.phone_number || req.body.phoneNumber || '');
+    const [result] = await pool.query(
+      `INSERT INTO partner_video_contacts
+       (clinic_name, partner_name, phone_number, active, receives_automatic_message, default_send_time, allowed_weekdays, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        clinicName,
+        partnerName,
+        phone || null,
+        req.body.active === undefined ? 1 : (req.body.active ? 1 : 0),
+        req.body.receives_automatic_message === undefined ? 1 : (req.body.receives_automatic_message ? 1 : 0),
+        req.body.default_send_time || req.body.defaultSendTime || '08:00:00',
+        req.body.allowed_weekdays || req.body.allowedWeekdays || '1,2,3,4,5,6',
+        sanitizeFinancialString(req.body.notes, 2000)
+      ]
+    );
+    await logPartnerVideoEvent({ contactId: result.insertId, eventType: 'contact_created', status: 'info', createdBy: getActorName(req.user) });
+    const [rows] = await pool.query('SELECT * FROM partner_video_contacts WHERE id = ? LIMIT 1', [result.insertId]);
+    return res.status(201).json(rows[0]);
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao cadastrar parceiro.' });
+  }
+});
+
+app.put('/api/partners-video/contacts/:id', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode editar parceiros.' });
+    }
+    const phone = normalizeWhatsAppPhone(req.body.phone_number || req.body.phoneNumber || '');
+    await pool.query(
+      `UPDATE partner_video_contacts
+          SET clinic_name = ?,
+              partner_name = ?,
+              phone_number = ?,
+              active = ?,
+              receives_automatic_message = ?,
+              default_send_time = ?,
+              allowed_weekdays = ?,
+              notes = ?,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?`,
+      [
+        sanitizeFinancialString(req.body.clinic_name || req.body.clinicName, 180),
+        sanitizeFinancialString(req.body.partner_name || req.body.partnerName, 220),
+        phone || null,
+        req.body.active ? 1 : 0,
+        req.body.receives_automatic_message ? 1 : 0,
+        req.body.default_send_time || req.body.defaultSendTime || '08:00:00',
+        req.body.allowed_weekdays || req.body.allowedWeekdays || '1,2,3,4,5,6',
+        sanitizeFinancialString(req.body.notes, 2000),
+        req.params.id
+      ]
+    );
+    await logPartnerVideoEvent({ contactId: req.params.id, eventType: 'contact_updated', status: 'info', createdBy: getActorName(req.user) });
+    const [rows] = await pool.query('SELECT * FROM partner_video_contacts WHERE id = ? LIMIT 1', [req.params.id]);
+    return res.json(rows[0] || null);
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao editar parceiro.' });
+  }
+});
+
+app.delete('/api/partners-video/contacts/:id', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode excluir parceiros.' });
+    }
+    await pool.query('DELETE FROM partner_video_contacts WHERE id = ?', [req.params.id]);
+    await logPartnerVideoEvent({ contactId: req.params.id, eventType: 'contact_deleted', status: 'info', createdBy: getActorName(req.user) });
+    return res.json({ message: 'Parceiro removido.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao excluir parceiro.' });
+  }
+});
+
+app.get('/api/partners-video/dashboard', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    return res.json(await getPartnerVideoDashboardData());
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar dashboard de vídeos dos parceiros.' });
+  }
+});
+
+app.put('/api/partners-video/settings', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode alterar configurações de vídeos.' });
+    }
+    const settings = sanitizePartnerVideoSettings(req.body || {});
+    await pool.query(
+      `INSERT INTO system_settings (setting_key, setting_value, updated_by)
+       VALUES (?, ?, ?)
+       ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by), updated_at = CURRENT_TIMESTAMP`,
+      [PARTNER_VIDEO_SETTINGS_KEY, JSON.stringify(settings), getActorName(req.user)]
+    );
+    await logPartnerVideoEvent({ eventType: 'settings_updated', status: 'info', createdBy: getActorName(req.user), responsePayload: { automationEnabled: settings.automationEnabled } });
+    return res.json(settings);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao salvar configurações de vídeos.' });
+  }
+});
+
+app.get('/api/partners-video/daily-controls', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    const date = req.query.date || getSaoPauloParts().dateKey;
+    const [rows] = await pool.query('SELECT * FROM partner_video_daily_controls WHERE date = ? ORDER BY clinic_name ASC', [date]);
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar controles diários.' });
+  }
+});
+
+app.post('/api/partners-video/send-daily-reminders', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode disparar a rotina.' });
+    }
+    const result = await dispatchPartnerVideoDailyReminders({ actor: req.user, force: true });
+    return res.json({ message: 'Cobranças de vídeo enfileiradas com controle anti-ban.', ...result });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao enfileirar cobranças de vídeo.' });
+  }
+});
+
+app.post('/api/partners-video/test-send', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode enviar testes.' });
+    }
+    const numbers = Array.isArray(req.body?.numbers) && req.body.numbers.length
+      ? req.body.numbers
+      : DEFAULT_PARTNER_VIDEO_TEST_NUMBERS;
+    const result = await dispatchPartnerVideoDailyReminders({ actor: req.user, force: true, testNumbers: numbers });
+    return res.json({ message: 'Teste enfileirado para Confirmação e Agendamento.', ...result });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao enviar teste de Confirmação e Agendamento.' });
+  }
+});
+
+app.post('/api/partners-video/:id/mark-video-received', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    await pool.query(
+      `UPDATE partner_video_daily_controls
+          SET video_received = 1,
+              video_received_at = NOW(),
+              status = CASE WHEN TIME(NOW()) <= video_due_time THEN 'enviado no prazo' ELSE 'enviado com atraso' END,
+              notes = COALESCE(?, notes)
+        WHERE id = ?`,
+      [sanitizeFinancialString(req.body?.notes, 2000) || null, req.params.id]
+    );
+    await logPartnerVideoEvent({ controlId: req.params.id, eventType: 'video_received', status: 'success', createdBy: getActorName(req.user) });
+    return res.json({ message: 'Vídeo marcado como recebido.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao marcar vídeo recebido.' });
+  }
+});
+
+app.post('/api/partners-video/:id/mark-not-sent', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    await pool.query(
+      `UPDATE partner_video_daily_controls
+          SET video_received = 0,
+              status = 'não enviado',
+              notes = COALESCE(?, notes)
+        WHERE id = ?`,
+      [sanitizeFinancialString(req.body?.notes, 2000) || null, req.params.id]
+    );
+    await logPartnerVideoEvent({ controlId: req.params.id, eventType: 'video_not_sent', status: 'warning', createdBy: getActorName(req.user) });
+    return res.json({ message: 'Pendência marcada como não enviada.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao marcar pendência.' });
+  }
+});
+
+async function markPartnerVideoNotification(req, res, field, status, eventType) {
+  try {
+    await pool.query(
+      `UPDATE partner_video_daily_controls
+          SET ${field} = NOW(),
+              status = ?
+        WHERE id = ?`,
+      [status, req.params.id]
+    );
+    await logPartnerVideoEvent({ controlId: req.params.id, eventType, status: 'info', createdBy: getActorName(req.user) });
+    return res.json({ message: 'Acionamento registrado.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao registrar acionamento.' });
+  }
+}
+
+app.post('/api/partners-video/:id/notify-leader', authenticate, requireWhatsAppView, (req, res) => markPartnerVideoNotification(req, res, 'leader_notified_at', 'acionado líder', 'leader_notified'));
+app.post('/api/partners-video/:id/notify-coordinator', authenticate, requireWhatsAppView, (req, res) => markPartnerVideoNotification(req, res, 'coordinator_notified_at', 'acionado coordenador', 'coordinator_notified'));
+app.post('/api/partners-video/:id/notify-manager', authenticate, requireWhatsAppView, (req, res) => markPartnerVideoNotification(req, res, 'manager_notified_at', 'acionado gerente', 'manager_notified'));
 app.post('/api/whatsapp/events', handleWhatsAppServiceEvents);
 app.post('/api/whatsapp/evolution-webhook', handleEvolutionWebhook);
 
@@ -16318,7 +17084,7 @@ function buildAdminUsersPdfBuffer(rows = []) {
   });
 }
 
-app.get('/admin/users/export/excel', authenticate, requireMasterAdmin, async (req, res) => {
+app.get(['/admin/users/export/excel', '/api/admin/users/export/excel'], authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const rows = await getAdminUsersExportRows();
     const buffer = buildAdminUsersExcelBuffer(rows);
@@ -16331,7 +17097,7 @@ app.get('/admin/users/export/excel', authenticate, requireMasterAdmin, async (re
   }
 });
 
-app.get('/admin/users/export/pdf', authenticate, requireMasterAdmin, async (req, res) => {
+app.get(['/admin/users/export/pdf', '/api/admin/users/export/pdf'], authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const rows = await getAdminUsersExportRows();
     const buffer = await buildAdminUsersPdfBuffer(rows);
@@ -21917,6 +22683,9 @@ async function startServer() {
     runDentalCardSlaNotificationSweep().catch((jobError) => {
       console.warn('Não foi possível executar a rotina inicial de SLA do Dental Card:', jobError.message);
     });
+    runScheduledPartnerVideoDailyReminders().catch((jobError) => {
+      console.warn('Não foi possível executar a rotina inicial de vídeos dos parceiros:', jobError.message);
+    });
     processWhatsAppDispatchQueue().catch((jobError) => {
       console.warn('Não foi possível executar a fila inicial de disparos WhatsApp:', jobError.message);
     });
@@ -21987,6 +22756,12 @@ async function startServer() {
       console.warn('Não foi possível executar a rotina programada de SLA do Dental Card:', jobError.message);
     });
   }, Math.max(5, Number(process.env.DENTAL_CARD_SLA_SWEEP_INTERVAL_MINUTES || 15)) * 60 * 1000);
+
+  setInterval(() => {
+    runScheduledPartnerVideoDailyReminders().catch((jobError) => {
+      console.warn('Não foi possível executar a rotina programada de vídeos dos parceiros:', jobError.message);
+    });
+  }, Math.max(5, Number(process.env.PARTNER_VIDEO_SWEEP_INTERVAL_MINUTES || 15)) * 60 * 1000);
 
   setInterval(() => {
     processWhatsAppDispatchQueue().catch((jobError) => {

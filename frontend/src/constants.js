@@ -74,6 +74,7 @@ export const accessProfiles = [
   { value: 'crc_leader', label: 'Lider de CRC' },
   { value: 'crc_manager', label: 'Gerente de CRC' },
   { value: 'crc_operator', label: 'Operador de CRC' },
+  { value: 'partner', label: 'Parceiro' },
   { value: 'coordinator', label: 'Coordenador' },
   { value: 'manager', label: 'Gerente' },
   { value: 'viewer', label: 'Marketing' }
@@ -100,6 +101,9 @@ export function normalizeRoleValue(role) {
     lider_de_crc: 'crc_leader',
     gerente_crc: 'crc_manager',
     gerente_de_crc: 'crc_manager',
+    parceiro: 'partner',
+    dentista_parceiro: 'partner',
+    parceiro_dentista: 'partner',
     supervisor_crc: 'supervisor_crc',
     supervisor_de_crc: 'supervisor_crc',
     coordenador: 'coordinator',
@@ -162,7 +166,11 @@ export const actionPermissions = [
   { value: 'whatsapp_instance_delete', label: 'Excluir instancia WhatsApp', area: 'WhatsApp CRC' },
   { value: 'whatsapp_template_delete', label: 'Excluir mensagem padrao', area: 'WhatsApp CRC' },
   { value: 'whatsapp_chatbot_delete', label: 'Excluir fluxo chatbot', area: 'WhatsApp CRC' },
-  { value: 'whatsapp_antiban_manage', label: 'Alterar anti-ban WhatsApp', area: 'WhatsApp CRC' }
+  { value: 'whatsapp_antiban_manage', label: 'Alterar anti-ban WhatsApp', area: 'WhatsApp CRC' },
+  { value: 'receber_notificacao_video', label: 'Receber cobranca de videos', area: 'Parceiros' },
+  { value: 'visualizar_proprias_pendencias', label: 'Visualizar proprias pendencias', area: 'Parceiros' },
+  { value: 'confirmar_envio_video', label: 'Confirmar envio de video', area: 'Parceiros' },
+  { value: 'responder_cobranca_video', label: 'Responder cobranca de video', area: 'Parceiros' }
 ];
 
 export function defaultActionPermissionsForRole(role) {
@@ -218,6 +226,15 @@ export function defaultActionPermissionsForRole(role) {
 
   if (role === 'crc_operator') {
     return [];
+  }
+
+  if (role === 'partner') {
+    return [
+      'receber_notificacao_video',
+      'visualizar_proprias_pendencias',
+      'confirmar_envio_video',
+      'responder_cobranca_video'
+    ];
   }
 
   if (role === 'manager' || role === 'coordinator') {
