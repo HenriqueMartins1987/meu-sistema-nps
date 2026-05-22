@@ -840,7 +840,7 @@ function DentalCard() {
           <Field label="SLA"><select className="dental-select" value={filters.slaStatus} onChange={(event) => updateFilter('slaStatus', event.target.value)}><option value="">Todos</option><option value="ok">No prazo</option><option value="retorno_hoje">Retorno hoje</option><option value="atencao">Atenção</option><option value="atrasado">Atrasado</option></select></Field>
           <Field label="SLA retorno"><select className="dental-select" value={filters.slaRetornoStatus} onChange={(event) => updateFilter('slaRetornoStatus', event.target.value)}><option value="">Todos</option><option value="pendente">Pendente</option><option value="atencao">Atenção</option><option value="vencido">Vencido</option><option value="cumprido">Cumprido</option><option value="cumprido_atrasado">Cumprido atrasado</option></select></Field>
           <Field label="Foto"><select className="dental-select" value={filters.fotoFiltro} onChange={(event) => updateFilter('fotoFiltro', event.target.value)}><option value="">Todos</option><option value="com">Com foto</option><option value="sem">Sem foto</option></select></Field>
-          <div className="dental-actions dental-span-2">
+          <div className="dental-actions dental-filter-actions dental-span-4">
             <button type="button" className="dental-button" onClick={resetFilters}>Limpar filtros</button>
             <button type="button" className="dental-button primary" onClick={exportCsv}>Exportar CSV</button>
             <button type="button" className="dental-button primary" onClick={exportExcel}>Exportar Excel</button>
@@ -1143,7 +1143,7 @@ function DentalCard() {
                 <div className="dental-routine-item"><strong>{formatPercent(summary.taxaConversaoFinal)}</strong><span>Conversão final</span></div>
                 <div className="dental-routine-item"><strong>{formatCurrency(summary.receitaTotal)}</strong><span>Receita filtrada</span></div>
               </div>
-              <div className="dental-actions" style={{ marginTop: 16 }}>
+              <div className="dental-actions dental-report-actions">
                 <button type="button" className="dental-button primary" onClick={exportCsv}>Exportar CSV</button>
                 <button type="button" className="dental-button primary" onClick={exportExcel}>Exportar Excel</button>
                 <button
@@ -1167,7 +1167,7 @@ function DentalCard() {
                 <div><span>Pagantes</span><strong>{formatNumber(weeklySummary.payers)}</strong></div>
                 <div><span>Receita</span><strong>{formatCurrency(weeklySummary.revenue)}</strong></div>
               </div>
-              <div className="dental-actions" style={{ marginTop: 16 }}>
+              <div className="dental-actions dental-report-actions">
                 <button
                   type="button"
                   className="dental-button"

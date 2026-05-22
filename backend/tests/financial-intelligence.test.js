@@ -56,6 +56,17 @@ test('labor cost composition treats payroll charges as Lucro Presumido even if l
   assert.equal(labor.encargos_obrigatorios, 696);
 });
 
+test('labor cost composition applies admission date to monthly thirteenth provision', () => {
+  const rules = normalizeFinancialRules({});
+  const eligible = calculateLaborCostComposition({ salary: 2000, hire_date: '2026-05-10' }, rules, null, '2026-05');
+  const notEligible = calculateLaborCostComposition({ salary: 2000, hire_date: '2026-05-20' }, rules, null, '2026-05');
+  const futureHire = calculateLaborCostComposition({ salary: 2000, hire_date: '2026-06-01' }, rules, null, '2026-05');
+
+  assert.equal(eligible.decimo_terceiro, 166.67);
+  assert.equal(notEligible.decimo_terceiro, 0);
+  assert.equal(futureHire.decimo_terceiro, 0);
+});
+
 test('financial intelligence calculates campaign ROI without duplicating monthly CRC costs', () => {
   const metrics = calculateFinancialMetrics({
     revenue: 10000,

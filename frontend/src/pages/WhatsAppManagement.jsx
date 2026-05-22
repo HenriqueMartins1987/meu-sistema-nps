@@ -166,9 +166,13 @@ function emptyPartnerVideoContact() {
 }
 
 function normalizePartnerVideoSettingsDraft(settings = {}) {
+  const allowedTimes = Array.isArray(settings.allowedTimes)
+    ? settings.allowedTimes.join('\n')
+    : (settings.allowedTimes || settings.allowed_times || '08:00\n18:00');
   return {
     automationEnabled: Boolean(settings.automationEnabled),
     standardTime: settings.standardTime || '08:00',
+    allowedTimes,
     allowedWeekdays: Array.isArray(settings.allowedWeekdays) ? settings.allowedWeekdays.map(Number) : [1, 2, 3, 4, 5, 6],
     sessionId: settings.sessionId || 'confirmacao-agendamento',
     senderPhone: settings.senderPhone || '5562998647043',
@@ -661,6 +665,7 @@ function WhatsAppManagement() {
       maxDelaySeconds: Number(draft.maxDelaySeconds || 60),
       limitPerMinute: Number(draft.limitPerMinute || 2),
       limitPerHour: Number(draft.limitPerHour || 60),
+      allowedTimes: String(draft.allowedTimes || '').split(/\n|,|;/).map((item) => item.trim()).filter(Boolean),
       testNumbers: String(draft.testNumbers || '').split(/\n|,|;/).map((item) => item.trim()).filter(Boolean)
     });
     setPartnerSettingsDraft(normalizePartnerVideoSettingsDraft(response.data || draft));
@@ -1385,6 +1390,8 @@ function WhatsAppManagement() {
     const logs = Array.isArray(partnersVideo?.logs) ? partnersVideo.logs : [];
     const session = partnersVideo?.session || instances.find((item) => item.instance_name === 'confirmacao-agendamento') || {};
     const settings = partnerSettingsDraft || normalizePartnerVideoSettingsDraft(partnersVideo?.settings || {});
+    const allowedTimeList = String(settings.allowedTimes || '08:00\n18:00').split(/\n|,|;/).map((item) => item.trim()).filter(Boolean);
+    const unitsWithoutPartnerNames = Array.isArray(summary.unitsWithoutPartnerNames) ? summary.unitsWithoutPartnerNames : [];
     const qrUrl = `${(configStatus?.baseUrl || adminSettings?.baseUrl || 'http://2.24.101.6:3005').replace(/\/+$/, '')}/public/sessions/confirmacao-agendamento/qr-image`;
     const formatDateTime = (value) => String(value || '-').slice(0, 16).replace('T', ' ');
     const cards = [
@@ -1397,7 +1404,7 @@ function WhatsAppManagement() {
       ['Acionamentos coord.', summary.coordinatorActions || 0, 'Escalada ate 11:00', summary.coordinatorActions ? 'warning' : 'neutral'],
       ['Acionamentos gerente', summary.managerActions || 0, 'Escalada ate 12:00', summary.managerActions ? 'danger' : 'neutral'],
       ['Falhas', summary.failuresToday || 0, 'Erros registrados hoje', summary.failuresToday ? 'danger' : 'success'],
-      ['Unidades sem parceiro', summary.unitsWithoutPartner || 0, (summary.unitsWithoutPartnerNames || []).join(', ') || 'Todas cobertas', summary.unitsWithoutPartner ? 'warning' : 'success']
+      ['Unidades sem parceiro', summary.unitsWithoutPartner || 0, unitsWithoutPartnerNames.join(', ') || 'Todas cobertas', summary.unitsWithoutPartner ? 'warning' : 'success']
     ];
 
     return (
@@ -1441,7 +1448,7 @@ function WhatsAppManagement() {
           <article className="whatsapp-panel">
             <h2>Parametros operacionais</h2>
             <div className="whatsapp-card-list compact">
-              <article><span>Horario</span><strong>{settings.standardTime || '08:00'}</strong><p>Dias: {(settings.allowedWeekdays || []).join(', ')}</p></article>
+              <article><span>Horarios</span><strong>{allowedTimeList.join(' e ')}</strong><p>Disparo automatico apenas nas janelas de 08:00 e 18:00.</p></article>
               <article><span>Automacao</span><strong>{settings.automationEnabled ? 'Ativa' : 'Pausada'}</strong><p>Ative somente apos teste e QR conectado</p></article>
               <article><span>Anti-ban</span><strong>{settings.minDelaySeconds || 20}s - {settings.maxDelaySeconds || 60}s</strong><p>Fila com atraso aleatorio por mensagem</p></article>
               <article><span>Limite</span><strong>{settings.limitPerMinute || 2}/min</strong><p>{settings.limitPerHour || 60}/hora</p></article>
@@ -1453,7 +1460,7 @@ function WhatsAppManagement() {
           <article className="whatsapp-panel">
             <h2>Configuracoes da rotina</h2>
             <div className="whatsapp-form-grid">
-              <label>Horario padrao<input className="field" type="time" value={settings.standardTime || '08:00'} onChange={(event) => updatePartnerSettingsDraft('standardTime', event.target.value)} /></label>
+              <label>Horario de referencia<input className="field" type="time" value={settings.standardTime || '08:00'} onChange={(event) => updatePartnerSettingsDraft('standardTime', event.target.value)} /></label>
               <label>Sessao WhatsApp<input className="field" value={settings.sessionId || 'confirmacao-agendamento'} onChange={(event) => updatePartnerSettingsDraft('sessionId', event.target.value)} /></label>
               <label>Numero remetente<input className="field" value={settings.senderPhone || ''} onChange={(event) => updatePartnerSettingsDraft('senderPhone', event.target.value)} /></label>
               <label>Limite por minuto<input className="field" type="number" min="1" value={settings.limitPerMinute || 2} onChange={(event) => updatePartnerSettingsDraft('limitPerMinute', event.target.value)} /></label>
@@ -1463,6 +1470,8 @@ function WhatsAppManagement() {
               <label className="checkbox-line"><input type="checkbox" checked={Boolean(settings.automationEnabled)} onChange={(event) => updatePartnerSettingsDraft('automationEnabled', event.target.checked)} /> Rotina automatica ativa</label>
               <label className="checkbox-line"><input type="checkbox" checked={Boolean(settings.testMode)} onChange={(event) => updatePartnerSettingsDraft('testMode', event.target.checked)} /> Modo teste</label>
             </div>
+            <label>Horarios permitidos<textarea className="field" rows="2" value={settings.allowedTimes || '08:00\n18:00'} onChange={(event) => updatePartnerSettingsDraft('allowedTimes', event.target.value)} /></label>
+            <p className="whatsapp-panel-note">A rotina automatica so dispara dentro da janela configurada para 08:00 e 18:00. Fora desses horarios, apenas envios manuais e testes ficam liberados.</p>
             <div className="partner-video-weekdays">
               {partnerVideoWeekdays.map((day) => (
                 <label key={day.value} className="checkbox-line compact-check">
@@ -1538,7 +1547,7 @@ function WhatsAppManagement() {
           </div>
         </section>
 
-        <section className="whatsapp-two-column">
+        <section className="whatsapp-two-column partner-video-coverage-grid">
           <article className="whatsapp-panel">
             <h2>Parceiros cadastrados</h2>
             <div className="partner-video-contact-list">
@@ -1557,7 +1566,23 @@ function WhatsAppManagement() {
               ))}
             </div>
           </article>
-          <article className="whatsapp-panel" id="partner-video-logs">
+          <article className="whatsapp-panel">
+            <h2>Unidades sem parceiro</h2>
+            <p className="whatsapp-panel-note">Relação para completar o cadastro e evitar unidades sem cobrança automática de vídeo.</p>
+            <div className="partner-video-missing-list">
+              {unitsWithoutPartnerNames.map((name) => (
+                <article key={name} className="partner-video-missing-card">
+                  <span>Sem parceiro ativo</span>
+                  <strong>{name}</strong>
+                  <p>Cadastre parceiro, telefone e rotina para incluir a unidade nos disparos.</p>
+                </article>
+              ))}
+              {!unitsWithoutPartnerNames.length && <p className="empty-state">Todas as unidades ativas possuem parceiro cadastrado.</p>}
+            </div>
+          </article>
+        </section>
+
+        <section className="whatsapp-panel" id="partner-video-logs">
             <h2>Logs recentes</h2>
             <div className="whatsapp-card-list compact">
               {logs.slice(0, 12).map((item) => (
@@ -1569,7 +1594,6 @@ function WhatsAppManagement() {
               ))}
               {!logs.length && <p className="empty-state">Nenhum log registrado ainda.</p>}
             </div>
-          </article>
         </section>
       </section>
     );

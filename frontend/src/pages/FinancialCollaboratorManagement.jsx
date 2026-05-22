@@ -77,6 +77,34 @@ function percentOf(value, total) {
   return divisor ? round((toNumber(value) / divisor) * 100) : 0;
 }
 
+function normalizeLaborReferenceMonth(value) {
+  if (!value) return '';
+  const text = String(value).trim();
+  const match = text.match(/^(\d{4})-(\d{2})/);
+  if (match) return `${match[1]}-${match[2]}`;
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 7);
+}
+
+function getThirteenthProvisionPercent(item = {}, rules = defaultLaborCostRules, monthlyCost = null) {
+  const defaultPercent = toNumber(rules.percentual13);
+  const referenceMonth = normalizeLaborReferenceMonth(
+    monthlyCost?.reference_month
+    || item.reference_month
+    || new Date().toISOString().slice(0, 7)
+  );
+  const hireDateText = item.hire_date ? String(item.hire_date).slice(0, 10) : '';
+  if (!referenceMonth || !hireDateText) return defaultPercent;
+
+  const hireDate = new Date(`${hireDateText}T12:00:00`);
+  const [year, monthNumber] = referenceMonth.split('-').map(Number);
+  const endOfReferenceMonth = new Date(year, monthNumber, 0, 23, 59, 59);
+  if (Number.isNaN(hireDate.getTime()) || Number.isNaN(endOfReferenceMonth.getTime())) return defaultPercent;
+  if (hireDate > endOfReferenceMonth) return 0;
+  if (hireDate.getFullYear() === year && hireDate.getMonth() === monthNumber - 1 && hireDate.getDate() > 16) return 0;
+  return defaultPercent;
+}
+
 function normalizeLaborRules(settings = {}) {
   return {
     ...defaultLaborCostRules,
@@ -106,7 +134,8 @@ function calculateLaborCost(item = {}, rulesSource = {}, monthlyCost = null) {
     + toNumber(item.bonus)
   );
   const fgts = round(salarioRemuneracaoBase * (toNumber(rules.percentualFgts) / 100));
-  const decimoTerceiro = round(salarioRemuneracaoBase * (toNumber(rules.percentual13) / 100));
+  const decimoTerceiroPercent = getThirteenthProvisionPercent(item, rules, monthlyCost);
+  const decimoTerceiro = round(salarioRemuneracaoBase * (decimoTerceiroPercent / 100));
   const ferias = round(salarioRemuneracaoBase * (toNumber(rules.percentualFerias) / 100));
   const tercoFerias = round(salarioRemuneracaoBase * (toNumber(rules.percentualTercoFerias) / 100));
   const inssPatronal = round(salarioRemuneracaoBase * (toNumber(rules.percentualInssPatronal) / 100));
@@ -139,6 +168,7 @@ function calculateLaborCost(item = {}, rulesSource = {}, monthlyCost = null) {
     beneficios_totais: beneficiosTotais,
     fgts,
     decimo_terceiro: decimoTerceiro,
+    decimo_terceiro_percentual_aplicado: round(decimoTerceiroPercent, 4),
     ferias,
     terco_ferias: tercoFerias,
     inss_patronal: inssPatronal,
@@ -623,7 +653,7 @@ function FinancialCollaboratorManagement() {
               <label>Função/Cargo<select className="field" value={draft.function_name} onChange={(event) => setDraft((current) => ({ ...current, function_name: event.target.value }))}><option value="">Selecione</option>{CRC_FUNCTION_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
               <label>Clínica<select className="field" value={draft.clinic_id || (draft.clinic_name === FINANCIAL_CENTRAL_CLINIC.name ? FINANCIAL_CENTRAL_CLINIC.id : '')} onChange={(event) => handleClinicChange(event.target.value)}><option value="">Selecione</option><option value={FINANCIAL_CENTRAL_CLINIC.id}>{FINANCIAL_CENTRAL_CLINIC.name}</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label>
               <label>Unidade<input className="field" value={draft.unit_name || ''} onChange={(event) => setDraft((current) => ({ ...current, unit_name: event.target.value }))} /></label>
-              <label>Data de contratação<input className="field" type="date" value={String(draft.hire_date || '').slice(0, 10)} onChange={(event) => setDraft((current) => ({ ...current, hire_date: event.target.value }))} /></label>
+              <label>Data de admissão<input className="field" type="date" value={String(draft.hire_date || '').slice(0, 10)} onChange={(event) => setDraft((current) => ({ ...current, hire_date: event.target.value }))} /></label>
               <label>Mês/Ano<input className="field" type="month" value={draft.reference_month || referenceMonth} onChange={(event) => setDraft((current) => ({ ...current, reference_month: event.target.value }))} /></label>
               <label>Salário<input className="field" type="number" step="0.01" value={draft.salary || ''} onChange={(event) => setDraft((current) => ({ ...current, salary: event.target.value }))} /></label>
               <label>Comissão fixa<input className="field" type="number" step="0.01" value={draft.fixed_commission || ''} onChange={(event) => setDraft((current) => ({ ...current, fixed_commission: event.target.value }))} /></label>

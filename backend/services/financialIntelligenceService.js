@@ -316,7 +316,35 @@ function percentageOfTotal(value, total) {
   return safeDivide(value, total, 100);
 }
 
-function calculateLaborCostComposition(collaborator = {}, rules = DEFAULT_FINANCIAL_RULES, monthly = null) {
+function normalizeLaborReferenceMonth(value) {
+  if (!value) return '';
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 7);
+  }
+  const text = String(value || '').trim();
+  const direct = text.match(/^(\d{4})-(\d{2})/);
+  if (direct) return `${direct[1]}-${direct[2]}`;
+  const parsed = new Date(text);
+  return Number.isNaN(parsed.getTime()) ? '' : parsed.toISOString().slice(0, 7);
+}
+
+function getThirteenthProvisionPercent(collaborator = {}, normalizedRules = DEFAULT_LABOR_COST_RULES, monthly = null, referenceMonth = '') {
+  const defaultPercent = toNumber(normalizedRules.percentual13);
+  const month = normalizeLaborReferenceMonth(referenceMonth || monthly?.reference_month || collaborator.reference_month);
+  const hireDateText = collaborator.hire_date ? String(collaborator.hire_date).slice(0, 10) : '';
+  if (!month || !hireDateText) return defaultPercent;
+
+  const hireDate = new Date(`${hireDateText}T12:00:00`);
+  const [year, monthNumber] = month.split('-').map(Number);
+  const endOfReferenceMonth = new Date(year, monthNumber, 0, 23, 59, 59);
+
+  if (Number.isNaN(hireDate.getTime()) || Number.isNaN(endOfReferenceMonth.getTime())) return defaultPercent;
+  if (hireDate > endOfReferenceMonth) return 0;
+  if (hireDate.getFullYear() === year && hireDate.getMonth() === monthNumber - 1 && hireDate.getDate() > 16) return 0;
+  return defaultPercent;
+}
+
+function calculateLaborCostComposition(collaborator = {}, rules = DEFAULT_FINANCIAL_RULES, monthly = null, referenceMonth = '') {
   const normalizedRules = normalizeLaborCostRules(rules);
   const receivesCommission = ['1', 'true', 'sim', 'yes', 'on'].includes(String(collaborator.receives_commission ?? '').trim().toLowerCase());
   const fixedCommission = toNumber(collaborator.fixed_commission ?? collaborator.commission_fixed ?? collaborator.commission_default);
@@ -339,7 +367,8 @@ function calculateLaborCostComposition(collaborator = {}, rules = DEFAULT_FINANC
   );
 
   const fgts = round(salarioRemuneracaoBase * (normalizedRules.percentualFgts / 100));
-  const decimoTerceiro = round(salarioRemuneracaoBase * (normalizedRules.percentual13 / 100));
+  const decimoTerceiroPercent = getThirteenthProvisionPercent(collaborator, normalizedRules, monthly, referenceMonth);
+  const decimoTerceiro = round(salarioRemuneracaoBase * (decimoTerceiroPercent / 100));
   const ferias = round(salarioRemuneracaoBase * (normalizedRules.percentualFerias / 100));
   const tercoFerias = round(salarioRemuneracaoBase * (normalizedRules.percentualTercoFerias / 100));
   const inssPatronal = round(salarioRemuneracaoBase * (normalizedRules.percentualInssPatronal / 100));
@@ -384,6 +413,8 @@ function calculateLaborCostComposition(collaborator = {}, rules = DEFAULT_FINANC
     beneficios_totais: beneficiosTotais,
     fgts,
     decimo_terceiro: decimoTerceiro,
+    decimo_terceiro_percentual_aplicado: round(decimoTerceiroPercent, 4),
+    decimo_terceiro_mes_referencia: normalizeLaborReferenceMonth(referenceMonth || monthly?.reference_month || collaborator.reference_month),
     ferias,
     terco_ferias: tercoFerias,
     ferias_com_terco: round(ferias + tercoFerias),

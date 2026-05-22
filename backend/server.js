@@ -11453,6 +11453,7 @@ function getDefaultPartnerVideoSettings() {
   return {
     automationEnabled: false,
     standardTime: '08:00',
+    allowedTimes: ['08:00', '18:00'],
     allowedWeekdays: [1, 2, 3, 4, 5, 6],
     sessionId: WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME,
     senderPhone: WHATSAPP_CONFIRMATION_APPOINTMENT_SENDER_PHONE,
@@ -11464,6 +11465,28 @@ function getDefaultPartnerVideoSettings() {
     testNumbers: DEFAULT_PARTNER_VIDEO_TEST_NUMBERS,
     template: DEFAULT_PARTNER_VIDEO_TEMPLATE
   };
+}
+
+function normalizePartnerVideoTime(value) {
+  const match = String(value || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return '';
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return '';
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function normalizePartnerVideoAllowedTimes(value, fallback = ['08:00', '18:00']) {
+  const rawTimes = Array.isArray(value)
+    ? value
+    : String(value || '').split(/\n|,|;/);
+  const times = Array.from(new Set(rawTimes.map(normalizePartnerVideoTime).filter(Boolean)))
+    .sort((left, right) => {
+      const [leftHour, leftMinute] = left.split(':').map(Number);
+      const [rightHour, rightMinute] = right.split(':').map(Number);
+      return (leftHour * 60 + leftMinute) - (rightHour * 60 + rightMinute);
+    });
+  return times.length ? times : fallback;
 }
 
 function sanitizePartnerVideoSettings(raw = {}) {
@@ -11479,6 +11502,8 @@ function sanitizePartnerVideoSettings(raw = {}) {
     ...raw,
     automationEnabled: raw.automationEnabled === undefined ? defaults.automationEnabled : Boolean(raw.automationEnabled),
     allowedWeekdays,
+    allowedTimes: normalizePartnerVideoAllowedTimes(raw.allowedTimes || raw.allowed_times || defaults.allowedTimes, defaults.allowedTimes),
+    standardTime: normalizePartnerVideoTime(raw.standardTime || defaults.standardTime) || defaults.standardTime,
     sessionId: String(raw.sessionId || defaults.sessionId).trim() || defaults.sessionId,
     senderPhone: normalizeWhatsAppPhone(raw.senderPhone || defaults.senderPhone),
     minDelaySeconds,
@@ -11538,6 +11563,23 @@ function getSaoPauloDateKey(value) {
 
 function getPartnerVideoMinuteOfDay(parts = getSaoPauloParts()) {
   return Number(parts.hour || 0) * 60 + Number(parts.minute || 0);
+}
+
+function partnerVideoTimeToMinute(time) {
+  const normalized = normalizePartnerVideoTime(time);
+  if (!normalized) return null;
+  const [hour, minute] = normalized.split(':').map(Number);
+  return (hour * 60) + minute;
+}
+
+function getPartnerVideoEligibleScheduleSlot(settings = {}, parts = getSaoPauloParts()) {
+  const allowedTimes = normalizePartnerVideoAllowedTimes(settings.allowedTimes || settings.standardTime);
+  const currentMinute = getPartnerVideoMinuteOfDay(parts);
+  const windowMinutes = Math.max(1, Number(process.env.PARTNER_VIDEO_SEND_WINDOW_MINUTES || 30));
+  return allowedTimes
+    .map((time) => ({ time, minute: partnerVideoTimeToMinute(time) }))
+    .filter((slot) => slot.minute !== null)
+    .find((slot) => currentMinute >= slot.minute && currentMinute <= slot.minute + windowMinutes) || null;
 }
 
 function fillPartnerVideoTemplate(template, contact = {}) {
@@ -11732,24 +11774,24 @@ async function runScheduledPartnerVideoDailyReminders() {
   if (!settings.automationEnabled) return { skipped: true, reason: 'disabled' };
   const parts = getSaoPauloParts();
   if (!settings.allowedWeekdays.includes(parts.weekday)) return { skipped: true, reason: 'weekday' };
-  const [scheduleHour, scheduleMinute] = String(settings.standardTime || '08:00').split(':').map((item) => Number(item || 0));
-  const scheduleMinuteOfDay = (Number(scheduleHour || 8) * 60) + Number(scheduleMinute || 0);
-  if (getPartnerVideoMinuteOfDay(parts) < scheduleMinuteOfDay) return { skipped: true, reason: 'before_schedule' };
+  const slot = getPartnerVideoEligibleScheduleSlot(settings, parts);
+  if (!slot) return { skipped: true, reason: 'outside_allowed_times', allowedTimes: settings.allowedTimes || ['08:00', '18:00'] };
+  const runKey = `${parts.dateKey}|${slot.time}`;
 
   const [rows] = await pool.query(
     'SELECT setting_value FROM system_settings WHERE setting_key = ? LIMIT 1',
     [PARTNER_VIDEO_LAST_RUN_KEY]
   );
-  if (rows[0]?.setting_value === parts.dateKey) return { skipped: true, reason: 'already_ran' };
+  if (rows[0]?.setting_value === runKey) return { skipped: true, reason: 'already_ran', slot: slot.time };
 
   const result = await dispatchPartnerVideoDailyReminders({ force: true });
   await pool.query(
     `INSERT INTO system_settings (setting_key, setting_value, updated_by)
      VALUES (?, ?, 'Sistema')
      ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by), updated_at = CURRENT_TIMESTAMP`,
-    [PARTNER_VIDEO_LAST_RUN_KEY, parts.dateKey]
+    [PARTNER_VIDEO_LAST_RUN_KEY, runKey]
   );
-  return result;
+  return { ...result, slot: slot.time };
 }
 
 async function runPartnerVideoOperationalEscalationSweep() {
@@ -11880,7 +11922,7 @@ async function getPartnerVideoDashboardData() {
       managerActions: controls.filter((item) => item.manager_notified_at).length,
       failuresToday: logs.filter((item) => String(item.status || '').toLowerCase() === 'erro' && getSaoPauloDateKey(item.created_at) === dateKey).length,
       unitsWithoutPartner: unitsWithoutPartner.length,
-      unitsWithoutPartnerNames: unitsWithoutPartner.slice(0, 12)
+      unitsWithoutPartnerNames: unitsWithoutPartner
     },
     contacts,
     controls,
@@ -16055,8 +16097,16 @@ app.post('/api/partners-video/send-daily-reminders', authenticate, requireWhatsA
     if (!canConfigureWhatsAppManagement(req.user)) {
       return res.status(403).json({ error: 'Seu perfil não pode disparar a rotina.' });
     }
+    const settings = await getPartnerVideoSettings();
+    const slot = getPartnerVideoEligibleScheduleSlot(settings, getSaoPauloParts());
+    if (!slot) {
+      return res.status(409).json({
+        error: 'Envio diário permitido apenas nas janelas de 08:00 e 18:00.',
+        allowedTimes: settings.allowedTimes || ['08:00', '18:00']
+      });
+    }
     const result = await dispatchPartnerVideoDailyReminders({ actor: req.user, force: true });
-    return res.json({ message: 'Cobranças de vídeo enfileiradas com controle anti-ban.', ...result });
+    return res.json({ message: 'Cobranças de vídeo enfileiradas com controle anti-ban.', slot: slot.time, ...result });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao enfileirar cobranças de vídeo.' });
@@ -20153,7 +20203,7 @@ function collaboratorBaseMonthlyCost(collaborator = {}, monthly = null, referenc
   const vacationAmount = monthly && Number(monthly.vacation_paid || 0)
     ? toFinancialNumber(monthly.vacation_amount)
     : 0;
-  const laborCost = calculateLaborCostComposition(collaborator, rules, monthly);
+  const laborCost = calculateLaborCostComposition(collaborator, rules, monthly, referenceMonth);
 
   return toFinancialNumber(laborCost.custo_total_mensal)
     + dsrCommission
@@ -20258,7 +20308,7 @@ async function getFinancialMonthlyCostContext(rows = [], financialRules = DEFAUL
       const monthly = monthlyByCollaborator[`${month}:${collaborator.id}`] || null;
       const totalCost = collaboratorBaseMonthlyCost(collaborator, monthly, month, financialRules);
       if (!totalCost) return;
-      const laborCost = calculateLaborCostComposition(collaborator, financialRules, monthly);
+      const laborCost = calculateLaborCostComposition(collaborator, financialRules, monthly, month);
 
       byMonth[month].collaboratorCost += totalCost;
       collaboratorCostRows.push({
@@ -22414,7 +22464,7 @@ async function handleGetCrcCollaborators(req, res) {
     const financialRules = await getFinancialSettings();
     return res.json(rows.map((row) => ({
       ...row,
-      labor_costs: calculateLaborCostComposition(row, financialRules)
+      labor_costs: calculateLaborCostComposition(row, financialRules, null, row.reference_month || new Date().toISOString().slice(0, 7))
     })));
   } catch (error) {
     console.error(error);
@@ -22441,7 +22491,7 @@ async function handleCreateCrcCollaborator(req, res) {
     const financialRules = await getFinancialSettings();
     return res.status(201).json({
       ...rows[0],
-      labor_costs: calculateLaborCostComposition(rows[0], financialRules)
+      labor_costs: calculateLaborCostComposition(rows[0], financialRules, null, rows[0].reference_month || new Date().toISOString().slice(0, 7))
     });
   } catch (error) {
     console.error(error);
@@ -22480,7 +22530,7 @@ async function handleUpdateCrcCollaborator(req, res) {
     const financialRules = await getFinancialSettings();
     return res.json({
       ...rows[0],
-      labor_costs: calculateLaborCostComposition(rows[0], financialRules)
+      labor_costs: calculateLaborCostComposition(rows[0], financialRules, null, rows[0].reference_month || new Date().toISOString().slice(0, 7))
     });
   } catch (error) {
     console.error(error);
