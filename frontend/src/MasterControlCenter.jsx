@@ -37,6 +37,20 @@ const defaultTaxComponents = [
   { key: 'iss', label: 'ISS', percent: 5 }
 ];
 
+const defaultLaborCostRules = [
+  { key: 'percentualFgts', label: 'FGTS mensal (%)', value: 8, step: '0.0001' },
+  { key: 'percentual13', label: '13o salario provisionado (%)', value: 8.3333, step: '0.0001' },
+  { key: 'percentualFerias', label: 'Ferias provisionadas (%)', value: 8.3333, step: '0.0001' },
+  { key: 'percentualTercoFerias', label: '1/3 constitucional de ferias (%)', value: 2.7778, step: '0.0001' },
+  { key: 'percentualInssPatronal', label: 'INSS patronal (%)', value: 20, step: '0.01' },
+  { key: 'percentualRat', label: 'RAT/SAT (%)', value: 1, step: '0.01' },
+  { key: 'fatorFap', label: 'FAP', value: 1, step: '0.0001' },
+  { key: 'percentualTerceiros', label: 'Terceiros/Sistema S (%)', value: 5.8, step: '0.01' },
+  { key: 'percentualProvisaoRescisoria', label: 'Provisao rescisoria (%)', value: 4, step: '0.01' },
+  { key: 'percentualAbsenteismo', label: 'Absenteismo (%)', value: 2, step: '0.01' },
+  { key: 'percentualTurnover', label: 'Turnover (%)', value: 2, step: '0.01' }
+];
+
 const permissionGroups = [
   { key: 'core', title: 'Sistema', match: (value) => ['home', 'admin_panel'].includes(value) },
   { key: 'complaints', title: 'Reclamacoes e protocolos', match: (value) => value.startsWith('complaints') },
@@ -243,6 +257,17 @@ function normalizeTaxComponentsForView(settings = {}) {
   });
 }
 
+function normalizeLaborCostRulesForView(settings = {}) {
+  const current = settings.laborCostRules || {};
+  return {
+    aplicarInssPatronal: current.aplicarInssPatronal === undefined ? true : Boolean(current.aplicarInssPatronal),
+    values: defaultLaborCostRules.map((item) => ({
+      ...item,
+      value: current[item.key] ?? item.value
+    }))
+  };
+}
+
 function roleLabel(value) {
   return roleOptions.find((role) => role.value === value)?.label || value || 'Perfil nao definido';
 }
@@ -421,6 +446,7 @@ function MasterControlCenter() {
     () => taxComponents.reduce((total, item) => total + toNumber(item.percent), 0),
     [taxComponents]
   );
+  const laborCostRules = useMemo(() => normalizeLaborCostRulesForView(settings || {}), [settings]);
 
   const patchUser = (userId, changes) => {
     setUsers((current) => current.map((user) => (
@@ -662,6 +688,26 @@ function MasterControlCenter() {
     });
   };
 
+  const updateLaborCostRule = (key, value) => {
+    setSettings((current) => ({
+      ...current,
+      laborCostRules: {
+        ...(current?.laborCostRules || {}),
+        [key]: value
+      }
+    }));
+  };
+
+  const updateApplyPayrollTaxes = (checked) => {
+    setSettings((current) => ({
+      ...current,
+      laborCostRules: {
+        ...(current?.laborCostRules || {}),
+        aplicarInssPatronal: checked
+      }
+    }));
+  };
+
   const updateMargin = (key, field, value) => {
     setSettings((current) => ({
       ...current,
@@ -690,6 +736,10 @@ function MasterControlCenter() {
           percent: toNumber(item.percent)
         })),
         taxRatePercent: normalizeTaxComponentsForView(settings).reduce((total, item) => total + toNumber(item.percent), 0),
+        laborCostRules: {
+          aplicarInssPatronal: Boolean(settings?.laborCostRules?.aplicarInssPatronal ?? true),
+          ...Object.fromEntries(normalizeLaborCostRulesForView(settings).values.map((item) => [item.key, toNumber(item.value)]))
+        },
         costAllocationPercent: toNumber(settings?.costAllocationPercent)
       };
       const { data } = await api.put('/admin/financial-settings', payload);
@@ -1306,6 +1356,36 @@ function MasterControlCenter() {
                   <label>Percentual de rateio do CRC (%)<input className="field" type="number" step="0.01" min="0" value={settings.costAllocationPercent ?? ''} onChange={(event) => updateSetting('costAllocationPercent', event.target.value)} /></label>
                 </article>
               </div>
+
+              <article className="master-tax-policy-card master-labor-policy-card">
+                <span>Custos Trabalhistas</span>
+                <strong>Parametros do colaborador</strong>
+                <small>Percentuais editaveis usados na composicao automatica de salario, encargos obrigatorios, provisoes trabalhistas e provisoes gerenciais.</small>
+                <label className="master-toggle-row">
+                  <input
+                    type="checkbox"
+                    checked={laborCostRules.aplicarInssPatronal}
+                    onChange={(event) => updateApplyPayrollTaxes(event.target.checked)}
+                  />
+                  Aplicar INSS patronal, RAT/FAP e Terceiros/Sistema S
+                </label>
+                <div className="master-tax-grid">
+                  {laborCostRules.values.map((rule) => (
+                    <label key={rule.key}>
+                      {rule.label}
+                      <input
+                        className="field"
+                        type="number"
+                        step={rule.step}
+                        min="0"
+                        value={rule.value ?? ''}
+                        onChange={(event) => updateLaborCostRule(rule.key, event.target.value)}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <p className="master-policy-note">Estimativa gerencial. Os percentuais podem variar conforme regime tributario, CNAE, FPAS, RAT/FAP, convencao coletiva, folha de pagamento e orientacao contabil/juridica aplicavel.</p>
+              </article>
 
               <div className="master-form-grid compact">
                 <label>ROI CRC excelente (%)<input className="field" type="number" step="0.01" value={settings.crcRoiExcellent ?? ''} onChange={(event) => updateSetting('crcRoiExcellent', event.target.value)} /></label>

@@ -113,6 +113,17 @@ const collaboratorDefaultFields = [
   'benefits',
   'receives_commission',
   'commission_default',
+  'fixed_commission',
+  'fixed_gratification',
+  'fixed_additional',
+  'transport_voucher',
+  'food_voucher',
+  'meal_voucher',
+  'health_plan',
+  'dental_plan',
+  'cost_allowance',
+  'other_benefits',
+  'bonus',
   'dsr_commission',
   'thirteenth_salary',
   'vacation_taken',
@@ -143,12 +154,28 @@ const DEFAULT_TAX_COMPONENTS = [
 
 const DEFAULT_TAX_RATE_PERCENT = DEFAULT_TAX_COMPONENTS.reduce((total, item) => total + item.percent, 0);
 
+const DEFAULT_LABOR_COST_RULES = {
+  percentualFgts: 8,
+  percentual13: 8.3333,
+  percentualFerias: 8.3333,
+  percentualTercoFerias: 2.7778,
+  aplicarInssPatronal: true,
+  percentualInssPatronal: 20,
+  percentualRat: 1,
+  fatorFap: 1,
+  percentualTerceiros: 5.8,
+  percentualProvisaoRescisoria: 4,
+  percentualAbsenteismo: 2,
+  percentualTurnover: 2
+};
+
 const DEFAULT_FINANCIAL_RULES = {
   crcRoiExcellent: 150,
   netMarginHealthyMin: 20,
   selicComparisonTolerance: 1,
   taxRatePercent: DEFAULT_TAX_RATE_PERCENT,
   taxComponents: DEFAULT_TAX_COMPONENTS,
+  laborCostRules: DEFAULT_LABOR_COST_RULES,
   costAllocationPercent: 100,
   expectedMargins
 };
@@ -227,6 +254,27 @@ function normalizeTaxComponents(rules = {}) {
   });
 }
 
+function normalizeLaborCostRules(rules = {}) {
+  const source = rules.laborCostRules || rules.labor_cost_rules || rules || {};
+  const normalized = {};
+
+  Object.entries(DEFAULT_LABOR_COST_RULES).forEach(([key, defaultValue]) => {
+    if (typeof defaultValue === 'boolean') {
+      const raw = source[key] ?? source[key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)];
+      normalized[key] = raw === undefined || raw === null || raw === ''
+        ? defaultValue
+        : ['1', 'true', 'sim', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+      return;
+    }
+
+    const raw = source[key] ?? source[key.replace(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`)];
+    const value = raw === undefined || raw === null || raw === '' ? defaultValue : toNumber(raw);
+    normalized[key] = key === 'fatorFap' ? Math.max(0, round(value, 4)) : Math.max(0, round(value, 4));
+  });
+
+  return normalized;
+}
+
 function normalizeFinancialRules(rules = {}) {
   const expected = {};
 
@@ -251,10 +299,114 @@ function normalizeFinancialRules(rules = {}) {
     selicComparisonTolerance: toNumber(rules.selicComparisonTolerance) || DEFAULT_FINANCIAL_RULES.selicComparisonTolerance,
     taxRatePercent,
     taxComponents,
+    laborCostRules: normalizeLaborCostRules(rules),
     costAllocationPercent: toNumber(rules.costAllocationPercent) > 0
       ? toNumber(rules.costAllocationPercent)
       : DEFAULT_FINANCIAL_RULES.costAllocationPercent,
     expectedMargins: expected
+  };
+}
+
+function percentageOfTotal(value, total) {
+  return safeDivide(value, total, 100);
+}
+
+function calculateLaborCostComposition(collaborator = {}, rules = DEFAULT_FINANCIAL_RULES, monthly = null) {
+  const normalizedRules = normalizeLaborCostRules(rules);
+  const receivesCommission = ['1', 'true', 'sim', 'yes', 'on'].includes(String(collaborator.receives_commission ?? '').trim().toLowerCase());
+  const fixedCommission = toNumber(collaborator.fixed_commission ?? collaborator.commission_fixed ?? collaborator.commission_default);
+  const monthlyCommission = receivesCommission && monthly ? toNumber(monthly.commission) : 0;
+  const salaryBase = toNumber(collaborator.salary ?? collaborator.salario_base);
+  const fixedGratification = toNumber(collaborator.fixed_gratification ?? collaborator.gratificacao);
+  const fixedAdditional = toNumber(collaborator.fixed_additional ?? collaborator.adicional_fixo);
+  const salarioRemuneracaoBase = round(salaryBase + fixedCommission + monthlyCommission + fixedGratification + fixedAdditional);
+
+  const beneficiosTotais = round(
+    toNumber(collaborator.transport_voucher ?? collaborator.vale_transporte)
+    + toNumber(collaborator.food_voucher ?? collaborator.vale_alimentacao)
+    + toNumber(collaborator.meal_voucher ?? collaborator.vale_refeicao)
+    + toNumber(collaborator.health_plan ?? collaborator.plano_saude)
+    + toNumber(collaborator.dental_plan ?? collaborator.plano_odontologico)
+    + toNumber(collaborator.cost_allowance ?? collaborator.ajuda_custo)
+    + toNumber(collaborator.bonus ?? collaborator.bonificacao)
+    + toNumber(collaborator.other_benefits ?? collaborator.outros_beneficios)
+    + toNumber(collaborator.benefits)
+  );
+
+  const fgts = round(salarioRemuneracaoBase * (normalizedRules.percentualFgts / 100));
+  const decimoTerceiro = round(salarioRemuneracaoBase * (normalizedRules.percentual13 / 100));
+  const ferias = round(salarioRemuneracaoBase * (normalizedRules.percentualFerias / 100));
+  const tercoFerias = round(salarioRemuneracaoBase * (normalizedRules.percentualTercoFerias / 100));
+  const inssPatronal = normalizedRules.aplicarInssPatronal
+    ? round(salarioRemuneracaoBase * (normalizedRules.percentualInssPatronal / 100))
+    : 0;
+  const ratAjustado = normalizedRules.aplicarInssPatronal
+    ? round(salarioRemuneracaoBase * (normalizedRules.percentualRat / 100) * normalizedRules.fatorFap)
+    : 0;
+  const terceiros = normalizedRules.aplicarInssPatronal
+    ? round(salarioRemuneracaoBase * (normalizedRules.percentualTerceiros / 100))
+    : 0;
+  const provisaoRescisoria = round(salarioRemuneracaoBase * (normalizedRules.percentualProvisaoRescisoria / 100));
+  const custoAbsenteismo = round(salarioRemuneracaoBase * (normalizedRules.percentualAbsenteismo / 100));
+  const custoTurnover = round(salarioRemuneracaoBase * (normalizedRules.percentualTurnover / 100));
+  const encargosObrigatorios = round(fgts + inssPatronal + ratAjustado + terceiros);
+  const provisoesTrabalhistas = round(decimoTerceiro + ferias + tercoFerias);
+  const provisoesGerenciais = round(provisaoRescisoria + custoAbsenteismo + custoTurnover);
+  const custoTotalMensal = round(
+    salarioRemuneracaoBase
+    + beneficiosTotais
+    + encargosObrigatorios
+    + provisoesTrabalhistas
+    + provisoesGerenciais
+  );
+  const custoTotalAnual = round(custoTotalMensal * 12);
+
+  const components = [
+    { key: 'salario_remuneracao_base', label: 'Salario/Remuneracao Base', category: 'Salario', value: salarioRemuneracaoBase },
+    { key: 'beneficios_totais', label: 'Beneficios', category: 'Beneficios', value: beneficiosTotais },
+    { key: 'fgts', label: 'FGTS', category: 'Encargos obrigatorios', value: fgts },
+    { key: 'inss_patronal', label: 'INSS Patronal', category: 'Encargos obrigatorios', value: inssPatronal },
+    { key: 'rat_ajustado', label: 'RAT/SAT ajustado', category: 'Encargos obrigatorios', value: ratAjustado },
+    { key: 'terceiros', label: 'Terceiros/Sistema S', category: 'Encargos obrigatorios', value: terceiros },
+    { key: 'decimo_terceiro', label: '13o Salario', category: 'Provisoes trabalhistas', value: decimoTerceiro },
+    { key: 'ferias', label: 'Ferias', category: 'Provisoes trabalhistas', value: ferias },
+    { key: 'terco_ferias', label: '1/3 Ferias', category: 'Provisoes trabalhistas', value: tercoFerias },
+    { key: 'provisao_rescisoria', label: 'Provisao Rescisoria', category: 'Provisoes gerenciais', value: provisaoRescisoria },
+    { key: 'custo_absenteismo', label: 'Absenteismo', category: 'Provisoes gerenciais', value: custoAbsenteismo },
+    { key: 'custo_turnover', label: 'Turnover', category: 'Provisoes gerenciais', value: custoTurnover }
+  ].map((component) => ({
+    ...component,
+    percent: percentageOfTotal(component.value, custoTotalMensal)
+  }));
+
+  return {
+    rules: normalizedRules,
+    salario_remuneracao_base: salarioRemuneracaoBase,
+    beneficios_totais: beneficiosTotais,
+    fgts,
+    decimo_terceiro: decimoTerceiro,
+    ferias,
+    terco_ferias: tercoFerias,
+    ferias_com_terco: round(ferias + tercoFerias),
+    inss_patronal: inssPatronal,
+    rat_ajustado: ratAjustado,
+    terceiros,
+    provisao_rescisoria: provisaoRescisoria,
+    custo_absenteismo: custoAbsenteismo,
+    custo_turnover: custoTurnover,
+    encargos_obrigatorios: encargosObrigatorios,
+    provisoes_trabalhistas: provisoesTrabalhistas,
+    provisoes_gerenciais: provisoesGerenciais,
+    custo_total_mensal: custoTotalMensal,
+    custo_total_anual: custoTotalAnual,
+    categories: [
+      { key: 'salario', label: 'Salario', value: salarioRemuneracaoBase, percent: percentageOfTotal(salarioRemuneracaoBase, custoTotalMensal) },
+      { key: 'beneficios', label: 'Beneficios', value: beneficiosTotais, percent: percentageOfTotal(beneficiosTotais, custoTotalMensal) },
+      { key: 'encargos', label: 'Encargos', value: encargosObrigatorios, percent: percentageOfTotal(encargosObrigatorios, custoTotalMensal) },
+      { key: 'provisoes_trabalhistas', label: 'Provisoes trabalhistas', value: provisoesTrabalhistas, percent: percentageOfTotal(provisoesTrabalhistas, custoTotalMensal) },
+      { key: 'provisoes_gerenciais', label: 'Provisoes gerenciais', value: provisoesGerenciais, percent: percentageOfTotal(provisoesGerenciais, custoTotalMensal) }
+    ],
+    components
   };
 }
 
@@ -699,15 +851,18 @@ function matchesFinancialStatus(row, status) {
 module.exports = {
   DEFAULT_SELIC_RATE,
   DEFAULT_FINANCIAL_RULES,
+  DEFAULT_LABOR_COST_RULES,
   DEFAULT_TAX_COMPONENTS,
   administrativeCostFields,
   buildFinancialIntelligencePayload,
   calculateFinancialMetrics,
+  calculateLaborCostComposition,
   collaboratorCostFields,
   collaboratorDefaultFields,
   editableFinancialFields,
   enrichFinancialRow,
   expectedMargins,
+  normalizeLaborCostRules,
   normalizeFinancialRules,
   integerFields,
   matchesFinancialStatus,

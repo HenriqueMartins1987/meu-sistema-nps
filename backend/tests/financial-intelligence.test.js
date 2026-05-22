@@ -3,6 +3,7 @@ const test = require('node:test');
 
 const {
   buildFinancialIntelligencePayload,
+  calculateLaborCostComposition,
   calculateFinancialMetrics,
   normalizeFinancialRules
 } = require('../services/financialIntelligenceService');
@@ -22,6 +23,37 @@ test('financial rules use detailed default tax parameters', () => {
       ['ISS', 5]
     ]
   );
+});
+
+test('labor cost composition calculates default payroll provisions', () => {
+  const labor = calculateLaborCostComposition({ salary: 2000 }, normalizeFinancialRules({}));
+
+  assert.equal(labor.salario_remuneracao_base, 2000);
+  assert.equal(labor.fgts, 160);
+  assert.equal(labor.decimo_terceiro, 166.67);
+  assert.equal(labor.ferias, 166.67);
+  assert.equal(labor.terco_ferias, 55.56);
+  assert.equal(labor.inss_patronal, 400);
+  assert.equal(labor.rat_ajustado, 20);
+  assert.equal(labor.terceiros, 116);
+  assert.equal(labor.provisao_rescisoria, 80);
+  assert.equal(labor.custo_absenteismo, 40);
+  assert.equal(labor.custo_turnover, 40);
+  assert.equal(labor.custo_total_mensal, 3244.9);
+  assert.equal(labor.custo_total_anual, 38938.8);
+  assert.equal(labor.components.find((component) => component.key === 'fgts').percent, 4.93);
+});
+
+test('labor cost composition respects Simples Nacional payroll toggle', () => {
+  const labor = calculateLaborCostComposition(
+    { salary: 2000 },
+    normalizeFinancialRules({ laborCostRules: { aplicarInssPatronal: false } })
+  );
+
+  assert.equal(labor.inss_patronal, 0);
+  assert.equal(labor.rat_ajustado, 0);
+  assert.equal(labor.terceiros, 0);
+  assert.equal(labor.encargos_obrigatorios, 160);
 });
 
 test('financial intelligence calculates campaign ROI without duplicating monthly CRC costs', () => {

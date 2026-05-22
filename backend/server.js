@@ -30,6 +30,7 @@ const whatsappVpsService = whatsappProvider;
 const {
   DEFAULT_SELIC_RATE,
   DEFAULT_FINANCIAL_RULES,
+  calculateLaborCostComposition,
   buildFinancialIntelligencePayload,
   collaboratorDefaultFields,
   editableFinancialFields,
@@ -2697,6 +2698,17 @@ async function ensureDatabaseSchema() {
   await ensureColumn('crc_collaborators', 'vacation_taken', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn('crc_collaborators', 'vacation_amount', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
   await ensureColumn('crc_collaborators', 'other_costs_description', 'VARCHAR(500) NULL');
+  await ensureColumn('crc_collaborators', 'fixed_commission', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+  await ensureColumn('crc_collaborators', 'fixed_gratification', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+  await ensureColumn('crc_collaborators', 'fixed_additional', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+  await ensureColumn('crc_collaborators', 'transport_voucher', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+  await ensureColumn('crc_collaborators', 'food_voucher', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+  await ensureColumn('crc_collaborators', 'meal_voucher', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+  await ensureColumn('crc_collaborators', 'health_plan', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+  await ensureColumn('crc_collaborators', 'dental_plan', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+  await ensureColumn('crc_collaborators', 'cost_allowance', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+  await ensureColumn('crc_collaborators', 'other_benefits', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
+  await ensureColumn('crc_collaborators', 'bonus', 'DECIMAL(14,2) NOT NULL DEFAULT 0');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS financial_intelligence (
@@ -17995,9 +18007,24 @@ app.patch('/patient-interactions/:id', authenticate, async (req, res) => {
   try {
     const status = String(req.body.status || '').trim();
     const action = String(req.body.action || status || 'Atualização').trim();
+    const scheduledAtInput = String(req.body.scheduledAt || req.body.scheduled_at || '').trim();
+    const note = String(req.body.note || '').trim();
+    let nextScheduledAt = null;
 
     if (!status) {
       return res.status(400).json({ error: 'Informe o novo status.' });
+    }
+
+    if (scheduledAtInput) {
+      const scheduledDate = /^\d{4}-\d{2}-\d{2}$/.test(scheduledAtInput)
+        ? new Date(`${scheduledAtInput}T00:00:00`)
+        : new Date(scheduledAtInput);
+
+      if (Number.isNaN(scheduledDate.getTime())) {
+        return res.status(400).json({ error: 'Informe uma data válida para o reagendamento.' });
+      }
+
+      nextScheduledAt = toMysqlDateTime(scheduledDate);
     }
 
     const [rows] = await pool.query(
@@ -18012,10 +18039,12 @@ app.patch('/patient-interactions/:id', authenticate, async (req, res) => {
     const currentRecord = rows[0];
 
     await pool.query(
-      'UPDATE patient_interactions SET status = ?, cancelled_at = NULL, cancelled_by_name = NULL, cancelled_by_role = NULL WHERE id = ?',
-      [status, req.params.id]
+      'UPDATE patient_interactions SET status = ?, scheduled_at = COALESCE(?, scheduled_at), cancelled_at = NULL, cancelled_by_name = NULL, cancelled_by_role = NULL WHERE id = ?',
+      [status, nextScheduledAt, req.params.id]
     );
-    await insertPatientInteractionLog(req.params.id, action, `Status atualizado para ${status}.`, req.user);
+    const scheduleNote = nextScheduledAt ? ` Nova agenda: ${formatMessageDateTime(nextScheduledAt)}.` : '';
+    const detailNote = note ? ` Observação: ${note}` : '';
+    await insertPatientInteractionLog(req.params.id, action, `Status atualizado para ${status}.${scheduleNote}${detailNote}`, req.user);
 
     if (isNoShowStatus(status) && !currentRecord.no_show_alert_sent_at) {
       await dispatchNoShowNotifications({
@@ -19197,24 +19226,18 @@ function calculateThirteenthProvision(collaborator = {}, referenceMonth = '') {
   return salary / 12;
 }
 
-function collaboratorBaseMonthlyCost(collaborator = {}, monthly = null, referenceMonth = '') {
+function collaboratorBaseMonthlyCost(collaborator = {}, monthly = null, referenceMonth = '', rules = DEFAULT_FINANCIAL_RULES) {
   const receivesCommission = Boolean(Number(collaborator.receives_commission || 0));
   const monthlyCommission = monthly ? toFinancialNumber(monthly.commission) : 0;
-  const commissionCost = receivesCommission ? monthlyCommission : 0;
   const dsrCommission = receivesCommission ? calculateDsrOnCommission(monthlyCommission) : 0;
-  const thirteenthSalary = calculateThirteenthProvision(collaborator, referenceMonth || monthly?.reference_month || collaborator.reference_month);
   const vacationAmount = monthly && Number(monthly.vacation_paid || 0)
     ? toFinancialNumber(monthly.vacation_amount)
     : 0;
+  const laborCost = calculateLaborCostComposition(collaborator, rules, monthly);
 
-  return toFinancialNumber(collaborator.salary)
-    + toFinancialNumber(collaborator.charges)
-    + toFinancialNumber(collaborator.benefits)
-    + commissionCost
+  return toFinancialNumber(laborCost.custo_total_mensal)
     + dsrCommission
-    + thirteenthSalary
     + vacationAmount
-    + toFinancialNumber(collaborator.other_costs_default)
     + (monthly ? toFinancialNumber(monthly.other_costs) : 0);
 }
 
@@ -19252,7 +19275,7 @@ async function applyMonthlySelicToRows(rows = []) {
   }));
 }
 
-async function getFinancialMonthlyCostContext(rows = []) {
+async function getFinancialMonthlyCostContext(rows = [], financialRules = DEFAULT_FINANCIAL_RULES) {
   const monthKeys = Array.from(new Set(
     rows.flatMap((row) => expandFinancialRowMonthKeys(row)).filter(Boolean)
   )).sort(compareMonthKey);
@@ -19313,8 +19336,9 @@ async function getFinancialMonthlyCostContext(rows = []) {
       if (referenceMonth && compareMonthKey(referenceMonth, month) > 0) return;
 
       const monthly = monthlyByCollaborator[`${month}:${collaborator.id}`] || null;
-      const totalCost = collaboratorBaseMonthlyCost(collaborator, monthly, month);
+      const totalCost = collaboratorBaseMonthlyCost(collaborator, monthly, month, financialRules);
       if (!totalCost) return;
+      const laborCost = calculateLaborCostComposition(collaborator, financialRules, monthly);
 
       byMonth[month].collaboratorCost += totalCost;
       collaboratorCostRows.push({
@@ -19325,7 +19349,8 @@ async function getFinancialMonthlyCostContext(rows = []) {
         clinic_name: collaborator.clinic_name,
         commission: monthly ? toFinancialNumber(monthly.commission) : 0,
         dsr_commission: monthly ? calculateDsrOnCommission(monthly.commission) : 0,
-        thirteenth_salary: calculateThirteenthProvision(collaborator, month),
+        thirteenth_salary: laborCost.decimo_terceiro,
+        labor_costs: laborCost,
         total_cost: totalCost
       });
     });
@@ -21215,7 +21240,7 @@ async function handleGetFinancialIntelligence(req, res) {
     const rowsWithMonthlySelic = await applyMonthlySelicToRows(rows);
     const enrichedRows = rowsWithMonthlySelic.map((row) => enrichFinancialRow(row, financialRules))
       .filter((row) => matchesFinancialStatus(row, req.query.status));
-    const monthlyCostContext = await getFinancialMonthlyCostContext(enrichedRows);
+    const monthlyCostContext = await getFinancialMonthlyCostContext(enrichedRows, financialRules);
 
     return res.json(buildFinancialIntelligencePayload(enrichedRows, financialRules, monthlyCostContext));
   } catch (error) {
@@ -21425,6 +21450,17 @@ async function buildCrcCollaboratorPayload(body = {}, user = {}) {
     benefits: toFinancialNumber(body.benefits),
     receives_commission: receivesCommission,
     commission_default: defaultCommission,
+    fixed_commission: toFinancialNumber(body.fixed_commission || body.fixedCommission),
+    fixed_gratification: toFinancialNumber(body.fixed_gratification || body.fixedGratification || body.gratificacao),
+    fixed_additional: toFinancialNumber(body.fixed_additional || body.fixedAdditional || body.adicional_fixo),
+    transport_voucher: toFinancialNumber(body.transport_voucher || body.transportVoucher || body.vale_transporte),
+    food_voucher: toFinancialNumber(body.food_voucher || body.foodVoucher || body.vale_alimentacao),
+    meal_voucher: toFinancialNumber(body.meal_voucher || body.mealVoucher || body.vale_refeicao),
+    health_plan: toFinancialNumber(body.health_plan || body.healthPlan || body.plano_saude),
+    dental_plan: toFinancialNumber(body.dental_plan || body.dentalPlan || body.plano_odontologico),
+    cost_allowance: toFinancialNumber(body.cost_allowance || body.costAllowance || body.ajuda_custo),
+    other_benefits: toFinancialNumber(body.other_benefits || body.otherBenefits || body.outros_beneficios),
+    bonus: toFinancialNumber(body.bonus || body.bonificacao),
     dsr_commission: receivesCommission ? calculateDsrOnCommission(defaultCommission) : 0,
     thirteenth_salary: calculateThirteenthProvision(
       { salary: body.salary, hire_date: body.hire_date || body.hireDate },
@@ -21455,7 +21491,11 @@ async function handleGetCrcCollaborators(req, res) {
         ORDER BY status ASC, name ASC`
     );
 
-    return res.json(rows);
+    const financialRules = await getFinancialSettings();
+    return res.json(rows.map((row) => ({
+      ...row,
+      labor_costs: calculateLaborCostComposition(row, financialRules)
+    })));
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao carregar colaboradores do CRC.' });
@@ -21478,7 +21518,11 @@ async function handleCreateCrcCollaborator(req, res) {
       values
     );
     const [rows] = await pool.query('SELECT * FROM crc_collaborators WHERE id = ? LIMIT 1', [result.insertId]);
-    return res.status(201).json(rows[0]);
+    const financialRules = await getFinancialSettings();
+    return res.status(201).json({
+      ...rows[0],
+      labor_costs: calculateLaborCostComposition(rows[0], financialRules)
+    });
   } catch (error) {
     console.error(error);
     return res.status(400).json({ error: error.message || 'Erro ao cadastrar colaborador.' });
@@ -21513,7 +21557,11 @@ async function handleUpdateCrcCollaborator(req, res) {
     );
 
     const [rows] = await pool.query('SELECT * FROM crc_collaborators WHERE id = ? LIMIT 1', [req.params.id]);
-    return res.json(rows[0]);
+    const financialRules = await getFinancialSettings();
+    return res.json({
+      ...rows[0],
+      labor_costs: calculateLaborCostComposition(rows[0], financialRules)
+    });
   } catch (error) {
     console.error(error);
     return res.status(400).json({ error: error.message || 'Erro ao editar colaborador.' });

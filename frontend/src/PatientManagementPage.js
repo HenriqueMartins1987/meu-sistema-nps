@@ -58,6 +58,21 @@ function todayDateValue() {
   return `${year}-${month}-${day}`;
 }
 
+function timeInputValue(value) {
+  const parsed = value ? new Date(value) : new Date();
+  if (Number.isNaN(parsed.getTime())) return '08:00';
+  return `${String(parsed.getHours()).padStart(2, '0')}:${String(parsed.getMinutes()).padStart(2, '0')}`;
+}
+
+function dateInputValue(value) {
+  const parsed = value ? new Date(value) : new Date();
+  if (Number.isNaN(parsed.getTime())) return todayDateValue();
+  const year = parsed.getFullYear();
+  const month = String(parsed.getMonth() + 1).padStart(2, '0');
+  const day = String(parsed.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function buildInitialForm() {
   return {
     patient: '',
@@ -151,6 +166,8 @@ function PatientManagementPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showCancelModal, setShowCancelModal] = useState(false);
+  const [showRescheduleModal, setShowRescheduleModal] = useState(false);
+  const [rescheduleDraft, setRescheduleDraft] = useState({ date: '', time: '08:00', note: '' });
   const autoOpenRecordRef = useRef(false);
 
   const loadRecords = useCallback(async () => {
@@ -513,6 +530,7 @@ function PatientManagementPage() {
   const openRecord = (record) => {
     setSelectedRecord(record);
     setShowCancelModal(false);
+    setShowRescheduleModal(false);
   };
 
   const refreshSelectedRecord = async (id) => {
@@ -532,6 +550,43 @@ function PatientManagementPage() {
       setFeedback('Agendamento atualizado com histórico.');
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível atualizar o agendamento.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const openRescheduleModal = () => {
+    if (!selectedRecord) return;
+    setRescheduleDraft({
+      date: dateInputValue(selectedRecord.scheduledAt),
+      time: timeInputValue(selectedRecord.scheduledAt),
+      note: ''
+    });
+    setShowRescheduleModal(true);
+  };
+
+  const saveReschedule = async () => {
+    if (!selectedRecord) return;
+    if (!rescheduleDraft.date || !rescheduleDraft.time) {
+      setFeedback('Informe a nova data e horario do reagendamento.');
+      return;
+    }
+
+    setSaving(true);
+    setFeedback('');
+
+    try {
+      await api.patch(`/patient-interactions/${selectedRecord.id}`, {
+        status: 'Reagendar',
+        action: 'Reagendamento registrado',
+        scheduledAt: `${rescheduleDraft.date}T${rescheduleDraft.time}:00`,
+        note: rescheduleDraft.note
+      });
+      setShowRescheduleModal(false);
+      await refreshSelectedRecord(selectedRecord.id);
+      setFeedback('Reagendamento salvo com nova data e horario.');
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Nao foi possivel reagendar o atendimento.');
     } finally {
       setSaving(false);
     }
@@ -1154,7 +1209,7 @@ function PatientManagementPage() {
                   <button className="outline-action" onClick={() => updateSelectedStatus('Confirmado', 'Agenda confirmada')} disabled={saving}>
                     Confirmar
                   </button>
-                  <button className="secondary-action" onClick={() => updateSelectedStatus('Reagendar', 'Solicitado reagendamento')} disabled={saving}>
+                  <button className="secondary-action" onClick={openRescheduleModal} disabled={saving}>
                     Reagendar
                   </button>
                   <button className="primary-action" onClick={() => updateSelectedStatus('Encerrado', 'Registro encerrado')} disabled={saving}>
@@ -1198,6 +1253,53 @@ function PatientManagementPage() {
               </button>
               <button className="outline-action danger-action" type="button" onClick={cancelSelectedRecord} disabled={saving}>
                 {saving ? 'Cancelando...' : 'Confirmar exclusão'}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
+
+      {showRescheduleModal && selectedRecord && (
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setShowRescheduleModal(false)}>
+          <section className="modal-panel modal-confirm-panel" onClick={(event) => event.stopPropagation()}>
+            <p className="eyebrow">Reagendar atendimento</p>
+            <h2>{selectedRecord.patient}</h2>
+            <div className="financial-editor-grid">
+              <label>
+                Nova data
+                <input
+                  className="field"
+                  type="date"
+                  value={rescheduleDraft.date}
+                  onChange={(event) => setRescheduleDraft((current) => ({ ...current, date: event.target.value }))}
+                />
+              </label>
+              <label>
+                Novo horario
+                <input
+                  className="field"
+                  type="time"
+                  value={rescheduleDraft.time}
+                  onChange={(event) => setRescheduleDraft((current) => ({ ...current, time: event.target.value }))}
+                />
+              </label>
+              <label className="wide-field">
+                Observacao
+                <textarea
+                  className="field"
+                  rows={3}
+                  value={rescheduleDraft.note}
+                  onChange={(event) => setRescheduleDraft((current) => ({ ...current, note: event.target.value }))}
+                  placeholder="Informe o motivo ou detalhe do reagendamento."
+                />
+              </label>
+            </div>
+            <div className="row-actions">
+              <button className="outline-action" type="button" onClick={() => setShowRescheduleModal(false)} disabled={saving}>
+                Voltar
+              </button>
+              <button className="primary-action" type="button" onClick={saveReschedule} disabled={saving}>
+                {saving ? 'Salvando...' : 'Salvar reagendamento'}
               </button>
             </div>
           </section>

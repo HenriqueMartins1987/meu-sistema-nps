@@ -8354,6 +8354,121 @@ a {
   overflow: auto;
 }
 
+.financial-labor-preview {
+  display: grid;
+  gap: 14px;
+  margin: 14px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fffdfa, #f8f3eb);
+}
+
+.financial-labor-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.financial-labor-cards article {
+  display: grid;
+  gap: 5px;
+  min-height: 76px;
+  padding: 11px;
+  border: 1px solid rgba(151, 111, 55, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.financial-labor-cards span,
+.financial-labor-table th,
+.financial-labor-bar span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.financial-labor-cards strong {
+  color: var(--ink);
+  font-size: 16px;
+}
+
+.financial-labor-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(280px, 0.85fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.financial-labor-table-wrap {
+  overflow: auto;
+  border: 1px solid rgba(151, 111, 55, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.84);
+}
+
+.financial-labor-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 540px;
+}
+
+.financial-labor-table th,
+.financial-labor-table td {
+  padding: 9px 10px;
+  border-bottom: 1px solid rgba(151, 111, 55, 0.14);
+  text-align: left;
+}
+
+.financial-labor-total-row td {
+  background: rgba(212, 167, 100, 0.14);
+  color: var(--brand-strong);
+  font-weight: 900;
+}
+
+.financial-labor-chart {
+  display: grid;
+  gap: 10px;
+}
+
+.financial-labor-bar {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr) 64px;
+  gap: 10px;
+  align-items: center;
+}
+
+.financial-labor-track {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(151, 111, 55, 0.16);
+}
+
+.financial-labor-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #1f7a8c, #4c956c);
+}
+
+.financial-labor-bar strong {
+  color: var(--ink);
+  font-size: 12px;
+  text-align: right;
+}
+
+.financial-labor-warning {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(31, 122, 140, 0.22);
+  border-radius: 8px;
+  background: rgba(31, 122, 140, 0.08);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .financial-launch-modal {
   width: min(1040px, calc(100vw - 28px));
   max-height: min(88vh, 820px);
@@ -9566,6 +9681,38 @@ a {
 
 .master-financial-policy-box .master-tax-policy-card {
   grid-column: span 2;
+}
+
+.master-financial-policy-box .master-labor-policy-card {
+  grid-column: span 2;
+}
+
+.master-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: fit-content;
+  padding: 10px 12px;
+  border: 1px solid rgba(151, 111, 55, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 253, 250, 0.78);
+}
+
+.master-toggle-row input {
+  width: 18px;
+  height: 18px;
+}
+
+.master-policy-note {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(31, 122, 140, 0.22);
+  border-radius: 8px;
+  background: rgba(31, 122, 140, 0.08);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.45;
 }
 
 .master-tax-grid {
@@ -11573,6 +11720,8 @@ a {
   .financial-record-layout,
   .master-control-grid,
   .master-margin-grid,
+  .financial-labor-cards,
+  .financial-labor-layout,
   .financial-editor-grid,
   .financial-calculated-grid {
     grid-template-columns: 1fr;
