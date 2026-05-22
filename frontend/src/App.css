@@ -10880,6 +10880,80 @@ a {
   color: var(--ink);
 }
 
+.partner-video-config-grid {
+  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+}
+
+.partner-video-weekdays {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.checkbox-line {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 42px;
+  padding: 10px 12px;
+  border: 1px solid rgba(221, 207, 188, 0.82);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.88);
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.checkbox-line input {
+  width: 16px;
+  height: 16px;
+}
+
+.checkbox-line.compact-check {
+  min-height: 36px;
+  padding: 8px 10px;
+}
+
+.partner-video-template-field {
+  min-height: 210px;
+}
+
+.partner-video-contact-list {
+  display: grid;
+  gap: 10px;
+  max-height: 620px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.partner-video-contact-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 13px;
+  border: 1px solid rgba(221, 207, 188, 0.82);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.partner-video-contact-card span {
+  color: var(--brand-strong);
+  font-size: 12px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.partner-video-contact-card strong {
+  display: block;
+  color: var(--ink);
+}
+
+.partner-video-contact-card p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-weight: 760;
+}
+
 .whatsapp-inline-select {
   display: grid;
   gap: 6px;
@@ -11823,6 +11897,7 @@ a {
 @media (max-width: 1180px) {
   .whatsapp-heading,
   .whatsapp-two-column,
+  .partner-video-config-grid,
   .whatsapp-attendance-layout,
   .whatsapp-chart-grid,
   .whatsapp-filter-row {
@@ -11907,7 +11982,8 @@ a {
   .whatsapp-settings-grid .row-actions,
   .whatsapp-settings-rule-grid,
   .whatsapp-settings-action-panel,
-  .whatsapp-service-session-card .whatsapp-service-row-actions {
+  .whatsapp-service-session-card .whatsapp-service-row-actions,
+  .partner-video-contact-card {
     grid-template-columns: 1fr;
   }
 

@@ -11529,6 +11529,17 @@ function getSaoPauloParts(date = new Date()) {
   };
 }
 
+function getSaoPauloDateKey(value) {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isNaN(date.getTime())) return getSaoPauloParts(date).dateKey;
+  return String(value || '').slice(0, 10);
+}
+
+function getPartnerVideoMinuteOfDay(parts = getSaoPauloParts()) {
+  return Number(parts.hour || 0) * 60 + Number(parts.minute || 0);
+}
+
 function fillPartnerVideoTemplate(template, contact = {}) {
   return String(template || DEFAULT_PARTNER_VIDEO_TEMPLATE)
     .replace(/\{\{partner_name\}\}/g, contact.partner_name || contact.partnerName || 'Parceiro(a)')
@@ -11721,7 +11732,9 @@ async function runScheduledPartnerVideoDailyReminders() {
   if (!settings.automationEnabled) return { skipped: true, reason: 'disabled' };
   const parts = getSaoPauloParts();
   if (!settings.allowedWeekdays.includes(parts.weekday)) return { skipped: true, reason: 'weekday' };
-  if (parts.hour < 8) return { skipped: true, reason: 'before_schedule' };
+  const [scheduleHour, scheduleMinute] = String(settings.standardTime || '08:00').split(':').map((item) => Number(item || 0));
+  const scheduleMinuteOfDay = (Number(scheduleHour || 8) * 60) + Number(scheduleMinute || 0);
+  if (getPartnerVideoMinuteOfDay(parts) < scheduleMinuteOfDay) return { skipped: true, reason: 'before_schedule' };
 
   const [rows] = await pool.query(
     'SELECT setting_value FROM system_settings WHERE setting_key = ? LIMIT 1',
@@ -11737,6 +11750,73 @@ async function runScheduledPartnerVideoDailyReminders() {
     [PARTNER_VIDEO_LAST_RUN_KEY, parts.dateKey]
   );
   return result;
+}
+
+async function runPartnerVideoOperationalEscalationSweep() {
+  const parts = getSaoPauloParts();
+  const dateKey = parts.dateKey;
+  const minuteOfDay = getPartnerVideoMinuteOfDay(parts);
+  if (minuteOfDay < 570) return { skipped: true, reason: 'before_0930' };
+
+  const [controls] = await pool.query(
+    `SELECT *
+       FROM partner_video_daily_controls
+      WHERE date = ?
+        AND COALESCE(video_received, 0) = 0
+        AND status NOT IN ('finalizado', 'enviado no prazo', 'enviado com atraso')`,
+    [dateKey]
+  );
+
+  let updated = 0;
+  for (const control of controls) {
+    const transitions = [];
+    if (minuteOfDay >= 570 && !['não enviado', 'acionado líder', 'acionado coordenador', 'acionado gerente'].includes(control.status)) {
+      transitions.push({
+        sql: `UPDATE partner_video_daily_controls SET status = 'não enviado', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        params: [control.id],
+        eventType: 'auto_not_sent',
+        status: 'warning'
+      });
+    }
+    if (minuteOfDay >= 600 && !control.leader_notified_at) {
+      transitions.push({
+        sql: `UPDATE partner_video_daily_controls SET leader_notified_at = NOW(), status = 'acionado líder', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        params: [control.id],
+        eventType: 'leader_auto_notified',
+        status: 'warning'
+      });
+    }
+    if (minuteOfDay >= 660 && !control.coordinator_notified_at) {
+      transitions.push({
+        sql: `UPDATE partner_video_daily_controls SET coordinator_notified_at = NOW(), status = 'acionado coordenador', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        params: [control.id],
+        eventType: 'coordinator_auto_notified',
+        status: 'warning'
+      });
+    }
+    if (minuteOfDay >= 720 && !control.manager_notified_at) {
+      transitions.push({
+        sql: `UPDATE partner_video_daily_controls SET manager_notified_at = NOW(), status = 'acionado gerente', updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+        params: [control.id],
+        eventType: 'manager_auto_notified',
+        status: 'warning'
+      });
+    }
+
+    for (const transition of transitions) {
+      await pool.query(transition.sql, transition.params);
+      await logPartnerVideoEvent({
+        contactId: control.partner_id,
+        controlId: control.id,
+        eventType: transition.eventType,
+        status: transition.status,
+        createdBy: 'Sistema'
+      });
+      updated += 1;
+    }
+  }
+
+  return { updated };
 }
 
 async function getPartnerVideoDashboardData() {
@@ -11759,6 +11839,9 @@ async function getPartnerVideoDashboardData() {
   const [contacts] = await pool.query(
     'SELECT * FROM partner_video_contacts ORDER BY active DESC, clinic_name ASC, partner_name ASC'
   );
+  const [clinicRows] = await pool.query(
+    'SELECT name FROM clinics WHERE active = 1 ORDER BY name ASC'
+  );
   const [logs] = await pool.query(
     `SELECT *
        FROM partner_video_logs
@@ -11769,6 +11852,16 @@ async function getPartnerVideoDashboardData() {
     'SELECT * FROM whatsapp_service_sessions WHERE session_id = ? LIMIT 1',
     [WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME]
   );
+  const activePartnerClinicKeys = new Set(
+    contacts
+      .filter((item) => Number(item.active))
+      .map((item) => normalizeClinicLookupValue(item.clinic_name))
+      .filter(Boolean)
+  );
+  const unitsWithoutPartner = clinicRows
+    .filter((clinic) => !activePartnerClinicKeys.has(normalizeClinicLookupValue(clinic.name)))
+    .map((clinic) => clinic.name);
+  const pendingControls = controls.filter((item) => !Number(item.video_received) && !String(item.status || '').includes('finalizado'));
 
   return {
     settings: await getPartnerVideoSettings(),
@@ -11779,8 +11872,15 @@ async function getPartnerVideoDashboardData() {
       withoutPhone: parseSqlCount(summary, 'withoutPhone'),
       sentToday: controls.filter((item) => ['enfileirado', 'enviada'].includes(String(item.message_status || '').toLowerCase())).length,
       receivedOnTime: controls.filter((item) => Number(item.video_received) && String(item.status || '').includes('prazo')).length,
-      pendingToday: controls.filter((item) => !Number(item.video_received) && !String(item.status || '').includes('finalizado')).length,
-      failuresToday: logs.filter((item) => String(item.status || '').toLowerCase() === 'erro' && String(item.created_at || '').startsWith(dateKey)).length
+      pendingToday: pendingControls.length,
+      pendingUntil930: pendingControls.filter((item) => String(item.status || '').toLowerCase() === 'aguardando envio').length,
+      pendingAfter10: pendingControls.filter((item) => ['não enviado', 'acionado líder', 'acionado coordenador', 'acionado gerente'].includes(String(item.status || '').toLowerCase())).length,
+      leaderActions: controls.filter((item) => item.leader_notified_at).length,
+      coordinatorActions: controls.filter((item) => item.coordinator_notified_at).length,
+      managerActions: controls.filter((item) => item.manager_notified_at).length,
+      failuresToday: logs.filter((item) => String(item.status || '').toLowerCase() === 'erro' && getSaoPauloDateKey(item.created_at) === dateKey).length,
+      unitsWithoutPartner: unitsWithoutPartner.length,
+      unitsWithoutPartnerNames: unitsWithoutPartner.slice(0, 12)
     },
     contacts,
     controls,
@@ -15910,6 +16010,15 @@ app.get('/api/partners-video/dashboard', authenticate, requireWhatsAppView, asyn
   }
 });
 
+app.get('/api/partners-video/settings', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    return res.json(await getPartnerVideoSettings());
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar configurações de vídeos.' });
+  }
+});
+
 app.put('/api/partners-video/settings', authenticate, requireWhatsAppView, async (req, res) => {
   try {
     if (!canConfigureWhatsAppManagement(req.user)) {
@@ -15967,6 +16076,51 @@ app.post('/api/partners-video/test-send', authenticate, requireWhatsAppView, asy
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao enviar teste de Confirmação e Agendamento.' });
+  }
+});
+
+app.post('/api/partners-video/:id/resend', authenticate, requireWhatsAppView, async (req, res) => {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode reenviar cobranças.' });
+    }
+    const [rows] = await pool.query(
+      `SELECT control.*,
+              contact.id AS contact_id,
+              contact.clinic_name AS contact_clinic_name,
+              contact.partner_name AS contact_partner_name,
+              contact.phone_number AS contact_phone_number
+         FROM partner_video_daily_controls control
+         LEFT JOIN partner_video_contacts contact ON contact.id = control.partner_id
+        WHERE control.id = ?
+        LIMIT 1`,
+      [req.params.id]
+    );
+    const control = rows[0];
+    if (!control) return res.status(404).json({ error: 'Controle diário não encontrado.' });
+
+    const settings = await getPartnerVideoSettings();
+    const contact = {
+      id: control.contact_id || control.partner_id,
+      clinic_name: control.contact_clinic_name || control.clinic_name,
+      partner_name: control.contact_partner_name || control.partner_name,
+      phone_number: control.contact_phone_number || control.phone_number
+    };
+    const delaySeconds = randomIntegerBetween(settings.minDelaySeconds, settings.maxDelaySeconds);
+    const result = await enqueuePartnerVideoMessage({
+      contact,
+      control,
+      number: contact.phone_number,
+      message: fillPartnerVideoTemplate(settings.template, contact),
+      delaySeconds,
+      actor: req.user,
+      type: 'partner_video_resend'
+    });
+    if (!result) return res.status(400).json({ error: 'Não foi possível reenviar: telefone inválido ou ausente.' });
+    return res.json({ message: 'Cobrança reenfileirada com controle anti-ban.', delaySeconds, queueId: result.dispatch?.id || null });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao reenfileirar cobrança de vídeo.' });
   }
 });
 
@@ -22760,6 +22914,9 @@ async function startServer() {
   setInterval(() => {
     runScheduledPartnerVideoDailyReminders().catch((jobError) => {
       console.warn('Não foi possível executar a rotina programada de vídeos dos parceiros:', jobError.message);
+    });
+    runPartnerVideoOperationalEscalationSweep().catch((jobError) => {
+      console.warn('Não foi possível executar o fluxo operacional de vídeos dos parceiros:', jobError.message);
     });
   }, Math.max(5, Number(process.env.PARTNER_VIDEO_SWEEP_INTERVAL_MINUTES || 15)) * 60 * 1000);
 
