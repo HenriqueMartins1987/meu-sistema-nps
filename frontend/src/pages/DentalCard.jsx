@@ -260,6 +260,7 @@ function DentalCard() {
   const [selectedLead, setSelectedLead] = useState(null);
   const [attemptLead, setAttemptLead] = useState(null);
   const [contactLead, setContactLead] = useState(null);
+  const [rescheduleLead, setRescheduleLead] = useState(null);
   const [contactDraft, setContactDraft] = useState({
     status_contato: '',
     canal_contato: 'WhatsApp',
@@ -276,6 +277,11 @@ function DentalCard() {
     observacao: '',
     proxima_acao: '',
     data_proxima_acao: ''
+  });
+  const [rescheduleDraft, setRescheduleDraft] = useState({
+    data_agendamento: '',
+    hora_agendamento: '',
+    observacao: ''
   });
   const [templateDraft, setTemplateDraft] = useState(defaultTemplate);
   const [editingTemplateId, setEditingTemplateId] = useState(null);
@@ -430,6 +436,63 @@ function DentalCard() {
       await loadData();
     } catch (err) {
       setError(err.response?.data?.error || 'Erro ao alterar status.');
+    }
+  }
+
+  function openReschedule(lead) {
+    setError('');
+    setSelectedLead(null);
+    setRescheduleLead(lead);
+    setRescheduleDraft({
+      data_agendamento: toDateInput(lead.data_reagendamento || lead.data_agendamento) || new Date().toISOString().slice(0, 10),
+      hora_agendamento: String(lead.hora_agendamento || '').slice(0, 5),
+      observacao: ''
+    });
+  }
+
+  async function saveReschedule(event) {
+    event?.preventDefault();
+    if (!rescheduleLead) return;
+
+    const date = rescheduleDraft.data_agendamento;
+    const time = rescheduleDraft.hora_agendamento;
+    if (!date || !time) {
+      setError('Informe a nova data e o novo horário para reagendar.');
+      return;
+    }
+
+    setError('');
+    setFeedback('');
+    const scheduledAt = `${date}T${time}`;
+    const note = rescheduleDraft.observacao
+      ? `Reagendamento: ${rescheduleDraft.observacao}`
+      : 'Reagendamento registrado pela operação CRC.';
+
+    try {
+      await api.put(`/dental-card/leads/${rescheduleLead.id}`, {
+        ...rescheduleLead,
+        agendado: true,
+        status: 'Reagendado',
+        data_agendamento: date,
+        hora_agendamento: time,
+        data_reagendamento: date,
+        data_proxima_tentativa: scheduledAt,
+        observacoes: [rescheduleLead.observacoes, note].filter(Boolean).join('\n')
+      });
+      await api.post(`/dental-card/leads/${rescheduleLead.id}/attempts`, {
+        canal: 'WhatsApp',
+        resultado: 'Reagendamento registrado',
+        observacao: note,
+        proxima_acao: 'Acompanhar comparecimento no novo horário',
+        data_proxima_acao: scheduledAt,
+        status: 'Reagendado'
+      });
+      setFeedback('Lead reagendado com nova data e horário.');
+      setRescheduleLead(null);
+      setRescheduleDraft({ data_agendamento: '', hora_agendamento: '', observacao: '' });
+      await loadData();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Erro ao reagendar lead Dental Card.');
     }
   }
 
@@ -1020,6 +1083,7 @@ function DentalCard() {
                             <button type="button" className="dental-mini-button" onClick={() => { setAttemptLead(lead); setAttemptDraft((current) => ({ ...current, data_proxima_acao: '' })); }}>Tentativa</button>
                             <button type="button" className="dental-mini-button" onClick={() => openWhatsApp(lead)}>WhatsApp</button>
                             <button type="button" className="dental-mini-button" onClick={() => updateStatus(lead, 'Agendado Joyce/CRC')}>Agendado</button>
+                            <button type="button" className="dental-mini-button" onClick={() => openReschedule(lead)}>Reagendar</button>
                             <button type="button" className="dental-mini-button" onClick={() => updateStatus(lead, 'Compareceu')}>Compareceu</button>
                             <button type="button" className="dental-mini-button" onClick={() => updateStatus(lead, 'Faltou / No-show')}>Faltou</button>
                             <button type="button" className="dental-mini-button" onClick={() => updateStatus(lead, 'Pagou')}>Pagou</button>
@@ -1261,6 +1325,7 @@ function DentalCard() {
                   <button type="button" className="dental-button" onClick={() => openWhatsApp(selectedLead)}>WhatsApp</button>
                   <button type="button" className="dental-button" onClick={() => openContactFicha(selectedLead)}>Editar contato</button>
                   <button type="button" className="dental-button" onClick={() => { setAttemptLead(selectedLead); setAttemptDraft((current) => ({ ...current, data_proxima_acao: '' })); }}>Registrar tentativa</button>
+                  <button type="button" className="dental-button" onClick={() => openReschedule(selectedLead)}>Reagendar</button>
                   <button type="button" className="dental-button" onClick={() => setSelectedLead(null)}>Fechar</button>
                 </div>
               </div>
@@ -1371,6 +1436,30 @@ function DentalCard() {
                 <div className="dental-actions dental-span-4">
                   <button type="button" className="dental-button" onClick={() => { setAttemptLead(contactLead); setContactLead(null); setAttemptDraft((current) => ({ ...current, data_proxima_acao: contactDraft.data_proxima_tentativa })); }}>Registrar tentativa detalhada</button>
                   <button type="submit" className="dental-button primary">Salvar ficha do contato</button>
+                </div>
+              </div>
+            </form>
+          </div>
+        ) : null}
+
+        {rescheduleLead ? (
+          <div className="dental-modal-backdrop" onClick={() => setRescheduleLead(null)}>
+            <form className="dental-modal" onClick={(event) => event.stopPropagation()} onSubmit={saveReschedule}>
+              <div className="dental-panel-header">
+                <div>
+                  <p className="dental-eyebrow">Agenda Dental Card</p>
+                  <h2 className="dental-panel-title">Reagendar atendimento</h2>
+                  <p className="dental-panel-note">{rescheduleLead.nome_lead} · {rescheduleLead.unidade}</p>
+                </div>
+                <button type="button" className="dental-button" onClick={() => setRescheduleLead(null)}>Fechar</button>
+              </div>
+              <div className="dental-form-grid">
+                <Field label="Nova data"><input className="dental-input" type="date" value={rescheduleDraft.data_agendamento} onChange={(event) => setRescheduleDraft((current) => ({ ...current, data_agendamento: event.target.value }))} required /></Field>
+                <Field label="Novo horário"><input className="dental-input" type="time" value={rescheduleDraft.hora_agendamento} onChange={(event) => setRescheduleDraft((current) => ({ ...current, hora_agendamento: event.target.value }))} required /></Field>
+                <Field label="Observação do reagendamento" className="dental-span-4"><textarea className="dental-textarea" value={rescheduleDraft.observacao} onChange={(event) => setRescheduleDraft((current) => ({ ...current, observacao: event.target.value }))} placeholder="Ex.: paciente solicitou novo horário, endereço reenviado, confirmação pendente..." /></Field>
+                <div className="dental-actions dental-span-4">
+                  <button type="button" className="dental-button" onClick={() => setRescheduleLead(null)}>Cancelar</button>
+                  <button type="submit" className="dental-button primary">Salvar nova agenda</button>
                 </div>
               </div>
             </form>

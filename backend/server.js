@@ -16093,6 +16093,21 @@ function getAccessProfileLabel(role) {
   return accessProfiles[role] || role || 'Perfil não informado';
 }
 
+function formatAdminUserPermissionList(value, fallback = []) {
+  let parsed = value;
+
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value);
+    } catch (error) {
+      parsed = [];
+    }
+  }
+
+  const list = Array.isArray(parsed) ? parsed : fallback;
+  return list.filter(Boolean).join(', ');
+}
+
 async function getAdminUsersExportRows() {
   const [rows] = await pool.query(
     `SELECT
@@ -16104,12 +16119,26 @@ async function getAdminUsersExportRows() {
         u.phone,
         u.whatsapp,
         u.department,
+        u.permissions,
+        u.action_permissions,
         u.active,
         u.must_change_password,
         u.created_at,
         u.updated_at,
         (
-          SELECT GROUP_CONCAT(c.name ORDER BY c.name SEPARATOR ', ')
+          SELECT GROUP_CONCAT(
+            CONCAT(
+              c.name,
+              CASE
+                WHEN COALESCE(c.city, '') <> '' OR COALESCE(c.state, '') <> ''
+                  THEN CONCAT(' - ', COALESCE(c.city, ''), CASE WHEN COALESCE(c.state, '') <> '' THEN CONCAT('/', c.state) ELSE '' END)
+                ELSE ''
+              END,
+              CASE WHEN COALESCE(uc.can_edit, 0) = 1 THEN ' (edita)' ELSE '' END
+            )
+            ORDER BY c.name
+            SEPARATOR '; '
+          )
             FROM user_clinics uc
             INNER JOIN clinics c ON c.id = uc.clinic_id
            WHERE uc.user_id = u.id
@@ -16119,21 +16148,29 @@ async function getAdminUsersExportRows() {
       ORDER BY u.name ASC, u.email ASC`
   );
 
-  return rows.map((user) => ({
-    id: user.id,
-    nome: user.name || '',
-    email: user.email || '',
-    telefone: user.phone || '',
-    whatsapp: user.whatsapp || '',
-    perfil: getAccessProfileLabel(user.role),
-    cargo: user.position || '',
-    area: user.department || '',
-    status: Number(user.active) ? 'Ativo' : 'Desabilitado',
-    senha_inicial: Number(user.must_change_password) ? 'Pendente de troca' : 'Regular',
-    clinicas: user.clinics || '',
-    criado_em: user.created_at,
-    atualizado_em: user.updated_at
-  }));
+  return rows.map((user) => {
+    const defaultScreens = defaultPermissionsForRole(user.role);
+    const defaultActions = defaultActionPermissionsForRole(user.role);
+
+    return {
+      id: user.id,
+      nome: user.name || '',
+      email: user.email || '',
+      telefone: user.phone || '',
+      whatsapp: user.whatsapp || '',
+      perfil: getAccessProfileLabel(user.role),
+      perfil_codigo: user.role || '',
+      cargo: user.position || '',
+      departamento: user.department || '',
+      status: Number(user.active) ? 'Ativo' : 'Desabilitado',
+      senha_inicial: Number(user.must_change_password) ? 'Pendente de troca' : 'Regular',
+      clinicas: user.clinics || '',
+      telas_liberadas: formatAdminUserPermissionList(user.permissions, defaultScreens),
+      acoes_liberadas: formatAdminUserPermissionList(user.action_permissions, defaultActions),
+      criado_em: user.created_at,
+      atualizado_em: user.updated_at
+    };
+  });
 }
 
 function buildAdminUsersExcelBuffer(rows = []) {
@@ -16144,11 +16181,14 @@ function buildAdminUsersExcelBuffer(rows = []) {
     Telefone: user.telefone,
     WhatsApp: user.whatsapp,
     Perfil: user.perfil,
+    'Código do perfil': user.perfil_codigo,
     Cargo: user.cargo,
-    'Área / unidade': user.area,
+    'Departamento / área': user.departamento,
     Status: user.status,
     'Senha inicial': user.senha_inicial,
-    'Clínicas vinculadas': user.clinicas,
+    'Clínicas sob responsabilidade': user.clinicas,
+    'Telas liberadas': user.telas_liberadas,
+    'Botões e ações liberados': user.acoes_liberadas,
     'Criado em': user.criado_em ? formatMessageDateTime(user.criado_em) : '',
     'Atualizado em': user.atualizado_em ? formatMessageDateTime(user.atualizado_em) : ''
   }));
@@ -16161,11 +16201,14 @@ function buildAdminUsersExcelBuffer(rows = []) {
     { wch: 18 },
     { wch: 18 },
     { wch: 22 },
+    { wch: 22 },
     { wch: 24 },
     { wch: 24 },
     { wch: 14 },
     { wch: 20 },
-    { wch: 48 },
+    { wch: 64 },
+    { wch: 64 },
+    { wch: 72 },
     { wch: 20 },
     { wch: 20 }
   ];
@@ -16184,13 +16227,12 @@ function buildAdminUsersPdfBuffer(rows = []) {
     const line = '#dfcfba';
     const pageWidth = doc.page.width - 64;
     const columns = [
-      ['Nome', 145],
-      ['E-mail', 170],
-      ['Telefone', 82],
-      ['WhatsApp', 82],
-      ['Perfil', 95],
-      ['Status', 62],
-      ['Clínicas', pageWidth - 636]
+      ['Nome', 128],
+      ['E-mail', 150],
+      ['Contato', 100],
+      ['Perfil / cargo', 126],
+      ['Clínicas', 188],
+      ['Permissões', pageWidth - 692]
     ];
     let y = 120;
 
@@ -16227,18 +16269,17 @@ function buildAdminUsersPdfBuffer(rows = []) {
         drawHeader();
         drawTableHeader();
       }
-      const rowHeight = 42;
+      const rowHeight = 66;
       doc.rect(32, y, pageWidth, rowHeight).fill(index % 2 === 0 ? '#ffffff' : '#fffaf4');
       doc.strokeColor(line).lineWidth(0.4).moveTo(32, y + rowHeight).lineTo(32 + pageWidth, y + rowHeight).stroke();
       let x = 32;
       const values = [
-        user.nome,
+        `${user.nome}\n${user.status} · ${user.senha_inicial}`,
         user.email,
-        user.telefone,
-        user.whatsapp,
-        user.perfil,
-        user.status,
-        user.clinicas || '-'
+        `Tel.: ${user.telefone || '-'}\nWhats.: ${user.whatsapp || '-'}`,
+        `${user.perfil}\n${user.cargo || '-'}\n${user.departamento || '-'}`,
+        user.clinicas || '-',
+        `Telas: ${user.telas_liberadas || '-'}\nAções: ${user.acoes_liberadas || '-'}`
       ];
       doc.fillColor(ink);
       values.forEach((value, valueIndex) => {

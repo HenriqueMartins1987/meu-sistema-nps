@@ -6,7 +6,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "node --test --test-concurrency=1 --test-isolation=none tests/*.test.js"
+    "test": "node --test --test-concurrency=1 --test-isolation=none tests/*.test.js",
+    "sync:prod-local": "node scripts/syncProductionToLocal.js"
   },
   "keywords": [],
   "author": "",
