@@ -63,6 +63,7 @@ function AdminPanel() {
   const [bulkEmailDraft, setBulkEmailDraft] = useState(buildBulkEmailDraft);
   const [bulkEmailUserIds, setBulkEmailUserIds] = useState([]);
   const [sendingBulkEmail, setSendingBulkEmail] = useState(false);
+  const [exportingUsers, setExportingUsers] = useState(false);
 
   const selectedUser = useMemo(() => (
     users.find((user) => String(user.id) === String(selectedUserId)) || null
@@ -426,6 +427,37 @@ function AdminPanel() {
     setBulkEmailUserIds([]);
   };
 
+  const exportUsers = async (format) => {
+    setFeedback('');
+    setExportingUsers(true);
+
+    const isExcel = format === 'excel';
+    const extension = isExcel ? 'xlsx' : 'pdf';
+    const mimeType = isExcel
+      ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      : 'application/pdf';
+
+    try {
+      const response = await api.get(`/admin/users/export/${format}`, {
+        responseType: 'blob'
+      });
+      const blob = new Blob([response.data], { type: mimeType });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `usuarios-cadastrados.${extension}`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      setFeedback(`Exportacao de usuarios em ${isExcel ? 'Excel' : 'PDF'} gerada com sucesso.`);
+    } catch (error) {
+      setFeedback(error.response?.data?.error || `Nao foi possivel exportar usuarios em ${isExcel ? 'Excel' : 'PDF'}.`);
+    } finally {
+      setExportingUsers(false);
+    }
+  };
+
   if (!isMasterAdmin(currentUser)) {
     return null;
   }
@@ -443,6 +475,14 @@ function AdminPanel() {
 
         <div className="heading-actions">
           <button className="outline-action" onClick={() => navigate('/admin/controle-master')}>Centro Master</button>
+          <button className="outline-action icon-action" onClick={() => exportUsers('excel')} disabled={exportingUsers}>
+            <span className="file-icon xls">XLS</span>
+            Exportar Excel
+          </button>
+          <button className="outline-action icon-action" onClick={() => exportUsers('pdf')} disabled={exportingUsers}>
+            <span className="file-icon pdf">PDF</span>
+            Exportar PDF
+          </button>
           <button className="outline-action" onClick={() => navigate('/admin/configuracoes/whatsapp')}>Configurações WhatsApp</button>
           <button className="primary-action" onClick={() => setCreateOpen(true)}>Cadastrar novo usuário</button>
           <button className="outline-action" onClick={() => navigate('/home')}>Home</button>

@@ -16088,6 +16088,209 @@ app.get('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
   }
 });
 
+function getAccessProfileLabel(role) {
+  if (role === 'master_admin') return 'Administrador Master';
+  return accessProfiles[role] || role || 'Perfil não informado';
+}
+
+async function getAdminUsersExportRows() {
+  const [rows] = await pool.query(
+    `SELECT
+        u.id,
+        u.name,
+        u.email,
+        u.role,
+        u.position,
+        u.phone,
+        u.whatsapp,
+        u.department,
+        u.active,
+        u.must_change_password,
+        u.created_at,
+        u.updated_at,
+        (
+          SELECT GROUP_CONCAT(c.name ORDER BY c.name SEPARATOR ', ')
+            FROM user_clinics uc
+            INNER JOIN clinics c ON c.id = uc.clinic_id
+           WHERE uc.user_id = u.id
+        ) AS clinics
+       FROM users u
+      WHERE u.deleted_at IS NULL
+      ORDER BY u.name ASC, u.email ASC`
+  );
+
+  return rows.map((user) => ({
+    id: user.id,
+    nome: user.name || '',
+    email: user.email || '',
+    telefone: user.phone || '',
+    whatsapp: user.whatsapp || '',
+    perfil: getAccessProfileLabel(user.role),
+    cargo: user.position || '',
+    area: user.department || '',
+    status: Number(user.active) ? 'Ativo' : 'Desabilitado',
+    senha_inicial: Number(user.must_change_password) ? 'Pendente de troca' : 'Regular',
+    clinicas: user.clinics || '',
+    criado_em: user.created_at,
+    atualizado_em: user.updated_at
+  }));
+}
+
+function buildAdminUsersExcelBuffer(rows = []) {
+  const data = rows.map((user) => ({
+    ID: user.id,
+    'Nome completo': user.nome,
+    'E-mail': user.email,
+    Telefone: user.telefone,
+    WhatsApp: user.whatsapp,
+    Perfil: user.perfil,
+    Cargo: user.cargo,
+    'Área / unidade': user.area,
+    Status: user.status,
+    'Senha inicial': user.senha_inicial,
+    'Clínicas vinculadas': user.clinicas,
+    'Criado em': user.criado_em ? formatMessageDateTime(user.criado_em) : '',
+    'Atualizado em': user.atualizado_em ? formatMessageDateTime(user.atualizado_em) : ''
+  }));
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.json_to_sheet(data);
+  worksheet['!cols'] = [
+    { wch: 8 },
+    { wch: 34 },
+    { wch: 34 },
+    { wch: 18 },
+    { wch: 18 },
+    { wch: 22 },
+    { wch: 24 },
+    { wch: 24 },
+    { wch: 14 },
+    { wch: 20 },
+    { wch: 48 },
+    { wch: 20 },
+    { wch: 20 }
+  ];
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Usuários');
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+}
+
+function buildAdminUsersPdfBuffer(rows = []) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 32, bufferPages: true });
+    const chunks = [];
+    const ink = '#211a16';
+    const muted = '#6c5a4d';
+    const gold = '#b07a35';
+    const teal = '#0e5966';
+    const line = '#dfcfba';
+    const pageWidth = doc.page.width - 64;
+    const columns = [
+      ['Nome', 145],
+      ['E-mail', 170],
+      ['Telefone', 82],
+      ['WhatsApp', 82],
+      ['Perfil', 95],
+      ['Status', 62],
+      ['Clínicas', pageWidth - 636]
+    ];
+    let y = 120;
+
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('error', reject);
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+
+    const drawHeader = () => {
+      doc.rect(0, 0, doc.page.width, 78).fill('#fff8ef');
+      doc.fillColor(gold).font('Helvetica-Bold').fontSize(9).text('PAINEL GERENCIAL', 32, 26);
+      doc.fillColor(ink).fontSize(22).text('Relação de usuários cadastrados', 32, 39);
+      doc.fillColor(muted).font('Helvetica').fontSize(9)
+        .text(`Emitido em ${formatMessageDateTime(new Date())} · ${rows.length} usuário(s)`, 32, 66);
+      y = 98;
+    };
+
+    const drawTableHeader = () => {
+      let x = 32;
+      doc.rect(32, y, pageWidth, 24).fill('#f5ead9');
+      doc.fillColor('#5e4321').font('Helvetica-Bold').fontSize(7);
+      columns.forEach(([label, width]) => {
+        doc.text(label.toUpperCase(), x + 4, y + 8, { width: width - 8 });
+        x += width;
+      });
+      y += 24;
+    };
+
+    drawHeader();
+    drawTableHeader();
+    doc.font('Helvetica').fontSize(7);
+    rows.forEach((user, index) => {
+      if (y > doc.page.height - 64) {
+        doc.addPage();
+        drawHeader();
+        drawTableHeader();
+      }
+      const rowHeight = 42;
+      doc.rect(32, y, pageWidth, rowHeight).fill(index % 2 === 0 ? '#ffffff' : '#fffaf4');
+      doc.strokeColor(line).lineWidth(0.4).moveTo(32, y + rowHeight).lineTo(32 + pageWidth, y + rowHeight).stroke();
+      let x = 32;
+      const values = [
+        user.nome,
+        user.email,
+        user.telefone,
+        user.whatsapp,
+        user.perfil,
+        user.status,
+        user.clinicas || '-'
+      ];
+      doc.fillColor(ink);
+      values.forEach((value, valueIndex) => {
+        const width = columns[valueIndex][1];
+        doc.text(String(value || '-'), x + 4, y + 8, { width: width - 8, height: rowHeight - 12 });
+        x += width;
+      });
+      y += rowHeight;
+    });
+
+    if (!rows.length) {
+      doc.fillColor(muted).fontSize(10).text('Nenhum usuário encontrado.', 32, y + 12);
+    }
+
+    const range = doc.bufferedPageRange();
+    for (let i = range.start; i < range.start + range.count; i += 1) {
+      doc.switchToPage(i);
+      doc.fillColor(teal).font('Helvetica-Bold').fontSize(8)
+        .text('Sistema NPS - Grupo Sorria | Gestão de Usuários', 32, doc.page.height - 24);
+      doc.fillColor(muted).font('Helvetica').text(`Página ${i + 1} de ${range.count}`, doc.page.width - 100, doc.page.height - 24);
+    }
+
+    doc.end();
+  });
+}
+
+app.get('/admin/users/export/excel', authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    const rows = await getAdminUsersExportRows();
+    const buffer = buildAdminUsersExcelBuffer(rows);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="usuarios-cadastrados.xlsx"');
+    return res.send(buffer);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao exportar usuários em Excel.' });
+  }
+});
+
+app.get('/admin/users/export/pdf', authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    const rows = await getAdminUsersExportRows();
+    const buffer = await buildAdminUsersPdfBuffer(rows);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="usuarios-cadastrados.pdf"');
+    return res.send(buffer);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao exportar usuários em PDF.' });
+  }
+});
+
 app.post('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const parsed = parseBodyWithSchema(adminUserCreateSchema, req.body);
