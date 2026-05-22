@@ -2,6 +2,7 @@ const XLSX = require('xlsx');
 
 const dentalCardStatuses = [
   'Novo Lead',
+  'Indicação Recebida',
   'Contato IA iniciado',
   'Aguardando resposta',
   'Contato efetivo',
@@ -209,6 +210,24 @@ function buildDentalDashboard(rows = []) {
   const today = new Date().toISOString().slice(0, 10);
   const returnsToday = rows.filter((row) => String(row.data_proxima_tentativa || '').slice(0, 10) === today).length;
   const critical = rows.filter((row) => row.sla_status === 'atrasado' || row.status === 'Faltou / No-show').length;
+  const publicRows = rows.filter((row) => Number(row.created_via_public_form || 0) || row.origem_cadastro === 'Formulário Público Dental Card');
+  const withPhoto = rows.filter((row) => String(row.foto_url || '').trim()).length;
+  const withoutPhoto = rows.filter((row) => !String(row.foto_url || '').trim()).length;
+  const pendingReturn = rows.filter((row) => ['pendente', 'atencao', 'vencido'].includes(String(row.sla_retorno_status || '').toLowerCase()) && !row.primeiro_retorno_em && !row.data_primeiro_contato).length;
+  const slaOk = rows.filter((row) => ['cumprido', 'cumprido_atrasado'].includes(String(row.sla_retorno_status || '').toLowerCase())).length;
+  const slaWarning = rows.filter((row) => String(row.sla_retorno_status || '').toLowerCase() === 'atencao').length;
+  const slaExpired = rows.filter((row) => String(row.sla_retorno_status || '').toLowerCase() === 'vencido').length;
+  const firstReturnTimes = rows
+    .map((row) => {
+      const start = row.created_at ? new Date(row.created_at) : null;
+      const first = row.primeiro_retorno_em || row.data_primeiro_contato ? new Date(row.primeiro_retorno_em || row.data_primeiro_contato) : null;
+      if (!start || !first || Number.isNaN(start.getTime()) || Number.isNaN(first.getTime())) return null;
+      return Math.max(0, (first.getTime() - start.getTime()) / (60 * 60 * 1000));
+    })
+    .filter((value) => value !== null);
+  const averageFirstReturnHours = firstReturnTimes.length
+    ? Number((firstReturnTimes.reduce((sum, value) => sum + value, 0) / firstReturnTimes.length).toFixed(2))
+    : 0;
 
   const rate = (part, base) => (base > 0 ? Number(((part / base) * 100).toFixed(2)) : 0);
   const groupBy = (field, valueField = null) => {
@@ -255,7 +274,16 @@ function buildDentalDashboard(rows = []) {
       leadsSemContato: withoutContact,
       leadsEmAtraso: late,
       leadsRetornoHoje: returnsToday,
-      leadsCriticos: critical
+      leadsCriticos: critical,
+      publicIndications: publicRows.length,
+      indicationsWithPhoto: withPhoto,
+      indicationsWithoutPhoto: withoutPhoto,
+      pendingReturn,
+      slaReturnOk: slaOk,
+      slaReturnWarning: slaWarning,
+      slaReturnExpired: slaExpired,
+      averageFirstReturnHours,
+      slaReturnCompliance: rate(slaOk, rows.length)
     },
     charts: {
       funnel: [
@@ -279,6 +307,15 @@ function buildDentalDashboard(rows = []) {
       })),
       revenueByMonth: Array.from(monthly.values()).sort((a, b) => a.name.localeCompare(b.name)),
       source: groupBy('origem'),
+      publicByUnit: publicRows.reduce((acc, row) => {
+        const key = row.unidade || 'Nao informado';
+        const item = acc.find((entry) => entry.name === key);
+        if (item) item.value += 1;
+        else acc.push({ name: key, value: 1 });
+        return acc;
+      }, []).sort((a, b) => b.value - a.value),
+      indicators: groupBy('nome_indicador'),
+      returnSla: groupBy('sla_retorno_status'),
       iaVsCrc: [
         { name: 'IA', agendados: scheduledIa, comparecidos: attendedIa },
         { name: 'Joyce/CRC', agendados: scheduledCrc, comparecidos: attendedCrc }

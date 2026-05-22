@@ -50,6 +50,38 @@ test('dental card dashboard calculates core funnel rates', () => {
   assert.equal(payload.summary.leadsCriticos, 1);
 });
 
+test('dental card dashboard highlights public indications and return SLA', () => {
+  const payload = buildDentalDashboard([
+    {
+      unidade: 'Garavelo',
+      nome_lead: 'Lead Publico',
+      telefone: '5562999999999',
+      created_via_public_form: 1,
+      foto_url: '/uploads/foto.jpg',
+      sla_retorno_status: 'vencido',
+      status: 'Indicação Recebida',
+      sla_status: 'atencao'
+    },
+    {
+      unidade: 'Garavelo',
+      nome_lead: 'Lead Retornado',
+      telefone: '5562888888888',
+      created_at: '2026-05-01T08:00:00.000Z',
+      primeiro_retorno_em: '2026-05-01T09:00:00.000Z',
+      sla_retorno_status: 'cumprido',
+      status: 'Contato efetivo',
+      sla_status: 'ok'
+    }
+  ]);
+
+  assert.equal(payload.summary.publicIndications, 1);
+  assert.equal(payload.summary.indicationsWithPhoto, 1);
+  assert.equal(payload.summary.slaReturnExpired, 1);
+  assert.equal(payload.summary.slaReturnOk, 1);
+  assert.equal(payload.summary.slaReturnCompliance, 50);
+  assert.equal(payload.charts.returnSla.length, 2);
+});
+
 test('dental card import maps workbook rows and removes duplicates', () => {
   const workbook = XLSX.utils.book_new();
   const sheet = XLSX.utils.json_to_sheet([

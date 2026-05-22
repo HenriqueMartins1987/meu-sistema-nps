@@ -186,6 +186,7 @@ function HomeShellFixed() {
   const [agendaItems, setAgendaItems] = useState([]);
   const [complaintTreatmentItems, setComplaintTreatmentItems] = useState([]);
   const [agendaAlerts, setAgendaAlerts] = useState([]);
+  const [dentalPendingCount, setDentalPendingCount] = useState(0);
   const [agendaLoading, setAgendaLoading] = useState(false);
   const [agendaAlertOpen, setAgendaAlertOpen] = useState(false);
   const [passwordForm, setPasswordForm] = useState({
@@ -322,9 +323,28 @@ function HomeShellFixed() {
     }
   }, [masterUser]);
 
+  const loadDentalCardBadge = useCallback(async () => {
+    if (!hasPermission(user, 'dental_card')) {
+      setDentalPendingCount(0);
+      return;
+    }
+
+    try {
+      const response = await api.get('/dental-card/dashboard');
+      const summary = response.data?.summary || {};
+      const pending = Number(summary.pendingReturn || 0)
+        + Number(summary.slaReturnWarning || 0)
+        + Number(summary.slaReturnExpired || 0);
+      setDentalPendingCount(Math.max(0, pending));
+    } catch (error) {
+      setDentalPendingCount(0);
+    }
+  }, [user]);
+
   useEffect(() => {
     loadNotifications();
-  }, [loadNotifications]);
+    loadDentalCardBadge();
+  }, [loadDentalCardBadge, loadNotifications]);
 
   useEffect(() => {
     if (crcWhatsappHomeTarget && !mustChangePassword) {
@@ -995,7 +1015,10 @@ function HomeShellFixed() {
                 <h3>{section.title}</h3>
                 {section.items.map((item) => (
                   <button key={item.path} onClick={() => handleNavigate(item.path)}>
-                    {item.label}
+                    <span>{item.label}</span>
+                    {item.permission === 'dental_card' && dentalPendingCount > 0 ? (
+                      <em className="drawer-badge">{dentalPendingCount}</em>
+                    ) : null}
                   </button>
                 ))}
               </section>

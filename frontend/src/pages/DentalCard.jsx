@@ -17,18 +17,20 @@ import {
 } from 'recharts';
 
 import api from '../api';
-import { hasPermission, readUser } from '../constants';
+import { hasPermission, isAdmin, readUser } from '../constants';
 import './DentalCard.css';
 
 const tabs = [
   { id: 'dashboard', label: 'Dashboard Executivo' },
   { id: 'lead', label: 'Lançamento de Indicação' },
   { id: 'pipeline', label: 'Controle Operacional' },
-  { id: 'reports', label: 'Relatórios e Exportação' }
+  { id: 'reports', label: 'Relatórios e Exportação' },
+  { id: 'settings', label: 'Configurações Dental Card' }
 ];
 
 const statusOptions = [
   'Novo Lead',
+  'Indicação Recebida',
   'Contato IA iniciado',
   'Aguardando resposta',
   'Contato efetivo',
@@ -173,6 +175,8 @@ function getLeadReferenceDate(lead) {
 
 function badgeTone(status = '') {
   const normalized = String(status).toLowerCase();
+  if (['cumprido', 'ok'].some((item) => normalized.includes(item))) return 'success';
+  if (['vencido'].some((item) => normalized.includes(item))) return 'danger';
   if (['pagou', 'compareceu', 'confirmado'].some((item) => normalized.includes(item))) return 'success';
   if (['agendado', 'contato efetivo'].some((item) => normalized.includes(item))) return 'info';
   if (['follow', 'aguardando', 'novo', 'retorno'].some((item) => normalized.includes(item))) return 'warning';
@@ -230,21 +234,27 @@ function DentalCard() {
   const navigate = useNavigate();
   const user = useMemo(() => readUser(), []);
   const canManage = hasPermission(user, 'dental_card');
+  const canConfigureDentalCard = isAdmin(user);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [filters, setFilters] = useState({
     startDate: '',
     endDate: '',
     unidade: '',
     origem: '',
+    origemCadastro: '',
+    indicador: '',
     status: '',
     pagamento: '',
     slaStatus: '',
+    slaRetornoStatus: '',
+    fotoFiltro: '',
     search: ''
   });
   const [dashboard, setDashboard] = useState(null);
   const [leads, setLeads] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [templates, setTemplates] = useState([]);
+  const [notificationSettings, setNotificationSettings] = useState([]);
   const [leadDraft, setLeadDraft] = useState(defaultLead);
   const [editingLeadId, setEditingLeadId] = useState(null);
   const [selectedLead, setSelectedLead] = useState(null);
@@ -278,7 +288,16 @@ function DentalCard() {
   const [error, setError] = useState('');
 
   const queryParams = useMemo(() => {
-    return Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== '' && value !== null && value !== undefined));
+    const params = Object.fromEntries(Object.entries(filters).filter(([, value]) => value !== '' && value !== null && value !== undefined));
+    if (params.fotoFiltro === 'com') {
+      params.comFoto = 'true';
+      delete params.fotoFiltro;
+    }
+    if (params.fotoFiltro === 'sem') {
+      params.semFoto = 'true';
+      delete params.fotoFiltro;
+    }
+    return params;
   }, [filters]);
 
   const unidadeOptions = useMemo(() => {
@@ -297,16 +316,18 @@ function DentalCard() {
     setLoading(true);
     setError('');
     try {
-      const [dashboardRes, leadsRes, clinicsRes, templatesRes] = await Promise.all([
+      const [dashboardRes, leadsRes, clinicsRes, templatesRes, settingsRes] = await Promise.all([
         api.get('/dental-card/dashboard', { params: queryParams }),
         api.get('/dental-card/leads', { params: queryParams }),
         api.get('/clinics').catch(() => ({ data: [] })),
-        api.get('/dental-card/templates').catch(() => ({ data: [] }))
+        api.get('/dental-card/templates').catch(() => ({ data: [] })),
+        api.get('/dental-card/notification-settings').catch(() => ({ data: [] }))
       ]);
       setDashboard(dashboardRes.data || null);
       setLeads(Array.isArray(leadsRes.data) ? leadsRes.data : []);
       setClinics(Array.isArray(clinicsRes.data) ? clinicsRes.data : []);
       setTemplates(Array.isArray(templatesRes.data) ? templatesRes.data : []);
+      setNotificationSettings(Array.isArray(settingsRes.data) ? settingsRes.data : []);
     } catch (err) {
       setError(err.response?.data?.error || 'Não foi possível carregar o Dental Card.');
     } finally {
@@ -332,9 +353,13 @@ function DentalCard() {
       endDate: '',
       unidade: '',
       origem: '',
+      origemCadastro: '',
+      indicador: '',
       status: '',
       pagamento: '',
       slaStatus: '',
+      slaRetornoStatus: '',
+      fotoFiltro: '',
       search: ''
     });
   }
@@ -520,6 +545,27 @@ function DentalCard() {
     }
   }
 
+  async function exportExcel() {
+    setError('');
+    try {
+      const response = await api.get('/dental-card/export/excel', {
+        params: queryParams,
+        responseType: 'blob'
+      });
+      const url = window.URL.createObjectURL(new Blob([response.data], {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'dental-card.xlsx';
+      link.click();
+      window.URL.revokeObjectURL(url);
+      setFeedback('Excel Dental Card gerado.');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Erro ao exportar Excel Dental Card.');
+    }
+  }
+
   async function exportPdf(extraParams = {}) {
     setError('');
     try {
@@ -536,6 +582,22 @@ function DentalCard() {
       setFeedback('Relatório PDF Dental Card gerado.');
     } catch (err) {
       setError(err.response?.data?.error || 'Erro ao exportar PDF Dental Card.');
+    }
+  }
+
+  async function exportLeadPdf(leadId) {
+    setError('');
+    try {
+      const response = await api.get(`/dental-card/report/${leadId}/pdf`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `dental-card-${leadId}.pdf`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+      setFeedback('PDF individual Dental Card gerado.');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Erro ao exportar PDF individual.');
     }
   }
 
@@ -610,6 +672,22 @@ function DentalCard() {
     }
   }
 
+  async function saveNotificationSetting(setting, patch) {
+    setError('');
+    setFeedback('');
+    try {
+      await api.put(`/dental-card/notification-settings/${setting.user_id}`, {
+        ...setting,
+        ...patch,
+        user_id: setting.user_id
+      });
+      setFeedback('Configuração de notificação Dental Card atualizada.');
+      await loadData();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Erro ao salvar configuração de notificação.');
+    }
+  }
+
   const summary = dashboard?.summary || {};
   const charts = dashboard?.charts || {};
   const routine = dashboard?.routineToday || {};
@@ -629,6 +707,9 @@ function DentalCard() {
   }, [weeklyLeads]);
   const topUnit = (charts.byUnit || [])[0];
   const topOperator = (charts.operatorConversion || [])[0];
+  const priorityLeads = useMemo(() => leads
+    .filter((lead) => ['pendente', 'atencao', 'vencido'].includes(String(lead.sla_retorno_status || '').toLowerCase()))
+    .slice(0, 10), [leads]);
 
   const kpis = [
     ['Total de indicações', formatNumber(summary.totalIndicacoes), 'Base filtrada no período.', 'neutral'],
@@ -642,7 +723,11 @@ function DentalCard() {
     ['Conversão final', formatPercent(summary.taxaConversaoFinal), 'Pagantes sobre indicações.', 'info'],
     ['Sem contato', formatNumber(summary.leadsSemContato), 'Leads que precisam de primeira ação.', 'warning'],
     ['Retorno hoje', formatNumber(summary.leadsRetornoHoje), 'Fila operacional do dia.', 'warning'],
-    ['Críticos', formatNumber(summary.leadsCriticos), 'Atrasados, faltosos ou no-show.', 'danger']
+    ['Críticos', formatNumber(summary.leadsCriticos), 'Atrasados, faltosos ou no-show.', 'danger'],
+    ['Formulário público', formatNumber(summary.publicIndications), 'Indicações recebidas pelo link externo.', 'info'],
+    ['SLA vencido', formatNumber(summary.slaReturnExpired), 'Indicações sem retorno em 24h.', 'danger'],
+    ['SLA em atenção', formatNumber(summary.slaReturnWarning), 'Menos de 4h para vencer.', 'warning'],
+    ['SLA cumprido', formatPercent(summary.slaReturnCompliance), 'Retornos registrados dentro do fluxo.', 'success']
   ];
 
   return (
@@ -683,14 +768,19 @@ function DentalCard() {
           <Field label="Período final"><input className="dental-input" type="date" value={filters.endDate} onChange={(event) => updateFilter('endDate', event.target.value)} /></Field>
           <Field label="Unidade"><select className="dental-select" value={filters.unidade} onChange={(event) => updateFilter('unidade', event.target.value)}><option value="">Todas</option>{unidadeOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
           <Field label="Origem"><select className="dental-select" value={filters.origem} onChange={(event) => updateFilter('origem', event.target.value)}><option value="">Todas</option>{originOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
+          <Field label="Origem do cadastro"><select className="dental-select" value={filters.origemCadastro} onChange={(event) => updateFilter('origemCadastro', event.target.value)}><option value="">Todas</option><option value="Formulário Público Dental Card">Formulário Público</option><option value="Importação">Importação</option><option value="Manual">Manual</option></select></Field>
           <Field label="Status"><select className="dental-select" value={filters.status} onChange={(event) => updateFilter('status', event.target.value)}><option value="">Todos</option>{statusOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
           <Field label="Busca"><input className="dental-input" value={filters.search} onChange={(event) => updateFilter('search', event.target.value)} placeholder="Paciente, telefone, ficha..." /></Field>
           <Field label="Responsável"><select className="dental-select" value={filters.responsavel || ''} onChange={(event) => updateFilter('responsavel', event.target.value)}><option value="">Todos</option>{responsavelOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
+          <Field label="Indicador"><input className="dental-input" value={filters.indicador || ''} onChange={(event) => updateFilter('indicador', event.target.value)} placeholder="Quem indicou" /></Field>
           <Field label="Pagamento"><select className="dental-select" value={filters.pagamento} onChange={(event) => updateFilter('pagamento', event.target.value)}><option value="">Todos</option>{paymentOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></Field>
           <Field label="SLA"><select className="dental-select" value={filters.slaStatus} onChange={(event) => updateFilter('slaStatus', event.target.value)}><option value="">Todos</option><option value="ok">No prazo</option><option value="retorno_hoje">Retorno hoje</option><option value="atencao">Atenção</option><option value="atrasado">Atrasado</option></select></Field>
+          <Field label="SLA retorno"><select className="dental-select" value={filters.slaRetornoStatus} onChange={(event) => updateFilter('slaRetornoStatus', event.target.value)}><option value="">Todos</option><option value="pendente">Pendente</option><option value="atencao">Atenção</option><option value="vencido">Vencido</option><option value="cumprido">Cumprido</option><option value="cumprido_atrasado">Cumprido atrasado</option></select></Field>
+          <Field label="Foto"><select className="dental-select" value={filters.fotoFiltro} onChange={(event) => updateFilter('fotoFiltro', event.target.value)}><option value="">Todos</option><option value="com">Com foto</option><option value="sem">Sem foto</option></select></Field>
           <div className="dental-actions dental-span-2">
             <button type="button" className="dental-button" onClick={resetFilters}>Limpar filtros</button>
             <button type="button" className="dental-button primary" onClick={exportCsv}>Exportar CSV</button>
+            <button type="button" className="dental-button primary" onClick={exportExcel}>Exportar Excel</button>
             <button type="button" className="dental-button primary" onClick={() => exportPdf()}>Exportar PDF</button>
           </div>
         </section>
@@ -801,6 +891,26 @@ function DentalCard() {
                   </div>
                 </div>
               </Panel>
+              <Panel title="Fila de prioridade" note="Indicações públicas pendentes de retorno e SLA de 24 horas.">
+                {priorityLeads.length ? (
+                  <div className="dental-priority-list">
+                    {priorityLeads.map((lead) => (
+                      <div className="dental-priority-item" key={lead.id}>
+                        <div>
+                          <strong>{lead.nome_lead}</strong>
+                          <span>{lead.unidade} · {lead.telefone}</span>
+                          <small>Indicado por {lead.nome_indicador || 'não informado'}</small>
+                        </div>
+                        <Badge tone={badgeTone(lead.sla_retorno_status)}>{lead.sla_retorno_status || 'pendente'}</Badge>
+                        <div className="dental-row-actions">
+                          <button type="button" className="dental-mini-button" onClick={() => openContactFicha(lead)}>Registrar retorno</button>
+                          <button type="button" className="dental-mini-button" onClick={() => openWhatsApp(lead)}>WhatsApp</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : <div className="dental-empty">Nenhuma indicação pendente de SLA no filtro atual.</div>}
+              </Panel>
             </div>
           </>
         ) : null}
@@ -889,7 +999,11 @@ function DentalCard() {
                       <tr key={lead.id}>
                         <td>{formatDate(lead.data_indicacao)}</td>
                         <td><strong>{lead.unidade}</strong><br /><small>{lead.ficha || 'Sem ficha'}</small></td>
-                        <td><strong>{lead.nome_lead}</strong><br /><small>{lead.nome_indicador ? `Indicado por ${lead.nome_indicador}` : 'Sem indicador'}</small></td>
+                        <td>
+                          <strong>{lead.nome_lead}</strong><br />
+                          <small>{lead.nome_indicador ? `Indicado por ${lead.nome_indicador}` : 'Sem indicador'}</small><br />
+                          {Number(lead.created_via_public_form || 0) ? <Badge tone="info">Formulário Público</Badge> : <Badge tone="neutral">{lead.origem_cadastro || 'Manual'}</Badge>}
+                        </td>
                         <td>{lead.telefone}</td>
                         <td>{lead.origem || '-'}</td>
                         <td>{lead.responsavel || '-'}</td>
@@ -910,6 +1024,7 @@ function DentalCard() {
                             <button type="button" className="dental-mini-button" onClick={() => updateStatus(lead, 'Faltou / No-show')}>Faltou</button>
                             <button type="button" className="dental-mini-button" onClick={() => updateStatus(lead, 'Pagou')}>Pagou</button>
                             <button type="button" className="dental-mini-button" onClick={() => updateStatus(lead, 'Encerrado')}>Encerrar</button>
+                            <button type="button" className="dental-mini-button" onClick={() => exportLeadPdf(lead.id)}>PDF</button>
                             <button type="button" className="dental-mini-button" onClick={() => deleteLead(lead)}>Excluir</button>
                           </div>
                         </td>
@@ -966,6 +1081,7 @@ function DentalCard() {
               </div>
               <div className="dental-actions" style={{ marginTop: 16 }}>
                 <button type="button" className="dental-button primary" onClick={exportCsv}>Exportar CSV</button>
+                <button type="button" className="dental-button primary" onClick={exportExcel}>Exportar Excel</button>
                 <button
                   type="button"
                   className="dental-button primary"
@@ -1041,6 +1157,96 @@ function DentalCard() {
           </div>
         ) : null}
 
+        {activeTab === 'settings' ? (
+          <div className="dental-grid-2">
+            <Panel title="Parâmetros de SLA" note="Regras operacionais aplicadas automaticamente às indicações recebidas pelo formulário público.">
+              <div className="dental-settings-summary">
+                <div><span>SLA padrão</span><strong>24 horas</strong><small>Prazo para primeiro retorno.</small></div>
+                <div><span>Alerta intermediário</span><strong>12 horas</strong><small>Gera aviso de acompanhamento.</small></div>
+                <div><span>Alerta crítico</span><strong>20 horas</strong><small>Menos de 4 horas para vencer.</small></div>
+                <div><span>Após vencimento</span><strong>Recorrente</strong><small>Permanece na fila até registrar retorno.</small></div>
+              </div>
+            </Panel>
+
+            <Panel title="Usuários notificados" note="Defina quem recebe alertas internos da Dental Card e deixe o WhatsApp preparado para ativação futura.">
+              {!canConfigureDentalCard ? <div className="dental-feedback">Somente administradores podem alterar estas configurações. Você pode consultar quem recebe os alertas.</div> : null}
+              <div className="dental-table-wrap">
+                <div className="dental-table-scroll">
+                  <table className="dental-table dental-table-compact">
+                    <thead>
+                      <tr>
+                        <th>Usuário</th>
+                        <th>Unidade</th>
+                        <th>Sistema</th>
+                        <th>WhatsApp</th>
+                        <th>Ativo</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {notificationSettings.map((setting) => (
+                        <tr key={`${setting.user_id}-${setting.unidade || 'all'}`}>
+                          <td><strong>{setting.name}</strong><br /><small>{setting.email}</small></td>
+                          <td>
+                            <input
+                              className="dental-input"
+                              disabled={!canConfigureDentalCard}
+                              value={setting.unidade || ''}
+                              placeholder="Todas"
+                              onChange={(event) => setNotificationSettings((current) => current.map((item) => (
+                                item === setting ? { ...item, unidade: event.target.value } : item
+                              )))}
+                              onBlur={(event) => saveNotificationSetting(setting, { unidade: event.target.value })}
+                            />
+                          </td>
+                          <td>
+                            <input
+                              type="checkbox"
+                              disabled={!canConfigureDentalCard}
+                              checked={Boolean(Number(setting.recebe_notificacao_sistema))}
+                              onChange={(event) => saveNotificationSetting(setting, { recebe_notificacao_sistema: event.target.checked ? 1 : 0 })}
+                            />
+                          </td>
+                          <td>
+                            <div className="dental-setting-phone">
+                              <input
+                                type="checkbox"
+                                disabled={!canConfigureDentalCard}
+                                checked={Boolean(Number(setting.recebe_notificacao_whatsapp))}
+                                onChange={(event) => saveNotificationSetting(setting, { recebe_notificacao_whatsapp: event.target.checked ? 1 : 0 })}
+                              />
+                              <input
+                                className="dental-input"
+                                disabled={!canConfigureDentalCard}
+                                value={setting.telefone_whatsapp || ''}
+                                placeholder="+55..."
+                                onChange={(event) => setNotificationSettings((current) => current.map((item) => (
+                                  item === setting ? { ...item, telefone_whatsapp: event.target.value } : item
+                                )))}
+                                onBlur={(event) => saveNotificationSetting(setting, { telefone_whatsapp: event.target.value })}
+                              />
+                            </div>
+                          </td>
+                          <td>
+                            <input
+                              type="checkbox"
+                              disabled={!canConfigureDentalCard}
+                              checked={Boolean(Number(setting.ativo))}
+                              onChange={(event) => saveNotificationSetting(setting, { ativo: event.target.checked ? 1 : 0 })}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                      {!notificationSettings.length ? (
+                        <tr><td colSpan="5"><div className="dental-empty">Nenhum usuário elegível para notificação Dental Card encontrado.</div></td></tr>
+                      ) : null}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </Panel>
+          </div>
+        ) : null}
+
         {selectedLead ? (
           <div className="dental-modal-backdrop" onClick={() => setSelectedLead(null)}>
             <section className="dental-modal dental-modal-wide" onClick={(event) => event.stopPropagation()}>
@@ -1051,6 +1257,8 @@ function DentalCard() {
                   <p className="dental-panel-note">{selectedLead.unidade} · {selectedLead.telefone}</p>
                 </div>
                 <div className="dental-actions">
+                  <button type="button" className="dental-button" onClick={() => exportLeadPdf(selectedLead.id)}>Exportar PDF</button>
+                  <button type="button" className="dental-button" onClick={() => openWhatsApp(selectedLead)}>WhatsApp</button>
                   <button type="button" className="dental-button" onClick={() => openContactFicha(selectedLead)}>Editar contato</button>
                   <button type="button" className="dental-button" onClick={() => { setAttemptLead(selectedLead); setAttemptDraft((current) => ({ ...current, data_proxima_acao: '' })); }}>Registrar tentativa</button>
                   <button type="button" className="dental-button" onClick={() => setSelectedLead(null)}>Fechar</button>
@@ -1060,6 +1268,7 @@ function DentalCard() {
                 <KpiCard label="Status" value={selectedLead.status} note={selectedLead.sla_status} tone={badgeTone(selectedLead.status)} />
                 <KpiCard label="Tentativas" value={formatNumber(selectedLead.quantidade_tentativas)} note={`Última: ${formatDate(selectedLead.data_ultima_tentativa)}`} tone="warning" />
                 <KpiCard label="Receita" value={formatCurrency(selectedLead.receita || selectedLead.valor_pago)} note={selectedLead.pagou} tone="success" />
+                <KpiCard label="SLA retorno" value={selectedLead.sla_retorno_status || 'pendente'} note={`Limite: ${formatDateTime(selectedLead.data_limite_retorno)}`} tone={badgeTone(selectedLead.sla_retorno_status)} />
               </div>
               <div className="dental-executive-grid">
                 <div className="dental-detail-card">
@@ -1083,10 +1292,45 @@ function DentalCard() {
                 <div className="dental-detail-card">
                   <span>Indicador</span>
                   <strong>{selectedLead.nome_indicador || 'Não informado'}</strong>
-                  <small>Tipo: {selectedLead.tipo_indicador || '-'}</small>
+                  <small>Vínculo: {selectedLead.vinculo_indicador || selectedLead.tipo_indicador || '-'}</small>
+                  <small>E-mail: {selectedLead.email || '-'}</small>
                   <small>Dentista: {selectedLead.dentista_responsavel || '-'}</small>
                 </div>
+                <div className="dental-detail-card">
+                  <span>Origem do cadastro</span>
+                  <strong>{selectedLead.origem_cadastro || selectedLead.origem || 'Manual'}</strong>
+                  <small>{Number(selectedLead.created_via_public_form || 0) ? 'Formulário Público' : 'Registro interno'}</small>
+                  <small>{selectedLead.ip_origem ? `IP: ${selectedLead.ip_origem}` : 'Origem técnica não registrada'}</small>
+                </div>
               </div>
+              {selectedLead.foto_url || (selectedLead.attachments || []).length ? (
+                <Panel title="Foto e anexos da indicação" note="Anexo enviado pelo formulário público e vinculado ao lead Dental Card.">
+                  <div className="dental-attachment-grid">
+                    {(selectedLead.attachments || []).map((attachment) => (
+                      <a
+                        key={attachment.id}
+                        className="dental-attachment-card"
+                        href={`${api.defaults.baseURL || ''}/dental-card/attachments/${attachment.id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {String(attachment.file_type || '').startsWith('image/') ? (
+                          <img src={`${api.defaults.baseURL || ''}/dental-card/attachments/${attachment.id}`} alt={attachment.file_name || 'Foto Dental Card'} />
+                        ) : null}
+                        <strong>{attachment.file_name || 'Anexo Dental Card'}</strong>
+                        <small>{attachment.file_type || 'arquivo'} · {formatNumber(Math.round((attachment.file_size || 0) / 1024))} KB</small>
+                      </a>
+                    ))}
+                    {!(selectedLead.attachments || []).length && selectedLead.foto_url ? (
+                      <a className="dental-attachment-card" href={selectedLead.foto_url} target="_blank" rel="noreferrer">
+                        <img src={selectedLead.foto_url} alt="Foto Dental Card" />
+                        <strong>Foto da indicação</strong>
+                        <small>Arquivo vinculado ao formulário público</small>
+                      </a>
+                    ) : null}
+                  </div>
+                </Panel>
+              ) : null}
               <Panel title="Histórico de tentativas" note="Dia, hora, responsável, canal, resultado e próxima ação para métrica do operador.">
                 {(selectedLead.attempts || []).length ? (
                   <div className="dental-table-scroll">

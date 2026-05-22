@@ -461,6 +461,97 @@
   line-height: 1.55;
 }
 
+.dental-priority-list,
+.dental-attachment-grid,
+.dental-settings-summary {
+  display: grid;
+  gap: 12px;
+}
+
+.dental-priority-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid rgba(142, 103, 49, 0.18);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fffaf4;
+}
+
+.dental-priority-item strong,
+.dental-priority-item span,
+.dental-priority-item small {
+  display: block;
+}
+
+.dental-priority-item span,
+.dental-priority-item small {
+  color: #78685d;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.dental-attachment-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.dental-attachment-card {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(142, 103, 49, 0.18);
+  border-radius: 8px;
+  padding: 12px;
+  color: inherit;
+  background: #fffaf4;
+  text-decoration: none;
+}
+
+.dental-attachment-card img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border-radius: 7px;
+  object-fit: cover;
+  background: #f1ece5;
+}
+
+.dental-settings-summary {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dental-settings-summary > div {
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(142, 103, 49, 0.18);
+  border-radius: 8px;
+  padding: 15px;
+  background: #fffaf4;
+}
+
+.dental-settings-summary span,
+.dental-attachment-card small {
+  color: #6c5a4d;
+  font-size: 0.78rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.dental-settings-summary strong {
+  font-size: 1.35rem;
+}
+
+.dental-settings-summary small {
+  color: #78685d;
+  font-weight: 700;
+}
+
+.dental-setting-phone {
+  display: grid;
+  grid-template-columns: auto minmax(150px, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
 .dental-import-report {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -487,7 +578,13 @@
   .dental-grid-3,
   .dental-executive-grid,
   .dental-dashboard-insights,
-  .dental-weekly-report {
+  .dental-weekly-report,
+  .dental-attachment-grid,
+  .dental-settings-summary {
+    grid-template-columns: 1fr;
+  }
+
+  .dental-priority-item {
     grid-template-columns: 1fr;
   }
 

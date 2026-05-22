@@ -13,6 +13,7 @@ const helmet = require('helmet');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const PDFDocument = require('pdfkit');
+const XLSX = require('xlsx');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
@@ -149,6 +150,11 @@ const railwayApiUrl = String(process.env.RAILWAY_API_URL || 'https://backboard.r
 const uploadDir = path.join(__dirname, 'uploads');
 const reportsDir = path.join(uploadDir, 'reports');
 const maxUploadSizeBytes = 10 * 1024 * 1024;
+const dentalCardPublicPhotoMaxBytes = Math.max(1, Number(process.env.DENTAL_CARD_PUBLIC_PHOTO_MAX_MB || 6)) * 1024 * 1024;
+const dentalCardSlaHours = Math.max(1, Number(process.env.DENTAL_CARD_SLA_HOURS || 24));
+const dentalCardSlaWarningHours = Math.max(1, Number(process.env.DENTAL_CARD_SLA_WARNING_HOURS || 12));
+const dentalCardSlaCriticalHours = Math.max(1, Number(process.env.DENTAL_CARD_SLA_CRITICAL_HOURS || 20));
+const dentalCardSlaRepeatHours = Math.max(1, Number(process.env.DENTAL_CARD_SLA_REPEAT_HOURS || 6));
 const configuredAllowedOrigins = Array.from(new Set([
   frontendUrl,
   ...String(process.env.ALLOWED_ORIGINS || '')
@@ -250,6 +256,45 @@ const upload = multer({
     fileSize: maxUploadSizeBytes
   }
 });
+
+const publicDentalCardPhotoUpload = multer({
+  storage,
+  limits: {
+    fileSize: dentalCardPublicPhotoMaxBytes
+  },
+  fileFilter: (req, file, cb) => {
+    const extension = getSafeUploadExtension(file);
+    const allowedExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic', '.heif']);
+    const mime = String(file?.mimetype || '').toLowerCase();
+    if (!mime.startsWith('image/') || !allowedExtensions.has(extension)) {
+      return cb(new Error('A foto precisa ser uma imagem válida.'));
+    }
+    return cb(null, true);
+  }
+});
+
+const publicDentalCardLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 12,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Muitas indicações enviadas em pouco tempo. Aguarde alguns minutos e tente novamente.'
+  }
+});
+
+function handlePublicDentalCardPhotoUpload(req, res, next) {
+  publicDentalCardPhotoUpload.single('foto')(req, res, (error) => {
+    if (error) {
+      return res.status(400).json({
+        error: error.code === 'LIMIT_FILE_SIZE'
+          ? 'A foto precisa respeitar o limite de tamanho configurado.'
+          : error.message || 'Não foi possível receber a foto da indicação.'
+      });
+    }
+    return next();
+  });
+}
 
 // ============================================
 // BANCO
@@ -2479,6 +2524,22 @@ async function ensureDatabaseSchema() {
     )
   `);
 
+  await ensureColumn('dental_card_leads', 'vinculo_indicador', 'VARCHAR(120) NULL');
+  await ensureColumn('dental_card_leads', 'email', 'VARCHAR(220) NULL');
+  await ensureColumn('dental_card_leads', 'responsavel_cadastro', 'VARCHAR(180) NULL');
+  await ensureColumn('dental_card_leads', 'foto_url', 'VARCHAR(500) NULL');
+  await ensureColumn('dental_card_leads', 'origem_cadastro', 'VARCHAR(160) NULL');
+  await ensureColumn('dental_card_leads', 'ip_origem', 'VARCHAR(80) NULL');
+  await ensureColumn('dental_card_leads', 'user_agent', 'VARCHAR(500) NULL');
+  await ensureColumn('dental_card_leads', 'link_origem', 'VARCHAR(500) NULL');
+  await ensureColumn('dental_card_leads', 'unidade_slug', 'VARCHAR(180) NULL');
+  await ensureColumn('dental_card_leads', 'data_status', 'DATETIME NULL');
+  await ensureColumn('dental_card_leads', 'public_form_token', 'VARCHAR(120) NULL');
+  await ensureColumn('dental_card_leads', 'created_via_public_form', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn('dental_card_leads', 'data_limite_retorno', 'DATETIME NULL');
+  await ensureColumn('dental_card_leads', 'primeiro_retorno_em', 'DATETIME NULL');
+  await ensureColumn('dental_card_leads', 'sla_retorno_status', "VARCHAR(40) NOT NULL DEFAULT 'pendente'");
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS dental_card_attempts (
       id INT AUTO_INCREMENT PRIMARY KEY,
@@ -2494,6 +2555,56 @@ async function ensureDatabaseSchema() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_dental_attempt_lead (lead_id),
       CONSTRAINT fk_dental_attempt_lead FOREIGN KEY (lead_id) REFERENCES dental_card_leads(id) ON DELETE CASCADE
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dental_card_attachments (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      lead_id INT NOT NULL,
+      file_name VARCHAR(255) NULL,
+      file_url VARCHAR(500) NOT NULL,
+      file_type VARCHAR(120) NULL,
+      file_size INT NULL,
+      uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      uploaded_by VARCHAR(180) NULL,
+      source VARCHAR(80) NULL,
+      INDEX idx_dental_attachment_lead (lead_id),
+      CONSTRAINT fk_dental_attachment_lead FOREIGN KEY (lead_id) REFERENCES dental_card_leads(id) ON DELETE CASCADE
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dental_card_notification_settings (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      recebe_notificacao_sistema TINYINT(1) NOT NULL DEFAULT 1,
+      recebe_notificacao_whatsapp TINYINT(1) NOT NULL DEFAULT 0,
+      telefone_whatsapp VARCHAR(40) NULL,
+      unidade VARCHAR(180) NULL,
+      ativo TINYINT(1) NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_dental_notification_user_unit (user_id, unidade),
+      INDEX idx_dental_notification_active (ativo)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dental_card_notification_logs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      lead_id INT NULL,
+      user_id INT NULL,
+      tipo_notificacao VARCHAR(80) NOT NULL,
+      canal VARCHAR(40) NOT NULL,
+      mensagem TEXT NULL,
+      status_envio VARCHAR(40) NOT NULL DEFAULT 'pendente',
+      data_envio DATETIME NULL,
+      erro TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_dental_notification_lead (lead_id),
+      INDEX idx_dental_notification_user (user_id),
+      INDEX idx_dental_notification_tipo (tipo_notificacao)
     )
   `);
 
@@ -19198,6 +19309,21 @@ const dentalCardLeadFields = [
   'telefone',
   'ficha',
   'nome_indicador',
+  'vinculo_indicador',
+  'email',
+  'responsavel_cadastro',
+  'foto_url',
+  'origem_cadastro',
+  'ip_origem',
+  'user_agent',
+  'link_origem',
+  'unidade_slug',
+  'data_status',
+  'public_form_token',
+  'created_via_public_form',
+  'data_limite_retorno',
+  'primeiro_retorno_em',
+  'sla_retorno_status',
   'tipo_indicador',
   'dentista_responsavel',
   'origem',
@@ -19302,6 +19428,62 @@ function normalizeDentalPaymentStatus(value) {
   return normalized || 'pendente';
 }
 
+function resolveDentalReturnSla(lead = {}, now = new Date()) {
+  const firstReturn = lead.primeiro_retorno_em || lead.data_primeiro_contato || null;
+  const createdAt = lead.created_at ? new Date(lead.created_at) : new Date();
+  const limit = lead.data_limite_retorno
+    ? new Date(lead.data_limite_retorno)
+    : new Date(createdAt.getTime() + dentalCardSlaHours * 60 * 60 * 1000);
+
+  if (firstReturn) {
+    const firstReturnDate = new Date(firstReturn);
+    return {
+      data_limite_retorno: Number.isNaN(limit.getTime()) ? null : toMysqlDateTime(limit),
+      sla_retorno_status: !Number.isNaN(firstReturnDate.getTime()) && !Number.isNaN(limit.getTime()) && firstReturnDate <= limit
+        ? 'cumprido'
+        : 'cumprido_atrasado',
+      tempo_restante_minutos: 0
+    };
+  }
+
+  if (Number.isNaN(limit.getTime())) {
+    return {
+      data_limite_retorno: null,
+      sla_retorno_status: 'pendente',
+      tempo_restante_minutos: null
+    };
+  }
+
+  const remainingMinutes = Math.floor((limit.getTime() - now.getTime()) / 60000);
+  if (remainingMinutes <= 0) {
+    return {
+      data_limite_retorno: toMysqlDateTime(limit),
+      sla_retorno_status: 'vencido',
+      tempo_restante_minutos: remainingMinutes
+    };
+  }
+
+  if (remainingMinutes <= 4 * 60) {
+    return {
+      data_limite_retorno: toMysqlDateTime(limit),
+      sla_retorno_status: 'atencao',
+      tempo_restante_minutos: remainingMinutes
+    };
+  }
+
+  return {
+    data_limite_retorno: toMysqlDateTime(limit),
+    sla_retorno_status: 'pendente',
+    tempo_restante_minutos: remainingMinutes
+  };
+}
+
+function normalizeDentalEmail(value) {
+  const email = normalizeDentalText(value, 220);
+  if (!email) return null;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email.toLowerCase() : null;
+}
+
 function buildDentalCardPayload(body = {}, user = {}, existing = {}) {
   const merged = { ...existing, ...body };
   const unidade = normalizeDentalText(merged.unidade, 180);
@@ -19319,6 +19501,21 @@ function buildDentalCardPayload(body = {}, user = {}, existing = {}) {
     telefone,
     ficha: normalizeDentalText(merged.ficha, 80),
     nome_indicador: normalizeDentalText(merged.nome_indicador || merged.nomeIndicador, 180),
+    vinculo_indicador: normalizeDentalText(merged.vinculo_indicador || merged.vinculoIndicador || merged.vinculo, 120),
+    email: normalizeDentalEmail(merged.email || merged.endereco_email || merged.enderecoEmail),
+    responsavel_cadastro: normalizeDentalText(merged.responsavel_cadastro || merged.responsavelCadastro, 180),
+    foto_url: normalizeStoredUploadUrl(merged.foto_url || merged.fotoUrl),
+    origem_cadastro: normalizeDentalText(merged.origem_cadastro || merged.origemCadastro, 160),
+    ip_origem: normalizeDentalText(merged.ip_origem || merged.ipOrigem, 80),
+    user_agent: normalizeDentalText(merged.user_agent || merged.userAgent, 500),
+    link_origem: normalizeDentalText(merged.link_origem || merged.linkOrigem, 500),
+    unidade_slug: normalizeDentalText(merged.unidade_slug || merged.unidadeSlug, 180),
+    data_status: normalizeDentalDateTimeValue(merged.data_status || merged.dataStatus),
+    public_form_token: normalizeDentalText(merged.public_form_token || merged.publicFormToken, 120),
+    created_via_public_form: toDentalBoolean(merged.created_via_public_form || merged.createdViaPublicForm),
+    data_limite_retorno: normalizeDentalDateTimeValue(merged.data_limite_retorno || merged.dataLimiteRetorno),
+    primeiro_retorno_em: normalizeDentalDateTimeValue(merged.primeiro_retorno_em || merged.primeiroRetornoEm),
+    sla_retorno_status: normalizeDentalText(merged.sla_retorno_status || merged.slaRetornoStatus, 40) || 'pendente',
     tipo_indicador: normalizeDentalText(merged.tipo_indicador || merged.tipoIndicador, 80),
     dentista_responsavel: normalizeDentalText(merged.dentista_responsavel || merged.dentistaResponsavel, 180),
     origem: normalizeDentalText(merged.origem, 120) || 'Indicação manual',
@@ -19385,10 +19582,13 @@ function buildDentalCardWhere(query = {}) {
   [
     ['unidade', query.unidade],
     ['origem', query.origem],
+    ['origem_cadastro', query.origemCadastro || query.origem_cadastro],
+    ['nome_indicador', query.indicador],
     ['responsavel', query.responsavel],
     ['status', query.status],
     ['pagou', query.pagamento || query.pagou],
-    ['sla_status', query.slaStatus || query.sla_status]
+    ['sla_status', query.slaStatus || query.sla_status],
+    ['sla_retorno_status', query.slaRetornoStatus || query.sla_retorno_status]
   ].forEach(([column, value]) => {
     if (value) {
       where.push(`${column} = ?`);
@@ -19404,17 +19604,29 @@ function buildDentalCardWhere(query = {}) {
     where.push("sla_status IN ('atrasado', 'atencao')");
   }
 
+  if (query.createdViaPublicForm === 'true' || query.created_via_public_form === 'true' || query.publico === 'true') {
+    where.push('created_via_public_form = 1');
+  }
+
+  if (query.comFoto === 'true' || query.withPhoto === 'true') {
+    where.push("foto_url IS NOT NULL AND TRIM(foto_url) <> ''");
+  }
+
+  if (query.semFoto === 'true' || query.withoutPhoto === 'true') {
+    where.push("(foto_url IS NULL OR TRIM(foto_url) = '')");
+  }
+
   if (query.search) {
-    where.push('(nome_lead LIKE ? OR telefone LIKE ? OR ficha LIKE ? OR unidade LIKE ?)');
+    where.push('(nome_lead LIKE ? OR telefone LIKE ? OR ficha LIKE ? OR unidade LIKE ? OR nome_indicador LIKE ? OR email LIKE ?)');
     const search = `%${String(query.search).trim()}%`;
-    params.push(search, search, search, search);
+    params.push(search, search, search, search, search, search);
   }
 
   return { where, params };
 }
 
 async function refreshDentalCardSlaForRows(rows = []) {
-  return rows.map((row) => ({ ...row, ...resolveDentalSla(row) }));
+  return rows.map((row) => ({ ...row, ...resolveDentalSla(row), ...resolveDentalReturnSla(row) }));
 }
 
 async function getDentalCardRows(query = {}) {
@@ -19447,6 +19659,358 @@ async function insertDentalCardAudit(req, action, leadId = null, details = {}) {
     );
   } catch (error) {
     console.warn('Não foi possível registrar auditoria Dental Card:', error.message);
+  }
+}
+
+function buildDentalCardPublicLink(leadId = '') {
+  return `/dental-card${leadId ? `?leadId=${leadId}` : ''}`;
+}
+
+function formatDentalSlaLimit(value) {
+  if (!value) return 'Não informado';
+  return formatMessageDateTime(value);
+}
+
+async function getDentalCardNotificationRecipients(lead = {}) {
+  const unidade = normalizeDentalText(lead.unidade, 180);
+  const [settings] = await pool.query(
+    `SELECT s.*, u.id AS user_id, u.name, u.role, u.whatsapp, u.phone
+       FROM dental_card_notification_settings s
+       INNER JOIN users u ON u.id = s.user_id
+      WHERE s.ativo = 1
+        AND s.recebe_notificacao_sistema = 1
+        AND u.active = 1
+        AND u.deleted_at IS NULL
+        AND (s.unidade IS NULL OR TRIM(s.unidade) = '' OR s.unidade = ?)`,
+    [unidade || '']
+  );
+
+  if (settings.length) {
+    return settings;
+  }
+
+  const [fallbackUsers] = await pool.query(
+    `SELECT id AS user_id, name, role, whatsapp, phone
+       FROM users
+      WHERE active = 1
+        AND deleted_at IS NULL
+        AND (
+          role IN ('master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator')
+          OR permissions LIKE '%dental_card%'
+        )`
+  );
+
+  return fallbackUsers.map((user) => ({
+    ...user,
+    recebe_notificacao_sistema: 1,
+    recebe_notificacao_whatsapp: 0,
+    telefone_whatsapp: user.whatsapp || user.phone || null,
+    unidade: null
+  }));
+}
+
+async function notifyDentalCardRecipients(lead = {}, tipo = 'nova_indicacao') {
+  const recipients = await getDentalCardNotificationRecipients(lead);
+  const titleByType = {
+    nova_indicacao: 'Nova indicação Dental Card',
+    pendente_12h: 'Indicação Dental Card pendente há 12 horas',
+    proxima_vencimento: 'Dental Card próximo do vencimento',
+    sla_vencido: 'SLA Dental Card vencido'
+  };
+  const messageByType = {
+    nova_indicacao: 'Nova indicação recebida no Programa Dental Card. Prazo de retorno: 24 horas.',
+    pendente_12h: 'Indicação Dental Card pendente há 12 horas. O retorno ainda não foi registrado.',
+    proxima_vencimento: 'Atenção: indicação Dental Card próxima do vencimento do SLA.',
+    sla_vencido: 'SLA vencido: indicação sem retorno dentro de 24 horas.'
+  };
+  const title = titleByType[tipo] || titleByType.nova_indicacao;
+  const message = messageByType[tipo] || messageByType.nova_indicacao;
+  const payload = {
+    leadId: lead.id,
+    nome_lead: lead.nome_lead,
+    telefone: lead.telefone,
+    unidade: lead.unidade,
+    nome_indicador: lead.nome_indicador,
+    created_at: lead.created_at,
+    data_limite_retorno: lead.data_limite_retorno,
+    sla_retorno_status: lead.sla_retorno_status,
+    link: buildDentalCardPublicLink(lead.id)
+  };
+
+  await Promise.all(recipients.map(async (recipient) => {
+    await createNotification(
+      recipient.user_id,
+      tipo === 'nova_indicacao' ? 'dental_card_new_indication' : 'dental_card_sla_alert',
+      title,
+      `${message} Paciente: ${lead.nome_lead}. Unidade: ${lead.unidade}.`,
+      buildDentalCardPublicLink(lead.id),
+      payload
+    );
+
+    await pool.query(
+      `INSERT INTO dental_card_notification_logs
+       (lead_id, user_id, tipo_notificacao, canal, mensagem, status_envio, data_envio, erro)
+       VALUES (?, ?, ?, 'SISTEMA', ?, 'enviado', NOW(), NULL)`,
+      [lead.id || null, recipient.user_id || null, tipo, message]
+    );
+
+    if (Number(recipient.recebe_notificacao_whatsapp || 0)) {
+      await pool.query(
+        `INSERT INTO dental_card_notification_logs
+         (lead_id, user_id, tipo_notificacao, canal, mensagem, status_envio, data_envio, erro)
+         VALUES (?, ?, ?, 'WHATSAPP', ?, 'pendente_configuracao', NOW(), ?)`,
+        [
+          lead.id || null,
+          recipient.user_id || null,
+          tipo,
+          `Nova indicação Dental Card recebida.\nPaciente: ${lead.nome_lead}\nTelefone: ${lead.telefone}\nUnidade: ${lead.unidade}\nIndicado por: ${lead.nome_indicador || 'Não informado'}\nPrazo de retorno: ${formatDentalSlaLimit(lead.data_limite_retorno)}`,
+          'Sessão/número remetente do WhatsApp Dental Card ainda não configurado.'
+        ]
+      );
+    }
+  }));
+
+  return recipients.length;
+}
+
+async function runDentalCardSlaNotificationSweep() {
+  const [rows] = await pool.query(
+    `SELECT *
+       FROM dental_card_leads
+      WHERE deleted_at IS NULL
+        AND created_via_public_form = 1
+        AND primeiro_retorno_em IS NULL
+        AND data_primeiro_contato IS NULL
+        AND status NOT IN ('Encerrado', 'Cancelado', 'Pagou')
+      ORDER BY COALESCE(data_limite_retorno, created_at) ASC
+      LIMIT 200`
+  );
+
+  let notified = 0;
+  const now = new Date();
+
+  for (const row of rows) {
+    const createdAt = row.created_at ? new Date(row.created_at) : now;
+    const elapsedHours = Number.isNaN(createdAt.getTime()) ? 0 : (now.getTime() - createdAt.getTime()) / (60 * 60 * 1000);
+    const returnSla = resolveDentalReturnSla(row, now);
+    await pool.query(
+      `UPDATE dental_card_leads
+          SET data_limite_retorno = ?,
+              sla_retorno_status = ?,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?`,
+      [returnSla.data_limite_retorno, returnSla.sla_retorno_status, row.id]
+    );
+
+    const lead = { ...row, ...returnSla };
+    let tipo = null;
+    if (elapsedHours >= dentalCardSlaHours) tipo = 'sla_vencido';
+    else if (elapsedHours >= dentalCardSlaCriticalHours) tipo = 'proxima_vencimento';
+    else if (elapsedHours >= dentalCardSlaWarningHours) tipo = 'pendente_12h';
+    if (!tipo) continue;
+
+    const [recentLogs] = await pool.query(
+      `SELECT id, created_at
+         FROM dental_card_notification_logs
+        WHERE lead_id = ?
+          AND tipo_notificacao = ?
+          AND canal = 'SISTEMA'
+          AND created_at >= DATE_SUB(NOW(), INTERVAL ? HOUR)
+        LIMIT 1`,
+      [
+        row.id,
+        tipo,
+        tipo === 'sla_vencido' ? dentalCardSlaRepeatHours : Math.max(24, dentalCardSlaHours)
+      ]
+    );
+
+    if (recentLogs.length) continue;
+    await notifyDentalCardRecipients(lead, tipo);
+    notified += 1;
+  }
+
+  return { checked: rows.length, notified };
+}
+
+function sanitizePublicDentalText(value, maxLength = 255) {
+  return normalizeDentalText(String(value || '').replace(/[<>]/g, ' '), maxLength);
+}
+
+function isValidPublicDentalPhoto(file) {
+  if (!file?.path || !file?.mimetype?.startsWith('image/')) return false;
+  try {
+    const header = fs.readFileSync(file.path).subarray(0, 16);
+    const hex = header.toString('hex');
+    const ascii = header.toString('ascii');
+    return hex.startsWith('ffd8ff')
+      || hex.startsWith('89504e47')
+      || ascii.startsWith('GIF8')
+      || ascii.includes('WEBP')
+      || ascii.includes('ftyp');
+  } catch (error) {
+    return false;
+  }
+}
+
+async function handleGetPublicDentalCardConfig(req, res) {
+  try {
+    const [rows] = await pool.query(
+      `SELECT id, name, city, state
+         FROM clinics
+        ORDER BY name ASC`
+    );
+
+    return res.json({
+      title: 'Programa Dental Card - Indicação de Pacientes',
+      slaHours: dentalCardSlaHours,
+      clinics: rows.map((clinic) => ({
+        id: clinic.id,
+        name: clinic.name,
+        city: clinic.city,
+        state: clinic.state,
+        slug: slugify(clinic.name)
+      }))
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Não foi possível carregar as unidades Dental Card.' });
+  }
+}
+
+async function handleCreatePublicDentalCardLead(req, res) {
+  try {
+    if (req.body?.website || req.body?.company_site || req.body?.hp_field) {
+      return res.status(400).json({ error: 'Não foi possível receber a indicação.' });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'Envie a foto com quem indicou para concluir a indicação.' });
+    }
+
+    if (!isValidPublicDentalPhoto(req.file)) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'A foto enviada não é uma imagem válida.' });
+    }
+
+    const emailInput = sanitizePublicDentalText(req.body.email || req.body.endereco_email || req.body.enderecoEmail, 220);
+    if (emailInput && !normalizeDentalEmail(emailInput)) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Informe um e-mail válido ou deixe o campo em branco.' });
+    }
+
+    const telefone = normalizeDentalPhone(req.body.telefone || req.body.phone || req.body.whatsapp);
+    if (!/^55\d{10,11}$/.test(telefone)) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Informe o telefone com DDD no padrão brasileiro.' });
+    }
+
+    const nomeLead = sanitizePublicDentalText(req.body.nome_lead || req.body.nomeLead || req.body.nome_indicado || req.body.nomeIndicado, 180);
+    const unidade = sanitizePublicDentalText(req.body.unidade, 180);
+    const nomeIndicador = sanitizePublicDentalText(req.body.nome_indicador || req.body.nomeIndicador || req.body.quem_indicou || req.body.quemIndicou, 180);
+    const vinculoIndicador = sanitizePublicDentalText(req.body.vinculo_indicador || req.body.vinculoIndicador || req.body.vinculo, 120);
+
+    if (!nomeLead || !unidade || !nomeIndicador || !vinculoIndicador) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(400).json({ error: 'Preencha quem indicou, vínculo, nome do indicado, telefone e unidade.' });
+    }
+
+    const [duplicates] = await pool.query(
+      `SELECT id
+         FROM dental_card_leads
+        WHERE deleted_at IS NULL
+          AND telefone = ?
+          AND created_at >= DATE_SUB(NOW(), INTERVAL 6 HOUR)
+        LIMIT 1`,
+      [telefone]
+    );
+
+    if (duplicates.length) {
+      fs.unlink(req.file.path, () => {});
+      return res.status(409).json({ error: 'Já recebemos uma indicação recente para este telefone. Nossa equipe fará o acompanhamento.' });
+    }
+
+    const now = new Date();
+    const slaLimit = new Date(now.getTime() + dentalCardSlaHours * 60 * 60 * 1000);
+    const fileUrl = `/uploads/${req.file.filename}`;
+    const publicToken = crypto.randomBytes(18).toString('hex');
+    const payload = buildDentalCardPayload({
+      data_indicacao: now.toISOString().slice(0, 10),
+      unidade,
+      nome_lead: nomeLead,
+      telefone,
+      nome_indicador: nomeIndicador,
+      vinculo_indicador: vinculoIndicador,
+      tipo_indicador: sanitizePublicDentalText(req.body.tipo_indicador || req.body.tipoIndicador, 80),
+      email: emailInput,
+      responsavel_cadastro: sanitizePublicDentalText(req.body.responsavel_cadastro || req.body.responsavelCadastro, 180),
+      status: 'Indicação Recebida',
+      origem: 'Formulário Público Dental Card',
+      origem_cadastro: 'Formulário Público Dental Card',
+      foto_url: fileUrl,
+      ip_origem: getRequestIp(req),
+      user_agent: String(req.headers['user-agent'] || '').slice(0, 500),
+      link_origem: String(req.headers.referer || req.body.link_origem || req.body.linkOrigem || '').slice(0, 500),
+      unidade_slug: sanitizePublicDentalText(req.params.unidadeSlug || req.body.unidade_slug || req.body.unidadeSlug || slugify(unidade), 180),
+      data_status: normalizeDentalDateTimeValue(req.body.data || req.body.data_status || req.body.dataStatus) || toMysqlDateTime(now),
+      public_form_token: publicToken,
+      created_via_public_form: 1,
+      data_limite_retorno: toMysqlDateTime(slaLimit),
+      sla_retorno_status: 'pendente',
+      observacoes: sanitizePublicDentalText(req.body.observacoes, 5000)
+    }, { name: 'Formulário Público Dental Card' });
+
+    const columns = [...dentalCardLeadFields, 'created_by', 'updated_by'];
+    const values = dentalCardLeadFields.map((field) => payload[field] ?? null);
+    values.push('Formulário Público Dental Card', 'Formulário Público Dental Card');
+    const [result] = await pool.query(
+      `INSERT INTO dental_card_leads (${columns.map((column) => `\`${column}\``).join(', ')})
+       VALUES (${columns.map(() => '?').join(', ')})`,
+      values
+    );
+
+    await pool.query(
+      `INSERT INTO dental_card_attachments
+       (lead_id, file_name, file_url, file_type, file_size, uploaded_by, source)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        result.insertId,
+        normalizeUploadedOriginalName(req.file) || req.file.originalname || req.file.filename,
+        fileUrl,
+        req.file.mimetype,
+        req.file.size,
+        'Formulário Público Dental Card',
+        'public_form'
+      ]
+    );
+
+    await pool.query(
+      `INSERT INTO dental_card_attempts
+       (lead_id, responsavel, tipo_contato, canal, resultado, observacao)
+       VALUES (?, 'Formulário Público', 'cadastro_publico', 'Formulário Público', 'Lead criado via formulário público Dental Card.', ?)`,
+      [result.insertId, payload.observacoes || null]
+    );
+
+    await insertDentalCardAudit(req, 'public_lead_created', result.insertId, {
+      telefone,
+      unidade,
+      nome_lead: nomeLead,
+      nome_indicador: nomeIndicador,
+      ip: getRequestIp(req)
+    });
+
+    const [rows] = await pool.query('SELECT * FROM dental_card_leads WHERE id = ? LIMIT 1', [result.insertId]);
+    const lead = { ...rows[0], ...resolveDentalReturnSla(rows[0]) };
+    await notifyDentalCardRecipients(lead, 'nova_indicacao');
+
+    return res.status(201).json({
+      success: true,
+      message: 'Indicação recebida com sucesso. Nossa equipe entrará em contato.',
+      protocol: `DC-${String(result.insertId).padStart(6, '0')}`
+    });
+  } catch (error) {
+    if (req.file?.path) fs.unlink(req.file.path, () => {});
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Não foi possível receber a indicação Dental Card.' });
   }
 }
 
@@ -19487,8 +20051,12 @@ async function handleGetDentalCardLead(req, res) {
       'SELECT * FROM dental_card_audit_logs WHERE lead_id = ? ORDER BY created_at DESC, id DESC LIMIT 50',
       [req.params.id]
     );
+    const [attachments] = await pool.query(
+      'SELECT * FROM dental_card_attachments WHERE lead_id = ? ORDER BY uploaded_at DESC, id DESC',
+      [req.params.id]
+    );
 
-    return res.json({ ...rows[0], ...resolveDentalSla(rows[0]), attempts, audit });
+    return res.json({ ...rows[0], ...resolveDentalSla(rows[0]), ...resolveDentalReturnSla(rows[0]), attempts, audit, attachments });
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao carregar lead Dental Card.' });
@@ -19528,7 +20096,7 @@ async function handleCreateDentalCardLead(req, res) {
 
     await insertDentalCardAudit(req, 'lead_created', result.insertId, payload);
     const [rows] = await pool.query('SELECT * FROM dental_card_leads WHERE id = ? LIMIT 1', [result.insertId]);
-    return res.status(201).json({ ...rows[0], ...resolveDentalSla(rows[0]) });
+    return res.status(201).json({ ...rows[0], ...resolveDentalSla(rows[0]), ...resolveDentalReturnSla(rows[0]) });
   } catch (error) {
     console.error(error);
     return res.status(400).json({ error: error.message || 'Erro ao cadastrar lead Dental Card.' });
@@ -19561,7 +20129,7 @@ async function handleUpdateDentalCardLead(req, res) {
 
     await insertDentalCardAudit(req, 'lead_updated', req.params.id, payload);
     const [rows] = await pool.query('SELECT * FROM dental_card_leads WHERE id = ? LIMIT 1', [req.params.id]);
-    return res.json({ ...rows[0], ...resolveDentalSla(rows[0]) });
+    return res.json({ ...rows[0], ...resolveDentalSla(rows[0]), ...resolveDentalReturnSla(rows[0]) });
   } catch (error) {
     console.error(error);
     return res.status(400).json({ error: error.message || 'Erro ao editar lead Dental Card.' });
@@ -19635,6 +20203,7 @@ async function handleCreateDentalCardAttempt(req, res) {
     const updatePayload = {
       quantidade_tentativas: attemptCount,
       data_primeiro_contato: leadRows[0].data_primeiro_contato || toMysqlDateTime(now),
+      primeiro_retorno_em: leadRows[0].primeiro_retorno_em || toMysqlDateTime(now),
       data_ultima_tentativa: toMysqlDateTime(now),
       data_proxima_tentativa: nextAction,
       status_contato: payload.resultado,
@@ -19643,10 +20212,12 @@ async function handleCreateDentalCardAttempt(req, res) {
       updated_by: getActorName(req.user)
     };
     const sla = resolveDentalSla({ ...leadRows[0], ...updatePayload });
+    const returnSla = resolveDentalReturnSla({ ...leadRows[0], ...updatePayload }, now);
     await pool.query(
       `UPDATE dental_card_leads
           SET quantidade_tentativas = ?,
               data_primeiro_contato = COALESCE(data_primeiro_contato, ?),
+              primeiro_retorno_em = COALESCE(primeiro_retorno_em, ?),
               data_ultima_tentativa = ?,
               data_proxima_tentativa = ?,
               status_contato = ?,
@@ -19654,11 +20225,13 @@ async function handleCreateDentalCardAttempt(req, res) {
               status = ?,
               sla_status = ?,
               dias_sem_contato = ?,
+              sla_retorno_status = ?,
               updated_by = ?
         WHERE id = ?`,
       [
         updatePayload.quantidade_tentativas,
         updatePayload.data_primeiro_contato,
+        updatePayload.primeiro_retorno_em,
         updatePayload.data_ultima_tentativa,
         updatePayload.data_proxima_tentativa,
         updatePayload.status_contato,
@@ -19666,6 +20239,7 @@ async function handleCreateDentalCardAttempt(req, res) {
         updatePayload.status,
         sla.sla_status,
         sla.dias_sem_contato,
+        returnSla.sla_retorno_status,
         updatePayload.updated_by,
         req.params.id
       ]
@@ -19826,6 +20400,53 @@ function buildDentalCardCsv(rows = []) {
     headers.map(([, label]) => escape(label)).join(';'),
     ...rows.map((row) => headers.map(([key]) => escape(row[key])).join(';'))
   ].join('\n');
+}
+
+function buildDentalCardExcelBuffer(rows = []) {
+  const data = rows.map((row) => ({
+    'Carimbo de data/hora': row.created_at,
+    'Quem indicou': row.nome_indicador,
+    'Vínculo/Grau de parentesco': row.vinculo_indicador,
+    'Nome do indicado': row.nome_lead,
+    'Telefone/WhatsApp': row.telefone,
+    Unidade: row.unidade,
+    'Link da foto': row.foto_url ? `${publicBaseUrl}${normalizeStoredUploadUrl(row.foto_url)}` : '',
+    'E-mail': row.email,
+    'Responsável pelo cadastro': row.responsavel_cadastro || row.responsavel,
+    Status: row.status,
+    Data: row.data_status || row.data_indicacao,
+    Origem: row.origem_cadastro || row.origem,
+    Observações: row.observacoes,
+    'Data de criação': row.created_at,
+    'Última atualização': row.updated_at,
+    'SLA retorno': row.sla_retorno_status,
+    'Prazo de retorno': row.data_limite_retorno
+  }));
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.json_to_sheet(data.length ? data : [{
+    'Carimbo de data/hora': '',
+    'Quem indicou': '',
+    'Vínculo/Grau de parentesco': '',
+    'Nome do indicado': '',
+    'Telefone/WhatsApp': '',
+    Unidade: '',
+    'Link da foto': '',
+    'E-mail': '',
+    'Responsável pelo cadastro': '',
+    Status: '',
+    Data: '',
+    Origem: '',
+    Observações: '',
+    'Data de criação': '',
+    'Última atualização': '',
+    'SLA retorno': '',
+    'Prazo de retorno': ''
+  }]);
+  worksheet['!cols'] = Object.keys(data[0] || {}).map((key) => ({
+    wch: Math.max(16, Math.min(34, key.length + 6))
+  }));
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Dental Card');
+  return XLSX.write(workbook, { bookType: 'xlsx', type: 'buffer' });
 }
 
 function formatDentalReportDate(value) {
@@ -20005,6 +20626,24 @@ async function handleExportDentalCard(req, res) {
   }
 }
 
+async function handleExportDentalCardExcel(req, res) {
+  try {
+    if (!canExportDentalCard(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode exportar Dental Card.' });
+    }
+
+    const rows = await getDentalCardRows(req.query);
+    const buffer = buildDentalCardExcelBuffer(rows);
+    await insertDentalCardAudit(req, 'export_excel', null, { total: rows.length, query: req.query });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="dental-card.xlsx"');
+    return res.send(buffer);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao exportar Excel Dental Card.' });
+  }
+}
+
 async function handleExportDentalCardPdf(req, res) {
   try {
     if (!canExportDentalCard(req.user)) {
@@ -20023,6 +20662,79 @@ async function handleExportDentalCardPdf(req, res) {
   }
 }
 
+async function handleExportDentalCardLeadPdf(req, res) {
+  try {
+    if (!canExportDentalCard(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode exportar Dental Card.' });
+    }
+
+    const [rows] = await pool.query('SELECT * FROM dental_card_leads WHERE id = ? AND deleted_at IS NULL LIMIT 1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Lead Dental Card não encontrado.' });
+    const [attempts] = await pool.query('SELECT * FROM dental_card_attempts WHERE lead_id = ? ORDER BY created_at ASC, id ASC', [req.params.id]);
+    const [attachments] = await pool.query('SELECT * FROM dental_card_attachments WHERE lead_id = ? ORDER BY uploaded_at ASC, id ASC', [req.params.id]);
+    const lead = { ...rows[0], ...resolveDentalSla(rows[0]), ...resolveDentalReturnSla(rows[0]) };
+
+    const buffer = await new Promise((resolve, reject) => {
+      const doc = new PDFDocument({ size: 'A4', margin: 42 });
+      const chunks = [];
+      doc.on('data', (chunk) => chunks.push(chunk));
+      doc.on('error', reject);
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+      doc.fillColor('#b07a35').font('Helvetica-Bold').fontSize(10).text('FICHA INDIVIDUAL DENTAL CARD');
+      doc.fillColor('#211a16').fontSize(22).text(lead.nome_lead || 'Lead Dental Card');
+      doc.moveDown(0.5);
+      doc.font('Helvetica').fontSize(10).fillColor('#5e5147')
+        .text(`Unidade: ${lead.unidade || '-'} | Telefone: ${lead.telefone || '-'} | Status: ${lead.status || '-'}`);
+      doc.moveDown();
+      [
+        ['Quem indicou', lead.nome_indicador],
+        ['Vínculo/Grau de parentesco', lead.vinculo_indicador],
+        ['E-mail', lead.email],
+        ['Origem', lead.origem_cadastro || lead.origem],
+        ['Data da indicação', formatDentalReportDate(lead.data_indicacao)],
+        ['Prazo de retorno', formatDentalSlaLimit(lead.data_limite_retorno)],
+        ['SLA retorno', lead.sla_retorno_status],
+        ['Responsável', lead.responsavel || lead.responsavel_cadastro],
+        ['Observações', lead.observacoes]
+      ].forEach(([label, value]) => {
+        doc.font('Helvetica-Bold').fillColor('#6d573b').text(`${label}:`, { continued: true });
+        doc.font('Helvetica').fillColor('#211a16').text(` ${value || '-'}`);
+      });
+      doc.moveDown();
+      doc.font('Helvetica-Bold').fontSize(14).fillColor('#211a16').text('Histórico');
+      if (attempts.length) {
+        attempts.forEach((attempt) => {
+          doc.font('Helvetica-Bold').fontSize(9).fillColor('#6d573b').text(formatMessageDateTime(attempt.created_at));
+          doc.font('Helvetica').fillColor('#211a16').text(`${attempt.responsavel || '-'} | ${attempt.canal || '-'} | ${attempt.resultado || '-'}`);
+          if (attempt.observacao) doc.fillColor('#5e5147').text(attempt.observacao);
+          doc.moveDown(0.4);
+        });
+      } else {
+        doc.font('Helvetica').fontSize(10).text('Nenhum histórico registrado.');
+      }
+      const photo = attachments.find((item) => /\.(png|jpe?g)$/i.test(item.file_url || ''));
+      if (photo) {
+        const imagePath = resolveStoredUploadFilePath(photo.file_url);
+        if (imagePath && fs.existsSync(imagePath)) {
+          doc.addPage();
+          doc.font('Helvetica-Bold').fontSize(14).fillColor('#211a16').text('Foto anexada');
+          doc.moveDown();
+          doc.image(imagePath, { fit: [430, 520], align: 'center' });
+        }
+      }
+      doc.end();
+    });
+
+    await insertDentalCardAudit(req, 'export_individual_pdf', req.params.id, { leadId: req.params.id });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="dental-card-${req.params.id}.pdf"`);
+    return res.send(buffer);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao exportar PDF individual Dental Card.' });
+  }
+}
+
 async function handleDownloadDentalCardImportTemplate(req, res) {
   try {
     if (!canViewDentalCard(req.user)) {
@@ -20037,6 +20749,125 @@ async function handleDownloadDentalCardImportTemplate(req, res) {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao gerar modelo de importação Dental Card.' });
+  }
+}
+
+async function handleGetDentalCardAttachment(req, res) {
+  try {
+    if (!canViewDentalCard(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode visualizar anexos Dental Card.' });
+    }
+
+    const [rows] = await pool.query(
+      `SELECT a.*, l.id AS lead_exists
+         FROM dental_card_attachments a
+         INNER JOIN dental_card_leads l ON l.id = a.lead_id AND l.deleted_at IS NULL
+        WHERE a.id = ?
+        LIMIT 1`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Anexo Dental Card não encontrado.' });
+
+    await insertDentalCardAudit(req, 'attachment_viewed', rows[0].lead_id, { attachmentId: req.params.id });
+    const filePath = resolveStoredUploadFilePath(rows[0].file_url);
+    if (!filePath || !fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'Arquivo não encontrado no armazenamento.' });
+    }
+    res.setHeader('Content-Type', rows[0].file_type || 'application/octet-stream');
+    return res.sendFile(filePath);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao abrir anexo Dental Card.' });
+  }
+}
+
+async function handleGetDentalCardNotificationSettings(req, res) {
+  try {
+    if (!isAdminUser(req.user) && !hasScreenPermission(req.user, 'dental_card')) {
+      return res.status(403).json({ error: 'Acesso não autorizado às configurações Dental Card.' });
+    }
+
+    const [rows] = await pool.query(
+      `SELECT
+         u.id AS user_id,
+         u.name,
+         u.email,
+         u.role,
+         u.whatsapp,
+         u.phone,
+         s.id AS setting_id,
+         COALESCE(s.recebe_notificacao_sistema, 0) AS recebe_notificacao_sistema,
+         COALESCE(s.recebe_notificacao_whatsapp, 0) AS recebe_notificacao_whatsapp,
+         COALESCE(s.telefone_whatsapp, u.whatsapp, u.phone) AS telefone_whatsapp,
+         s.unidade,
+         COALESCE(s.ativo, 0) AS ativo
+       FROM users u
+       LEFT JOIN dental_card_notification_settings s ON s.user_id = u.id
+       WHERE u.deleted_at IS NULL
+         AND u.active = 1
+         AND (
+           u.role IN ('master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator')
+           OR u.permissions LIKE '%dental_card%'
+         )
+       ORDER BY u.name ASC, s.unidade ASC`
+    );
+
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar configurações Dental Card.' });
+  }
+}
+
+async function handleUpsertDentalCardNotificationSetting(req, res) {
+  try {
+    if (!isAdminUser(req.user)) {
+      return res.status(403).json({ error: 'Somente administradores podem alterar notificações Dental Card.' });
+    }
+
+    const userId = Number(req.body.user_id || req.body.userId || req.params.userId || 0);
+    if (!userId) return res.status(400).json({ error: 'Informe o usuário da configuração.' });
+
+    const unidade = normalizeDentalText(req.body.unidade, 180) || '';
+    const values = [
+      toDentalBoolean(req.body.recebe_notificacao_sistema ?? req.body.recebeNotificacaoSistema ?? 1),
+      toDentalBoolean(req.body.recebe_notificacao_whatsapp ?? req.body.recebeNotificacaoWhatsapp ?? 0),
+      normalizeWhatsAppPhone(req.body.telefone_whatsapp || req.body.telefoneWhatsapp || ''),
+      unidade,
+      toDentalBoolean(req.body.ativo ?? 1)
+    ];
+    const settingId = Number(req.body.setting_id || req.body.settingId || 0);
+
+    if (settingId) {
+      await pool.query(
+        `UPDATE dental_card_notification_settings
+            SET recebe_notificacao_sistema = ?,
+                recebe_notificacao_whatsapp = ?,
+                telefone_whatsapp = ?,
+                unidade = ?,
+                ativo = ?,
+                updated_at = CURRENT_TIMESTAMP
+          WHERE id = ? AND user_id = ?`,
+        [...values, settingId, userId]
+      );
+    } else {
+      await pool.query(
+        `INSERT INTO dental_card_notification_settings
+         (user_id, recebe_notificacao_sistema, recebe_notificacao_whatsapp, telefone_whatsapp, unidade, ativo)
+         VALUES (?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           recebe_notificacao_sistema = VALUES(recebe_notificacao_sistema),
+           recebe_notificacao_whatsapp = VALUES(recebe_notificacao_whatsapp),
+           telefone_whatsapp = VALUES(telefone_whatsapp),
+           ativo = VALUES(ativo),
+           updated_at = CURRENT_TIMESTAMP`,
+        [userId, ...values]
+      );
+    }
+    return res.json({ message: 'Configuração Dental Card atualizada.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao salvar configuração Dental Card.' });
   }
 }
 
@@ -20624,6 +21455,9 @@ async function handleCreateCrcOperationalCost(req, res) {
   }
 }
 
+app.get(['/public/dental-card/config', '/public/dental-card/config/:unidadeSlug', '/api/public/dental-card/config', '/api/public/dental-card/config/:unidadeSlug'], publicDentalCardLimiter, handleGetPublicDentalCardConfig);
+app.post(['/public/dental-card', '/public/dental-card/:unidadeSlug', '/api/public/dental-card', '/api/public/dental-card/:unidadeSlug'], publicDentalCardLimiter, handlePublicDentalCardPhotoUpload, handleCreatePublicDentalCardLead);
+
 app.get(['/dental-card/dashboard', '/api/dental-card/dashboard'], authenticate, requireDentalCardView, handleGetDentalCardDashboard);
 app.get(['/dental-card/leads', '/api/dental-card/leads', '/dental-card', '/api/dental-card'], authenticate, requireDentalCardView, handleGetDentalCardLeads);
 app.get(['/dental-card/leads/:id', '/api/dental-card/leads/:id'], authenticate, requireDentalCardView, handleGetDentalCardLead);
@@ -20634,8 +21468,13 @@ app.post(['/dental-card/leads/:id/attempts', '/api/dental-card/leads/:id/attempt
 app.post(['/dental-card/leads/:id/status', '/api/dental-card/leads/:id/status'], authenticate, requireDentalCardView, handleUpdateDentalCardStatus);
 app.post(['/dental-card/import', '/api/dental-card/import'], authenticate, requireDentalCardView, upload.single('file'), handleImportDentalCard);
 app.get(['/dental-card/export', '/api/dental-card/export'], authenticate, requireDentalCardView, handleExportDentalCard);
+app.get(['/dental-card/export/excel', '/api/dental-card/export/excel'], authenticate, requireDentalCardView, handleExportDentalCardExcel);
 app.get(['/dental-card/export/pdf', '/api/dental-card/export/pdf'], authenticate, requireDentalCardView, handleExportDentalCardPdf);
+app.get(['/dental-card/report/:id/pdf', '/api/dental-card/report/:id/pdf'], authenticate, requireDentalCardView, handleExportDentalCardLeadPdf);
+app.get(['/dental-card/attachments/:id', '/api/dental-card/attachments/:id'], authenticate, requireDentalCardView, handleGetDentalCardAttachment);
 app.get(['/dental-card/import-template', '/api/dental-card/import-template'], authenticate, requireDentalCardView, handleDownloadDentalCardImportTemplate);
+app.get(['/dental-card/notification-settings', '/api/dental-card/notification-settings'], authenticate, requireDentalCardView, handleGetDentalCardNotificationSettings);
+app.put(['/dental-card/notification-settings/:userId', '/api/dental-card/notification-settings/:userId'], authenticate, requireDentalCardView, handleUpsertDentalCardNotificationSetting);
 app.get(['/dental-card/templates', '/api/dental-card/templates'], authenticate, requireDentalCardView, handleGetDentalCardTemplates);
 app.post(['/dental-card/templates', '/api/dental-card/templates'], authenticate, requireDentalCardView, handleCreateDentalCardTemplate);
 app.put(['/dental-card/templates/:id', '/api/dental-card/templates/:id'], authenticate, requireDentalCardView, handleUpdateDentalCardTemplate);
@@ -20783,6 +21622,9 @@ async function startServer() {
     runScheduledDailyCoordinatorDeliveryReport().catch((jobError) => {
       console.warn('Não foi possível executar a rotina inicial de relatório diário de entregas aos administradores:', jobError.message);
     });
+    runDentalCardSlaNotificationSweep().catch((jobError) => {
+      console.warn('Não foi possível executar a rotina inicial de SLA do Dental Card:', jobError.message);
+    });
     processWhatsAppDispatchQueue().catch((jobError) => {
       console.warn('Não foi possível executar a fila inicial de disparos WhatsApp:', jobError.message);
     });
@@ -20847,6 +21689,12 @@ async function startServer() {
       console.warn('Não foi possível executar a rotina programada de relatório diário de entregas:', jobError.message);
     });
   }, dailyCoordinatorDeliveryReportIntervalMinutes * 60 * 1000);
+
+  setInterval(() => {
+    runDentalCardSlaNotificationSweep().catch((jobError) => {
+      console.warn('Não foi possível executar a rotina programada de SLA do Dental Card:', jobError.message);
+    });
+  }, Math.max(5, Number(process.env.DENTAL_CARD_SLA_SWEEP_INTERVAL_MINUTES || 15)) * 60 * 1000);
 
   setInterval(() => {
     processWhatsAppDispatchQueue().catch((jobError) => {

@@ -1382,6 +1382,10 @@ a {
 }
 
 .drawer-section button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   width: 100%;
   min-height: 42px;
   border: 1px solid var(--line);
@@ -1392,6 +1396,21 @@ a {
   text-align: left;
   padding: 0 12px;
   cursor: pointer;
+}
+
+.drawer-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  min-height: 24px;
+  border-radius: 999px;
+  padding: 0 8px;
+  color: #fff;
+  background: #b8392c;
+  font-size: 0.78rem;
+  font-style: normal;
+  font-weight: 900;
 }
 
 .home-qr-panel {

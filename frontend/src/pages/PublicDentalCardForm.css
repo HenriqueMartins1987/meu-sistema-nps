@@ -1,0 +1,209 @@
+.public-dental-page {
+  min-height: 100vh;
+  padding: 24px;
+  color: #211a16;
+  background:
+    radial-gradient(circle at top left, rgba(212, 175, 55, 0.18), transparent 26rem),
+    linear-gradient(135deg, #fffaf2 0%, #f4efe7 52%, #ecf7f4 100%);
+}
+
+.public-dental-form,
+.public-dental-success {
+  width: min(760px, 100%);
+  margin: 0 auto;
+  border: 1px solid rgba(142, 103, 49, 0.24);
+  border-top: 5px solid #c79544;
+  border-radius: 12px;
+  padding: 26px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 22px 52px rgba(73, 53, 31, 0.12);
+}
+
+.public-dental-header {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+
+.public-dental-eyebrow {
+  margin: 0;
+  color: #b47a2d;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.public-dental-header h1,
+.public-dental-success h1 {
+  margin: 0;
+  font-size: clamp(2rem, 8vw, 3.1rem);
+  line-height: 1.05;
+}
+
+.public-dental-header p,
+.public-dental-success p,
+.public-photo-section p {
+  margin: 0;
+  color: #65584f;
+  line-height: 1.55;
+}
+
+.public-progress {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #f0e2cc;
+}
+
+.public-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(135deg, #1f7a8c, #d4af37);
+  transition: width 0.2s ease;
+}
+
+.public-dental-alert {
+  margin: 14px 0;
+  border: 1px solid rgba(196, 69, 54, 0.28);
+  border-radius: 8px;
+  padding: 13px 14px;
+  color: #a93629;
+  background: #fff0ed;
+  font-weight: 800;
+}
+
+.public-dental-section {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid rgba(142, 103, 49, 0.18);
+}
+
+.public-dental-section h2 {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.public-dental-section label {
+  display: grid;
+  gap: 7px;
+  color: #5e5147;
+  font-weight: 850;
+}
+
+.public-dental-section input,
+.public-dental-section select,
+.public-dental-section textarea {
+  width: 100%;
+  min-height: 52px;
+  border: 1px solid rgba(142, 103, 49, 0.26);
+  border-radius: 8px;
+  padding: 13px 14px;
+  color: #211a16;
+  background: #fff;
+  font: inherit;
+}
+
+.public-dental-section textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+
+.public-photo-section {
+  grid-template-columns: 1fr;
+}
+
+.public-photo-input {
+  display: grid;
+  place-items: center;
+  min-height: 170px;
+  border: 1px dashed rgba(31, 122, 140, 0.38);
+  border-radius: 10px;
+  color: #0e5966;
+  background: #effafa;
+  text-align: center;
+  cursor: pointer;
+}
+
+.public-photo-input input {
+  display: none;
+}
+
+.public-photo-preview {
+  display: grid;
+  gap: 12px;
+}
+
+.public-photo-preview img {
+  width: 100%;
+  max-height: 360px;
+  border-radius: 10px;
+  object-fit: cover;
+}
+
+.public-photo-preview button,
+.public-submit,
+.public-dental-success button {
+  min-height: 52px;
+  border: 1px solid rgba(180, 122, 45, 0.52);
+  border-radius: 8px;
+  padding: 0 18px;
+  color: #7d5524;
+  background: #fffaf2;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.public-submit,
+.public-dental-success button {
+  width: 100%;
+  margin-top: 22px;
+  color: #fff;
+  border-color: #9b6a2a;
+  background: linear-gradient(135deg, #b07a35, #d2ad72);
+}
+
+.public-submit:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.public-dental-honeypot {
+  position: absolute;
+  left: -9999px;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.public-dental-success {
+  display: grid;
+  gap: 14px;
+  margin-top: 8vh;
+  text-align: center;
+}
+
+.public-dental-success strong {
+  color: #0e5966;
+  font-size: 1.1rem;
+}
+
+@media (max-width: 680px) {
+  .public-dental-page {
+    padding: 12px;
+  }
+
+  .public-dental-form,
+  .public-dental-success {
+    padding: 20px;
+  }
+
+  .public-dental-section {
+    grid-template-columns: 1fr;
+  }
+}

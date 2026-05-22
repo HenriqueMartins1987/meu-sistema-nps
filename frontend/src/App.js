@@ -26,6 +26,7 @@ import FinancialIntelligence from './pages/FinancialIntelligence';
 import FinancialIntelligenceManage from './pages/FinancialIntelligenceManage';
 import FinancialIntelligenceRecord from './pages/FinancialIntelligenceRecord';
 import DentalCard from './pages/DentalCard';
+import PublicDentalCardForm from './pages/PublicDentalCardForm';
 import WhatsAppManagement from './pages/WhatsAppManagement';
 import WhatsAppServiceSettings from './pages/WhatsAppServiceSettings';
 import { PermissionRoute, ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
@@ -89,6 +90,8 @@ function App() {
       <Route path="/marketing" element={<MarketingIntake />} />
       <Route path="/registro-marketing" element={<MarketingIntake />} />
       <Route path="/pesquisa-nps" element={<NpsSurveyPage />} />
+      <Route path="/public/dental-card" element={<PublicDentalCardForm />} />
+      <Route path="/public/dental-card/:unidadeSlug" element={<PublicDentalCardForm />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<PermissionRoute permission="home" />}>
           <Route path="/home" element={<Home />} />
