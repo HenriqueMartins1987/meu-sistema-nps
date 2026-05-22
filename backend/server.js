@@ -11445,28 +11445,29 @@ async function enqueueWhatsAppDispatch(payload = {}) {
 const PARTNER_VIDEO_SETTINGS_KEY = 'partner_video_settings';
 const PARTNER_VIDEO_LAST_RUN_KEY = 'partner_video_daily_last_run';
 const DEFAULT_PARTNER_VIDEO_TEST_NUMBERS = ['5562999669966', '5562998852865', '5564981598113'];
-const DEFAULT_PARTNER_VIDEO_TEMPLATE = `Bom dia, Dr(a). {{partner_name}}.
+const PARTNER_VIDEO_COMPLIANCE_GOAL = 40;
+const DEFAULT_PARTNER_VIDEO_TEMPLATE = `*CONFIRMACAO E AGENDAMENTO - GRUPO SORRIA*
 
-Aqui é a equipe de Confirmação e Agendamento do Grupo Sorria.
+Bom dia, Dr(a). {{partner_name}}.
 
-Conforme fluxo operacional, solicitamos o envio dos vídeos personalizados dos pacientes com avaliações/reavaliações do dia seguinte.
+Solicitamos o envio dos videos personalizados dos pacientes com avaliacoes/reavaliacoes do dia seguinte.
 
-📌 Unidade: {{clinic_name}}
-⏰ Prazo de envio: até 09:30.
+Unidade: {{clinic_name}}
+Prazo de envio: ate 09:30.
 
-O vídeo deve ser único e personalizado para cada paciente, seguindo o script padrão:
+O video deve ser unico e personalizado para cada paciente, seguindo o roteiro padrao:
 
-"Olá, {{nome_paciente}}, tudo bem?
-Aqui é o Dr(a). {{nome_dentista}}.
+"Ola, {{nome_paciente}}, tudo bem?
+Aqui e o Dr(a). {{nome_dentista}}.
 
-Estou passando para avisar que nosso compromisso está confirmado para amanhã às {{horario}}.
+Estou passando para avisar que nosso compromisso esta confirmado para amanha as {{horario}}.
 
 Estou deixando tudo organizado para seu atendimento.
-Te espero amanhã."
+Te espero amanha."
 
-Após gravar, favor enviar o vídeo para a CRC realizar o encaminhamento ao paciente.
+Apos gravar, favor enviar o video para a CRC realizar o encaminhamento ao paciente.
 
-Esta é uma mensagem automática do sistema.`;
+Mensagem automatica do sistema.`;
 
 function getDefaultPartnerVideoSettings() {
   return {
@@ -11508,6 +11509,19 @@ function normalizePartnerVideoAllowedTimes(value, fallback = ['08:00', '18:00'])
   return times.length ? times : fallback;
 }
 
+function normalizePartnerVideoMessageText(value = '') {
+  return String(value || '')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[–—]/g, '-')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x09\x0A\x0D\x20-\x7E]/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+}
+
 function sanitizePartnerVideoSettings(raw = {}) {
   const defaults = getDefaultPartnerVideoSettings();
   const allowedWeekdays = Array.isArray(raw.allowedWeekdays)
@@ -11533,7 +11547,7 @@ function sanitizePartnerVideoSettings(raw = {}) {
     testNumbers: Array.isArray(raw.testNumbers)
       ? raw.testNumbers.map(normalizeWhatsAppPhone).filter(Boolean)
       : defaults.testNumbers,
-    template: String(raw.template || defaults.template)
+    template: normalizePartnerVideoMessageText(raw.template || defaults.template)
   };
 }
 
@@ -11602,12 +11616,13 @@ function getPartnerVideoEligibleScheduleSlot(settings = {}, parts = getSaoPauloP
 }
 
 function fillPartnerVideoTemplate(template, contact = {}) {
-  return String(template || DEFAULT_PARTNER_VIDEO_TEMPLATE)
+  const message = String(template || DEFAULT_PARTNER_VIDEO_TEMPLATE)
     .replace(/\{\{partner_name\}\}/g, contact.partner_name || contact.partnerName || 'Parceiro(a)')
     .replace(/\{\{clinic_name\}\}/g, contact.clinic_name || contact.clinicName || 'Unidade')
     .replace(/\{\{nome_paciente\}\}/g, '{{nome_paciente}}')
     .replace(/\{\{nome_dentista\}\}/g, contact.partner_name || contact.partnerName || 'dentista')
     .replace(/\{\{horario\}\}/g, '{{horario}}');
+  return normalizePartnerVideoMessageText(message);
 }
 
 async function logPartnerVideoEvent(event = {}) {
@@ -11736,16 +11751,22 @@ async function dispatchPartnerVideoDailyReminders({ actor = null, force = false,
   let delayCursor = 0;
   const queued = [];
   const skipped = [];
-  const template = settings.template;
+  const template = normalizePartnerVideoMessageText(settings.template || DEFAULT_PARTNER_VIDEO_TEMPLATE);
 
   if (isTest) {
     for (const phone of testNumbers.map(normalizeWhatsAppPhone).filter(Boolean)) {
+      const testContact = {
+        id: null,
+        partner_name: 'Teste operacional',
+        clinic_name: WHATSAPP_CONFIRMATION_APPOINTMENT_DISPLAY_NAME,
+        phone_number: phone
+      };
       delayCursor += randomIntegerBetween(settings.minDelaySeconds, settings.maxDelaySeconds);
       const result = await enqueuePartnerVideoMessage({
-        contact: { id: null, partner_name: 'Teste operacional', clinic_name: WHATSAPP_CONFIRMATION_APPOINTMENT_DISPLAY_NAME, phone_number: phone },
+        contact: testContact,
         control: null,
         number: phone,
-        message: template,
+        message: fillPartnerVideoTemplate(template, testContact),
         delaySeconds: delayCursor,
         actor,
         type: 'partner_video_test'
@@ -11921,16 +11942,25 @@ async function getPartnerVideoDashboardData() {
     .filter((clinic) => !activePartnerClinicKeys.has(normalizeClinicLookupValue(clinic.name)))
     .map((clinic) => clinic.name);
   const pendingControls = controls.filter((item) => !Number(item.video_received) && !String(item.status || '').includes('finalizado'));
+  const activeContacts = parseSqlCount(summary, 'activeContacts');
+  const receivedOnTimeCount = controls.filter((item) => Number(item.video_received) && String(item.status || '').includes('prazo')).length;
+  const complianceBase = controls.length || activeContacts;
+  const complianceRate = complianceBase > 0 ? (receivedOnTimeCount / complianceBase) * 100 : 0;
 
   return {
     settings: await getPartnerVideoSettings(),
     session: sessionRows[0] || null,
     summary: {
       totalContacts: parseSqlCount(summary, 'totalContacts'),
-      activeContacts: parseSqlCount(summary, 'activeContacts'),
+      activeContacts,
       withoutPhone: parseSqlCount(summary, 'withoutPhone'),
       sentToday: controls.filter((item) => ['enfileirado', 'enviada'].includes(String(item.message_status || '').toLowerCase())).length,
-      receivedOnTime: controls.filter((item) => Number(item.video_received) && String(item.status || '').includes('prazo')).length,
+      receivedOnTime: receivedOnTimeCount,
+      complianceGoal: PARTNER_VIDEO_COMPLIANCE_GOAL,
+      complianceBase,
+      complianceRate: Number(complianceRate.toFixed(2)),
+      complianceMissing: Math.max(0, Math.ceil(((PARTNER_VIDEO_COMPLIANCE_GOAL / 100) * complianceBase) - receivedOnTimeCount)),
+      complianceStatus: complianceRate >= PARTNER_VIDEO_COMPLIANCE_GOAL ? 'cumprida' : 'abaixo_meta',
       pendingToday: pendingControls.length,
       pendingUntil930: pendingControls.filter((item) => String(item.status || '').toLowerCase() === 'aguardando envio').length,
       pendingAfter10: pendingControls.filter((item) => ['não enviado', 'acionado líder', 'acionado coordenador', 'acionado gerente'].includes(String(item.status || '').toLowerCase())).length,
@@ -23174,6 +23204,8 @@ module.exports = {
     dispatchDailyCoordinatorDeliveryReport,
     dispatchWeeklyAdminComplaintReport,
     processWhatsAppDispatchQueue,
+    fillPartnerVideoTemplate,
+    normalizePartnerVideoMessageText,
     runScheduledDailyCoordinatorDemandReminders,
     runScheduledDailyCoordinatorDeliveryReport,
     runScheduledWeeklyAdminComplaintReport,

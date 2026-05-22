@@ -340,6 +340,22 @@ test('daily coordinator WhatsApp reminder is ASCII-safe and professional', () =>
   assert.doesNotMatch(message, /[^\x09\x0A\x0D\x20-\x7E]/);
 });
 
+test('partner video reminder is ASCII-safe for whatsapp-service', () => {
+  const message = __testables.fillPartnerVideoTemplate(
+    'Bom dia, Dr(a). {{partner_name}}.\n📌 Unidade: {{clinic_name}}\n⏰ Prazo até 09:30.\nVídeo único para amanhã.',
+    {
+      partner_name: 'Bruna Frazão',
+      clinic_name: 'Núcleo Bandeirante'
+    }
+  );
+
+  assert.match(message, /Bruna Frazao/);
+  assert.match(message, /Nucleo Bandeirante/);
+  assert.match(message, /Prazo ate 09:30/);
+  assert.doesNotMatch(message, /\?/);
+  assert.doesNotMatch(message, /[^\x09\x0A\x0D\x20-\x7E]/);
+});
+
 test('daily coordinator delivery report includes phone, units and confirmed delivery status', () => {
   const now = new Date('2026-05-20T12:00:00.000Z');
   const period = __testables.buildDailyCoordinatorDeliveryReportPeriod(now);

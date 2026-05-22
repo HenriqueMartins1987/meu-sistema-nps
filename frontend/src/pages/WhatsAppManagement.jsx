@@ -1107,6 +1107,7 @@ function WhatsAppManagement() {
           <section class="cards">
             <div class="card"><span>Mensagens hoje</span><strong>${Number(summary.sentToday || 0)}</strong></div>
             <div class="card"><span>No prazo</span><strong>${Number(summary.receivedOnTime || 0)}</strong></div>
+            <div class="card"><span>Regra 40%</span><strong>${Number(summary.complianceRate || 0).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%</strong></div>
             <div class="card"><span>Pendentes</span><strong>${Number(summary.pendingToday || 0)}</strong></div>
             <div class="card"><span>Não enviados</span><strong>${Number(summary.pendingAfter10 || 0)}</strong></div>
           </section>
@@ -1537,6 +1538,8 @@ function WhatsAppManagement() {
     const settings = partnerSettingsDraft || normalizePartnerVideoSettingsDraft(partnersVideo?.settings || {});
     const allowedTimeList = String(settings.allowedTimes || '08:00\n18:00').split(/\n|,|;/).map((item) => item.trim()).filter(Boolean);
     const unitsWithoutPartnerNames = Array.isArray(summary.unitsWithoutPartnerNames) ? summary.unitsWithoutPartnerNames : [];
+    const complianceRate = Number(summary.complianceRate || 0);
+    const complianceGoal = Number(summary.complianceGoal || 40);
     const weekdayDescription = formatPartnerWeekdayLabels(settings.allowedWeekdays || [1, 2, 3, 4, 5, 6]);
     const controlsByPartnerId = new Set(controls.map((item) => String(item.partner_id || '')));
     const noVideoOptions = [
@@ -1570,6 +1573,7 @@ function WhatsAppManagement() {
       ['Pendencias ate 09:30', summary.pendingUntil930 || 0, 'Aguardando baixa do video', summary.pendingUntil930 ? 'warning' : 'success'],
       ['Pendencias apos 10:00', summary.pendingAfter10 || 0, 'Fora do fluxo ideal', summary.pendingAfter10 ? 'danger' : 'success'],
       ['No prazo', summary.receivedOnTime || 0, 'Videos recebidos no prazo', 'success'],
+      ['Regra 40%', `${complianceRate.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`, `Meta minima: ${complianceGoal}% no prazo${summary.complianceMissing ? ` - faltam ${summary.complianceMissing}` : ''}`, complianceRate >= complianceGoal ? 'success' : 'danger'],
       ['Acionamentos coord.', summary.coordinatorActions || 0, 'Escalada ate 11:00', summary.coordinatorActions ? 'warning' : 'neutral'],
       ['Acionamentos gerente', summary.managerActions || 0, 'Escalada ate 12:00', summary.managerActions ? 'danger' : 'neutral'],
       ['Falhas', summary.failuresToday || 0, 'Erros registrados hoje', summary.failuresToday ? 'danger' : 'success'],
