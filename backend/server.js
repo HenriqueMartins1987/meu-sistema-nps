@@ -5203,11 +5203,32 @@ async function getNpsNotificationContext(npsId) {
 }
 
 function shouldNotifyAssignedComplaintAudience(complaint) {
-  const assignedRole = String(
-    complaint?.assigned_responsible_role || complaint?.forwarded_to_role || ''
-  ).toLowerCase();
+  return Boolean(complaint?.assigned_user_id || complaint?.assigned_user_email);
+}
 
-  return Boolean(complaint?.assigned_user_id) && ['coordinator', 'manager'].includes(assignedRole);
+function isMasterNotificationRecipient(recipient) {
+  return normalizeAccessRole(recipient?.role || recipient?.recipientRole) === 'master_admin'
+    || normalizeNotificationEmail(recipient?.email || recipient?.recipient_email) === masterAdminEmail;
+}
+
+function isComplaintAssignedEmailRecipient(complaint, recipient) {
+  const recipientUserId = Number(recipient?.userId || recipient?.id || recipient?.recipient_user_id || 0);
+  const assignedUserId = Number(complaint?.assigned_user_id || complaint?.assigned_responsible_user_id || 0);
+  const recipientEmail = normalizeNotificationEmail(recipient?.email || recipient?.recipient_email);
+  const assignedEmail = normalizeNotificationEmail(complaint?.assigned_user_email);
+
+  return Boolean(assignedUserId && recipientUserId === assignedUserId)
+    || Boolean(assignedEmail && recipientEmail === assignedEmail);
+}
+
+function applyComplaintEmailResponsibilityPolicy(complaint, recipients = []) {
+  return recipients.map((recipient) => {
+    if (isMasterNotificationRecipient(recipient) || isComplaintAssignedEmailRecipient(complaint, recipient)) {
+      return recipient;
+    }
+
+    return { ...recipient, email: '' };
+  });
 }
 
 function buildComplaintAssignedAudienceRecipients(complaint) {
@@ -5237,8 +5258,14 @@ async function buildComplaintAssignedNotificationRecipients(complaint) {
 
   clinicRecipients.forEach((recipient) => addNotificationRecipient(recipientMap, recipient));
   buildComplaintAssignedAudienceRecipients(complaint).forEach((recipient) => addNotificationRecipient(recipientMap, recipient));
+  addNotificationRecipient(recipientMap, {
+    name: 'Administrador Master',
+    role: 'master_admin',
+    email: masterAdminEmail,
+    whatsapp: masterAdminWhatsapp
+  });
 
-  return Array.from(recipientMap.values());
+  return applyComplaintEmailResponsibilityPolicy(complaint, Array.from(recipientMap.values()));
 }
 
 async function buildComplaintNotificationRecipients(complaint) {
@@ -5262,7 +5289,7 @@ async function buildComplaintNotificationRecipients(complaint) {
     buildComplaintAssignedAudienceRecipients(complaint).forEach((recipient) => addNotificationRecipient(recipientMap, recipient));
   }
 
-  return Array.from(recipientMap.values());
+  return applyComplaintEmailResponsibilityPolicy(complaint, Array.from(recipientMap.values()));
 }
 
 function buildComplaintNotificationEmail(complaint, protocol) {

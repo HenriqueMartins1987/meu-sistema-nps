@@ -18,7 +18,7 @@ const sections = [
   { id: 'history', label: 'Historico', path: '/home/whatsapp-management/history', permission: 'whatsapp_history', operator: true },
   { id: 'confirmation', label: 'Confirmacao e Agendamento', path: '/home/whatsapp-management/confirmation', permission: 'whatsapp_reports', leader: true },
   { id: 'reports', label: 'Relatorios', path: '/home/whatsapp-management/reports', permission: 'whatsapp_reports', leader: true },
-  { id: 'settings', label: 'Configuracoes', path: '/home/whatsapp-management/settings', permission: 'whatsapp_settings', masterOnly: true }
+  { id: 'settings', label: 'Configuracoes', path: '/admin/controle-master', permission: 'whatsapp_settings', masterOnly: true }
 ];
 
 const sectionDescriptions = {
@@ -352,6 +352,7 @@ function WhatsAppManagement() {
   const [messages, setMessages] = useState([]);
   const [selectedConversationId, setSelectedConversationId] = useState('');
   const [qrResult, setQrResult] = useState(null);
+  const [dashboardView, setDashboardView] = useState('overview');
 
   const [instanceDraft, setInstanceDraft] = useState(emptyInstance());
   const [editingInstanceName, setEditingInstanceName] = useState('');
@@ -1351,40 +1352,163 @@ function WhatsAppManagement() {
 
   const renderDashboard = () => {
     const summary = dashboard?.summary || {};
+    const connectedCount = instances.filter((item) => String(item.status || '').toLowerCase() === 'conectado').length;
+    const disconnectedCount = Math.max(0, instances.length - connectedCount);
+    const sentToday = Number(summary.sentToday || 0);
+    const receivedToday = Number(summary.receivedToday || 0);
+    const totalMessagesToday = sentToday + receivedToday;
+    const responseRate = Math.max(0, Math.min(100, Number(summary.responseRate || 0)));
+    const healthScore = instances.length ? Math.round((connectedCount / instances.length) * 100) : 0;
+    const queuePressure = Math.min(100, Math.round((queue.length / Math.max(1, queue.length + operators.length)) * 100));
+    const topInstances = [...instances]
+      .map((item) => ({
+        ...item,
+        volume: Number(item.message_count || item.messages_today || item.sent_today || item.received_today || 0)
+      }))
+      .sort((a, b) => b.volume - a.volume)
+      .slice(0, 8);
+    const sectorMap = instances.reduce((map, item) => {
+      const key = String(item.sector || 'Geral').trim() || 'Geral';
+      const current = map.get(key) || { total: 0, connected: 0 };
+      current.total += 1;
+      if (String(item.status || '').toLowerCase() === 'conectado') current.connected += 1;
+      map.set(key, current);
+      return map;
+    }, new Map());
+    const sectorRows = Array.from(sectorMap.entries()).map(([label, value]) => ({
+      label,
+      total: value.total,
+      connected: value.connected,
+      percent: value.total ? Math.round((value.connected / value.total) * 100) : 0
+    }));
+
     const cards = [
-      ['Sessoes', instances.length, 'Numeros cadastrados'],
-      ['Conectadas', instances.filter((item) => String(item.status || '').toLowerCase() === 'conectado').length, 'Status via VPS'],
-      ['Mensagens hoje', summary.sentToday || 0, 'Historico do dia'],
-      ['Recebidas hoje', summary.receivedToday || 0, 'Entradas do dia'],
-      ['Fila aberta', queue.length, 'Atendimentos pendentes'],
-      ['Ausentes', absent.length, 'Retorno pendente'],
-      ['Operadores', operators.length, 'Equipe habilitada'],
-      ['Taxa resposta', `${Number(summary.responseRate || 0).toLocaleString('pt-BR')}%`, 'Indicador operacional']
+      { title: 'Saude das sessoes', value: `${healthScore}%`, helper: `${connectedCount} conectadas de ${instances.length}`, tone: healthScore >= 80 ? 'success' : healthScore >= 50 ? 'warning' : 'danger', progress: healthScore },
+      { title: 'Mensagens hoje', value: totalMessagesToday, helper: `${sentToday} enviadas / ${receivedToday} recebidas`, tone: 'neutral', progress: Math.min(100, totalMessagesToday) },
+      { title: 'Fila aberta', value: queue.length, helper: 'Atendimentos pendentes', tone: queue.length ? 'warning' : 'success', progress: queuePressure },
+      { title: 'Taxa resposta', value: `${responseRate.toLocaleString('pt-BR')}%`, helper: 'Indicador operacional', tone: responseRate >= 80 ? 'success' : responseRate >= 50 ? 'warning' : 'danger', progress: responseRate }
     ];
 
     return (
       <>
-        <section className="whatsapp-kpi-grid">
-          {cards.map(([title, value, helper]) => (
-            <article className="whatsapp-kpi" key={title}>
-              <span>{title}</span>
-              <strong>{value}</strong>
-              <small>{helper}</small>
-            </article>
-          ))}
-        </section>
-        <section className="whatsapp-panel">
-          <h2>Leitura operacional</h2>
-          <div className="whatsapp-card-list compact">
-            {instances.slice(0, 12).map((item) => (
-              <article key={item.instance_name}>
-                <span>{item.display_name || item.instance_name}</span>
-                <strong>{item.status || 'sem status'}</strong>
-                <small>{item.phone_number || item.clinic_name || '-'}</small>
-              </article>
+        <section className="whatsapp-bi-command">
+          <div>
+            <p className="eyebrow">BI operacional</p>
+            <h2>Central WhatsApp CRC</h2>
+            <p>Indicadores em tempo real para acompanhar sessoes, fila, mensagens e risco operacional.</p>
+          </div>
+          <div className="whatsapp-bi-toggle" role="tablist" aria-label="Visao do dashboard WhatsApp">
+            {[
+              ['overview', 'Operacao'],
+              ['sessions', 'Sessoes'],
+              ['queue', 'Fila']
+            ].map(([key, label]) => (
+              <button
+                key={key}
+                type="button"
+                className={dashboardView === key ? 'active' : ''}
+                onClick={() => setDashboardView(key)}
+              >
+                {label}
+              </button>
             ))}
           </div>
         </section>
+
+        <section className="whatsapp-kpi-grid whatsapp-bi-kpi-grid">
+          {cards.map((card) => (
+            <article className={`whatsapp-kpi ${card.tone}`} key={card.title}>
+              <span>{card.title}</span>
+              <strong>{card.value}</strong>
+              <small>{card.helper}</small>
+              <div className="whatsapp-kpi-progress"><i style={{ width: `${card.progress}%` }} /></div>
+            </article>
+          ))}
+        </section>
+
+        {dashboardView === 'overview' && (
+          <section className="whatsapp-bi-grid">
+            <article className="whatsapp-panel whatsapp-bi-panel">
+              <h2>Capacidade da central</h2>
+              <div className="whatsapp-bi-meter">
+                <strong>{healthScore}%</strong>
+                <span>saude das conexoes</span>
+                <i><b style={{ width: `${healthScore}%` }} /></i>
+              </div>
+              <div className="whatsapp-bi-mini-list">
+                <span><strong>{connectedCount}</strong> sessoes conectadas</span>
+                <span><strong>{disconnectedCount}</strong> sessoes sem conexao</span>
+                <span><strong>{operators.length}</strong> operadores habilitados</span>
+              </div>
+            </article>
+
+            <article className="whatsapp-panel whatsapp-bi-panel">
+              <h2>Movimento do dia</h2>
+              <div className="whatsapp-bi-bars">
+                <label><span>Enviadas</span><i><b style={{ width: `${Math.min(100, sentToday)}%` }} /></i><strong>{sentToday}</strong></label>
+                <label><span>Recebidas</span><i><b style={{ width: `${Math.min(100, receivedToday)}%` }} /></i><strong>{receivedToday}</strong></label>
+                <label><span>Ausentes</span><i><b style={{ width: `${Math.min(100, absent.length * 8)}%` }} /></i><strong>{absent.length}</strong></label>
+              </div>
+            </article>
+
+            <article className="whatsapp-panel whatsapp-bi-panel">
+              <h2>Leitura por setor</h2>
+              <div className="whatsapp-bi-sector-list">
+                {sectorRows.length ? sectorRows.map((item) => (
+                  <div key={item.label}>
+                    <span>{item.label}<small>{item.connected}/{item.total} conectadas</small></span>
+                    <i><b style={{ width: `${item.percent}%` }} /></i>
+                  </div>
+                )) : <p className="whatsapp-panel-note">Nenhuma sessao cadastrada ainda.</p>}
+              </div>
+            </article>
+          </section>
+        )}
+
+        {dashboardView === 'sessions' && (
+          <section className="whatsapp-panel whatsapp-bi-panel">
+            <div className="whatsapp-panel-head">
+              <div>
+                <h2>Sessoes monitoradas</h2>
+                <p className="whatsapp-panel-note">Status das conexoes, clinica vinculada e volume recente quando disponivel.</p>
+              </div>
+            </div>
+            <div className="whatsapp-bi-session-grid">
+              {topInstances.map((item) => {
+                const connected = String(item.status || '').toLowerCase() === 'conectado';
+                return (
+                  <article key={item.instance_name} className={connected ? 'online' : 'offline'}>
+                    <span>{item.display_name || item.instance_name}</span>
+                    <strong>{connected ? 'Conectada' : (item.status || 'sem status')}</strong>
+                    <p>{item.clinic_name || item.phone_number || 'Sem clinica vinculada'}</p>
+                    <i><b style={{ width: `${Math.min(100, item.volume || (connected ? 60 : 18))}%` }} /></i>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {dashboardView === 'queue' && (
+          <section className="whatsapp-panel whatsapp-bi-panel">
+            <div className="whatsapp-panel-head">
+              <div>
+                <h2>Fila e retorno</h2>
+                <p className="whatsapp-panel-note">Pacientes aguardando atendimento ou retorno ativo no WhatsApp.</p>
+              </div>
+            </div>
+            <div className="whatsapp-bi-queue-list">
+              {queue.slice(0, 10).map((item, index) => (
+                <article key={item.id || `${item.phone || item.patient_phone}-${index}`}>
+                  <span>{item.patient_name || item.name || 'Paciente nao identificado'}</span>
+                  <strong>{item.status || item.queue_status || 'pendente'}</strong>
+                  <small>{item.clinic_name || item.instance_name || item.phone || item.patient_phone || '-'}</small>
+                </article>
+              ))}
+              {!queue.length && <p className="whatsapp-panel-note">Nenhum atendimento pendente neste momento.</p>}
+            </div>
+          </section>
+        )}
       </>
     );
   };
@@ -1751,6 +1875,11 @@ function WhatsAppManagement() {
     ));
     const selectedTemplate = matchingTemplates.find((item) => String(item.id) === String(campaignDraft.template_id)) || null;
     const selectedPreviewRows = campaignPreview.filter((item) => campaignSelection.includes(item.preview_id));
+    const allowedClinicNames = clinics
+      .map((clinic) => String(clinic.name || clinic.nome || '').trim())
+      .filter(Boolean)
+      .slice(0, 8);
+    const remainingClinicCount = Math.max(0, clinics.length - allowedClinicNames.length);
 
     return (
       <section className="whatsapp-two-column whatsapp-campaigns-layout">
@@ -1795,6 +1924,11 @@ function WhatsAppManagement() {
               <select className="field" value={campaignDraft.session_id} onChange={(event) => setCampaignDraft((current) => ({ ...current, session_id: event.target.value }))} disabled={campaignDraft.campaign_type === 'confirmacao'}>
                 {instances.map((item) => <option key={item.instance_name} value={item.instance_name}>{item.display_name || item.instance_name}</option>)}
               </select>
+              <small className="whatsapp-field-hint">
+                {campaignDraft.campaign_type === 'confirmacao'
+                  ? 'Confirmacao usa sempre o WhatsApp vinculado a clinica do paciente.'
+                  : 'NPS usa a sessao central selecionada para o lote.'}
+              </small>
             </label>
             <label>Template
               <select className="field" value={campaignDraft.template_id} onChange={(event) => {
@@ -1809,6 +1943,16 @@ function WhatsAppManagement() {
               <textarea className="field textarea" rows="5" value={campaignDraft.message_text} onChange={(event) => setCampaignDraft((current) => ({ ...current, message_text: event.target.value }))} placeholder="Use variaveis como {{nome_paciente}}, {{clinica}}, {{data_consulta}}, {{hora_consulta}} e {{link_nps}}." />
             </label>
           </div>
+          <section className="whatsapp-allowed-clinic-strip">
+            <div>
+              <span>Clinicas liberadas para este operador</span>
+              <strong>{clinics.length || 0}</strong>
+            </div>
+            <div className="whatsapp-allowed-clinic-tags">
+              {allowedClinicNames.length ? allowedClinicNames.map((name) => <em key={name}>{name}</em>) : <em>Nenhuma clinica vinculada</em>}
+              {remainingClinicCount > 0 ? <em>+{remainingClinicCount}</em> : null}
+            </div>
+          </section>
           <section className="whatsapp-campaign-import-grid">
             <label>Lista para disparo
               <textarea className="field textarea" rows="11" value={campaignDraft.recipients} onChange={(event) => setCampaignDraft((current) => ({ ...current, recipients: event.target.value }))} />

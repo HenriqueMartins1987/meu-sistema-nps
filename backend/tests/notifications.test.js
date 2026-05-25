@@ -376,7 +376,7 @@ test('complaint notification templates include the complaint link and detailed W
   assert.doesNotMatch(message, /Resumo da ocorr/);
 });
 
-test('assigned complaint notifications keep coordinator and manager in the audience', async () => {
+test('assigned complaint notifications email only current responsible and master', async () => {
   const originalQuery = serverModule.pool.query;
 
   serverModule.pool.query = async (sql, params = []) => {
@@ -422,8 +422,9 @@ test('assigned complaint notifications keep coordinator and manager in the audie
     });
 
     assert.ok(recipients.some((recipient) => recipient.email === 'coordenadora@clinica.com'));
-    assert.ok(recipients.some((recipient) => recipient.email === 'gerente@clinica.com'));
-    assert.ok(recipients.some((recipient) => recipient.email === 'responsavel@clinica.com'));
+    assert.ok(recipients.some((recipient) => recipient.role === 'master_admin' && recipient.email));
+    assert.ok(!recipients.some((recipient) => recipient.email === 'gerente@clinica.com'));
+    assert.ok(!recipients.some((recipient) => recipient.email === 'responsavel@clinica.com'));
   } finally {
     serverModule.pool.query = originalQuery;
   }

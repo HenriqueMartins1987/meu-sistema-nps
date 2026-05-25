@@ -29,6 +29,7 @@ import DentalCard from './pages/DentalCard';
 import PublicDentalCardForm from './pages/PublicDentalCardForm';
 import WhatsAppManagement from './pages/WhatsAppManagement';
 import WhatsAppServiceSettings from './pages/WhatsAppServiceSettings';
+import ReportsHub from './pages/ReportsHub';
 import { PermissionRoute, ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
 import './App.css';
 
@@ -95,6 +96,7 @@ function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<PermissionRoute permission="home" />}>
           <Route path="/home" element={<Home />} />
+          <Route path="/home/relatorios" element={<ReportsHub />} />
           <Route path="/perfil" element={<Profile />} />
         </Route>
         <Route element={<PermissionRoute permission="financial_dashboard" />}>
