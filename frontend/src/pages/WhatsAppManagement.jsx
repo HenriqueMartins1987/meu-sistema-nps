@@ -12,6 +12,7 @@ const sections = [
   { id: 'attendance', label: 'Atendimento', path: '/home/whatsapp-management/attendance', permission: 'whatsapp_attendance', operator: true },
   { id: 'send', label: 'Envio manual', path: '/home/whatsapp-management/send', permission: 'whatsapp_send', operator: true },
   { id: 'templates', label: 'Mensagens padrao', path: '/home/whatsapp-management/templates', permission: 'whatsapp_templates', operator: true },
+  { id: 'campaigns', label: 'Disparos em massa', path: '/home/whatsapp-management/campaigns', permission: 'whatsapp_send', operator: true },
   { id: 'chatbot', label: 'Chatbot', path: '/home/whatsapp-management/chatbot', permission: 'whatsapp_chatbot', operator: true },
   { id: 'absent', label: 'Ausentes', path: '/home/whatsapp-management/absent', permission: 'whatsapp_absent', operator: true },
   { id: 'history', label: 'Historico', path: '/home/whatsapp-management/history', permission: 'whatsapp_history', operator: true },
@@ -157,6 +158,16 @@ function emptyFlow() {
   };
 }
 
+function emptyCampaignDraft() {
+  return {
+    campaign_type: 'confirmacao',
+    session_id: 'confirmacao-agendamento',
+    template_id: '',
+    message_text: '',
+    recipients: 'nome_paciente;telefone;clinica;data_consulta;hora_consulta\nPaciente Exemplo;5562999999999;Garavelo;26/05/2026;14:30'
+  };
+}
+
 function emptySend(user) {
   return {
     instance_name: '',
@@ -281,6 +292,7 @@ function WhatsAppManagement() {
   const [absent, setAbsent] = useState([]);
   const [history, setHistory] = useState([]);
   const [flows, setFlows] = useState([]);
+  const [chatbotSessions, setChatbotSessions] = useState([]);
   const [partnersVideo, setPartnersVideo] = useState(null);
   const [messages, setMessages] = useState([]);
   const [selectedConversationId, setSelectedConversationId] = useState('');
@@ -296,6 +308,7 @@ function WhatsAppManagement() {
   const [editingTemplateId, setEditingTemplateId] = useState('');
   const [flowDraft, setFlowDraft] = useState(emptyFlow());
   const [editingFlowId, setEditingFlowId] = useState('');
+  const [campaignDraft, setCampaignDraft] = useState(emptyCampaignDraft());
   const [partnerSettingsDraft, setPartnerSettingsDraft] = useState(null);
   const [partnerContactDraft, setPartnerContactDraft] = useState(emptyPartnerVideoContact());
   const [editingPartnerContactId, setEditingPartnerContactId] = useState('');
@@ -378,6 +391,7 @@ function WhatsAppManagement() {
       absent: api.get('/api/whatsapp/absent'),
       history: api.get('/api/whatsapp/history', { params: historyFilters }),
       flows: api.get('/api/whatsapp/chatbot/flows'),
+      chatbotSessions: api.get('/api/whatsapp/chatbot/sessions'),
       partnersVideo: api.get('/api/partners-video/dashboard')
     };
     const entries = Object.entries(requests);
@@ -406,6 +420,7 @@ function WhatsAppManagement() {
       if (key === 'absent') setAbsent(Array.isArray(data) ? data : []);
       if (key === 'history') setHistory(Array.isArray(data) ? data : []);
       if (key === 'flows') setFlows(Array.isArray(data) ? data : []);
+      if (key === 'chatbotSessions') setChatbotSessions(Array.isArray(data) ? data : []);
       if (key === 'partnersVideo') setPartnersVideo(data || null);
     });
 
@@ -524,6 +539,14 @@ function WhatsAppManagement() {
       }));
     }
   }, [preferredInstance, sendDraft.instance_name]);
+
+  useEffect(() => {
+    setCampaignDraft((current) => {
+      const nextSession = current.campaign_type === 'nps' ? 'nps' : 'confirmacao-agendamento';
+      if (current.session_id === nextSession) return current;
+      return { ...current, session_id: nextSession };
+    });
+  }, [campaignDraft.campaign_type]);
 
   const runAction = async (key, action, successMessage, fallbackMessage) => {
     setSavingKey(key);
@@ -939,6 +962,25 @@ function WhatsAppManagement() {
       return response;
     }, 'Fluxo excluido.', 'Nao foi possivel excluir o fluxo.');
   };
+
+  const bootstrapProfessionalChatbot = () => runAction('chatbot-bootstrap', async () => {
+    const response = await api.post('/api/whatsapp/chatbot/bootstrap-defaults');
+    await loadBaseData({ silent: true });
+    return response;
+  }, 'Fluxos profissionais atualizados.', 'Nao foi possivel atualizar os fluxos profissionais.');
+
+  const sendMassCampaign = () => runAction('mass-campaign', async () => {
+    const payload = {
+      ...campaignDraft,
+      session_id: campaignDraft.session_id || (campaignDraft.campaign_type === 'nps' ? 'nps' : 'confirmacao-agendamento')
+    };
+    const response = await api.post('/api/whatsapp/campaigns/mass-send', payload);
+    await loadBaseData({ silent: true });
+    return response;
+  }, (data) => {
+    const sessionLabel = data?.sessionId ? ` Sessao usada: ${data.sessionId}.` : '';
+    return `${data?.message || 'Campanha enfileirada com sucesso.'}${sessionLabel}`;
+  }, 'Nao foi possivel enfileirar a campanha em massa.');
 
   const markAbsent = (conversation) => runAction(`absent-${conversation?.id}`, async () => {
     if (!conversation?.id) throw new Error('Selecione uma conversa antes de marcar paciente ausente.');
@@ -1447,6 +1489,7 @@ function WhatsAppManagement() {
         <label>Mensagem inicial<textarea className="field textarea" value={flowDraft.initial_message} onChange={(event) => setFlowDraft((current) => ({ ...current, initial_message: event.target.value }))} /></label>
         <div className="row-actions">
           <Button actionKey="flow" className="primary-action" onClick={saveFlow}>{editingFlowId ? 'Salvar alteracoes' : 'Salvar fluxo'}</Button>
+          <Button actionKey="chatbot-bootstrap" onClick={bootstrapProfessionalChatbot}>Preparar NPS e confirmacao</Button>
           {editingFlowId && <button type="button" className="outline-action" onClick={() => { setEditingFlowId(''); setFlowDraft(emptyFlow()); }}>Cancelar</button>}
         </div>
       </article>
@@ -1465,9 +1508,94 @@ function WhatsAppManagement() {
             </article>
           ))}
         </div>
+        <h2 style={{ marginTop: 24 }}>Sessoes recentes do chatbot</h2>
+        <div className="whatsapp-card-list compact">
+          {chatbotSessions.map((session) => (
+            <article key={session.id}>
+              <span>{session.flow_name || `Fluxo #${session.flow_id}`}</span>
+              <strong>{session.patient_name || session.patient_phone}</strong>
+              <p>{session.patient_phone} - {session.status} - passo {session.current_step_order || 1}</p>
+            </article>
+          ))}
+          {!chatbotSessions.length && <p className="empty-state">Nenhuma sessao conversacional registrada ainda.</p>}
+        </div>
       </article>
     </section>
   );
+
+  const renderCampaigns = () => {
+    const matchingTemplates = templates.filter((item) => (
+      campaignDraft.campaign_type === 'nps'
+        ? String(item.category || '').toLowerCase() === 'nps'
+        : String(item.category || '').toLowerCase().includes('confirma')
+    ));
+    const selectedTemplate = matchingTemplates.find((item) => String(item.id) === String(campaignDraft.template_id)) || null;
+
+    return (
+      <section className="whatsapp-two-column">
+        <article className="whatsapp-panel">
+          <h2>Campanhas em massa</h2>
+          <p className="whatsapp-panel-note">Use nome e telefone em cada linha. O sistema enfileira aos poucos com anti-ban, rate limit e janela de aquecimento.</p>
+          <div className="whatsapp-form-grid">
+            <label>Tipo
+              <select className="field" value={campaignDraft.campaign_type} onChange={(event) => setCampaignDraft((current) => ({ ...current, campaign_type: event.target.value, template_id: '' }))}>
+                <option value="confirmacao">Confirmacao de atendimento</option>
+                <option value="nps">NPS por WhatsApp</option>
+              </select>
+            </label>
+            <label>Sessao
+              <select className="field" value={campaignDraft.session_id} onChange={(event) => setCampaignDraft((current) => ({ ...current, session_id: event.target.value }))}>
+                {instances.map((item) => <option key={item.instance_name} value={item.instance_name}>{item.display_name || item.instance_name}</option>)}
+              </select>
+            </label>
+            <label>Template
+              <select className="field" value={campaignDraft.template_id} onChange={(event) => {
+                const template = matchingTemplates.find((item) => String(item.id) === String(event.target.value));
+                setCampaignDraft((current) => ({ ...current, template_id: event.target.value, message_text: template?.message_text || current.message_text }));
+              }}>
+                <option value="">Selecionar template</option>
+                {matchingTemplates.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+              </select>
+            </label>
+            <label>Texto base
+              <textarea className="field textarea" rows="5" value={campaignDraft.message_text} onChange={(event) => setCampaignDraft((current) => ({ ...current, message_text: event.target.value }))} placeholder="Use variaveis como {{nome_paciente}}, {{clinica}}, {{data_consulta}}, {{hora_consulta}} e {{link_nps}}." />
+            </label>
+          </div>
+          <label>Lista para disparo
+            <textarea className="field textarea" rows="10" value={campaignDraft.recipients} onChange={(event) => setCampaignDraft((current) => ({ ...current, recipients: event.target.value }))} />
+          </label>
+          <div className="row-actions">
+            <Button actionKey="mass-campaign" className="primary-action" onClick={sendMassCampaign}>Enfileirar campanha</Button>
+          </div>
+        </article>
+        <article className="whatsapp-panel">
+          <h2>Operacao pronta</h2>
+          <div className="whatsapp-card-list compact">
+            <article>
+              <span>Numero NPS</span>
+              <strong>556296807670</strong>
+              <p>Canal priorizado para disparos de NPS e acompanhamento pelo SAC.</p>
+            </article>
+            <article>
+              <span>Template selecionado</span>
+              <strong>{selectedTemplate?.title || 'Mensagem livre'}</strong>
+              <p>{String(selectedTemplate?.message_text || campaignDraft.message_text || '').slice(0, 220) || 'Defina o texto base da campanha.'}</p>
+            </article>
+            <article>
+              <span>Modelo de lista</span>
+              <strong>nome_paciente;telefone</strong>
+              <p>Campos extras aceitos: clinica;data_consulta;hora_consulta.</p>
+            </article>
+            <article>
+              <span>Fluxo conversacional</span>
+              <strong>{campaignDraft.campaign_type === 'nps' ? 'NPS' : 'Confirmacao'}</strong>
+              <p>{campaignDraft.campaign_type === 'nps' ? 'A resposta pode ser capturada pelo fluxo NPS quando o paciente interagir no numero dedicado.' : 'Respostas 1, 2 e 3 entram no chatbot e atualizam o status do atendimento.'}</p>
+            </article>
+          </div>
+        </article>
+      </section>
+    );
+  };
 
   const renderAbsent = () => (
     <section className="whatsapp-panel">
@@ -1891,6 +2019,7 @@ function WhatsAppManagement() {
     if (currentSection === 'attendance') return renderAttendance();
     if (currentSection === 'send') return renderSend();
     if (currentSection === 'templates') return renderTemplates();
+    if (currentSection === 'campaigns') return renderCampaigns();
     if (currentSection === 'chatbot') return renderChatbot();
     if (currentSection === 'absent') return renderAbsent();
     if (currentSection === 'history') return renderHistory();

@@ -340,7 +340,8 @@ function NpsManagement() {
       const formData = new FormData();
       formData.append('file', bulkFile);
       const response = await api.post('/nps/bulk-dispatch', formData);
-      setFeedback(response.data?.message || 'Envio em massa preparado com sucesso.');
+      const sessionLabel = response.data?.sessionId ? ` Sessao WhatsApp usada: ${response.data.sessionId}.` : '';
+      setFeedback((response.data?.message || 'Envio em massa preparado com sucesso.') + sessionLabel);
       setBulkFile(null);
     } catch (error) {
       const backendMessage = typeof error.response?.data === 'string'
@@ -573,6 +574,7 @@ function NpsManagement() {
                   ? 'Pesquisas NPS finalizadas'
                   : 'Lista de respostas NPS'}
             </h2>
+            <p className="base-subtitle">O sistema prioriza a sessÃ£o dedicada <strong>nps</strong> na VPS quando ela estiver cadastrada e conectada.</p>
           </div>
 
           <div className="patient-tabs" role="tablist" aria-label="Visões da gestão NPS">

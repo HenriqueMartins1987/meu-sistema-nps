@@ -181,6 +181,38 @@ test('normalizeWhatsAppPhone normalizes brazilian phones to E.164 digits', () =>
   assert.equal(normalizeWhatsAppPhone('123'), '');
 });
 
+test('parseMassWhatsAppRecipients accepts header and optional confirmation fields', () => {
+  const parsed = __testables.parseMassWhatsAppRecipients([
+    'nome_paciente;telefone;clinica;data_consulta;hora_consulta',
+    'Maria Silva;5562999999999;Garavelo;26/05/2026;14:30',
+    'Joao sem telefone;;Centro;26/05/2026;16:00'
+  ].join('\n'));
+
+  assert.equal(parsed.recipients.length, 1);
+  assert.deepEqual(parsed.recipients[0], {
+    patient_name: 'Maria Silva',
+    patient_phone: '5562999999999',
+    clinic_name: 'Garavelo',
+    data_consulta: '26/05/2026',
+    hora_consulta: '14:30'
+  });
+  assert.equal(parsed.invalidRows.length, 1);
+});
+
+test('renderGenericWhatsAppTemplate replaces campaign variables safely', () => {
+  const rendered = __testables.renderGenericWhatsAppTemplate(
+    'Ola, {{nome_paciente}}. Sua consulta na {{clinica}} e {{data_consulta}} as {{hora_consulta}}.',
+    {
+      nome_paciente: 'Maria',
+      clinica: 'Garavelo',
+      data_consulta: '26/05/2026',
+      hora_consulta: '14:30'
+    }
+  );
+
+  assert.equal(rendered, 'Ola, Maria. Sua consulta na Garavelo e 26/05/2026 as 14:30.');
+});
+
 test('normalizeTwilioPhoneNumber keeps WhatsApp prefix and accepts fixed complaint numbers', () => {
   assert.equal(normalizeTwilioPhoneNumber('5562996807670'), 'whatsapp:+5562996807670');
   assert.equal(normalizeTwilioPhoneNumber('556299669966'), 'whatsapp:+556299669966');
