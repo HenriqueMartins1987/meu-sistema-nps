@@ -209,9 +209,9 @@ function KpiCard({ label, value, note, tone = 'neutral' }) {
   );
 }
 
-function Panel({ title, note, actions, children }) {
+function Panel({ title, note, actions, children, className = '' }) {
   return (
-    <section className="dental-panel">
+    <section className={`dental-panel ${className}`}>
       <div className="dental-panel-header">
         <div>
           <h2 className="dental-panel-title">{title}</h2>
@@ -224,9 +224,9 @@ function Panel({ title, note, actions, children }) {
   );
 }
 
-function ChartPanel({ title, note, children }) {
+function ChartPanel({ title, note, children, className = '' }) {
   return (
-    <Panel title={title} note={note}>
+    <Panel title={title} note={note} className={className}>
       <div className="dental-chart">{children}</div>
     </Panel>
   );
@@ -879,7 +879,7 @@ function DentalCard() {
               {kpis.map(([label, value, note, tone]) => <KpiCard key={label} label={label} value={value} note={note} tone={tone} />)}
             </section>
 
-            <div className="dental-grid-2">
+            <div className="dental-grid-2 dental-dashboard-grid">
               <ChartPanel title="Funil Dental Card" note="Indicações > contatados > agendados > comparecidos > pagantes.">
                 <ResponsiveContainer>
                   <BarChart data={charts.funnel || []}>
@@ -979,7 +979,7 @@ function DentalCard() {
                   </div>
                 </div>
               </Panel>
-              <Panel title="Fila de prioridade" note="Indicações públicas pendentes de retorno e SLA de 24 horas.">
+              <Panel title="Fila de prioridade" note="Indicações públicas pendentes de retorno e SLA de 24 horas." className="dental-panel-full">
                 {priorityLeads.length ? (
                   <div className="dental-priority-list">
                     {priorityLeads.map((lead) => (
@@ -1139,7 +1139,7 @@ function DentalCard() {
         ) : null}
 
         {activeTab === 'reports' ? (
-          <div className="dental-grid-2">
+          <div className="dental-grid-2 dental-reports-grid">
             <Panel title="Importação da planilha" note="Leia todas as abas da planilha Todos os meses.xlsx, gere uma prévia e salve apenas após conferência.">
               <div className="dental-form-grid">
                 <Field label="Arquivo .xlsx" className="dental-span-4"><input className="dental-input" type="file" accept=".xlsx,.xls" onChange={(event) => setImportFile(event.target.files?.[0] || null)} /></Field>
@@ -1224,7 +1224,7 @@ function DentalCard() {
               </form>
             </Panel>
 
-            <Panel title="Biblioteca de mensagens" note="Mensagens disponíveis para uso no cadastro e no atendimento.">
+            <Panel title="Biblioteca de mensagens" note="Mensagens disponíveis para uso no cadastro e no atendimento." className="dental-panel-full">
               <div className="dental-table-wrap">
                 <div className="dental-table-scroll">
                   <table className="dental-table">
