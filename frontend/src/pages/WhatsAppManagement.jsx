@@ -168,6 +168,13 @@ function emptyCampaignDraft() {
   };
 }
 
+function generateClientRequestId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `wa-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function emptySend(user) {
   return {
     instance_name: '',
@@ -309,6 +316,7 @@ function WhatsAppManagement() {
   const [flowDraft, setFlowDraft] = useState(emptyFlow());
   const [editingFlowId, setEditingFlowId] = useState('');
   const [campaignDraft, setCampaignDraft] = useState(emptyCampaignDraft());
+  const [campaignFile, setCampaignFile] = useState(null);
   const [partnerSettingsDraft, setPartnerSettingsDraft] = useState(null);
   const [partnerContactDraft, setPartnerContactDraft] = useState(emptyPartnerVideoContact());
   const [editingPartnerContactId, setEditingPartnerContactId] = useState('');
@@ -857,7 +865,13 @@ function WhatsAppManagement() {
   }, 'Atendimento atualizado.', 'Nao foi possivel atualizar o atendimento.');
 
   const sendMessage = (draft = sendDraft) => {
-    const payload = { ...draft, patient_phone: normalizePhone(draft.patient_phone), operator_name: user?.name || draft.operator_name };
+    const payload = {
+      ...draft,
+      patient_phone: normalizePhone(draft.patient_phone),
+      patient_name: String(draft.patient_name || '').trim().toUpperCase(),
+      operator_name: user?.name || draft.operator_name,
+      client_request_id: generateClientRequestId()
+    };
     if (!payload.patient_phone || !payload.message_text) {
       setError('Informe telefone e mensagem.');
       return null;
@@ -873,7 +887,7 @@ function WhatsAppManagement() {
         ? await api.post('/api/whatsapp/send-template', {
           ...payload,
           variables: {
-            nome_paciente: payload.patient_name,
+            nome_paciente: String(payload.patient_name || '').toUpperCase(),
             clinica: payload.clinic_name,
             nome_operador: payload.operator_name
           }
@@ -974,13 +988,39 @@ function WhatsAppManagement() {
       ...campaignDraft,
       session_id: campaignDraft.session_id || (campaignDraft.campaign_type === 'nps' ? 'nps' : 'confirmacao-agendamento')
     };
-    const response = await api.post('/api/whatsapp/campaigns/mass-send', payload);
+    const response = campaignFile
+      ? await (() => {
+          const formData = new FormData();
+          formData.append('file', campaignFile);
+          formData.append('campaign_type', payload.campaign_type);
+          formData.append('session_id', payload.session_id);
+          formData.append('template_id', payload.template_id || '');
+          formData.append('message_text', payload.message_text || '');
+          return api.post('/api/whatsapp/campaigns/mass-send', formData);
+        })()
+      : await api.post('/api/whatsapp/campaigns/mass-send', payload);
+    setCampaignFile(null);
     await loadBaseData({ silent: true });
     return response;
   }, (data) => {
     const sessionLabel = data?.sessionId ? ` Sessao usada: ${data.sessionId}.` : '';
     return `${data?.message || 'Campanha enfileirada com sucesso.'}${sessionLabel}`;
   }, 'Nao foi possivel enfileirar a campanha em massa.');
+
+  const downloadCampaignTemplate = (campaignType = campaignDraft.campaign_type) => runAction(`campaign-template-${campaignType}`, async () => {
+    const response = await api.get('/api/whatsapp/campaigns/template', {
+      params: { campaign_type: campaignType },
+      responseType: 'blob'
+    });
+    const blob = new Blob([response.data], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = campaignType === 'nps' ? 'template-whatsapp-nps.xlsx' : 'template-whatsapp-confirmacao.xlsx';
+    link.click();
+    window.URL.revokeObjectURL(url);
+    return response;
+  }, 'Template Excel baixado.', 'Nao foi possivel baixar o template Excel.');
 
   const markAbsent = (conversation) => runAction(`absent-${conversation?.id}`, async () => {
     if (!conversation?.id) throw new Error('Selecione uma conversa antes de marcar paciente ausente.');
@@ -1561,9 +1601,16 @@ function WhatsAppManagement() {
               <textarea className="field textarea" rows="5" value={campaignDraft.message_text} onChange={(event) => setCampaignDraft((current) => ({ ...current, message_text: event.target.value }))} placeholder="Use variaveis como {{nome_paciente}}, {{clinica}}, {{data_consulta}}, {{hora_consulta}} e {{link_nps}}." />
             </label>
           </div>
+          <div className="row-actions">
+            <Button actionKey={`campaign-template-${campaignDraft.campaign_type}`} onClick={() => downloadCampaignTemplate(campaignDraft.campaign_type)}>Baixar template Excel</Button>
+          </div>
           <label>Lista para disparo
             <textarea className="field textarea" rows="10" value={campaignDraft.recipients} onChange={(event) => setCampaignDraft((current) => ({ ...current, recipients: event.target.value }))} />
           </label>
+          <label>Upload da lista
+            <input className="field" type="file" accept=".xlsx,.xls,.csv,.txt" onChange={(event) => setCampaignFile(event.target.files?.[0] || null)} />
+          </label>
+          {campaignFile && <small className="bulk-file-name">Arquivo selecionado: {campaignFile.name}</small>}
           <div className="row-actions">
             <Button actionKey="mass-campaign" className="primary-action" onClick={sendMassCampaign}>Enfileirar campanha</Button>
           </div>
@@ -1584,7 +1631,7 @@ function WhatsAppManagement() {
             <article>
               <span>Modelo de lista</span>
               <strong>nome_paciente;telefone</strong>
-              <p>Campos extras aceitos: clinica;data_consulta;hora_consulta.</p>
+              <p>Campos extras aceitos: clinica;data_consulta;hora_consulta. O nome sai sempre em CAIXA ALTA na mensagem.</p>
             </article>
             <article>
               <span>Fluxo conversacional</span>

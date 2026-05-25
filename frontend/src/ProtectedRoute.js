@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
+import AuthenticatedLayout from './AuthenticatedLayout';
 import { hasPermission, isMasterAdmin, readUser } from './constants';
 import {
   clearSession,
@@ -109,7 +110,10 @@ export function ProtectedRoute() {
           </div>
         </aside>
       </div>
-      <Outlet />
+      <AuthenticatedLayout
+        remainingMsLabel={formatRemainingTime(remainingMs)}
+        remainingWarning={remainingMs <= 5 * 60 * 1000}
+      />
     </>
   );
 }

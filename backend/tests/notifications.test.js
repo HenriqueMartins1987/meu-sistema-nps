@@ -190,7 +190,7 @@ test('parseMassWhatsAppRecipients accepts header and optional confirmation field
 
   assert.equal(parsed.recipients.length, 1);
   assert.deepEqual(parsed.recipients[0], {
-    patient_name: 'Maria Silva',
+    patient_name: 'MARIA SILVA',
     patient_phone: '5562999999999',
     clinic_name: 'Garavelo',
     data_consulta: '26/05/2026',
@@ -210,7 +210,32 @@ test('renderGenericWhatsAppTemplate replaces campaign variables safely', () => {
     }
   );
 
-  assert.equal(rendered, 'Ola, Maria. Sua consulta na Garavelo e 26/05/2026 as 14:30.');
+  assert.equal(rendered, 'Ola, MARIA. Sua consulta na Garavelo e 26/05/2026 as 14:30.');
+});
+
+test('parseMassWhatsAppRecipientsFromWorksheetRows accepts excel-like rows', () => {
+  const parsed = __testables.parseMassWhatsAppRecipientsFromWorksheetRows([
+    { nome_paciente: 'Maria Silva', telefone: '5562999999999', clinica: 'Garavelo', data_consulta: '26/05/2026', hora_consulta: '14:30' },
+    { nome_paciente: '', telefone: '', clinica: 'Centro' }
+  ]);
+
+  assert.equal(parsed.recipients.length, 1);
+  assert.equal(parsed.recipients[0].patient_name, 'MARIA SILVA');
+  assert.equal(parsed.invalidRows.length, 1);
+});
+
+test('parseBulkNpsWorksheetRows accepts excel-like rows for NPS dispatch', () => {
+  const parsed = __testables.parseBulkNpsWorksheetRows([
+    { nome_paciente: 'Maria Silva', telefone: '5562999999999', clinica: 'Garavelo' },
+    { nome_paciente: '', telefone: '', clinica: 'Centro' }
+  ]);
+
+  assert.equal(parsed.length, 1);
+  assert.deepEqual(parsed[0], {
+    name: 'MARIA SILVA',
+    phone: '+5562999999999',
+    clinic: 'Garavelo'
+  });
 });
 
 test('normalizeTwilioPhoneNumber keeps WhatsApp prefix and accepts fixed complaint numbers', () => {

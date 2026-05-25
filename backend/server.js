@@ -2096,6 +2096,30 @@ function parseBulkNpsCsv(content) {
   }).filter((row) => row.name && row.phone);
 }
 
+function parseBulkNpsWorksheetRows(rows = []) {
+  return rows.map((row) => ({
+    name: normalizeWhatsAppPatientName(
+      row.nome_paciente || row.nome || row.paciente || row.patient_name || row.patient || ''
+    ),
+    phone: normalizeBrazilPhone(
+      row.telefone || row.phone || row.patient_phone || row.whatsapp || row.celular || ''
+    ),
+    clinic: String(row.clinica || row.clinic || row.unidade || '').trim()
+  })).filter((row) => row.name && row.phone);
+}
+
+function parseBulkNpsUpload(filePath, originalName = '') {
+  const extension = String(path.extname(originalName || filePath || '')).trim().toLowerCase();
+  if (['.xlsx', '.xls'].includes(extension)) {
+    const workbook = XLSX.readFile(filePath);
+    const firstSheetName = workbook.SheetNames[0];
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName] || {}, { defval: '' });
+    return parseBulkNpsWorksheetRows(rows);
+  }
+
+  return parseBulkNpsCsv(fs.readFileSync(filePath));
+}
+
 function isStrongPassword(value) {
   const password = String(value || '');
   return password.length >= 8
@@ -3448,6 +3472,7 @@ async function ensureDatabaseSchema() {
   await ensureColumn('whatsapp_messages', 'message', 'TEXT NULL');
   await ensureColumn('whatsapp_messages', 'source', 'VARCHAR(80) NULL');
   await ensureColumn('whatsapp_messages', 'whatsapp_message_id', 'VARCHAR(180) NULL');
+  await ensureColumn('whatsapp_messages', 'client_request_id', 'VARCHAR(120) NULL');
   await ensureColumn('whatsapp_messages', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
   await ensureDefaultWhatsAppCrcSessions();
   await ensurePartnerVideoContactSeeds();
@@ -10784,9 +10809,13 @@ function renderWhatsAppTemplateText(text = '', variables = {}) {
       try { return JSON.parse(variables); } catch (error) { return {}; }
     })()
     : variables;
+  const normalizedSource = { ...(source || {}) };
+  if (normalizedSource.nome_paciente) {
+    normalizedSource.nome_paciente = normalizeWhatsAppPatientName(normalizedSource.nome_paciente);
+  }
 
   return String(text || '').replace(/\{\{\s*([\w_]+)\s*\}\}/g, (_, key) => {
-    const value = source?.[key] ?? source?.[key.toLowerCase()] ?? '';
+    const value = normalizedSource?.[key] ?? normalizedSource?.[key.toLowerCase()] ?? '';
     return value === null || value === undefined ? '' : String(value);
   });
 }
@@ -10964,15 +10993,15 @@ async function insertWhatsAppMessage(payload = {}) {
   const [result] = await pool.query(
     `INSERT INTO whatsapp_messages
      (conversation_id, instance_name, session_id, patient_phone, phone, patient_name, direction, message_text, message, message_type, source, status, evolution_message_id, whatsapp_message_id,
-      operator_id, operator_name, clinic_id, clinic_name, campaign, media_url, media_mime_type, sent_at, delivered_at, read_at, responded_at, error_message)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      operator_id, operator_name, clinic_id, clinic_name, campaign, media_url, media_mime_type, sent_at, delivered_at, read_at, responded_at, error_message, client_request_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       payload.conversation_id || null,
       payload.instance_name || null,
       payload.session_id || payload.sessionId || payload.instance_name || null,
       payload.patient_phone,
       payload.phone || payload.patient_phone,
-      payload.patient_name || null,
+      normalizeWhatsAppPatientName(payload.patient_name || ''),
       payload.direction || 'outbound',
       payload.message_text,
       payload.message || payload.message_text,
@@ -10992,7 +11021,8 @@ async function insertWhatsAppMessage(payload = {}) {
       payload.delivered_at || null,
       payload.read_at || null,
       payload.responded_at || null,
-      payload.error_message || null
+      payload.error_message || null,
+      sanitizeFinancialString(payload.client_request_id || payload.clientRequestId, 120)
     ]
   );
   return result.insertId;
@@ -14109,6 +14139,7 @@ async function handleSendWhatsAppManagementMessage(req, res, options = {}) {
   try {
     const messageText = String(req.body.message_text || req.body.message || '').trim();
     if (!messageText) return res.status(400).json({ error: 'Informe a mensagem para envio.' });
+    const clientRequestId = sanitizeFinancialString(req.body.client_request_id || req.body.clientRequestId, 120);
 
     const phone = normalizeWhatsAppPhone(req.body.patient_phone || req.body.phone || req.body.to);
     if (!phone) return res.status(400).json({ error: 'Número inválido. Use DDI e DDD. Exemplo: 5562999999999.' });
@@ -14134,6 +14165,20 @@ async function handleSendWhatsAppManagementMessage(req, res, options = {}) {
       });
     }
 
+    if (clientRequestId) {
+      const existingByRequestId = await findWhatsAppMessageByClientRequestId(clientRequestId);
+      if (existingByRequestId) {
+        return res.json({
+          success: true,
+          queued: true,
+          duplicateSuppressed: true,
+          messageId: existingByRequestId.id,
+          conversationId: existingByRequestId.conversation_id || null,
+          provider: 'whatsapp_dispatch_queue'
+        });
+      }
+    }
+
     const duplicateMessage = await findRecentDuplicateWhatsAppMessage({
       instanceName,
       patientPhone: phone,
@@ -14155,6 +14200,7 @@ async function handleSendWhatsAppManagementMessage(req, res, options = {}) {
     const conversation = await findOrCreateWhatsAppConversation({
       ...req.body,
       patient_phone: phone,
+      patient_name: normalizeWhatsAppPatientName(req.body.patient_name || req.body.patientName || ''),
       instance_name: instanceName,
       status: req.body.status || 'Em atendimento'
     }, req.user);
@@ -14171,7 +14217,8 @@ async function handleSendWhatsAppManagementMessage(req, res, options = {}) {
       operator_name: getActorName(req.user),
       clinic_id: conversation.clinic_id,
       clinic_name: conversation.clinic_name,
-      campaign: conversation.campaign
+      campaign: conversation.campaign,
+      client_request_id: clientRequestId
     });
 
     await pool.query(
@@ -14193,120 +14240,33 @@ async function handleSendWhatsAppManagementMessage(req, res, options = {}) {
     emitWhatsAppConversationChange('message_pending', updatedConversation);
     emitWhatsAppMessageChange('pending', message, updatedConversation);
 
-    const startedAt = performance.now();
-    try {
-      const providerResponse = await whatsappProvider.sendText({
-        sessionId: instanceName,
-        number: phone,
-        message: messageText
-      });
-      const providerMessageId = providerResponse.messageId || null;
-
-      await pool.query(
-        `UPDATE whatsapp_messages
-            SET status = 'enviada',
-                evolution_message_id = ?,
-                whatsapp_message_id = ?,
-                sent_at = NOW(),
-                error_message = NULL,
-                updated_at = NOW()
-          WHERE id = ?`,
-        [providerMessageId, providerMessageId, messageId]
-      );
-      await pool.query(
-        `INSERT INTO whatsapp_service_message_history
-         (session_id, patient_phone, message_text, status, provider_message_id, response_payload, created_by, sent_at)
-         VALUES (?, ?, ?, 'enviado', ?, ?, ?, NOW())`,
-        [
-          instanceName,
-          phone,
-          messageText,
-          providerMessageId,
-          JSON.stringify(providerResponse.raw || providerResponse),
-          getActorName(req.user)
-        ]
-      );
-      await pool.query(
-        `UPDATE whatsapp_instances
-            SET messages_sent_today = messages_sent_today + 1,
-                status = 'conectado',
-                notes = NULL,
-                last_warmup_reset = CURDATE(),
-                updated_at = NOW()
-          WHERE instance_name = ?`,
-        [instanceName]
-      );
-      await logEvolutionEvent('whatsapp_service_send_direct', {
-        messageId,
-        conversationId: conversation.id,
-        instanceName,
-        status: 'success',
-        durationMs: performance.now() - startedAt,
-        request: { provider: 'whatsapp_service', number: phone, textLength: messageText.length },
-        response: providerResponse.raw || providerResponse
-      });
-
-      const sentMessage = await getWhatsAppMessageById(messageId);
-      const sentConversation = await getWhatsAppConversationById(conversation.id);
-      emitWhatsAppConversationChange('message_sent', sentConversation);
-      emitWhatsAppMessageChange('sent', sentMessage, sentConversation);
-
-      return res.json({
-        success: true,
-        queued: false,
-        messageId,
-        providerMessageId,
-        conversationId: conversation.id,
-        provider: 'whatsapp_service'
-      });
-    } catch (sendError) {
-      const friendlyError = whatsappProvider.friendlyApiError(sendError);
-      const requiresReconnect = /nao esta pronta|não está pronta|reconectar|qr code/i.test(friendlyError || '');
-      await pool.query(
-        `UPDATE whatsapp_messages
-            SET status = 'erro',
-                error_message = ?,
-                updated_at = NOW()
-          WHERE id = ?`,
-        [friendlyError, messageId]
-      );
-      if (requiresReconnect) {
-        await pool.query(
-          `UPDATE whatsapp_instances
-              SET status = 'reconectar',
-                  notes = ?,
-                  last_status_check_at = NOW(),
-                  updated_by = ?,
-                  updated_at = NOW()
-            WHERE instance_name = ?`,
-          [
-            'Sessão conectada no status da VPS, mas sem canal de comunicação ativo. Gere o QR Code novamente ou reinicie a sessão no whatsapp-service.',
-            getActorName(req.user),
-            instanceName
-          ]
-        );
+    const dispatch = await enqueueWhatsAppDispatch({
+      message_id: messageId,
+      conversation_id: conversation.id,
+      instance_name: instanceName,
+      recipient_phone: phone,
+      message_text: messageText,
+      message_type: options.messageType || req.body.message_type || 'manual',
+      operator_id: req.user?.id || null,
+      operator_name: getActorName(req.user),
+      scheduleDelaySeconds: 0,
+      payload: {
+        source: 'manual_send',
+        clientRequestId
       }
-      await logEvolutionEvent('whatsapp_service_send_direct_error', {
-        messageId,
-        conversationId: conversation.id,
-        instanceName,
-        status: 'error',
-        durationMs: performance.now() - startedAt,
-        request: { provider: 'whatsapp_service', number: phone, textLength: messageText.length },
-        error: sendError
-      });
+    });
+    processWhatsAppDispatchQueue().catch((jobError) => {
+      console.warn('Nao foi possivel processar imediatamente a fila de disparo WhatsApp:', jobError.message);
+    });
 
-      const failedMessage = await getWhatsAppMessageById(messageId);
-      emitWhatsAppMessageChange('error', failedMessage, updatedConversation);
-      return res.status(requiresReconnect ? 409 : 502).json({
-        success: false,
-        messageId,
-        conversationId: conversation.id,
-        requiresReconnect,
-        instanceName,
-        error: friendlyError || 'Erro ao enviar mensagem pelo whatsapp-service.'
-      });
-    }
+    return res.json({
+      success: true,
+      queued: true,
+      queueId: dispatch?.id || null,
+      messageId,
+      conversationId: conversation.id,
+      provider: 'whatsapp_dispatch_queue'
+    });
   } catch (error) {
     console.error(error);
     return res.status(400).json({ error: error.message || 'Erro ao enviar mensagem WhatsApp.' });
@@ -15087,10 +15047,22 @@ function validateChatbotStepResponse(step, inboundText) {
 
 function renderGenericWhatsAppTemplate(message, variables = {}) {
   const source = String(message || '');
+  const normalizedVariables = { ...variables };
+  if (normalizedVariables.nome_paciente) {
+    normalizedVariables.nome_paciente = String(normalizedVariables.nome_paciente).trim().toUpperCase();
+  }
   return source.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key) => {
-    const value = variables[key];
+    const value = normalizedVariables[key];
     return value === undefined || value === null ? '' : String(value);
   });
+}
+
+function normalizeWhatsAppPatientName(value) {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toUpperCase()
+    .slice(0, 180);
 }
 
 function parseMassWhatsAppRecipients(rawText = '') {
@@ -15120,6 +15092,38 @@ function parseMassWhatsAppRecipients(rawText = '') {
     }
 
     recipients.push({
+      patient_name: normalizeWhatsAppPatientName(patientName),
+      patient_phone: patientPhone,
+      clinic_name: clinicName,
+      data_consulta: appointmentDate,
+      hora_consulta: appointmentTime
+    });
+  });
+
+  return { recipients, invalidRows };
+}
+
+function parseMassWhatsAppRecipientsFromWorksheetRows(rows = []) {
+  const recipients = [];
+  const invalidRows = [];
+
+  rows.forEach((row, index) => {
+    const patientName = normalizeWhatsAppPatientName(
+      row.nome_paciente || row.nome || row.paciente || row.patient_name || row.patient || ''
+    );
+    const patientPhone = normalizeWhatsAppPhone(
+      row.telefone || row.phone || row.patient_phone || row.whatsapp || row.celular || ''
+    );
+    const clinicName = String(row.clinica || row.clinic || row.unidade || '').trim();
+    const appointmentDate = String(row.data_consulta || row.data || '').trim();
+    const appointmentTime = String(row.hora_consulta || row.hora || '').trim();
+
+    if (!patientName || !patientPhone) {
+      invalidRows.push({ line: index + 2, content: JSON.stringify(row) });
+      return;
+    }
+
+    recipients.push({
       patient_name: patientName,
       patient_phone: patientPhone,
       clinic_name: clinicName,
@@ -15129,6 +15133,17 @@ function parseMassWhatsAppRecipients(rawText = '') {
   });
 
   return { recipients, invalidRows };
+}
+
+function parseMassWhatsAppRecipientsFromUpload(filePath, originalName = '') {
+  const extension = String(path.extname(originalName || filePath || '')).trim().toLowerCase();
+  if (['.xlsx', '.xls'].includes(extension)) {
+    const workbook = XLSX.readFile(filePath);
+    const firstSheetName = workbook.SheetNames[0];
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName] || {}, { defval: '' });
+    return parseMassWhatsAppRecipientsFromWorksheetRows(rows);
+  }
+  return parseMassWhatsAppRecipients(decodeUploadedText(fs.readFileSync(filePath)));
 }
 
 function buildProgressiveDispatchDelaySeconds(index, antiBan = null) {
@@ -15163,6 +15178,16 @@ async function findRecentDuplicateWhatsAppMessage({
       ORDER BY id DESC
       LIMIT 1`,
     [instanceName, patientPhone, String(messageText || '').trim(), messageType, messageType, Math.max(5, Number(maxAgeSeconds || 45))]
+  );
+  return rows[0] || null;
+}
+
+async function findWhatsAppMessageByClientRequestId(clientRequestId) {
+  const requestId = String(clientRequestId || '').trim();
+  if (!requestId) return null;
+  const [rows] = await pool.query(
+    'SELECT * FROM whatsapp_messages WHERE client_request_id = ? ORDER BY id DESC LIMIT 1',
+    [requestId]
   );
   return rows[0] || null;
 }
@@ -15205,7 +15230,7 @@ async function queueManagedWhatsAppMessage({
 
   const conversation = await findOrCreateWhatsAppConversation({
     ...conversationPayload,
-    patient_name: patientName || conversationPayload.patient_name || 'Paciente WhatsApp',
+    patient_name: normalizeWhatsAppPatientName(patientName || conversationPayload.patient_name || 'Paciente WhatsApp'),
     patient_phone: normalizedPhone,
     phone: normalizedPhone,
     clinic_id: clinicId || conversationPayload.clinic_id || null,
@@ -15681,11 +15706,11 @@ async function handleMassWhatsAppCampaignSend(req, res) {
     const templateId = Number(req.body.template_id || req.body.templateId || 0) || null;
     const sessionId = sanitizeFinancialString(req.body.session_id || req.body.sessionId);
     const messageText = String(req.body.message_text || req.body.messageText || '').trim();
-    const recipientsSource = req.file?.path
-      ? decodeUploadedText(fs.readFileSync(req.file.path))
-      : decodeUploadedText(req.body.recipients || req.body.content || '');
+    const parsedUpload = req.file?.path
+      ? parseMassWhatsAppRecipientsFromUpload(req.file.path, req.file.originalname)
+      : parseMassWhatsAppRecipients(decodeUploadedText(req.body.recipients || req.body.content || ''));
 
-    const { recipients, invalidRows } = parseMassWhatsAppRecipients(recipientsSource);
+    const { recipients, invalidRows } = parsedUpload;
     if (!recipients.length) {
       return res.status(400).json({ error: 'Informe uma lista com nome e telefone para disparo em massa.' });
     }
@@ -15762,6 +15787,54 @@ async function handleMassWhatsAppCampaignSend(req, res) {
     if (req.file?.path) {
       fs.unlink(req.file.path, () => {});
     }
+  }
+}
+
+async function handleDownloadWhatsAppCampaignTemplate(req, res) {
+  try {
+    const campaignType = String(req.query?.campaign_type || req.query?.campaignType || 'confirmacao').trim().toLowerCase();
+    const rows = campaignType === 'nps'
+      ? [
+          {
+            nome_paciente: 'MARIA SILVA',
+            telefone: '5562999999999',
+            clinica: 'GARAVELO',
+            data_consulta: '',
+            hora_consulta: '',
+            observacao: 'Campos obrigatorios: nome_paciente e telefone'
+          }
+        ]
+      : [
+          {
+            nome_paciente: 'MARIA SILVA',
+            telefone: '5562999999999',
+            clinica: 'GARAVELO',
+            data_consulta: '26/05/2026',
+            hora_consulta: '14:30',
+            observacao: 'Campos obrigatorios: nome_paciente e telefone'
+          }
+        ];
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    worksheet['!cols'] = [
+      { wch: 26 },
+      { wch: 18 },
+      { wch: 20 },
+      { wch: 16 },
+      { wch: 14 },
+      { wch: 48 }
+    ];
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Pacientes');
+    const filename = campaignType === 'nps'
+      ? 'template-whatsapp-nps.xlsx'
+      : 'template-whatsapp-confirmacao.xlsx';
+    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename=\"${filename}\"`);
+    return res.send(buffer);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao gerar o template Excel da campanha WhatsApp.' });
   }
 }
 
@@ -16850,6 +16923,7 @@ app.delete('/api/whatsapp/chatbot/flows/:id', authenticate, requireWhatsAppView,
 
 app.get('/api/whatsapp/dashboard', authenticate, requireWhatsAppView, handleGetWhatsAppDashboard);
 app.get('/api/whatsapp/history', authenticate, requireWhatsAppView, handleGetWhatsAppHistory);
+app.get('/api/whatsapp/campaigns/template', authenticate, requireWhatsAppView, handleDownloadWhatsAppCampaignTemplate);
 app.post('/api/whatsapp/campaigns/mass-send', authenticate, requireWhatsAppView, upload.single('file'), handleMassWhatsAppCampaignSend);
 app.get('/api/whatsapp/evolution-logs', authenticate, requireWhatsAppView, async (req, res) => {
   try {
@@ -19769,14 +19843,36 @@ app.get('/nps/bulk-template', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Seu perfil nao possui acesso ao envio em massa de NPS.' });
     }
 
-    const csv = [
-      'Nome;Telefone / WhatsApp',
-      'Paciente Exemplo;+5562999999999'
-    ].join('\n');
+    if (String(req.query?.format || '').trim().toLowerCase() === 'csv') {
+      const csv = [
+        'Nome;Telefone / WhatsApp;Clinica',
+        'Paciente Exemplo;+5562999999999;Garavelo'
+      ].join('\n');
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', 'attachment; filename="template-envio-nps.csv"');
+      return res.send(`\uFEFF${csv}`);
+    }
 
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-    res.setHeader('Content-Disposition', 'attachment; filename="template-envio-nps.csv"');
-    res.send(`\uFEFF${csv}`);
+    const workbook = XLSX.utils.book_new();
+    const worksheet = XLSX.utils.json_to_sheet([
+      {
+        nome_paciente: 'MARIA SILVA',
+        telefone: '5562999999999',
+        clinica: 'GARAVELO',
+        observacao: 'Campos obrigatorios: nome_paciente e telefone'
+      }
+    ]);
+    worksheet['!cols'] = [
+      { wch: 28 },
+      { wch: 18 },
+      { wch: 20 },
+      { wch: 48 }
+    ];
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Pacientes');
+    const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="template-envio-nps.xlsx"');
+    return res.send(buffer);
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao gerar o template de envio em massa.' });
@@ -19797,18 +19893,12 @@ app.post('/nps/bulk-dispatch', authenticate, upload.single('file'), async (req, 
     const publicNpsLink = `${frontendUrl}/pesquisa-nps`;
     const npsInstance = await getNpsWhatsAppInstance(req.user);
     const npsSessionId = npsInstance?.instance_name || WHATSAPP_NPS_INSTANCE_NAME;
-    const content = req.file?.path
-      ? decodeUploadedText(fs.readFileSync(req.file.path))
-      : decodeUploadedText(req.body?.content || '');
-
-    if (!String(content || '').trim()) {
-      return res.status(400).json({ error: 'Envie uma planilha CSV com nome e telefone dos pacientes.' });
-    }
-
-    const recipients = parseBulkNpsCsv(content);
+    const recipients = req.file?.path
+      ? parseBulkNpsUpload(req.file.path, req.file.originalname)
+      : parseBulkNpsCsv(req.body?.content || '');
 
     if (!recipients.length) {
-      return res.status(400).json({ error: 'Nenhum paciente valido foi encontrado na planilha.' });
+      return res.status(400).json({ error: 'Envie uma planilha com nome e telefone dos pacientes.' });
     }
 
     const invalidRecipients = recipients.filter((recipient) => !isCompleteBrazilPhone(recipient.phone));
@@ -24197,6 +24287,8 @@ module.exports = {
     dispatchDailyCoordinatorDeliveryReport,
     dispatchWeeklyAdminComplaintReport,
     processWhatsAppDispatchQueue,
+    parseMassWhatsAppRecipientsFromWorksheetRows,
+    parseBulkNpsWorksheetRows,
     fillPartnerVideoTemplate,
     normalizePartnerVideoMessageText,
     parseMassWhatsAppRecipients,

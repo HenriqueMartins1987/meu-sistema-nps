@@ -314,7 +314,7 @@ function NpsManagement() {
       const blobUrl = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = blobUrl;
-      link.download = 'template-envio-nps.csv';
+      link.download = 'template-envio-nps.xlsx';
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -553,7 +553,7 @@ function NpsManagement() {
         <div className="bulk-dispatch-actions">
           <label className="field bulk-dispatch-field">
             <span>Planilha CSV</span>
-            <input type="file" accept=".csv,text/csv" onChange={(event) => setBulkFile(event.target.files?.[0] || null)} />
+            <input type="file" accept=".xlsx,.xls,.csv,.txt,text/csv" onChange={(event) => setBulkFile(event.target.files?.[0] || null)} />
           </label>
           <button type="button" className="primary-action" onClick={handleBulkDispatch} disabled={bulkSending}>
             {bulkSending ? 'Processando...' : 'Enviar links em massa'}
