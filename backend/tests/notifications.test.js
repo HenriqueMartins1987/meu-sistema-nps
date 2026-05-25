@@ -33,7 +33,8 @@ const {
   describeTwilioMessageError,
   sendTemplateMessage
 } = require('../services/twilioWhatsAppService');
-const { __testables } = require('../server');
+const serverModule = require('../server');
+const { __testables } = serverModule;
 
 test('generateTemporaryPassword creates a strong temporary password', () => {
   const password = generateTemporaryPassword(10);
@@ -316,6 +317,59 @@ test('complaint notification templates include the complaint link and detailed W
   assert.match(message, /- Prazo final: 7 dias uteis/);
   assert.match(message, /\/gestao\/123/);
   assert.doesNotMatch(message, /Resumo da ocorr/);
+});
+
+test('assigned complaint notifications keep coordinator and manager in the audience', async () => {
+  const originalQuery = serverModule.pool.query;
+
+  serverModule.pool.query = async (sql, params = []) => {
+    if (sql.includes('SELECT coordinator_name, responsible_email, responsible_whatsapp FROM clinics')) {
+      assert.equal(params[0], 5);
+      return [[{
+        coordinator_name: 'Coordenadora Unidade',
+        responsible_email: 'responsavel@clinica.com',
+        responsible_whatsapp: '+5562988887777'
+      }]];
+    }
+
+    if (sql.includes('INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = ?')) {
+      assert.equal(params[0], 5);
+      return [[
+        { id: 17, name: 'Coordenadora Unidade', email: 'coordenadora@clinica.com', whatsapp: '+5562999990000', phone: '', role: 'coordinator' },
+        { id: 21, name: 'Gerente Unidade', email: 'gerente@clinica.com', whatsapp: '+5562999991111', phone: '', role: 'manager' }
+      ]];
+    }
+
+    if (sql.includes('SELECT DISTINCT id, name, email, whatsapp, phone, role') && sql.includes('LOWER(name) = LOWER(?)')) {
+      return [[
+        { id: 17, name: 'Coordenadora Unidade', email: 'coordenadora@clinica.com', whatsapp: '+5562999990000', phone: '', role: 'coordinator' }
+      ]];
+    }
+
+    throw new Error(`Unexpected query in test: ${sql}`);
+  };
+
+  try {
+    const recipients = await __testables.buildComplaintAssignedNotificationRecipients({
+      clinic_id: 5,
+      responsible_email: 'responsavel@clinica.com',
+      responsible_whatsapp: '+5562988887777',
+      assigned_user_id: 17,
+      assigned_user_name: 'Coordenadora Unidade',
+      assigned_user_email: 'coordenadora@clinica.com',
+      assigned_user_whatsapp: '+5562999990000',
+      assigned_user_role: 'coordinator',
+      assigned_coordinator_name: 'Coordenadora Unidade',
+      assigned_responsible_role: 'coordinator',
+      forwarded_to_role: 'coordinator'
+    });
+
+    assert.ok(recipients.some((recipient) => recipient.email === 'coordenadora@clinica.com'));
+    assert.ok(recipients.some((recipient) => recipient.email === 'gerente@clinica.com'));
+    assert.ok(recipients.some((recipient) => recipient.email === 'responsavel@clinica.com'));
+  } finally {
+    serverModule.pool.query = originalQuery;
+  }
 });
 
 test('daily coordinator WhatsApp reminder is ASCII-safe and professional', () => {

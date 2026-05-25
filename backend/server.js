@@ -4426,20 +4426,9 @@ async function getComplaintRows(query = {}, user = null) {
 
     if (role === 'manager') {
       if (clinicIds.length) {
-        accessClauses.push(`(
-          c.clinic_id IN (?)
-          AND (
-            c.status = 'resolvida'
-            OR c.assigned_responsible_user_id = ?
-            OR ${buildRoleAliasWhere('c.assigned_responsible_role', managerAccessRoleAliases)}
-            OR ${buildRoleAliasWhere('c.forwarded_to_role', managerAccessRoleAliases)}
-          )
-        )`);
+        accessClauses.push('(c.clinic_id IN (?))');
         accessParams.push(
-          clinicIds,
-          user.id,
-          ...getRoleAliasParams(managerAccessRoleAliases),
-          ...getRoleAliasParams(managerAccessRoleAliases)
+          clinicIds
         );
         addNameFallback('manager', clinicIds);
       } else {
@@ -4457,15 +4446,7 @@ async function getComplaintRows(query = {}, user = null) {
             )
             OR ${buildRoleAliasWhere('c.assigned_responsible_role', coordinatorAccessRoleAliases)}
             OR ${buildRoleAliasWhere('c.forwarded_to_role', coordinatorAccessRoleAliases)}
-            OR (
-              c.assigned_coordinator_user_id = ?
-              AND (
-                c.first_attendance_at IS NOT NULL
-                OR c.patient_contacted_at IS NOT NULL
-                OR c.forwarded_to_role IS NOT NULL
-                OR ${buildRoleAliasWhere('c.assigned_responsible_role', coordinatorAccessRoleAliases)}
-              )
-            )
+            OR c.assigned_coordinator_user_id = ?
           )
         )`);
         accessParams.push(
@@ -4474,8 +4455,7 @@ async function getComplaintRows(query = {}, user = null) {
           ...getRoleAliasParams(coordinatorAccessRoleAliases),
           ...getRoleAliasParams(coordinatorAccessRoleAliases),
           ...getRoleAliasParams(coordinatorAccessRoleAliases),
-          user.id,
-          ...getRoleAliasParams(coordinatorAccessRoleAliases)
+          user.id
         );
         addNameFallback('coordinator', clinicIds);
       } else {
@@ -5145,6 +5125,16 @@ function buildComplaintAssignedAudienceRecipients(complaint) {
   return Array.from(recipientMap.values());
 }
 
+async function buildComplaintAssignedNotificationRecipients(complaint) {
+  const recipientMap = new Map();
+  const clinicRecipients = await getClinicCoordinatorManagerNotificationRecipients(complaint?.clinic_id);
+
+  clinicRecipients.forEach((recipient) => addNotificationRecipient(recipientMap, recipient));
+  buildComplaintAssignedAudienceRecipients(complaint).forEach((recipient) => addNotificationRecipient(recipientMap, recipient));
+
+  return Array.from(recipientMap.values());
+}
+
 async function buildComplaintNotificationRecipients(complaint) {
   const recipientMap = new Map();
   const adminAndSupervisorRecipients = await getAdminAndSupervisorNotificationRecipients();
@@ -5713,7 +5703,7 @@ async function dispatchComplaintAssignedNotifications(complaintId, protocol) {
       return { notificationStatus: 'skipped', results: [] };
     }
 
-    const recipients = buildComplaintAssignedAudienceRecipients(complaint).map((recipient) => ({
+    const recipients = (await buildComplaintAssignedNotificationRecipients(complaint)).map((recipient) => ({
       ...recipient,
       complaintUrl: getComplaintUrl(complaint)
     }));
@@ -7236,8 +7226,23 @@ async function notifyComplaintAudienceByScope(clinicId, assignedResponsibleUserI
         AND (
           u.role IN ('admin', 'master_admin')
           OR (? IS NOT NULL AND u.id = ?)
+          OR (
+            ? IS NOT NULL
+            AND u.id IN (
+              SELECT uc.user_id
+                FROM user_clinics uc
+               WHERE uc.clinic_id = ?
+            )
+            AND ${buildRoleAliasWhere('u.role', coordinatorManagerAccessRoleAliases)}
+          )
         )`,
-      [assignedResponsibleUserId || null, assignedResponsibleUserId || null]
+      [
+        assignedResponsibleUserId || null,
+        assignedResponsibleUserId || null,
+        clinicId || null,
+        clinicId || null,
+        ...getRoleAliasParams(coordinatorManagerAccessRoleAliases)
+      ]
   );
 
   const recipients = users.filter((user) => {
@@ -20272,9 +20277,6 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         values.push(assignment?.userId || null);
         updates.push('assigned_coordinator_name = ?');
         values.push(assignment?.name || forwardedLabel);
-      } else if (forward_to_role === 'sac_operator') {
-        updates.push('assigned_coordinator_user_id = NULL');
-        updates.push('assigned_coordinator_name = NULL');
       }
 
       logEntries.push({
@@ -23297,6 +23299,7 @@ module.exports = {
     canEditComplaintPatientPhone,
     canRenotifyComplaint,
     canReceiveComplaintNotification,
+    buildComplaintAssignedNotificationRecipients,
     changeUserPassword,
     decodeUploadedText,
     extractWhatsAppServiceEventMessage,

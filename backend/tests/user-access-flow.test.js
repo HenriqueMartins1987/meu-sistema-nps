@@ -977,6 +977,75 @@ test('coordinator can open complaint assigned through coordinator scope', async 
   assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes('gerente_unidade')));
 });
 
+test('coordinator keeps visibility after complaint is returned to SAC', async () => {
+  let complaintQuerySql = '';
+  let complaintQueryParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[{ clinic_id: 5 }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes('WHERE c.id = ?'),
+      reply: async (sql, params) => {
+        complaintQuerySql = sql;
+        complaintQueryParams = params;
+
+        return [[{
+          id: 89,
+          protocol: 'GRC-2026-000089',
+          clinic_id: 5,
+          patient_name: 'Paciente em acompanhamento',
+          patient_phone: '+5562999999999',
+          status: 'em_andamento',
+          forwarded_to_role: 'sac_operator',
+          forwarded_to_label: 'Operador SAC',
+          assigned_coordinator_user_id: 17,
+          assigned_coordinator_name: 'Coordenador Teste',
+          assigned_responsible_user_id: 9,
+          assigned_responsible_name: 'Operador SAC',
+          assigned_responsible_role: 'sac_operator',
+          attachment_url: null,
+          deleted_at: null,
+          created_at: new Date(),
+          updated_at: new Date()
+        }]];
+      }
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_evidences') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_logs') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    }
+  ]);
+
+  const response = await request(app)
+    .get('/complaints/89')
+    .set('Authorization', `Bearer ${signToken({
+      id: 17,
+      email: 'coordenador@example.com',
+      role: 'coordinator',
+      name: 'Coordenador Teste',
+      permissions: [],
+      clinicIds: [5],
+      mustChangePassword: false
+    })}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.id, 89);
+  assert.match(complaintQuerySql, /assigned_coordinator_user_id = \?/);
+  assert.ok(Array.isArray(complaintQueryParams));
+  assert.ok(complaintQueryParams.includes(17));
+});
+
 test('coordinator can return assigned complaint to SAC after saved treatment', async () => {
   let updateComplaintSql = null;
   let updateComplaintParams = null;
@@ -1076,7 +1145,7 @@ test('coordinator can return assigned complaint to SAC after saved treatment', a
   assert.match(complaintLogParams[2], /Operador SAC/);
 });
 
-test('manager sees finalized complaints only inside selected clinics', async () => {
+test('manager keeps visibility of complaints inside selected clinics', async () => {
   let complaintQuerySql = '';
   let complaintQueryParams = null;
 
@@ -1090,7 +1159,7 @@ test('manager sees finalized complaints only inside selected clinics', async () 
       reply: async () => [[{ clinic_id: 9 }]]
     },
     {
-      match: (sql) => sql.includes('FROM complaints c') && sql.includes("c.status = 'resolvida'"),
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes('c.clinic_id IN (?)'),
       reply: async (sql, params) => {
         complaintQuerySql = sql;
         complaintQueryParams = params;
@@ -1142,9 +1211,8 @@ test('manager sees finalized complaints only inside selected clinics', async () 
   assert.equal(response.status, 200);
   assert.equal(response.body[0].id, 91);
   assert.match(complaintQuerySql, /c\.clinic_id IN \(\?\)/);
-  assert.match(complaintQuerySql, /c\.status = 'resolvida'/);
+  assert.doesNotMatch(complaintQuerySql, /c\.status = 'resolvida'/);
   assert.ok(Array.isArray(complaintQueryParams));
-  assert.ok(complaintQueryParams.includes(33));
   assert.ok(complaintQueryParams.includes('Gerente Teste'));
   assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes(9)));
   assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes('manager')));
