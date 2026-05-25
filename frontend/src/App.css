@@ -10288,6 +10288,45 @@ a {
   color: #2f855a;
 }
 
+.whatsapp-load-warning-strip {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid rgba(201, 137, 47, 0.22);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 250, 242, 0.98), rgba(255, 255, 255, 0.94));
+  box-shadow: 0 14px 30px rgba(12, 12, 16, 0.05);
+}
+
+.whatsapp-load-warning-strip strong {
+  color: #8d5d18;
+  font-size: 15px;
+}
+
+.whatsapp-load-warning-strip p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.whatsapp-load-warning-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.whatsapp-load-warning-list span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(201, 137, 47, 0.12);
+  color: #8d5d18;
+  font-size: 12px;
+  font-weight: 900;
+}
+
 .whatsapp-realtime-pill {
   display: inline-flex;
   align-items: center;
@@ -10424,6 +10463,10 @@ a {
   grid-template-columns: minmax(320px, 0.9fr) minmax(0, 1.4fr);
   gap: 14px;
   align-items: start;
+}
+
+.whatsapp-campaigns-layout {
+  grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.85fr);
 }
 
 .whatsapp-panel {
@@ -11378,6 +11421,69 @@ a {
   margin: 0;
   color: var(--muted);
   line-height: 1.45;
+}
+
+.whatsapp-campaign-hero {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.whatsapp-campaign-hero article,
+.whatsapp-campaign-upload-help article {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid rgba(221, 207, 188, 0.82);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 251, 249, 0.94));
+}
+
+.whatsapp-campaign-hero span,
+.whatsapp-campaign-upload-help span {
+  color: var(--brand-strong);
+  font-size: 11px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.whatsapp-campaign-hero strong,
+.whatsapp-campaign-upload-help strong {
+  color: var(--ink);
+  font-size: 17px;
+}
+
+.whatsapp-campaign-hero p,
+.whatsapp-campaign-upload-help p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.whatsapp-campaign-import-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(280px, 0.8fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.whatsapp-campaign-upload-box {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid rgba(221, 207, 188, 0.82);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(250, 247, 242, 0.96), rgba(255, 255, 255, 0.94));
+}
+
+.whatsapp-campaign-upload-help {
+  display: grid;
+  gap: 10px;
+}
+
+.whatsapp-campaign-side-panel .whatsapp-card-list.compact {
+  grid-template-columns: 1fr;
 }
 
 .whatsapp-campaign-preview-panel {
@@ -12339,6 +12445,8 @@ a {
 @media (max-width: 1180px) {
   .whatsapp-heading,
   .whatsapp-two-column,
+  .whatsapp-campaign-hero,
+  .whatsapp-campaign-import-grid,
   .partner-video-config-grid,
   .partner-video-coverage-grid,
   .partner-video-report-toolbar,
@@ -12387,6 +12495,8 @@ a {
 
   .whatsapp-heading .heading-actions,
   .whatsapp-form-grid,
+  .whatsapp-campaign-hero,
+  .whatsapp-campaign-import-grid,
   .whatsapp-instances-card-grid,
   .whatsapp-instance-meta,
   .whatsapp-instance-actions,

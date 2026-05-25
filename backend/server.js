@@ -11366,6 +11366,22 @@ function buildQueueScopeWhere(user, alias = 'q') {
   };
 }
 
+function buildWhatsAppInstanceScopeWhere(user, alias = 'wi') {
+  if (canViewAllWhatsAppAttendance(user) || canConfigureWhatsAppManagement(user)) {
+    return { clause: '1=1', params: [] };
+  }
+
+  const clinicIds = clinicIdsFromUser(user);
+  if (!clinicIds.length) {
+    return { clause: '0=1', params: [] };
+  }
+
+  return {
+    clause: `${alias}.clinic_id IN (${clinicIds.map(() => '?').join(',')})`,
+    params: clinicIds
+  };
+}
+
 async function getWhatsAppOperatorMaxSimultaneous(userId) {
   const config = getWhatsAppAntiBanConfig();
   const [rows] = await pool.query('SELECT max_simultaneous FROM whatsapp_operator_limits WHERE user_id = ? AND active = 1 LIMIT 1', [userId]);
@@ -13386,13 +13402,16 @@ async function handleListWhatsAppServiceHistory(req, res) {
 
 async function handleGetWhatsAppInstances(req, res) {
   try {
+    const scope = buildWhatsAppInstanceScopeWhere(req.user, 'wi');
     const [rows] = await pool.query(
       `SELECT wi.*,
               (SELECT COUNT(*) FROM whatsapp_messages m WHERE m.instance_name = wi.instance_name) AS message_count,
               (SELECT MAX(m.created_at) FROM whatsapp_messages m WHERE m.instance_name = wi.instance_name) AS last_activity_at,
               (SELECT COUNT(*) FROM whatsapp_attendance_queue q WHERE q.instance_name = wi.instance_name AND q.status = 'aguardando') AS queue_count
          FROM whatsapp_instances wi
-        ORDER BY wi.sector ASC, wi.display_name ASC, wi.instance_name ASC`
+        WHERE ${scope.clause}
+        ORDER BY wi.sector ASC, wi.display_name ASC, wi.instance_name ASC`,
+      scope.params
     );
     if (isWhatsAppServiceProviderConfigured()) {
       const enriched = await Promise.all(rows.map((row) => refreshWhatsAppInstanceStatusFromService(row)));
@@ -14483,6 +14502,12 @@ async function handleGetWhatsAppQueue(req, res) {
 
 async function handleGetWhatsAppOperators(req, res) {
   try {
+    const operatorWhere = [];
+    const operatorParams = [...getWhatsAppOperatorRoleParams()];
+    if (isCrcOperatorUser(req.user)) {
+      operatorWhere.push('u.id = ?');
+      operatorParams.push(req.user.id || 0);
+    }
     const [users] = await pool.query(
       `SELECT u.id, u.name, u.email, u.role,
               COALESCE(s.status, 'online') AS operator_status,
@@ -14493,8 +14518,9 @@ async function handleGetWhatsAppOperators(req, res) {
         WHERE u.active = 1
           AND u.deleted_at IS NULL
           AND ${buildWhatsAppOperatorRoleWhere('u')}
+          ${operatorWhere.length ? `AND ${operatorWhere.join(' AND ')}` : ''}
         ORDER BY u.name ASC`,
-      getWhatsAppOperatorRoleParams()
+      operatorParams
     );
     const enriched = [];
     for (const user of users) {
@@ -14661,6 +14687,7 @@ async function handleClaimWhatsAppConversation(req, res) {
   try {
     const conversation = await getWhatsAppConversationById(req.params.id);
     if (!conversation) return res.status(404).json({ error: 'Atendimento não encontrado.' });
+    await assertCrcOperatorClinicAccess(req.user, conversation.clinic_id);
     if (conversation.operator_id && Number(conversation.operator_id) !== Number(req.user?.id) && !canViewAllWhatsAppAttendance(req.user)) {
       return res.status(409).json({ error: 'Este atendimento já possui operador responsável.' });
     }
@@ -14819,6 +14846,7 @@ async function handleGetWhatsAppConversationMessages(req, res) {
   try {
     const conversation = await getWhatsAppConversationById(req.params.id);
     if (!conversation) return res.status(404).json({ error: 'Atendimento não encontrado.' });
+    await assertCrcOperatorClinicAccess(req.user, conversation.clinic_id);
     if (!canViewAllWhatsAppAttendance(req.user) && Number(conversation.operator_id) !== Number(req.user?.id)) {
       return res.status(403).json({ error: 'Você só pode visualizar seus atendimentos.' });
     }
@@ -15228,6 +15256,18 @@ async function resolveMassCampaignRecipientRoute(recipient, campaignType, user =
   const requestedSession = sanitizeFinancialString(requestedSessionId);
   if (campaignType === 'confirmacao') {
     const clinicId = normalizedRecipient.clinic_id || await resolveClinicIdByName(normalizedRecipient.clinic_name);
+    if (isCrcOperatorUser(user)) {
+      try {
+        await assertCrcOperatorClinicAccess(user, clinicId);
+      } catch (error) {
+        return {
+          ...normalizedRecipient,
+          clinic_id: clinicId || null,
+          resolved: false,
+          routing_error: error.message || 'A clínica informada não está vinculada ao operador CRC.'
+        };
+      }
+    }
     const clinicInstance = await findWhatsAppInstanceByClinic({
       clinicId,
       clinicName: normalizedRecipient.clinic_name,
@@ -15497,15 +15537,17 @@ async function queueManagedWhatsAppMessage({
   return { conversation, messageId, dispatch };
 }
 
-async function getWhatsAppChatbotRecentSessions(limit = 40) {
+async function getWhatsAppChatbotRecentSessions(limit = 40, user = null) {
+  const scope = buildWhatsAppScopeWhere(user, 'c');
   const [rows] = await pool.query(
     `SELECT s.*, f.flow_name, c.status AS conversation_status, c.operator_name AS conversation_operator_name
        FROM whatsapp_chatbot_sessions s
        LEFT JOIN whatsapp_chatbot_flows f ON f.id = s.flow_id
        LEFT JOIN whatsapp_conversations c ON c.id = s.conversation_id
+      WHERE ${scope.clause}
       ORDER BY COALESCE(s.last_interaction_at, s.started_at, s.created_at) DESC
       LIMIT ?`,
-    [Math.max(1, Number(limit || 40))]
+    [...scope.params, Math.max(1, Number(limit || 40))]
   );
   return rows.map((row) => ({
     ...row,
@@ -15943,7 +15985,7 @@ async function handleUpdateWhatsAppFlow(req, res) {
 
 async function handleGetWhatsAppChatbotSessions(req, res) {
   try {
-    const sessions = await getWhatsAppChatbotRecentSessions(60);
+    const sessions = await getWhatsAppChatbotRecentSessions(60, req.user);
     return res.json(sessions);
   } catch (error) {
     console.error(error);
@@ -15953,7 +15995,7 @@ async function handleGetWhatsAppChatbotSessions(req, res) {
 
 async function handleGetWhatsAppConfirmationResponses(req, res) {
   try {
-    const rows = await getRecentConfirmationChatbotResponses(200);
+    const rows = await getRecentConfirmationChatbotResponses(200, req.user);
     return res.json(rows);
   } catch (error) {
     console.error(error);
@@ -16488,10 +16530,14 @@ async function handleClearWhatsAppManagementData(req, res) {
 async function handleGetWhatsAppDashboard(req, res) {
   try {
     const scope = buildWhatsAppScopeWhere(req.user, 'c');
+    const instanceScope = buildWhatsAppInstanceScopeWhere(req.user, 'wi');
     const dashboardFilters = buildWhatsAppDashboardFilters(req.query, 'c');
     const conversationWhere = [scope.clause, ...dashboardFilters.where];
     const conversationParams = [...scope.params, ...dashboardFilters.params];
-    const [instances] = await pool.query('SELECT * FROM whatsapp_instances ORDER BY display_name ASC');
+    const [instances] = await pool.query(
+      `SELECT * FROM whatsapp_instances wi WHERE ${instanceScope.clause} ORDER BY display_name ASC`,
+      instanceScope.params
+    );
     const [conversations] = await pool.query(
       `SELECT * FROM whatsapp_conversations c WHERE ${conversationWhere.join(' AND ')}`,
       conversationParams
@@ -16730,7 +16776,8 @@ async function primeWhatsAppChatbotSessionForFlow({ flow, conversation, collecte
   return result.insertId;
 }
 
-async function getRecentConfirmationChatbotResponses(limit = 120) {
+async function getRecentConfirmationChatbotResponses(limit = 120, user = null) {
+  const scope = buildWhatsAppScopeWhere(user, 'c');
   const [rows] = await pool.query(
     `SELECT s.*,
             f.flow_name,
@@ -16742,9 +16789,10 @@ async function getRecentConfirmationChatbotResponses(limit = 120) {
        INNER JOIN whatsapp_chatbot_flows f ON f.id = s.flow_id
        LEFT JOIN whatsapp_conversations c ON c.id = s.conversation_id
       WHERE f.trigger_type = 'confirmacao de consulta'
+        AND ${scope.clause}
       ORDER BY COALESCE(s.completed_at, s.last_interaction_at, s.started_at) DESC
       LIMIT ?`,
-    [Math.max(1, Number(limit || 120))]
+    [...scope.params, Math.max(1, Number(limit || 120))]
   );
 
   return rows.map((row) => {

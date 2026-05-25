@@ -7,7 +7,7 @@ import { hasActionPermission, hasPermission, isMasterAdmin, normalizeRoleValue, 
 import { readToken } from '../session';
 
 const sections = [
-  { id: 'dashboard', label: 'Dashboard', path: '/home/whatsapp-management/dashboard', permission: 'whatsapp_dashboard', leader: true },
+  { id: 'dashboard', label: 'Visao geral', path: '/home/whatsapp-management/dashboard', permission: 'whatsapp_dashboard', leader: true },
   { id: 'instances', label: 'Cadastro de Numero', path: '/home/whatsapp-management/instances', permission: 'whatsapp_instances', leader: true },
   { id: 'attendance', label: 'Atendimento', path: '/home/whatsapp-management/attendance', permission: 'whatsapp_attendance', operator: true },
   { id: 'send', label: 'Envio manual', path: '/home/whatsapp-management/send', permission: 'whatsapp_send', operator: true },
@@ -89,6 +89,27 @@ function normalizePhone(value) {
 
 function formatNumber(value) {
   return Number(value || 0).toLocaleString('pt-BR');
+}
+
+function formatLoadWarningKey(key) {
+  const labels = {
+    config: 'status do servico',
+    adminSettings: 'configuracoes administrativas',
+    dashboard: 'visao geral',
+    instances: 'instancias',
+    operators: 'operadores',
+    clinics: 'clinicas',
+    templates: 'templates',
+    conversations: 'atendimentos',
+    queue: 'fila',
+    absent: 'ausentes',
+    history: 'historico',
+    flows: 'chatbot',
+    chatbotSessions: 'sessoes do chatbot',
+    confirmationResponses: 'confirmacoes do chatbot',
+    partnersVideo: 'painel de confirmacao'
+  };
+  return labels[key] || key;
 }
 
 function sectionBadgeValue(sectionId, context = {}) {
@@ -312,6 +333,7 @@ function WhatsAppManagement() {
   const [loading, setLoading] = useState(false);
   const [savingKey, setSavingKey] = useState('');
   const [feedback, setFeedback] = useState(null);
+  const [loadWarnings, setLoadWarnings] = useState([]);
   const [configStatus, setConfigStatus] = useState(null);
   const [adminSettings, setAdminSettings] = useState(null);
   const [dashboard, setDashboard] = useState(null);
@@ -487,8 +509,11 @@ function WhatsAppManagement() {
       if (key === 'partnersVideo') setPartnersVideo(data || null);
     });
 
-    if (failed.length && !silent) {
-      setError(`Algumas informacoes nao carregaram: ${failed.join(', ')}. Use Atualizar para tentar novamente; os botoes exibem a rota exata em caso de 404.`);
+    if (!silent) {
+      setLoadWarnings(failed);
+      if (failed.length === entries.length) {
+        setError('Nao foi possivel carregar a Gestao de WhatsApp. Atualize a pagina e tente novamente.');
+      }
     }
     if (!silent) setLoading(false);
   }, [allowed, dashboardFilters, historyFilters, user]);
@@ -1367,7 +1392,7 @@ function WhatsAppManagement() {
   const renderInstances = () => (
     <section className="whatsapp-two-column">
       {canConfigure && (
-        <article className="whatsapp-panel">
+        <article className="whatsapp-panel whatsapp-campaign-side-panel">
           <h2>{editingInstanceName ? 'Editar numero' : 'Novo numero'}</h2>
           <div className="whatsapp-form-grid">
             <label>Identificacao<input className="field" value={instanceDraft.instance_name} onChange={(event) => setInstanceDraft((current) => ({ ...current, instance_name: event.target.value }))} disabled={Boolean(editingInstanceName)} /></label>
@@ -1728,10 +1753,32 @@ function WhatsAppManagement() {
     const selectedPreviewRows = campaignPreview.filter((item) => campaignSelection.includes(item.preview_id));
 
     return (
-      <section className="whatsapp-two-column">
+      <section className="whatsapp-two-column whatsapp-campaigns-layout">
         <article className="whatsapp-panel">
-          <h2>Campanhas em massa</h2>
-          <p className="whatsapp-panel-note">Use nome e telefone em cada linha. O sistema enfileira aos poucos com anti-ban, rate limit e janela de aquecimento.</p>
+          <div className="whatsapp-panel-head">
+            <div>
+              <h2>Campanhas em massa</h2>
+              <p className="whatsapp-panel-note">Monte o lote, importe a base e valide a conferencia antes do envio. A fila respeita anti-ban, aquecimento e rastreabilidade por paciente.</p>
+            </div>
+            <Button actionKey={`campaign-template-${campaignDraft.campaign_type}`} className="outline-action" onClick={() => downloadCampaignTemplate(campaignDraft.campaign_type)}>Baixar template Excel</Button>
+          </div>
+          <section className="whatsapp-campaign-hero">
+            <article>
+              <span>Canal do lote</span>
+              <strong>{campaignDraft.campaign_type === 'confirmacao' ? 'WhatsApp da clinica logada' : 'Sessao central NPS'}</strong>
+              <p>{campaignDraft.campaign_type === 'confirmacao' ? 'Cada paciente segue pela sessao ativa da propria clinica e o operador CRC fica restrito as clinicas do cadastro.' : 'Os disparos de NPS seguem pela sessao central configurada para satisfacao.'}</p>
+            </article>
+            <article>
+              <span>Template em uso</span>
+              <strong>{selectedTemplate?.title || 'Mensagem livre'}</strong>
+              <p>{String(selectedTemplate?.message_text || campaignDraft.message_text || '').slice(0, 180) || 'Defina o texto base da campanha para liberar o lote.'}</p>
+            </article>
+            <article>
+              <span>Padrao da base</span>
+              <strong>nome_paciente;telefone</strong>
+              <p>Campos extras aceitos: clinica;data_consulta;hora_consulta. O nome sempre sai em CAIXA ALTA na mensagem final.</p>
+            </article>
+          </section>
           <div className="whatsapp-form-grid">
             <label>Tipo
               <select className="field" value={campaignDraft.campaign_type} onChange={(event) => {
@@ -1762,15 +1809,28 @@ function WhatsAppManagement() {
               <textarea className="field textarea" rows="5" value={campaignDraft.message_text} onChange={(event) => setCampaignDraft((current) => ({ ...current, message_text: event.target.value }))} placeholder="Use variaveis como {{nome_paciente}}, {{clinica}}, {{data_consulta}}, {{hora_consulta}} e {{link_nps}}." />
             </label>
           </div>
-          <div className="row-actions">
-            <Button actionKey={`campaign-template-${campaignDraft.campaign_type}`} onClick={() => downloadCampaignTemplate(campaignDraft.campaign_type)}>Baixar template Excel</Button>
-          </div>
-          <label>Lista para disparo
-            <textarea className="field textarea" rows="10" value={campaignDraft.recipients} onChange={(event) => setCampaignDraft((current) => ({ ...current, recipients: event.target.value }))} />
-          </label>
-          <label>Upload da lista
-            <input className="field" type="file" accept=".xlsx,.xls,.csv,.txt" onChange={(event) => handleCampaignFileChange(event.target.files?.[0] || null)} />
-          </label>
+          <section className="whatsapp-campaign-import-grid">
+            <label>Lista para disparo
+              <textarea className="field textarea" rows="11" value={campaignDraft.recipients} onChange={(event) => setCampaignDraft((current) => ({ ...current, recipients: event.target.value }))} />
+            </label>
+            <div className="whatsapp-campaign-upload-box">
+              <label>Upload da lista
+                <input className="field" type="file" accept=".xlsx,.xls,.csv,.txt" onChange={(event) => handleCampaignFileChange(event.target.files?.[0] || null)} />
+              </label>
+              <div className="whatsapp-campaign-upload-help">
+                <article>
+                  <span>Leitura suportada</span>
+                  <strong>Excel, CSV e TXT</strong>
+                  <p>Use a planilha padrao para reduzir falhas de estrutura e divergencia de clinica.</p>
+                </article>
+                <article>
+                  <span>Conferencia</span>
+                  <strong>Preview antes do disparo</strong>
+                  <p>O sistema valida nome, telefone, clinica, sessao resolvida e itens bloqueados antes de enfileirar.</p>
+                </article>
+              </div>
+            </div>
+          </section>
           {campaignFile && <small className="bulk-file-name">Arquivo selecionado: {campaignFile.name}</small>}
           {campaignPreviewSummary && (
             <section className="whatsapp-panel whatsapp-campaign-preview-panel">
@@ -1838,7 +1898,12 @@ function WhatsAppManagement() {
           </div>
         </article>
         <article className="whatsapp-panel">
-          <h2>Operacao pronta</h2>
+          <div className="whatsapp-panel-head">
+            <div>
+              <h2>Operacao pronta</h2>
+              <p className="whatsapp-panel-note">Resumo rapido para validar governanca, texto e comportamento antes do lote sair.</p>
+            </div>
+          </div>
           <div className="whatsapp-card-list compact">
             <article>
               <span>Roteamento</span>
@@ -1846,19 +1911,19 @@ function WhatsAppManagement() {
               <p>{campaignDraft.campaign_type === 'confirmacao' ? 'Cada paciente segue pelo WhatsApp vinculado à própria clínica.' : 'Os disparos de NPS seguem pela sessão central configurada.'}</p>
             </article>
             <article>
-              <span>Template selecionado</span>
-              <strong>{selectedTemplate?.title || 'Mensagem livre'}</strong>
-              <p>{String(selectedTemplate?.message_text || campaignDraft.message_text || '').slice(0, 220) || 'Defina o texto base da campanha.'}</p>
-            </article>
-            <article>
-              <span>Modelo de lista</span>
-              <strong>nome_paciente;telefone</strong>
-              <p>Campos extras aceitos: clinica;data_consulta;hora_consulta. O nome sai sempre em CAIXA ALTA na mensagem.</p>
-            </article>
-            <article>
               <span>Fluxo conversacional</span>
               <strong>{campaignDraft.campaign_type === 'nps' ? 'NPS' : 'Confirmacao'}</strong>
               <p>{campaignDraft.campaign_type === 'nps' ? 'A resposta pode ser capturada pelo fluxo NPS quando o paciente interagir no numero dedicado.' : 'A assistente registra SIM, reagendamento ou pedido de atendimento humano direto no sistema.'}</p>
+            </article>
+            <article>
+              <span>Escopo do operador</span>
+              <strong>{normalizeRoleValue(user?.role) === 'crc_operator' ? 'Clinicas vinculadas' : 'Gestao ampliada'}</strong>
+              <p>{normalizeRoleValue(user?.role) === 'crc_operator' ? 'O operador CRC nao consegue visualizar nem disparar para clinicas fora do proprio cadastro.' : 'Liderancas e perfis administrativos mantem visao consolidada da operacao.'}</p>
+            </article>
+            <article>
+              <span>Persistencia</span>
+              <strong>Lote auditavel</strong>
+              <p>Pacientes enviados ficam registrados com lote, clinica, sessao e status no banco para rastreabilidade posterior.</p>
             </article>
           </div>
         </article>
@@ -2395,6 +2460,20 @@ function WhatsAppManagement() {
           </button>
         ))}
       </nav>
+
+      {Boolean(loadWarnings.length) && (
+        <section className="whatsapp-load-warning-strip" aria-label="Itens com carga parcial">
+          <div>
+            <strong>Carga parcial de dados</strong>
+            <p>Alguns modulos nao responderam nesta atualizacao. A operacao principal continua disponivel.</p>
+          </div>
+          <div className="whatsapp-load-warning-list">
+            {loadWarnings.map((item) => (
+              <span key={item}>{formatLoadWarningKey(item)}</span>
+            ))}
+          </div>
+        </section>
+      )}
 
       {feedback && <p className={`form-feedback whatsapp-feedback ${feedback.type === 'error' ? 'error' : 'success'}`}>{feedback.message}</p>}
       {loading ? <p className="form-feedback whatsapp-feedback">Carregando Gestao WhatsApp CRC...</p> : renderSection()}
