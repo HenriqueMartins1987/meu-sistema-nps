@@ -96,25 +96,10 @@ export function ProtectedRoute() {
   }
 
   return (
-    <>
-      <div className="session-timer-bar" aria-label="Tempo da sessão">
-        <aside
-          className={`session-countdown ${remainingMs <= 5 * 60 * 1000 ? 'warning' : ''}`}
-          aria-live="polite"
-          aria-label={`Tempo restante da sessão: ${formatRemainingTime(remainingMs)}`}
-        >
-          <span className="session-countdown-clock" aria-hidden="true" />
-          <div className="session-countdown-copy">
-            <strong>{formatRemainingTime(remainingMs)}</strong>
-            <span>logout automático</span>
-          </div>
-        </aside>
-      </div>
-      <AuthenticatedLayout
-        remainingMsLabel={formatRemainingTime(remainingMs)}
-        remainingWarning={remainingMs <= 5 * 60 * 1000}
-      />
-    </>
+    <AuthenticatedLayout
+      remainingMsLabel={formatRemainingTime(remainingMs)}
+      remainingWarning={remainingMs <= 5 * 60 * 1000}
+    />
   );
 }
 

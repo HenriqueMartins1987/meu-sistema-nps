@@ -1882,8 +1882,8 @@ function WhatsAppManagement() {
     const remainingClinicCount = Math.max(0, clinics.length - allowedClinicNames.length);
 
     return (
-      <section className="whatsapp-two-column whatsapp-campaigns-layout">
-        <article className="whatsapp-panel">
+      <section className="whatsapp-campaigns-layout">
+        <article className="whatsapp-panel whatsapp-campaign-builder-card">
           <div className="whatsapp-panel-head">
             <div>
               <h2>Campanhas em massa</h2>
@@ -1908,8 +1908,8 @@ function WhatsAppManagement() {
               <p>Campos extras aceitos: clinica;data_consulta;hora_consulta. O nome sempre sai em CAIXA ALTA na mensagem final.</p>
             </article>
           </section>
-          <div className="whatsapp-form-grid">
-            <label>Tipo
+          <div className="whatsapp-campaign-control-grid">
+            <label className="campaign-type-field">Tipo
               <select className="field" value={campaignDraft.campaign_type} onChange={(event) => {
                 const nextType = event.target.value;
                 setCampaignDraft((current) => ({ ...current, campaign_type: nextType, template_id: '' }));
@@ -1920,7 +1920,7 @@ function WhatsAppManagement() {
                 <option value="nps">NPS por WhatsApp</option>
               </select>
             </label>
-            <label>Sessao
+            <label className="campaign-session-field">Sessao
               <select className="field" value={campaignDraft.session_id} onChange={(event) => setCampaignDraft((current) => ({ ...current, session_id: event.target.value }))} disabled={campaignDraft.campaign_type === 'confirmacao'}>
                 {instances.map((item) => <option key={item.instance_name} value={item.instance_name}>{item.display_name || item.instance_name}</option>)}
               </select>
@@ -1930,7 +1930,7 @@ function WhatsAppManagement() {
                   : 'NPS usa a sessao central selecionada para o lote.'}
               </small>
             </label>
-            <label>Template
+            <label className="campaign-template-field">Template
               <select className="field" value={campaignDraft.template_id} onChange={(event) => {
                 const template = matchingTemplates.find((item) => String(item.id) === String(event.target.value));
                 setCampaignDraft((current) => ({ ...current, template_id: event.target.value, message_text: template?.message_text || current.message_text }));
@@ -1939,7 +1939,7 @@ function WhatsAppManagement() {
                 {matchingTemplates.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
               </select>
             </label>
-            <label>Texto base
+            <label className="campaign-message-field">Texto base
               <textarea className="field textarea" rows="5" value={campaignDraft.message_text} onChange={(event) => setCampaignDraft((current) => ({ ...current, message_text: event.target.value }))} placeholder="Use variaveis como {{nome_paciente}}, {{clinica}}, {{data_consulta}}, {{hora_consulta}} e {{link_nps}}." />
             </label>
           </div>
@@ -1954,10 +1954,10 @@ function WhatsAppManagement() {
             </div>
           </section>
           <section className="whatsapp-campaign-import-grid">
-            <label>Lista para disparo
+            <label className="campaign-recipient-field">Lista para disparo
               <textarea className="field textarea" rows="11" value={campaignDraft.recipients} onChange={(event) => setCampaignDraft((current) => ({ ...current, recipients: event.target.value }))} />
             </label>
-            <div className="whatsapp-campaign-upload-box">
+            <div className="whatsapp-campaign-upload-box campaign-upload-field">
               <label>Upload da lista
                 <input className="field" type="file" accept=".xlsx,.xls,.csv,.txt" onChange={(event) => handleCampaignFileChange(event.target.files?.[0] || null)} />
               </label>
@@ -2041,7 +2041,7 @@ function WhatsAppManagement() {
             <Button actionKey="mass-campaign" className="primary-action" onClick={sendMassCampaign}>Enfileirar campanha</Button>
           </div>
         </article>
-        <article className="whatsapp-panel">
+        <article className="whatsapp-panel whatsapp-campaign-summary-panel">
           <div className="whatsapp-panel-head">
             <div>
               <h2>Operacao pronta</h2>
