@@ -47,7 +47,7 @@ function canOpenWeeklyComplaintReport(user) {
 function buildMenuItems(user) {
   const master = isMasterAdmin(user);
   const items = [
-    { key: 'dashboard', label: 'Dashboard', icon: 'dashboard', path: '/home', visible: hasPermission(user, 'home') },
+    { key: 'dashboard', label: 'Home', icon: 'dashboard', path: '/home', visible: hasPermission(user, 'home') },
     { key: 'complaints', label: 'Reclamações', icon: 'complaints', path: '/gestao', visible: hasPermission(user, 'complaints_management') || hasPermission(user, 'complaints_register') || hasPermission(user, 'complaints_dashboard') },
     { key: 'nps', label: 'NPS', icon: 'nps', path: '/gestao-nps', visible: hasPermission(user, 'nps_management') || hasPermission(user, 'nps_dashboard') },
     { key: 'patients', label: 'Pacientes', icon: 'patients', path: '/pacientes', visible: hasPermission(user, 'patient_management') },

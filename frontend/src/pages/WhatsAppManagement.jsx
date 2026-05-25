@@ -21,6 +21,21 @@ const sections = [
   { id: 'settings', label: 'Configuracoes', path: '/home/whatsapp-management/settings', permission: 'whatsapp_settings', masterOnly: true }
 ];
 
+const sectionDescriptions = {
+  dashboard: 'Visao executiva das sessoes, filas, operadores e ritmo operacional do WhatsApp.',
+  instances: 'Cadastro, vinculo e governanca dos numeros que operam na central.',
+  attendance: 'Operacao em tempo real para assumir, responder, transferir e finalizar atendimentos.',
+  send: 'Disparo individual com padronizacao de sessao, paciente, clinica e mensagem.',
+  templates: 'Biblioteca oficial de mensagens para manter padrao, velocidade e qualidade.',
+  campaigns: 'Campanhas em massa com fila progressiva, anti-ban e controle por template.',
+  chatbot: 'Fluxos conversacionais para captura estruturada de respostas e automacao.',
+  absent: 'Retomada dos pacientes sem resposta com controle simples de tentativa e retorno.',
+  history: 'Historico operacional para auditoria, rastreio e exportacao das mensagens.',
+  confirmation: 'Painel dedicado a confirmacao, agendamento e rotina dos parceiros.',
+  reports: 'Exportacoes e leituras gerenciais para acompanhamento da operacao.',
+  settings: 'Configuracao tecnica do servico, limites de envio e diagnostico da integracao.'
+};
+
 const sectors = ['CRC', 'SAC', 'Comercial', 'NPS', 'Reclamacoes', 'Pos-venda', 'Dentistas Parceiros', 'Confirmacao e Agendamento'];
 const attendanceStatuses = ['Novo', 'Em atendimento', 'Aguardando paciente', 'Agendado', 'Compareceu', 'Nao compareceu', 'Ausente', 'Retornar depois', 'Encerrado', 'Reclamacao', 'NPS', 'Urgente'];
 const operatorStatuses = [
@@ -74,6 +89,16 @@ function normalizePhone(value) {
 
 function formatNumber(value) {
   return Number(value || 0).toLocaleString('pt-BR');
+}
+
+function sectionBadgeValue(sectionId, context = {}) {
+  if (sectionId === 'instances') return context.instances?.length || 0;
+  if (sectionId === 'attendance') return context.queue?.length || 0;
+  if (sectionId === 'templates') return context.templates?.length || 0;
+  if (sectionId === 'chatbot') return context.flows?.length || 0;
+  if (sectionId === 'absent') return context.absent?.length || 0;
+  if (sectionId === 'history') return context.history?.length || 0;
+  return null;
 }
 
 function statusTone(status) {
@@ -300,6 +325,7 @@ function WhatsAppManagement() {
   const [history, setHistory] = useState([]);
   const [flows, setFlows] = useState([]);
   const [chatbotSessions, setChatbotSessions] = useState([]);
+  const [confirmationResponses, setConfirmationResponses] = useState([]);
   const [partnersVideo, setPartnersVideo] = useState(null);
   const [messages, setMessages] = useState([]);
   const [selectedConversationId, setSelectedConversationId] = useState('');
@@ -317,6 +343,10 @@ function WhatsAppManagement() {
   const [editingFlowId, setEditingFlowId] = useState('');
   const [campaignDraft, setCampaignDraft] = useState(emptyCampaignDraft());
   const [campaignFile, setCampaignFile] = useState(null);
+  const [campaignPreview, setCampaignPreview] = useState([]);
+  const [campaignPreviewSummary, setCampaignPreviewSummary] = useState(null);
+  const [campaignInvalidRows, setCampaignInvalidRows] = useState([]);
+  const [campaignSelection, setCampaignSelection] = useState([]);
   const [partnerSettingsDraft, setPartnerSettingsDraft] = useState(null);
   const [partnerContactDraft, setPartnerContactDraft] = useState(emptyPartnerVideoContact());
   const [editingPartnerContactId, setEditingPartnerContactId] = useState('');
@@ -366,6 +396,29 @@ function WhatsAppManagement() {
     && selectedSendInstanceStatus
     && selectedSendInstanceStatus !== 'conectado'
     && selectedSendInstanceStatus !== 'connected';
+  const currentSectionMeta = allowedSections.find((item) => item.id === currentSection) || allowedSections[0] || null;
+  const headerMetrics = useMemo(() => ([
+    {
+      label: 'Sessoes conectadas',
+      value: formatNumber(instances.filter((item) => String(item.status || '').toLowerCase() === 'conectado').length),
+      tone: 'success'
+    },
+    {
+      label: 'Fila aberta',
+      value: formatNumber(queue.length),
+      tone: queue.length ? 'warning' : 'neutral'
+    },
+    {
+      label: 'Mensagens hoje',
+      value: formatNumber(dashboard?.summary?.sentToday || 0),
+      tone: 'neutral'
+    },
+    {
+      label: 'Operadores',
+      value: formatNumber(operators.length),
+      tone: 'neutral'
+    }
+  ]), [dashboard?.summary?.sentToday, instances, operators.length, queue.length]);
 
   const setSuccess = (message) => setFeedback({ type: 'success', message });
   const setError = (message) => setFeedback({ type: 'error', message });
@@ -400,6 +453,7 @@ function WhatsAppManagement() {
       history: api.get('/api/whatsapp/history', { params: historyFilters }),
       flows: api.get('/api/whatsapp/chatbot/flows'),
       chatbotSessions: api.get('/api/whatsapp/chatbot/sessions'),
+      confirmationResponses: api.get('/api/whatsapp/confirmation/responses'),
       partnersVideo: api.get('/api/partners-video/dashboard')
     };
     const entries = Object.entries(requests);
@@ -429,6 +483,7 @@ function WhatsAppManagement() {
       if (key === 'history') setHistory(Array.isArray(data) ? data : []);
       if (key === 'flows') setFlows(Array.isArray(data) ? data : []);
       if (key === 'chatbotSessions') setChatbotSessions(Array.isArray(data) ? data : []);
+      if (key === 'confirmationResponses') setConfirmationResponses(Array.isArray(data) ? data : []);
       if (key === 'partnersVideo') setPartnersVideo(data || null);
     });
 
@@ -983,23 +1038,81 @@ function WhatsAppManagement() {
     return response;
   }, 'Fluxos profissionais atualizados.', 'Nao foi possivel atualizar os fluxos profissionais.');
 
+  const resetCampaignPreview = () => {
+    setCampaignPreview([]);
+    setCampaignPreviewSummary(null);
+    setCampaignInvalidRows([]);
+    setCampaignSelection([]);
+  };
+
+  const previewCampaignFile = async (file, nextCampaignType = campaignDraft.campaign_type) => {
+    if (!file) {
+      resetCampaignPreview();
+      return;
+    }
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('campaign_type', nextCampaignType);
+    formData.append('session_id', campaignDraft.session_id || '');
+    try {
+      const response = await api.post('/api/whatsapp/campaigns/preview', formData);
+      const recipients = Array.isArray(response.data?.recipients) ? response.data.recipients : [];
+      setCampaignPreview(recipients);
+      setCampaignPreviewSummary(response.data?.summary || null);
+      setCampaignInvalidRows([...(response.data?.invalidRows || []), ...(response.data?.skippedRows || [])]);
+      setCampaignSelection(recipients.filter((item) => item.selected).map((item) => item.preview_id));
+    } catch (error) {
+      resetCampaignPreview();
+      setError(getErrorMessage(error, 'Nao foi possivel analisar a planilha da campanha.'));
+    }
+  };
+
+  const handleCampaignFileChange = async (file) => {
+    setCampaignFile(file || null);
+    await previewCampaignFile(file || null);
+  };
+
+  const toggleCampaignRecipientSelection = (previewId) => {
+    setCampaignSelection((current) => current.includes(previewId)
+      ? current.filter((item) => item !== previewId)
+      : [...current, previewId]);
+  };
+
+  const selectAllCampaignRecipients = () => {
+    setCampaignSelection(campaignPreview.filter((item) => item.resolved).map((item) => item.preview_id));
+  };
+
+  const clearCampaignRecipientSelection = () => {
+    setCampaignSelection([]);
+  };
+
   const sendMassCampaign = () => runAction('mass-campaign', async () => {
     const payload = {
       ...campaignDraft,
       session_id: campaignDraft.session_id || (campaignDraft.campaign_type === 'nps' ? 'nps' : 'confirmacao-agendamento')
     };
-    const response = campaignFile
-      ? await (() => {
-          const formData = new FormData();
-          formData.append('file', campaignFile);
-          formData.append('campaign_type', payload.campaign_type);
-          formData.append('session_id', payload.session_id);
-          formData.append('template_id', payload.template_id || '');
-          formData.append('message_text', payload.message_text || '');
-          return api.post('/api/whatsapp/campaigns/mass-send', formData);
-        })()
-      : await api.post('/api/whatsapp/campaigns/mass-send', payload);
+    const selectedRecipients = campaignPreview.filter((item) => campaignSelection.includes(item.preview_id));
+    if (campaignPreview.length && !selectedRecipients.length) {
+      throw new Error('Selecione ao menos um paciente da prévia da planilha para enfileirar a campanha.');
+    }
+    const response = selectedRecipients.length
+      ? await api.post('/api/whatsapp/campaigns/mass-send', {
+          ...payload,
+          selected_recipients: selectedRecipients
+        })
+      : campaignFile
+        ? await (() => {
+            const formData = new FormData();
+            formData.append('file', campaignFile);
+            formData.append('campaign_type', payload.campaign_type);
+            formData.append('session_id', payload.session_id);
+            formData.append('template_id', payload.template_id || '');
+            formData.append('message_text', payload.message_text || '');
+            return api.post('/api/whatsapp/campaigns/mass-send', formData);
+          })()
+        : await api.post('/api/whatsapp/campaigns/mass-send', payload);
     setCampaignFile(null);
+    resetCampaignPreview();
     await loadBaseData({ silent: true });
     return response;
   }, (data) => {
@@ -1455,29 +1568,71 @@ function WhatsAppManagement() {
   );
 
   const renderSend = () => (
-    <section className="whatsapp-panel">
-      <h2>Envio manual</h2>
-      <div className="whatsapp-form-grid">
-        <label>Sessao<select className="field" value={sendDraft.instance_name} onChange={(event) => setSendDraft((current) => ({ ...current, instance_name: event.target.value }))}><option value="">Selecione</option>{instances.map((item) => <option key={item.instance_name} value={item.instance_name}>{item.display_name || item.instance_name}</option>)}</select></label>
-        <label>Telefone<input className="field" value={sendDraft.patient_phone} onChange={(event) => setSendDraft((current) => ({ ...current, patient_phone: normalizePhone(event.target.value) }))} placeholder="5562999999999" /></label>
-        <label>Paciente<input className="field" value={sendDraft.patient_name} onChange={(event) => setSendDraft((current) => ({ ...current, patient_name: event.target.value }))} /></label>
-        <label>Clinica<select className="field" value={sendDraft.clinic_id} onChange={(event) => {
-          const clinic = clinics.find((item) => String(item.id) === String(event.target.value));
-          setSendDraft((current) => ({ ...current, clinic_id: event.target.value, clinic_name: clinic?.name || '' }));
-        }}><option value="">Selecione</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label>
-        <label>Mensagem padrao<select className="field" value={sendDraft.template_id} onChange={(event) => {
-          const template = templates.find((item) => String(item.id) === String(event.target.value));
-          setSendDraft((current) => ({ ...current, template_id: event.target.value, message_text: template?.message_text || current.message_text }));
-        }}><option value="">Mensagem livre</option>{templates.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
-        <label>Operador<input className="field" value={user?.name || ''} readOnly /></label>
-      </div>
-      {selectedSendInstanceBlocked && (
-        <p className="form-feedback error">
-          A sessao {selectedSendInstance?.display_name || selectedSendInstance?.instance_name} esta com status "{selectedSendInstance?.status}". Reconecte o numero antes de enviar.
-        </p>
-      )}
-      <label>Mensagem<textarea className="field textarea" value={sendDraft.message_text} onChange={(event) => setSendDraft((current) => ({ ...current, message_text: event.target.value }))} /></label>
-      <Button actionKey="send-message" className="primary-action" onClick={() => sendMessage(sendDraft)} disabled={selectedSendInstanceBlocked}>Enviar mensagem</Button>
+    <section className="whatsapp-two-column">
+      <article className="whatsapp-panel">
+        <div className="whatsapp-panel-head">
+          <div>
+            <h2>Envio manual</h2>
+            <p className="whatsapp-panel-note">Envie uma mensagem individual com sessao, paciente e clinica definidos para manter rastreabilidade.</p>
+          </div>
+          <span className={`whatsapp-badge ${selectedSendInstanceBlocked ? 'danger' : 'success'}`}>
+            {selectedSendInstanceBlocked ? 'Sessao bloqueada' : 'Pronto para envio'}
+          </span>
+        </div>
+        <div className="whatsapp-form-grid">
+          <label>Sessao<select className="field" value={sendDraft.instance_name} onChange={(event) => setSendDraft((current) => ({ ...current, instance_name: event.target.value }))}><option value="">Selecione</option>{instances.map((item) => <option key={item.instance_name} value={item.instance_name}>{item.display_name || item.instance_name}</option>)}</select></label>
+          <label>Telefone<input className="field" value={sendDraft.patient_phone} onChange={(event) => setSendDraft((current) => ({ ...current, patient_phone: normalizePhone(event.target.value) }))} placeholder="5562999999999" /></label>
+          <label>Paciente<input className="field" value={sendDraft.patient_name} onChange={(event) => setSendDraft((current) => ({ ...current, patient_name: event.target.value }))} /></label>
+          <label>Clinica<select className="field" value={sendDraft.clinic_id} onChange={(event) => {
+            const clinic = clinics.find((item) => String(item.id) === String(event.target.value));
+            setSendDraft((current) => ({ ...current, clinic_id: event.target.value, clinic_name: clinic?.name || '' }));
+          }}><option value="">Selecione</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label>
+          <label>Mensagem padrao<select className="field" value={sendDraft.template_id} onChange={(event) => {
+            const template = templates.find((item) => String(item.id) === String(event.target.value));
+            setSendDraft((current) => ({ ...current, template_id: event.target.value, message_text: template?.message_text || current.message_text }));
+          }}><option value="">Mensagem livre</option>{templates.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
+          <label>Operador<input className="field" value={user?.name || ''} readOnly /></label>
+        </div>
+        {selectedSendInstanceBlocked && (
+          <p className="form-feedback error">
+            A sessao {selectedSendInstance?.display_name || selectedSendInstance?.instance_name} esta com status "{selectedSendInstance?.status}". Reconecte o numero antes de enviar.
+          </p>
+        )}
+        <label>Mensagem<textarea className="field textarea" value={sendDraft.message_text} onChange={(event) => setSendDraft((current) => ({ ...current, message_text: event.target.value }))} /></label>
+        <div className="row-actions">
+          <Button actionKey="send-message" className="primary-action" onClick={() => sendMessage(sendDraft)} disabled={selectedSendInstanceBlocked}>Enviar mensagem</Button>
+        </div>
+      </article>
+      <article className="whatsapp-panel whatsapp-guidance-panel">
+        <div className="whatsapp-panel-head">
+          <div>
+            <h2>Checklist de qualidade</h2>
+            <p className="whatsapp-panel-note">Leitura rapida para o operador validar antes de disparar.</p>
+          </div>
+        </div>
+        <div className="whatsapp-guidance-list">
+          <article>
+            <span>Sessao</span>
+            <strong>{selectedSendInstance?.display_name || 'Selecione uma sessao'}</strong>
+            <p>Use o numero certo para o contexto de atendimento, confirmacao ou NPS.</p>
+          </article>
+          <article>
+            <span>Paciente</span>
+            <strong>{sendDraft.patient_name ? String(sendDraft.patient_name).toUpperCase() : 'Nao informado'}</strong>
+            <p>O nome segue padronizado em CAIXA ALTA para manter consistencia visual.</p>
+          </article>
+          <article>
+            <span>Template</span>
+            <strong>{templates.find((item) => String(item.id) === String(sendDraft.template_id))?.title || 'Mensagem livre'}</strong>
+            <p>Prefira mensagem padrao quando o contato exigir historico, auditoria ou repeticao.</p>
+          </article>
+          <article>
+            <span>Destino</span>
+            <strong>{sendDraft.patient_phone || 'Sem telefone'}</strong>
+            <p>Revise DDI, DDD e clinica antes de confirmar o disparo.</p>
+          </article>
+        </div>
+      </article>
     </section>
   );
 
@@ -1570,6 +1725,7 @@ function WhatsAppManagement() {
         : String(item.category || '').toLowerCase().includes('confirma')
     ));
     const selectedTemplate = matchingTemplates.find((item) => String(item.id) === String(campaignDraft.template_id)) || null;
+    const selectedPreviewRows = campaignPreview.filter((item) => campaignSelection.includes(item.preview_id));
 
     return (
       <section className="whatsapp-two-column">
@@ -1578,13 +1734,18 @@ function WhatsAppManagement() {
           <p className="whatsapp-panel-note">Use nome e telefone em cada linha. O sistema enfileira aos poucos com anti-ban, rate limit e janela de aquecimento.</p>
           <div className="whatsapp-form-grid">
             <label>Tipo
-              <select className="field" value={campaignDraft.campaign_type} onChange={(event) => setCampaignDraft((current) => ({ ...current, campaign_type: event.target.value, template_id: '' }))}>
+              <select className="field" value={campaignDraft.campaign_type} onChange={(event) => {
+                const nextType = event.target.value;
+                setCampaignDraft((current) => ({ ...current, campaign_type: nextType, template_id: '' }));
+                resetCampaignPreview();
+                setCampaignFile(null);
+              }}>
                 <option value="confirmacao">Confirmacao de atendimento</option>
                 <option value="nps">NPS por WhatsApp</option>
               </select>
             </label>
             <label>Sessao
-              <select className="field" value={campaignDraft.session_id} onChange={(event) => setCampaignDraft((current) => ({ ...current, session_id: event.target.value }))}>
+              <select className="field" value={campaignDraft.session_id} onChange={(event) => setCampaignDraft((current) => ({ ...current, session_id: event.target.value }))} disabled={campaignDraft.campaign_type === 'confirmacao'}>
                 {instances.map((item) => <option key={item.instance_name} value={item.instance_name}>{item.display_name || item.instance_name}</option>)}
               </select>
             </label>
@@ -1608,9 +1769,70 @@ function WhatsAppManagement() {
             <textarea className="field textarea" rows="10" value={campaignDraft.recipients} onChange={(event) => setCampaignDraft((current) => ({ ...current, recipients: event.target.value }))} />
           </label>
           <label>Upload da lista
-            <input className="field" type="file" accept=".xlsx,.xls,.csv,.txt" onChange={(event) => setCampaignFile(event.target.files?.[0] || null)} />
+            <input className="field" type="file" accept=".xlsx,.xls,.csv,.txt" onChange={(event) => handleCampaignFileChange(event.target.files?.[0] || null)} />
           </label>
           {campaignFile && <small className="bulk-file-name">Arquivo selecionado: {campaignFile.name}</small>}
+          {campaignPreviewSummary && (
+            <section className="whatsapp-panel whatsapp-campaign-preview-panel">
+              <div className="whatsapp-panel-head">
+                <div>
+                  <h2>Conferencia da planilha</h2>
+                  <p className="whatsapp-panel-note">Revise os pacientes importados antes do disparo. Na confirmação, cada linha segue pelo WhatsApp da clínica vinculada.</p>
+                </div>
+                <div className="whatsapp-row-actions">
+                  <button type="button" className="outline-action mini-action" onClick={selectAllCampaignRecipients}>Marcar todos</button>
+                  <button type="button" className="outline-action mini-action" onClick={clearCampaignRecipientSelection}>Desmarcar</button>
+                </div>
+              </div>
+              <div className="whatsapp-card-list compact">
+                <article>
+                  <span>Prontos</span>
+                  <strong>{campaignPreviewSummary.ready || 0}</strong>
+                  <p>Linhas com roteamento validado.</p>
+                </article>
+                <article>
+                  <span>Bloqueados</span>
+                  <strong>{campaignPreviewSummary.blocked || 0}</strong>
+                  <p>Linhas sem clínica/sessão válida.</p>
+                </article>
+                <article>
+                  <span>Selecionados</span>
+                  <strong>{selectedPreviewRows.length}</strong>
+                  <p>Pacientes que entrarão na fila.</p>
+                </article>
+                <article>
+                  <span>Inválidos</span>
+                  <strong>{campaignPreviewSummary.invalid || 0}</strong>
+                  <p>Linhas com falha de estrutura.</p>
+                </article>
+              </div>
+              <div className="whatsapp-campaign-preview-list">
+                {campaignPreview.map((item) => (
+                  <label key={item.preview_id} className={`whatsapp-campaign-preview-item ${item.resolved ? '' : 'blocked'}`}>
+                    <input
+                      type="checkbox"
+                      checked={campaignSelection.includes(item.preview_id)}
+                      disabled={!item.resolved}
+                      onChange={() => toggleCampaignRecipientSelection(item.preview_id)}
+                    />
+                    <div>
+                      <span>{item.patient_name}</span>
+                      <strong>{item.patient_phone}</strong>
+                      <p>{item.clinic_name || 'Clínica não informada'}</p>
+                      <small>{item.resolved ? `Sessão: ${item.resolved_instance_display_name || item.resolved_instance_name}` : item.routing_error}</small>
+                    </div>
+                  </label>
+                ))}
+              </div>
+              {campaignInvalidRows.length ? (
+                <div className="whatsapp-campaign-invalid-list">
+                  {campaignInvalidRows.slice(0, 8).map((item, index) => (
+                    <p key={`${item.line || index}-${index}`}>Linha {item.line || index + 1}: {item.reason || item.content || 'Registro inválido.'}</p>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          )}
           <div className="row-actions">
             <Button actionKey="mass-campaign" className="primary-action" onClick={sendMassCampaign}>Enfileirar campanha</Button>
           </div>
@@ -1619,9 +1841,9 @@ function WhatsAppManagement() {
           <h2>Operacao pronta</h2>
           <div className="whatsapp-card-list compact">
             <article>
-              <span>Numero NPS</span>
-              <strong>556296807670</strong>
-              <p>Canal priorizado para disparos de NPS e acompanhamento pelo SAC.</p>
+              <span>Roteamento</span>
+              <strong>{campaignDraft.campaign_type === 'confirmacao' ? 'Automatico por clinica' : 'Sessao central NPS'}</strong>
+              <p>{campaignDraft.campaign_type === 'confirmacao' ? 'Cada paciente segue pelo WhatsApp vinculado à própria clínica.' : 'Os disparos de NPS seguem pela sessão central configurada.'}</p>
             </article>
             <article>
               <span>Template selecionado</span>
@@ -1636,7 +1858,7 @@ function WhatsAppManagement() {
             <article>
               <span>Fluxo conversacional</span>
               <strong>{campaignDraft.campaign_type === 'nps' ? 'NPS' : 'Confirmacao'}</strong>
-              <p>{campaignDraft.campaign_type === 'nps' ? 'A resposta pode ser capturada pelo fluxo NPS quando o paciente interagir no numero dedicado.' : 'Respostas 1, 2 e 3 entram no chatbot e atualizam o status do atendimento.'}</p>
+              <p>{campaignDraft.campaign_type === 'nps' ? 'A resposta pode ser capturada pelo fluxo NPS quando o paciente interagir no numero dedicado.' : 'A assistente registra SIM, reagendamento ou pedido de atendimento humano direto no sistema.'}</p>
             </article>
           </div>
         </article>
@@ -1739,6 +1961,9 @@ function WhatsAppManagement() {
       const status = String(item.status || '').toLowerCase();
       return !Number(item.video_received) || status.includes('não enviado') || status.includes('nao enviado') || status.includes('acionado');
     });
+    const confirmationConfirmed = confirmationResponses.filter((item) => item.confirmation_confirmed);
+    const confirmationReschedule = confirmationResponses.filter((item) => item.confirmation_decision === 'reagendar');
+    const confirmationHuman = confirmationResponses.filter((item) => item.confirmation_decision === 'humano');
     const qrUrl = `${(configStatus?.baseUrl || adminSettings?.baseUrl || 'http://2.24.101.6:3005').replace(/\/+$/, '')}/public/sessions/confirmacao-agendamento/qr-image`;
     const formatDateTime = (value) => String(value || '-').slice(0, 16).replace('T', ' ');
     const cards = [
@@ -1752,7 +1977,10 @@ function WhatsAppManagement() {
       ['Acionamentos coord.', summary.coordinatorActions || 0, 'Escalada ate 11:00', summary.coordinatorActions ? 'warning' : 'neutral'],
       ['Acionamentos gerente', summary.managerActions || 0, 'Escalada ate 12:00', summary.managerActions ? 'danger' : 'neutral'],
       ['Falhas', summary.failuresToday || 0, 'Erros registrados hoje', summary.failuresToday ? 'danger' : 'success'],
-      ['Unidades sem parceiro', summary.unitsWithoutPartner || 0, unitsWithoutPartnerNames.join(', ') || 'Todas cobertas', summary.unitsWithoutPartner ? 'warning' : 'success']
+      ['Unidades sem parceiro', summary.unitsWithoutPartner || 0, unitsWithoutPartnerNames.join(', ') || 'Todas cobertas', summary.unitsWithoutPartner ? 'warning' : 'success'],
+      ['Confirmados no WhatsApp', confirmationConfirmed.length, 'Pacientes que responderam SIM', confirmationConfirmed.length ? 'success' : 'neutral'],
+      ['Pediram reagendamento', confirmationReschedule.length, 'Pacientes que precisam de novo horario', confirmationReschedule.length ? 'warning' : 'neutral'],
+      ['Pediram atendimento humano', confirmationHuman.length, 'Encaminhados para a equipe', confirmationHuman.length ? 'danger' : 'neutral']
     ];
 
     return (
@@ -1812,6 +2040,48 @@ function WhatsAppManagement() {
               <article><span>Automacao</span><strong>{settings.automationEnabled ? 'Ativa' : 'Pausada'}</strong><p>Ative somente apos teste e QR conectado</p></article>
               <article><span>Anti-ban</span><strong>{settings.minDelaySeconds || 20}s - {settings.maxDelaySeconds || 60}s</strong><p>Fila com atraso aleatorio por mensagem</p></article>
               <article><span>Limite</span><strong>{settings.limitPerMinute || 2}/min</strong><p>{settings.limitPerHour || 60}/hora</p></article>
+            </div>
+          </article>
+        </section>
+
+        <section className="whatsapp-two-column">
+          <article className="whatsapp-panel">
+            <div className="whatsapp-panel-head">
+              <div>
+                <h2>Pacientes que confirmaram</h2>
+                <p className="whatsapp-panel-note">Lista viva das confirmaÃ§Ãµes registradas pela assistente conversacional.</p>
+              </div>
+            </div>
+            <div className="whatsapp-card-list compact">
+              {confirmationConfirmed.slice(0, 18).map((item) => (
+                <article key={item.id}>
+                  <span>{item.clinic_name || 'Unidade'}</span>
+                  <strong>{item.patient_name || item.patient_phone}</strong>
+                  <p>{item.patient_phone || '-'} - {item.confirmation_label}</p>
+                  <small>{String(item.completed_at || item.last_interaction_at || item.started_at || '').slice(0, 16).replace('T', ' ')}</small>
+                </article>
+              ))}
+              {!confirmationConfirmed.length && <p className="empty-state">Nenhuma confirmaÃ§Ã£o concluÃ­da ainda.</p>}
+            </div>
+          </article>
+
+          <article className="whatsapp-panel">
+            <div className="whatsapp-panel-head">
+              <div>
+                <h2>Ajustes e atendimento humano</h2>
+                <p className="whatsapp-panel-note">Pacientes que pediram reagendamento ou falar com a equipe.</p>
+              </div>
+            </div>
+            <div className="whatsapp-card-list compact">
+              {[...confirmationReschedule, ...confirmationHuman].slice(0, 18).map((item) => (
+                <article key={item.id}>
+                  <span>{item.clinic_name || 'Unidade'}</span>
+                  <strong>{item.patient_name || item.patient_phone}</strong>
+                  <p>{item.patient_phone || '-'} - {item.confirmation_label}</p>
+                  <small>{item.operator_name || item.conversation_status || 'Encaminhado pela assistente'}</small>
+                </article>
+              ))}
+              {!confirmationReschedule.length && !confirmationHuman.length && <p className="empty-state">Nenhum ajuste de confirmaÃ§Ã£o pendente.</p>}
             </div>
           </article>
         </section>
@@ -2094,8 +2364,11 @@ function WhatsAppManagement() {
         <div>
           <p className="eyebrow">Central de atendimento</p>
           <h1>Gestao WhatsApp CRC</h1>
-          <p>Atendimento operacional, numeros conectados, mensagens padrao, chatbot, ausentes, historico e metricas.</p>
-          <span className={`whatsapp-badge ${configStatus?.serviceReachable ? 'success' : 'warning'}`}>{configStatus?.serviceReachable ? 'whatsapp-service online' : 'verificando servico'}</span>
+          <p>{sectionDescriptions[currentSectionMeta?.id] || 'Atendimento operacional, numeros conectados, mensagens padrao, chatbot, ausentes, historico e metricas.'}</p>
+          <div className="whatsapp-heading-meta">
+            <span className={`whatsapp-badge ${configStatus?.serviceReachable ? 'success' : 'warning'}`}>{configStatus?.serviceReachable ? 'whatsapp-service online' : 'verificando servico'}</span>
+            {currentSectionMeta ? <span className="whatsapp-section-pill">{currentSectionMeta.label}</span> : null}
+          </div>
         </div>
         <div className="heading-actions">
           <button type="button" className="outline-action" onClick={() => loadBaseData()}>Atualizar</button>
@@ -2103,9 +2376,23 @@ function WhatsAppManagement() {
         </div>
       </header>
 
+      <section className="whatsapp-hero-metrics">
+        {headerMetrics.map((item) => (
+          <article key={item.label} className={`whatsapp-hero-metric ${item.tone || 'neutral'}`}>
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+          </article>
+        ))}
+      </section>
+
       <nav className="whatsapp-tabbar">
         {allowedSections.map((item) => (
-          <button key={item.id} type="button" className={currentSection === item.id ? 'active' : ''} onClick={() => navigate(item.path)}>{item.label}</button>
+          <button key={item.id} type="button" className={currentSection === item.id ? 'active' : ''} onClick={() => navigate(item.path)}>
+            <span>{item.label}</span>
+            {sectionBadgeValue(item.id, { instances, queue, templates, flows, absent, history }) ? (
+              <small>{sectionBadgeValue(item.id, { instances, queue, templates, flows, absent, history })}</small>
+            ) : null}
+          </button>
         ))}
       </nav>
 

@@ -3253,6 +3253,33 @@ async function ensureDatabaseSchema() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS whatsapp_campaign_recipients (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      batch_id VARCHAR(80) NOT NULL,
+      campaign_type VARCHAR(40) NOT NULL,
+      template_id INT NULL,
+      patient_name VARCHAR(180) NOT NULL,
+      patient_phone VARCHAR(40) NOT NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      instance_name VARCHAR(120) NULL,
+      source VARCHAR(120) NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'pendente',
+      routing_error TEXT NULL,
+      conversation_id INT NULL,
+      message_id INT NULL,
+      dispatch_queue_id INT NULL,
+      created_by VARCHAR(180) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_whatsapp_campaign_batch (batch_id),
+      INDEX idx_whatsapp_campaign_phone (patient_phone),
+      INDEX idx_whatsapp_campaign_status (status),
+      INDEX idx_whatsapp_campaign_instance (instance_name)
+    )
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS whatsapp_absent_patients (
       id INT AUTO_INCREMENT PRIMARY KEY,
       conversation_id INT NULL,
@@ -15146,6 +15173,199 @@ function parseMassWhatsAppRecipientsFromUpload(filePath, originalName = '') {
   return parseMassWhatsAppRecipients(decodeUploadedText(fs.readFileSync(filePath)));
 }
 
+function normalizeMassCampaignRecipientInput(recipient = {}) {
+  const patientName = normalizeWhatsAppPatientName(
+    recipient.patient_name || recipient.nome_paciente || recipient.nome || recipient.patientName || ''
+  );
+  const patientPhone = normalizeWhatsAppPhone(
+    recipient.patient_phone || recipient.telefone || recipient.phone || recipient.patientPhone || ''
+  );
+  const clinicName = sanitizeFinancialString(recipient.clinic_name || recipient.clinica || recipient.clinicName || recipient.clinic || '', 180);
+  const clinicId = Number(recipient.clinic_id || recipient.clinicId || 0) || null;
+  return {
+    patient_name: patientName,
+    patient_phone: patientPhone,
+    clinic_name: clinicName || '',
+    clinic_id: clinicId,
+    data_consulta: String(recipient.data_consulta || recipient.dataConsulta || '').trim(),
+    hora_consulta: String(recipient.hora_consulta || recipient.horaConsulta || '').trim()
+  };
+}
+
+async function findWhatsAppInstanceByClinic({ clinicId = null, clinicName = '', preferredSector = null } = {}) {
+  if (clinicId) {
+    const [rows] = await pool.query(
+      `SELECT *
+         FROM whatsapp_instances
+        WHERE clinic_id = ?
+        ORDER BY CASE WHEN status = 'conectado' THEN 0 ELSE 1 END,
+                 CASE WHEN ? IS NOT NULL AND sector = ? THEN 0 ELSE 1 END,
+                 updated_at DESC
+        LIMIT 1`,
+      [clinicId, preferredSector, preferredSector]
+    );
+    if (rows[0]) return rows[0];
+  }
+
+  const normalizedClinicName = normalizeClinicLookupValue(clinicName);
+  if (!normalizedClinicName) return null;
+
+  const [rows] = await pool.query(
+    `SELECT *
+       FROM whatsapp_instances
+      WHERE clinic_name IS NOT NULL
+      ORDER BY CASE WHEN status = 'conectado' THEN 0 ELSE 1 END,
+               CASE WHEN ? IS NOT NULL AND sector = ? THEN 0 ELSE 1 END,
+               updated_at DESC`,
+    [preferredSector, preferredSector]
+  );
+
+  return rows.find((row) => normalizeClinicLookupValue(row.clinic_name) === normalizedClinicName) || null;
+}
+
+async function resolveMassCampaignRecipientRoute(recipient, campaignType, user = null, requestedSessionId = '') {
+  const normalizedRecipient = normalizeMassCampaignRecipientInput(recipient);
+  const requestedSession = sanitizeFinancialString(requestedSessionId);
+  if (campaignType === 'confirmacao') {
+    const clinicId = normalizedRecipient.clinic_id || await resolveClinicIdByName(normalizedRecipient.clinic_name);
+    const clinicInstance = await findWhatsAppInstanceByClinic({
+      clinicId,
+      clinicName: normalizedRecipient.clinic_name,
+      preferredSector: 'Confirmacao e Agendamento'
+    });
+
+    if (!clinicInstance) {
+      return {
+        ...normalizedRecipient,
+        clinic_id: clinicId,
+        resolved: false,
+        routing_error: clinicId || normalizedRecipient.clinic_name
+          ? 'Nenhum WhatsApp de clínica foi encontrado para este paciente.'
+          : 'Informe a clínica para enviar a confirmação pelo número correto.'
+      };
+    }
+
+    if (String(clinicInstance.status || '').trim().toLowerCase() !== 'conectado') {
+      return {
+        ...normalizedRecipient,
+        clinic_id: clinicId || clinicInstance.clinic_id || null,
+        clinic_name: normalizedRecipient.clinic_name || clinicInstance.clinic_name || '',
+        resolved: false,
+        resolved_instance_name: clinicInstance.instance_name,
+        resolved_instance_display_name: clinicInstance.display_name || clinicInstance.instance_name,
+        resolved_instance_status: clinicInstance.status || '',
+        routing_error: 'O WhatsApp da clínica foi encontrado, mas não está logado no momento.'
+      };
+    }
+
+    return {
+      ...normalizedRecipient,
+      clinic_id: clinicId || clinicInstance.clinic_id || null,
+      clinic_name: normalizedRecipient.clinic_name || clinicInstance.clinic_name || '',
+      resolved: true,
+      resolved_instance_name: clinicInstance.instance_name,
+      resolved_instance_display_name: clinicInstance.display_name || clinicInstance.instance_name,
+      resolved_instance_status: clinicInstance.status || '',
+      routing_note: 'Envio automático pelo WhatsApp vinculado à clínica.'
+    };
+  }
+
+  const defaultInstance = await getNpsWhatsAppInstance(user);
+  const instanceName = requestedSession || defaultInstance?.instance_name || WHATSAPP_NPS_INSTANCE_NAME;
+  return {
+    ...normalizedRecipient,
+    resolved: true,
+    resolved_instance_name: instanceName,
+    resolved_instance_display_name: defaultInstance?.display_name || instanceName,
+    resolved_instance_status: defaultInstance?.status || ''
+  };
+}
+
+async function saveWhatsAppCampaignRecipientRecord({
+  batchId,
+  campaignType,
+  templateId = null,
+  route = {},
+  status = 'pendente',
+  routingError = null,
+  source = 'whatsapp_campaign',
+  createdBy = null,
+  conversationId = null,
+  messageId = null,
+  dispatchQueueId = null
+} = {}) {
+  await pool.query(
+    `INSERT INTO whatsapp_campaign_recipients
+     (batch_id, campaign_type, template_id, patient_name, patient_phone, clinic_id, clinic_name, instance_name, source, status, routing_error, conversation_id, message_id, dispatch_queue_id, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      sanitizeFinancialString(batchId, 80) || `batch-${Date.now()}`,
+      sanitizeFinancialString(campaignType, 40) || 'confirmacao',
+      templateId || null,
+      sanitizeFinancialString(route.patient_name, 180) || 'Paciente',
+      normalizeWhatsAppPhone(route.patient_phone || ''),
+      route.clinic_id || null,
+      sanitizeFinancialString(route.clinic_name, 180) || null,
+      sanitizeFinancialString(route.resolved_instance_name || route.instance_name, 120) || null,
+      sanitizeFinancialString(source, 120) || 'whatsapp_campaign',
+      sanitizeFinancialString(status, 40) || 'pendente',
+      routingError ? String(routingError).slice(0, 4000) : null,
+      conversationId || null,
+      messageId || null,
+      dispatchQueueId || null,
+      sanitizeFinancialString(createdBy, 180) || null
+    ]
+  );
+}
+
+async function buildMassWhatsAppCampaignPreview({ recipients = [], invalidRows = [], campaignType = 'confirmacao', sessionId = '', user = null } = {}) {
+  const previewRows = [];
+  const skippedRows = [];
+
+  for (const [index, recipient] of recipients.entries()) {
+    const resolvedRecipient = await resolveMassCampaignRecipientRoute(recipient, campaignType, user, sessionId);
+    const previewId = `recipient-${index + 1}-${resolvedRecipient.patient_phone || 'sem-telefone'}`;
+    if (!resolvedRecipient.patient_name || !resolvedRecipient.patient_phone) {
+      skippedRows.push({
+        preview_id: previewId,
+        line: index + 1,
+        content: recipient,
+        reason: 'Campos obrigatórios: nome_paciente e telefone.'
+      });
+      continue;
+    }
+    previewRows.push({
+      ...resolvedRecipient,
+      preview_id: previewId,
+      selected: Boolean(resolvedRecipient.resolved)
+    });
+  }
+
+  return {
+    recipients: previewRows,
+    invalidRows,
+    skippedRows,
+    summary: {
+      total: previewRows.length,
+      ready: previewRows.filter((item) => item.resolved).length,
+      blocked: previewRows.filter((item) => !item.resolved).length,
+      invalid: invalidRows.length + skippedRows.length
+    }
+  };
+}
+
+function parseSelectedCampaignRecipients(req) {
+  const rawSelection = req.body?.selected_recipients || req.body?.selectedRecipients || null;
+  if (!rawSelection) return [];
+  if (Array.isArray(rawSelection)) return rawSelection.map(normalizeMassCampaignRecipientInput).filter((item) => item.patient_name && item.patient_phone);
+  try {
+    const parsed = JSON.parse(rawSelection);
+    return Array.isArray(parsed) ? parsed.map(normalizeMassCampaignRecipientInput).filter((item) => item.patient_name && item.patient_phone) : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
 function buildProgressiveDispatchDelaySeconds(index, antiBan = null) {
   const config = antiBan || getWhatsAppAntiBanConfig();
   const minSeconds = Math.max(10, Math.round(Number(config.minDelayMs || 4500) / 1000));
@@ -15293,21 +15513,40 @@ async function getWhatsAppChatbotRecentSessions(limit = 40) {
   }));
 }
 
-async function findWhatsAppChatbotFlowByTrigger({ instanceName, inboundText }) {
-  const triggerType = instanceName === WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME
-    ? 'confirmacao de consulta'
-    : instanceName === WHATSAPP_NPS_INSTANCE_NAME
-      ? 'nps'
-      : 'palavra-chave';
-  const normalizedText = normalizeChatbotInboundValue(inboundText);
-
+async function getWhatsAppChatbotFlowByTriggerType({ instanceName = null, triggerType = 'palavra-chave' } = {}) {
   const [rows] = await pool.query(
     `SELECT *
        FROM whatsapp_chatbot_flows
       WHERE status = 'ativo'
+        AND trigger_type = ?
+        AND (instance_name IS NULL OR instance_name = '' OR instance_name = ?)
+      ORDER BY CASE WHEN instance_name = ? THEN 0 ELSE 1 END, id ASC
+      LIMIT 1`,
+    [triggerType, instanceName || null, instanceName || null]
+  );
+  return rows[0] || null;
+}
+
+async function getWhatsAppChatbotTriggerTypeForConversation({ instanceName = null, conversation = null } = {}) {
+  const campaign = String(conversation?.campaign || '').trim().toLowerCase();
+  if (campaign === 'confirmacao') return 'confirmacao de consulta';
+  if (campaign === 'nps') return 'nps';
+  if (instanceName === WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME) return 'confirmacao de consulta';
+  if (instanceName === WHATSAPP_NPS_INSTANCE_NAME) return 'nps';
+  return 'palavra-chave';
+}
+
+async function findWhatsAppChatbotFlowByTrigger({ instanceName, inboundText, conversation = null }) {
+  const triggerType = await getWhatsAppChatbotTriggerTypeForConversation({ instanceName, conversation });
+  const normalizedText = normalizeChatbotInboundValue(inboundText);
+  const [rows] = await pool.query(
+    `SELECT *
+       FROM whatsapp_chatbot_flows
+      WHERE status = 'ativo'
+        AND trigger_type = ?
         AND (instance_name IS NULL OR instance_name = '' OR instance_name = ?)
       ORDER BY CASE WHEN instance_name = ? THEN 0 ELSE 1 END, id ASC`,
-    [instanceName || null, instanceName || null]
+    [triggerType, instanceName || null, instanceName || null]
   );
 
   return rows.find((row) => {
@@ -15497,7 +15736,8 @@ async function processWhatsAppChatbotInbound({ conversation, inboundMessage }) {
   if (!activeSession) {
     const flow = await findWhatsAppChatbotFlowByTrigger({
       instanceName: conversation.instance_name,
-      inboundText: inboundMessage.message_text || inboundMessage.message
+      inboundText: inboundMessage.message_text || inboundMessage.message,
+      conversation
     });
     if (!flow) return { matched: false };
     const sessionId = await startWhatsAppChatbotSession({ flow, conversation, inboundMessage });
@@ -15529,15 +15769,20 @@ async function processWhatsAppChatbotInbound({ conversation, inboundMessage }) {
     return { matched: true, validationError: true };
   }
 
+  const currentPayload = parseWhatsAppChatbotPayload(currentStep?.action_payload);
+  const normalizedValueMap = currentPayload.normalize_value_map || currentPayload.normalizeValueMap || {};
+  const effectiveNormalizedValue = normalizedValueMap[validation.normalizedValue] || validation.normalizedValue;
+  const effectiveParsedValue = normalizedValueMap[validation.normalizedValue] || validation.parsedValue;
+
   const nextData = await applyWhatsAppChatbotStepAction({
     session: activeSession,
     step: currentStep,
-    normalizedValue: validation.normalizedValue,
-    parsedValue: validation.parsedValue,
+    normalizedValue: effectiveNormalizedValue,
+    parsedValue: effectiveParsedValue,
     conversation
   });
 
-  const nextStep = getWhatsAppChatbotNextStep(currentStep, steps, validation.normalizedValue);
+  const nextStep = getWhatsAppChatbotNextStep(currentStep, steps, effectiveNormalizedValue);
   if (!nextStep) {
     await saveWhatsAppChatbotSession(activeSession.id, {
       collected_data: stringifyWhatsAppChatbotPayload(nextData),
@@ -15579,6 +15824,29 @@ async function processWhatsAppChatbotInbound({ conversation, inboundMessage }) {
       scheduleDelaySeconds: 2,
       payload: { chatbotSessionId: activeSession.id, flowId: activeSession.flow_id, stepOrder: nextStep.step_order }
     });
+  }
+
+  if (String(nextStep.action_type || '').trim() !== 'capture_field') {
+    const autoAdvancedData = await applyWhatsAppChatbotStepAction({
+      session: { ...activeSession, collected_data: stringifyWhatsAppChatbotPayload(nextData) },
+      step: nextStep,
+      normalizedValue: '',
+      parsedValue: '',
+      conversation
+    });
+    const chainedStep = getWhatsAppChatbotNextStep(nextStep, steps, '');
+    if (!chainedStep) {
+      await saveWhatsAppChatbotSession(activeSession.id, {
+        collected_data: stringifyWhatsAppChatbotPayload(autoAdvancedData),
+        last_inbound_message_id: inboundMessage.id,
+        last_interaction_at: new Date(),
+        current_step_order: Number(nextStep.step_order || activeSession.current_step_order || 1),
+        current_step_id: nextStep.id,
+        status: 'concluido',
+        completed_at: new Date()
+      });
+      return { matched: true, completed: true, data: autoAdvancedData };
+    }
   }
 
   return { matched: true, completed: false, data: nextData };
@@ -15683,6 +15951,16 @@ async function handleGetWhatsAppChatbotSessions(req, res) {
   }
 }
 
+async function handleGetWhatsAppConfirmationResponses(req, res) {
+  try {
+    const rows = await getRecentConfirmationChatbotResponses(200);
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar as confirmações registradas pelo WhatsApp.' });
+  }
+}
+
 async function handleBootstrapProfessionalWhatsAppFlows(req, res) {
   try {
     if (!canConfigureWhatsAppManagement(req.user)) {
@@ -15706,7 +15984,10 @@ async function handleMassWhatsAppCampaignSend(req, res) {
     const templateId = Number(req.body.template_id || req.body.templateId || 0) || null;
     const sessionId = sanitizeFinancialString(req.body.session_id || req.body.sessionId);
     const messageText = String(req.body.message_text || req.body.messageText || '').trim();
-    const parsedUpload = req.file?.path
+    const selectedRecipients = parseSelectedCampaignRecipients(req);
+    const parsedUpload = selectedRecipients.length
+      ? { recipients: selectedRecipients, invalidRows: [] }
+      : req.file?.path
       ? parseMassWhatsAppRecipientsFromUpload(req.file.path, req.file.originalname)
       : parseMassWhatsAppRecipients(decodeUploadedText(req.body.recipients || req.body.content || ''));
 
@@ -15732,57 +16013,157 @@ async function handleMassWhatsAppCampaignSend(req, res) {
           fallbackInstanceName: WHATSAPP_NOTIFICATION_INSTANCE_NAME,
           fallbackPhone: WHATSAPP_NOTIFICATION_SENDER_PHONE
         });
-    const instanceName = sessionId || defaultInstance?.instance_name || (campaignType === 'nps' ? WHATSAPP_NPS_INSTANCE_NAME : WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME);
     const antiBan = getWhatsAppAntiBanConfig();
     const publicNpsLink = `${frontendUrl}/pesquisa-nps`;
+    const confirmationFlow = campaignType === 'confirmacao'
+      ? await getWhatsAppChatbotFlowByTriggerType({ triggerType: 'confirmacao de consulta' })
+      : null;
+    const batchId = `campaign-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    const campaignSource = campaignType === 'nps' ? 'nps_bulk_dispatch' : 'confirmacao_massa';
+    const unresolvedRecipients = [];
+    let queuedCount = 0;
 
     for (const [index, recipient] of recipients.entries()) {
+      const route = await resolveMassCampaignRecipientRoute(recipient, campaignType, req.user, sessionId);
+      if (!route.resolved || !route.resolved_instance_name) {
+        const routingError = route.routing_error || 'Roteamento da clínica não encontrado.';
+        await saveWhatsAppCampaignRecipientRecord({
+          batchId,
+          campaignType,
+          templateId,
+          route,
+          status: 'bloqueado',
+          routingError,
+          source: campaignSource,
+          createdBy: getActorName(req.user)
+        });
+        unresolvedRecipients.push({
+          patient_name: route.patient_name,
+          patient_phone: route.patient_phone,
+          clinic_name: route.clinic_name,
+          error: routingError
+        });
+        continue;
+      }
+
+      const instanceName = route.resolved_instance_name;
       const rendered = renderGenericWhatsAppTemplate(resolvedMessage, {
-        nome_paciente: recipient.patient_name,
-        telefone: recipient.patient_phone,
-        clinica: recipient.clinic_name || '',
-        data_consulta: recipient.data_consulta || '',
-        hora_consulta: recipient.hora_consulta || '',
+        nome_paciente: route.patient_name,
+        telefone: route.patient_phone,
+        clinica: route.clinic_name || '',
+        data_consulta: route.data_consulta || '',
+        hora_consulta: route.hora_consulta || '',
         link_nps: publicNpsLink
       }).trim();
-      await queueManagedWhatsAppMessage({
+      const queued = await queueManagedWhatsAppMessage({
         actor: req.user,
         conversationPayload: {
-          patient_name: recipient.patient_name,
-          patient_phone: recipient.patient_phone,
-          clinic_name: recipient.clinic_name || null,
+          patient_name: route.patient_name,
+          patient_phone: route.patient_phone,
+          clinic_id: route.clinic_id || null,
+          clinic_name: route.clinic_name || null,
           instance_name: instanceName,
+          campaign: campaignType,
           status: campaignType === 'nps' ? 'NPS' : 'Em atendimento'
         },
         instanceName,
-        patientPhone: recipient.patient_phone,
-        patientName: recipient.patient_name,
-        clinicName: recipient.clinic_name || null,
+        patientPhone: route.patient_phone,
+        patientName: route.patient_name,
+        clinicName: route.clinic_name || null,
+        clinicId: route.clinic_id || null,
         messageText: rendered,
         messageType: campaignType === 'nps' ? 'nps_bulk_invite' : 'confirmacao_massa',
-        source: campaignType === 'nps' ? 'nps_bulk_dispatch' : 'confirmacao_massa',
+        source: campaignSource,
         scheduleDelaySeconds: buildProgressiveDispatchDelaySeconds(index, antiBan),
         payload: {
+          batchId,
           campaignType,
           templateId,
           link: publicNpsLink,
           triggerChatbot: campaignType !== 'nps'
         }
       });
+      await saveWhatsAppCampaignRecipientRecord({
+        batchId,
+        campaignType,
+        templateId,
+        route,
+        status: queued?.duplicateSuppressed ? 'duplicado' : 'enfileirado',
+        source: campaignSource,
+        createdBy: getActorName(req.user),
+        conversationId: queued?.conversation?.id || null,
+        messageId: queued?.messageId || null,
+        dispatchQueueId: queued?.dispatch?.id || null
+      });
+      queuedCount += 1;
+
+      if (campaignType === 'confirmacao' && confirmationFlow && queued?.conversation) {
+        await primeWhatsAppChatbotSessionForFlow({
+          flow: confirmationFlow,
+          conversation: queued.conversation,
+          collectedData: {
+            campaign_type: campaignType,
+            data_consulta: route.data_consulta || '',
+            hora_consulta: route.hora_consulta || '',
+            clinic_name: route.clinic_name || '',
+            routed_instance_name: instanceName
+          }
+        });
+      }
     }
 
     return res.json({
       success: true,
-      message: `Campanha ${campaignType} enfileirada para ${recipients.length} paciente(s).`,
-      queued: recipients.length,
-      invalid: invalidRows.length,
+      message: `Campanha ${campaignType} enfileirada para ${queuedCount} paciente(s).`,
+      queued: queuedCount,
+      invalid: invalidRows.length + unresolvedRecipients.length,
       invalidRows,
-      sessionId: instanceName,
+      unresolvedRecipients,
+      batchId,
+      sessionId: campaignType === 'nps' ? (sessionId || defaultInstance?.instance_name || WHATSAPP_NPS_INSTANCE_NAME) : 'automatico-por-clinica',
       antiBan
     });
   } catch (error) {
     console.error(error);
     return res.status(400).json({ error: error.message || 'Erro ao preparar o disparo em massa do WhatsApp.' });
+  } finally {
+    if (req.file?.path) {
+      fs.unlink(req.file.path, () => {});
+    }
+  }
+}
+
+async function handlePreviewMassWhatsAppCampaign(req, res) {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user) && !hasPermission(req.user, 'whatsapp_send')) {
+      return res.status(403).json({ error: 'Seu perfil não pode visualizar campanhas em massa pelo WhatsApp.' });
+    }
+
+    const campaignType = String(req.body.campaign_type || req.body.campaignType || 'confirmacao').trim().toLowerCase();
+    const sessionId = sanitizeFinancialString(req.body.session_id || req.body.sessionId);
+    const parsedUpload = req.file?.path
+      ? parseMassWhatsAppRecipientsFromUpload(req.file.path, req.file.originalname)
+      : parseMassWhatsAppRecipients(decodeUploadedText(req.body.recipients || req.body.content || ''));
+
+    if (!parsedUpload.recipients.length) {
+      return res.status(400).json({ error: 'Informe uma lista com nome e telefone para conferência da campanha.' });
+    }
+
+    const preview = await buildMassWhatsAppCampaignPreview({
+      recipients: parsedUpload.recipients,
+      invalidRows: parsedUpload.invalidRows,
+      campaignType,
+      sessionId,
+      user: req.user
+    });
+
+    return res.json({
+      success: true,
+      ...preview
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao montar a prévia da campanha em massa.' });
   } finally {
     if (req.file?.path) {
       fs.unlink(req.file.path, () => {});
@@ -15858,8 +16239,9 @@ async function ensureDefaultWhatsAppContent() {
       title: 'Confirmação de atendimento em massa',
       category: 'Confirmação de consulta',
       sector: 'Confirmacao e Agendamento',
-      message_text: 'Olá, {{nome_paciente}}! Aqui é da central Grupo Sorria. Estamos confirmando seu atendimento na unidade {{clinica}} em {{data_consulta}} às {{hora_consulta}}. Responda 1 para confirmar, 2 para reagendar ou 3 para falar com nossa equipe.',
-      variables: ['nome_paciente', 'clinica', 'data_consulta', 'hora_consulta']
+      message_text: 'Olá, {{nome_paciente}}! Tudo bem? Sou a assistente de confirmação da unidade {{clinica}} no Grupo Sorria. Seu atendimento está reservado para {{data_consulta}} às {{hora_consulta}}. Se estiver tudo certo, responda SIM. Se quiser remarcar, escreva REMARCAR. Se preferir falar com nossa equipe, responda ATENDENTE.',
+      variables: ['nome_paciente', 'clinica', 'data_consulta', 'hora_consulta'],
+      force_update: true
     },
     {
       title: 'NPS WhatsApp em massa',
@@ -15928,7 +16310,7 @@ async function ensureDefaultWhatsAppContent() {
       sector: 'Confirmacao e Agendamento',
       trigger_type: 'confirmacao de consulta',
       trigger_value: 'confirmar',
-      initial_message: 'Olá, {{nome_paciente}}! Vamos registrar sua confirmação de atendimento por aqui com rapidez e segurança.'
+      initial_message: 'Olá, {{nome_paciente}}! Vou cuidar da sua confirmação por aqui de forma rápida e segura.'
     },
     {
       flow_name: 'NPS conversacional profissional',
@@ -15957,52 +16339,90 @@ async function ensureDefaultWhatsAppContent() {
   ];
 
   for (const flow of defaultFlows) {
-    const [result] = await pool.query(
+    await pool.query(
       `INSERT INTO whatsapp_chatbot_flows
        (flow_name, instance_name, sector, trigger_type, trigger_value, initial_message, status, created_by, updated_by)
        SELECT ?, ?, ?, ?, ?, ?, 'ativo', 'Sistema', 'Sistema'
        WHERE NOT EXISTS (SELECT 1 FROM whatsapp_chatbot_flows WHERE flow_name = ? LIMIT 1)`,
       [flow.flow_name, flow.instance_name || null, flow.sector || 'CRC', flow.trigger_type, flow.trigger_value, flow.initial_message, flow.flow_name]
     );
-    if (result.insertId) {
-      if (flow.flow_name === 'Confirmação automática profissional') {
-        await saveWhatsAppFlowSteps(result.insertId, [
+    const [savedFlowRows] = await pool.query('SELECT id FROM whatsapp_chatbot_flows WHERE flow_name = ? LIMIT 1', [flow.flow_name]);
+    const savedFlowId = savedFlowRows[0]?.id || null;
+    if (!savedFlowId) continue;
+
+    await pool.query(
+      `UPDATE whatsapp_chatbot_flows
+          SET instance_name = ?,
+              sector = ?,
+              trigger_type = ?,
+              trigger_value = ?,
+              initial_message = ?,
+              status = 'ativo',
+              updated_by = 'Sistema',
+              updated_at = NOW()
+        WHERE id = ?`,
+      [flow.instance_name || null, flow.sector || 'CRC', flow.trigger_type, flow.trigger_value, flow.initial_message, savedFlowId]
+    );
+
+    if (flow.flow_name === 'Confirmação automática profissional') {
+      await saveWhatsAppFlowSteps(savedFlowId, [
           {
             step_order: 1,
-            message_text: 'Responda 1 para confirmar, 2 para reagendar ou 3 para falar com o Operador de SAC.',
-            option_value: '1|2|3',
+            message_text: 'Para eu registrar certinho: responda SIM para confirmar, REMARCAR se quiser ajustar o horário ou ATENDENTE para falar com nossa equipe.',
+            option_value: 'sim|s|ok|confirmo|confirmado|1|remarcar|reagendar|nao|não|2|atendente|humano|ajuda|3',
             action_type: 'capture_field',
             action_payload: {
-              field: 'appointment_decision',
+              field: 'confirmation_decision',
               validation: 'choice',
-              next_step_by_value: { '1': 2, '2': 3, '3': 4 },
-              save_conversation_status_by_value: { '1': 'Agendado', '2': 'Retornar depois', '3': 'Em atendimento' }
+              normalize_value_map: {
+                sim: 'confirmado',
+                s: 'confirmado',
+                ok: 'confirmado',
+                confirmo: 'confirmado',
+                confirmado: 'confirmado',
+                '1': 'confirmado',
+                remarcar: 'reagendar',
+                reagendar: 'reagendar',
+                nao: 'reagendar',
+                'não': 'reagendar',
+                '2': 'reagendar',
+                atendente: 'humano',
+                humano: 'humano',
+                ajuda: 'humano',
+                '3': 'humano'
+              },
+              next_step_by_value: { confirmado: 2, reagendar: 3, humano: 4 },
+              save_conversation_status_by_value: {
+                confirmado: 'Confirmado no WhatsApp',
+                reagendar: 'Retornar depois',
+                humano: 'Em atendimento'
+              }
             }
           },
           {
             step_order: 2,
-            message_text: 'Perfeito, {{nome_paciente}}. Sua confirmação foi registrada com sucesso. Se precisar de algo, é só responder por aqui.',
+            message_text: 'Perfeito, {{nome_paciente}}! Sua confirmação já ficou registrada no sistema da unidade {{clinica}}. Se surgir qualquer imprevisto, pode me chamar por aqui.',
             option_value: '',
             action_type: 'complete_session',
             action_payload: {}
           },
           {
             step_order: 3,
-            message_text: 'Entendido. Vou encaminhar seu caso para nossa equipe ajustar a agenda com você.',
+            message_text: 'Sem problema, {{nome_paciente}}. Vou encaminhar agora para nossa equipe ajustar o melhor horário com você.',
             option_value: '',
             action_type: 'assign_operator_role',
             action_payload: { role: 'sac_operator' }
           },
           {
             step_order: 4,
-            message_text: 'Certo. Vou direcionar agora mesmo para o Operador de SAC continuar com você.',
+            message_text: 'Claro, {{nome_paciente}}. Já estou direcionando sua conversa para o Operador de SAC continuar o atendimento com você.',
             option_value: '',
             action_type: 'assign_operator_role',
             action_payload: { role: 'sac_operator' }
           }
         ]);
-      } else if (flow.flow_name === 'NPS conversacional profissional') {
-        await saveWhatsAppFlowSteps(result.insertId, [
+    } else if (flow.flow_name === 'NPS conversacional profissional') {
+      await saveWhatsAppFlowSteps(savedFlowId, [
           {
             step_order: 1,
             message_text: 'De 0 a 10, qual nota você dá para a sua experiência?',
@@ -16025,11 +16445,10 @@ async function ensureDefaultWhatsAppContent() {
             action_payload: {}
           }
         ]);
-      } else {
-        await saveWhatsAppFlowSteps(result.insertId, [
-          { step_order: 1, message_text: flow.initial_message, option_value: '', action_type: 'mensagem' }
-        ]);
-      }
+    } else {
+      await saveWhatsAppFlowSteps(savedFlowId, [
+        { step_order: 1, message_text: flow.initial_message, option_value: '', action_type: 'mensagem' }
+      ]);
     }
   }
 }
@@ -16279,6 +16698,73 @@ function firstNonEmpty(...values) {
     if (value !== undefined && value !== null && String(value).trim() !== '') return value;
   }
   return null;
+}
+
+async function primeWhatsAppChatbotSessionForFlow({ flow, conversation, collectedData = {} } = {}) {
+  if (!flow?.id || !conversation?.id) return null;
+  const existingSession = await findActiveWhatsAppChatbotSession({
+    conversationId: conversation.id,
+    phone: conversation.patient_phone,
+    instanceName: conversation.instance_name
+  });
+  if (existingSession) return existingSession.id;
+
+  const steps = await getWhatsAppChatbotSteps(flow.id);
+  if (!steps.length) return null;
+  const firstStep = steps[0];
+  const [result] = await pool.query(
+    `INSERT INTO whatsapp_chatbot_sessions
+     (flow_id, conversation_id, instance_name, patient_phone, patient_name, current_step_order, current_step_id, last_inbound_message_id, collected_data, status, started_at, last_interaction_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, 'ativo', NOW(), NOW())`,
+    [
+      flow.id,
+      conversation.id,
+      conversation.instance_name || null,
+      conversation.patient_phone,
+      conversation.patient_name,
+      Number(firstStep.step_order || 1),
+      firstStep.id,
+      stringifyWhatsAppChatbotPayload(collectedData || {})
+    ]
+  );
+  return result.insertId;
+}
+
+async function getRecentConfirmationChatbotResponses(limit = 120) {
+  const [rows] = await pool.query(
+    `SELECT s.*,
+            f.flow_name,
+            c.status AS conversation_status,
+            c.clinic_name,
+            c.instance_name,
+            c.operator_name
+       FROM whatsapp_chatbot_sessions s
+       INNER JOIN whatsapp_chatbot_flows f ON f.id = s.flow_id
+       LEFT JOIN whatsapp_conversations c ON c.id = s.conversation_id
+      WHERE f.trigger_type = 'confirmacao de consulta'
+      ORDER BY COALESCE(s.completed_at, s.last_interaction_at, s.started_at) DESC
+      LIMIT ?`,
+    [Math.max(1, Number(limit || 120))]
+  );
+
+  return rows.map((row) => {
+    const collected = normalizeChatbotSessionData(row.collected_data);
+    const decision = String(collected.confirmation_decision || '').trim().toLowerCase();
+    const decisionLabel = decision === 'confirmado'
+      ? 'Confirmado'
+      : decision === 'reagendar'
+        ? 'Pediu reagendamento'
+        : decision === 'humano'
+          ? 'Solicitou atendimento humano'
+          : 'Sem resposta conclusiva';
+    return {
+      ...row,
+      collected_data: collected,
+      confirmation_decision: decision || null,
+      confirmation_label: decisionLabel,
+      confirmation_confirmed: decision === 'confirmado'
+    };
+  });
 }
 
 function firstNonEmptyString(...values) {
@@ -16904,6 +17390,7 @@ app.put('/api/whatsapp/absent/:id', authenticate, requireWhatsAppView, handleUpd
 
 app.get('/api/whatsapp/chatbot/flows', authenticate, requireWhatsAppView, handleGetWhatsAppFlows);
 app.get('/api/whatsapp/chatbot/sessions', authenticate, requireWhatsAppView, handleGetWhatsAppChatbotSessions);
+app.get('/api/whatsapp/confirmation/responses', authenticate, requireWhatsAppView, handleGetWhatsAppConfirmationResponses);
 app.post('/api/whatsapp/chatbot/bootstrap-defaults', authenticate, requireWhatsAppView, handleBootstrapProfessionalWhatsAppFlows);
 app.post('/api/whatsapp/chatbot/flows', authenticate, requireWhatsAppView, handleCreateWhatsAppFlow);
 app.put('/api/whatsapp/chatbot/flows/:id', authenticate, requireWhatsAppView, handleUpdateWhatsAppFlow);
@@ -16924,6 +17411,7 @@ app.delete('/api/whatsapp/chatbot/flows/:id', authenticate, requireWhatsAppView,
 app.get('/api/whatsapp/dashboard', authenticate, requireWhatsAppView, handleGetWhatsAppDashboard);
 app.get('/api/whatsapp/history', authenticate, requireWhatsAppView, handleGetWhatsAppHistory);
 app.get('/api/whatsapp/campaigns/template', authenticate, requireWhatsAppView, handleDownloadWhatsAppCampaignTemplate);
+app.post('/api/whatsapp/campaigns/preview', authenticate, requireWhatsAppView, upload.single('file'), handlePreviewMassWhatsAppCampaign);
 app.post('/api/whatsapp/campaigns/mass-send', authenticate, requireWhatsAppView, upload.single('file'), handleMassWhatsAppCampaignSend);
 app.get('/api/whatsapp/evolution-logs', authenticate, requireWhatsAppView, async (req, res) => {
   try {

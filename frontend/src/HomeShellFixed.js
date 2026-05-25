@@ -767,9 +767,6 @@ function HomeShellFixed() {
           <div className="brand-mark">
             <img src={logo} alt="GRC Consultoria Empresarial" />
           </div>
-          <button className="ghost-action menu-trigger home-menu-top" onClick={() => setDrawerOpen(true)}>
-            Menu
-          </button>
           {masterUser && (
             <button
               type="button"
