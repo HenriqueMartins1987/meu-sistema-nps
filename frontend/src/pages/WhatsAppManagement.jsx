@@ -399,6 +399,8 @@ function WhatsAppManagement() {
   const [historyFilters, setHistoryFilters] = useState({ search: '', status: '', instanceName: '' });
   const [dashboardFilters] = useState({ operatorId: '', clinicId: '', instanceName: '', status: '', campaign: '' });
   const selectedConversationIdRef = useRef('');
+  const instanceEditorRef = useRef(null);
+  const instancePhoneInputRef = useRef(null);
 
   const selectedQueueConversation = useMemo(
     () => queue.find((item) => String(item.conversation_id) === String(selectedConversationId)) || null,
@@ -713,6 +715,13 @@ function WhatsAppManagement() {
       notes: instance.notes || ''
     });
     setSuccess(`Editando ${instance.display_name || instance.instance_name}.`);
+    window.setTimeout(() => {
+      instanceEditorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      window.setTimeout(() => {
+        instancePhoneInputRef.current?.focus({ preventScroll: true });
+        instancePhoneInputRef.current?.select();
+      }, 180);
+    }, 0);
   };
 
   const cancelInstanceEdit = () => {
@@ -1606,15 +1615,25 @@ function WhatsAppManagement() {
   const renderInstances = () => (
     <section className="whatsapp-two-column">
       {canConfigure && (
-        <article className="whatsapp-panel whatsapp-campaign-side-panel">
-          <h2>{editingInstanceName ? 'Editar numero' : 'Novo numero'}</h2>
+        <article ref={instanceEditorRef} className={`whatsapp-panel whatsapp-campaign-side-panel ${editingInstanceName ? 'whatsapp-instance-editor-active' : ''}`}>
+          <div className="whatsapp-panel-head">
+            <div>
+              <h2>{editingInstanceName ? 'Editar numero' : 'Novo numero'}</h2>
+              <p className="whatsapp-panel-note">
+                {editingInstanceName
+                  ? 'Modo edicao ativo. Altere o telefone, confira clinica/unidade e clique em Salvar alteracoes.'
+                  : 'Cadastre ou vincule um numero WhatsApp a uma clinica para liberar roteamento e campanhas.'}
+              </p>
+            </div>
+            {editingInstanceName && <span className="whatsapp-editing-pill">Editando</span>}
+          </div>
           <div className="whatsapp-form-grid">
             <label>Identificacao<input className="field" value={instanceDraft.instance_name} onChange={(event) => setInstanceDraft((current) => ({ ...current, instance_name: event.target.value }))} disabled={Boolean(editingInstanceName)} /></label>
             <label>Nome de exibicao<input className="field" value={instanceDraft.display_name} onChange={(event) => setInstanceDraft((current) => ({ ...current, display_name: event.target.value }))} /></label>
             <label>Setor<select className="field" value={instanceDraft.sector} onChange={(event) => setInstanceDraft((current) => ({ ...current, sector: event.target.value }))}>{sectors.map((item) => <option key={item}>{item}</option>)}</select></label>
             <label>Clinica<select className="field" value={instanceDraft.clinic_id} onChange={(event) => setInstanceDraft((current) => ({ ...current, clinic_id: event.target.value }))}><option value="">Sem vinculo</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label>
             <label>Unidade<input className="field" value={instanceDraft.unit_name} onChange={(event) => setInstanceDraft((current) => ({ ...current, unit_name: event.target.value }))} /></label>
-            <label>Numero WhatsApp<input className="field" value={instanceDraft.phone_number} onChange={(event) => setInstanceDraft((current) => ({ ...current, phone_number: normalizePhone(event.target.value) }))} placeholder="5562999999999" /></label>
+            <label>Numero WhatsApp<input ref={instancePhoneInputRef} className="field" value={instanceDraft.phone_number} onChange={(event) => setInstanceDraft((current) => ({ ...current, phone_number: normalizePhone(event.target.value) }))} placeholder="5562999999999" /></label>
             {canRouteAttendance && (
               <label>Atendente responsavel
                 <select className="field" value={instanceDraft.operator_id} onChange={(event) => setInstanceDraft((current) => ({ ...current, operator_id: event.target.value }))}>

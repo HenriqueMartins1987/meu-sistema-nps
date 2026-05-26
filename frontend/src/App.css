@@ -10739,6 +10739,29 @@ a {
   padding: 22px;
 }
 
+.whatsapp-instance-editor-active {
+  border-color: rgba(181, 132, 61, 0.62);
+  box-shadow: 0 22px 54px rgba(120, 78, 30, 0.14);
+  outline: 3px solid rgba(181, 132, 61, 0.12);
+  scroll-margin-top: 108px;
+}
+
+.whatsapp-editing-pill {
+  display: inline-grid;
+  min-height: 34px;
+  place-items: center;
+  padding: 0 14px;
+  border: 1px solid rgba(181, 132, 61, 0.36);
+  border-radius: 999px;
+  background: rgba(181, 132, 61, 0.12);
+  color: var(--brand-strong);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
 .whatsapp-panel-head {
   display: flex;
   justify-content: space-between;
