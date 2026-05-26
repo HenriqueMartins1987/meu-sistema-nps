@@ -13411,6 +13411,228 @@ async function handleSendWhatsAppServiceMessage(req, res) {
   }
 }
 
+async function ensureWhatsAppServiceSessionFromInstance(instance = {}, actorName = 'Sistema') {
+  const sessionId = normalizeEvolutionInstanceName(instance.instance_name);
+  if (!sessionId) return null;
+
+  await pool.query(
+    `INSERT INTO whatsapp_service_sessions
+     (session_id, display_name, clinic_id, clinic_name, unit_name, phone_number, status, notes, created_by, updated_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       display_name = COALESCE(NULLIF(display_name, ''), VALUES(display_name)),
+       clinic_id = COALESCE(clinic_id, VALUES(clinic_id)),
+       clinic_name = COALESCE(NULLIF(clinic_name, ''), VALUES(clinic_name)),
+       unit_name = COALESCE(NULLIF(unit_name, ''), VALUES(unit_name)),
+       phone_number = COALESCE(NULLIF(phone_number, ''), VALUES(phone_number)),
+       status = CASE
+         WHEN status IS NULL OR status = '' OR status = 'pendente_configuracao' THEN VALUES(status)
+         ELSE status
+       END,
+       updated_by = VALUES(updated_by)`,
+    [
+      sessionId,
+      sanitizeFinancialString(instance.display_name || sessionId),
+      instance.clinic_id || null,
+      sanitizeFinancialString(instance.clinic_name),
+      sanitizeFinancialString(instance.unit_name),
+      normalizeWhatsAppPhone(instance.phone_number || ''),
+      sanitizeFinancialString(instance.status || 'iniciando', 40),
+      sanitizeFinancialString(instance.notes, 2000),
+      actorName,
+      actorName
+    ]
+  );
+
+  const [rows] = await pool.query('SELECT * FROM whatsapp_service_sessions WHERE session_id = ? LIMIT 1', [sessionId]);
+  return rows[0] || null;
+}
+
+async function updateWhatsAppInstanceAndSessionStatus(instanceName, status, payload, actorName) {
+  const normalizedStatus = sanitizeFinancialString(status || 'iniciando', 40);
+  const payloadJson = payload ? JSON.stringify(payload) : null;
+
+  await pool.query(
+    `UPDATE whatsapp_instances
+        SET status = ?,
+            last_connection_at = CASE WHEN ? = 'conectado' THEN NOW() ELSE last_connection_at END,
+            uptime_started_at = CASE WHEN ? = 'conectado' AND uptime_started_at IS NULL THEN NOW() WHEN ? <> 'conectado' THEN NULL ELSE uptime_started_at END,
+            last_status_check_at = NOW(),
+            updated_by = ?
+      WHERE instance_name = ?`,
+    [normalizedStatus, normalizedStatus, normalizedStatus, normalizedStatus, actorName, instanceName]
+  );
+
+  await pool.query(
+    `UPDATE whatsapp_service_sessions
+        SET status = ?,
+            last_status_payload = COALESCE(?, last_status_payload),
+            last_status_check_at = NOW(),
+            updated_by = ?
+      WHERE session_id = ?`,
+    [normalizedStatus, payloadJson, actorName, instanceName]
+  );
+}
+
+async function handleTestWhatsAppInstanceMessage(req, res) {
+  const startedAt = performance.now();
+  let historyId = null;
+  let instanceName = '';
+
+  try {
+    instanceName = normalizeEvolutionInstanceName(req.params.instanceName || req.body.instance_name || req.body.instanceName);
+    const phone = normalizeWhatsAppPhone(req.body.patient_phone || req.body.phone || req.body.number);
+    const message = String(req.body.message_text || req.body.message || 'Envio de mensagem teste').trim();
+    const actorName = getActorName(req.user);
+
+    if (!instanceName) return res.status(400).json({ error: 'Informe a instância WhatsApp.' });
+    if (!phone) return res.status(400).json({ error: 'Número inválido. Use DDI e DDD. Exemplo: 5562999999999.' });
+    if (!message) return res.status(400).json({ error: 'Informe a mensagem de teste.' });
+
+    const scope = buildWhatsAppInstanceScopeWhere(req.user, 'wi');
+    const [instanceRows] = await pool.query(
+      `SELECT wi.*
+         FROM whatsapp_instances wi
+        WHERE wi.instance_name = ?
+          AND ${scope.clause}
+        LIMIT 1`,
+      [instanceName, ...scope.params]
+    );
+    const instance = instanceRows[0];
+    if (!instance) {
+      return res.status(404).json({ error: 'Número WhatsApp não encontrado ou fora das clínicas liberadas para seu usuário.' });
+    }
+
+    await assertCrcOperatorClinicAccess(req.user, instance.clinic_id);
+    await ensureWhatsAppServiceSessionFromInstance(instance, actorName);
+
+    if (!isWhatsAppServiceProviderConfigured()) {
+      return res.status(503).json({
+        success: false,
+        error: 'whatsapp-service VPS não configurado no backend para envio de teste.'
+      });
+    }
+
+    let statusPayload = null;
+    let statusWarning = null;
+    try {
+      statusPayload = await whatsappVpsService.getSessionStatus(instanceName);
+      const providerStatus = mapWhatsAppServiceStatus(statusPayload, instance.status || 'iniciando');
+      await updateWhatsAppInstanceAndSessionStatus(instanceName, providerStatus, statusPayload, actorName);
+    } catch (statusError) {
+      statusWarning = whatsappVpsService.friendlyApiError(statusError) || statusError.message;
+      await logEvolutionEvent('whatsapp_service_test_status_warning', {
+        instanceName,
+        status: 'warning',
+        durationMs: performance.now() - startedAt,
+        request: { sessionId: instanceName },
+        error: statusError
+      });
+    }
+
+    const [insert] = await pool.query(
+      `INSERT INTO whatsapp_service_message_history
+       (session_id, patient_phone, message_text, status, created_by)
+       VALUES (?, ?, ?, 'pendente', ?)`,
+      [instanceName, phone, message, actorName]
+    );
+    historyId = insert.insertId;
+
+    const serviceResponse = await whatsappVpsService.sendMessage({ sessionId: instanceName, number: phone, message });
+    const providerMessageId = getWhatsAppServiceMessageId(serviceResponse);
+
+    await pool.query(
+      `UPDATE whatsapp_service_message_history
+          SET status = 'enviado',
+              provider_message_id = ?,
+              response_payload = ?,
+              sent_at = NOW()
+        WHERE id = ?`,
+      [providerMessageId, JSON.stringify(serviceResponse), historyId]
+    );
+    await updateWhatsAppInstanceAndSessionStatus(instanceName, 'conectado', statusPayload || serviceResponse, actorName);
+    await logEvolutionEvent('whatsapp_service_instance_test_send', {
+      instanceName,
+      status: 'success',
+      durationMs: performance.now() - startedAt,
+      request: { sessionId: instanceName, number: phone, textLength: message.length },
+      response: {
+        providerMessageId,
+        resolvedNumber: serviceResponse?.resolvedNumber || serviceResponse?.raw?.resolvedNumber || null,
+        attemptedNumbers: serviceResponse?.attemptedNumbers || serviceResponse?.raw?.attemptedNumbers || []
+      }
+    });
+    emitWhatsAppDashboardRefresh('instance_test_sent', { instanceName });
+
+    return res.status(202).json({
+      success: true,
+      message: 'Mensagem teste enviada pela VPS.',
+      provider: 'whatsapp_service',
+      instanceName,
+      historyId,
+      providerMessageId,
+      resolvedNumber: serviceResponse?.resolvedNumber || serviceResponse?.raw?.resolvedNumber || phone,
+      attemptedNumbers: serviceResponse?.attemptedNumbers || serviceResponse?.raw?.attemptedNumbers || [phone],
+      statusWarning
+    });
+  } catch (error) {
+    console.error(error);
+    const friendlyError = whatsappVpsService.friendlyApiError(error) || 'Erro ao enviar mensagem teste pela VPS.';
+    const shouldReconnect = /comms|startcomms|não está pronta|nao esta pronta|not ready|reconectar/i.test(`${friendlyError} ${error.message || ''}`);
+
+    if (historyId) {
+      await pool.query(
+        `UPDATE whatsapp_service_message_history
+            SET status = 'erro',
+                error_message = ?,
+                response_payload = ?
+          WHERE id = ?`,
+        [
+          friendlyError,
+          error.response?.data ? JSON.stringify(error.response.data) : null,
+          historyId
+        ]
+      );
+    }
+
+    if (instanceName && shouldReconnect) {
+      await pool.query(
+        `UPDATE whatsapp_instances
+            SET status = 'reconectar',
+                notes = ?,
+                last_status_check_at = NOW(),
+                updated_by = ?
+          WHERE instance_name = ?`,
+        [friendlyError, getActorName(req.user), instanceName]
+      );
+      await pool.query(
+        `UPDATE whatsapp_service_sessions
+            SET status = 'reconectar',
+                notes = ?,
+                last_status_check_at = NOW(),
+                updated_by = ?
+          WHERE session_id = ?`,
+        [friendlyError, getActorName(req.user), instanceName]
+      );
+    }
+
+    await logEvolutionEvent('whatsapp_service_instance_test_send', {
+      instanceName,
+      status: error.code === 'ECONNABORTED' ? 'timeout' : 'error',
+      durationMs: performance.now() - startedAt,
+      request: { sessionId: instanceName },
+      error
+    });
+
+    return res.status(502).json({
+      success: false,
+      requiresReconnect: shouldReconnect,
+      instanceName,
+      error: friendlyError
+    });
+  }
+}
+
 async function handleListWhatsAppServiceHistory(req, res) {
   try {
     const limit = Math.min(100, Math.max(10, Number(req.query.limit || 50)));
@@ -17525,6 +17747,7 @@ app.post('/api/whatsapp/instances', authenticate, requireWhatsAppView, handleCre
 app.put('/api/whatsapp/instances/:instanceName', authenticate, requireWhatsAppView, handleUpdateWhatsAppInstance);
 app.get('/api/whatsapp/instances/:instanceName/qrcode', authenticate, requireWhatsAppView, handleWhatsAppInstanceQrCode);
 app.get('/api/whatsapp/instances/:instanceName/status', authenticate, requireWhatsAppView, handleWhatsAppInstanceStatus);
+app.post('/api/whatsapp/instances/:instanceName/test', authenticate, requireWhatsAppView, handleTestWhatsAppInstanceMessage);
 app.post('/api/whatsapp/instances/:instanceName/reconnect', authenticate, requireWhatsAppView, handleWhatsAppInstanceReconnect);
 app.post('/api/whatsapp/instances/:instanceName/logout', authenticate, requireWhatsAppView, handleWhatsAppInstanceLogout);
 app.put('/api/whatsapp/instances/:instanceName/assignment', authenticate, requireWhatsAppView, handleUpdateWhatsAppInstanceAssignment);

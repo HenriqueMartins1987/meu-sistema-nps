@@ -756,16 +756,15 @@ function WhatsAppManagement() {
       return null;
     }
     return runAction(`test-${instanceName}`, async () => {
-      const response = await api.post('/api/whatsapp/send', {
-        instance_name: instanceName,
+      const response = await api.post(`/api/whatsapp/instances/${instanceName}/test`, {
         patient_phone: phone,
-        patient_name: 'Teste operacional',
-        message_type: 'teste',
         message_text: 'Envio de mensagem teste'
       });
       await loadBaseData({ silent: true });
       return response;
-    }, 'Mensagem teste enviada ou enfileirada.', 'Nao foi possivel enviar a mensagem teste.');
+    }, (data) => data?.providerMessageId
+      ? `Mensagem teste enviada pela VPS. ID: ${data.providerMessageId}`
+      : 'Mensagem teste enviada pela VPS.', 'Nao foi possivel enviar a mensagem teste pela VPS.');
   };
 
   const sendPartnerVideoTests = () => runAction('partner-video-test', async () => {
