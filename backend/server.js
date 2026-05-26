@@ -2375,6 +2375,14 @@ async function ensureColumn(table, column, definition) {
   }
 }
 
+async function ensureIndex(table, indexName, definition) {
+  const [rows] = await pool.query(`SHOW INDEX FROM \`${table}\` WHERE Key_name = ?`, [indexName]);
+
+  if (rows.length === 0) {
+    await pool.query(`ALTER TABLE \`${table}\` ADD ${definition}`);
+  }
+}
+
 function getDefaultWhatsAppSessionSector(sessionId) {
   if (sessionId === WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME) return 'Confirmação e Agendamento';
   if (sessionId === WHATSAPP_NOTIFICATION_INSTANCE_NAME) return 'Reclamações';
@@ -3383,13 +3391,15 @@ async function ensureDatabaseSchema() {
       operator_name VARCHAR(180) NULL,
       anti_ban_delay_ms INT NOT NULL DEFAULT 0,
       humanization_profile VARCHAR(80) NULL,
+      dispatch_dedupe_key VARCHAR(80) NULL,
       error_message TEXT NULL,
       payload LONGTEXT NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_whatsapp_dispatch_status_schedule (status, scheduled_at),
       INDEX idx_whatsapp_dispatch_instance (instance_name),
-      INDEX idx_whatsapp_dispatch_message (message_id)
+      INDEX idx_whatsapp_dispatch_message (message_id),
+      UNIQUE KEY uniq_whatsapp_dispatch_dedupe_key (dispatch_dedupe_key)
     )
   `);
 
@@ -3501,6 +3511,8 @@ async function ensureDatabaseSchema() {
   await ensureColumn('whatsapp_messages', 'whatsapp_message_id', 'VARCHAR(180) NULL');
   await ensureColumn('whatsapp_messages', 'client_request_id', 'VARCHAR(120) NULL');
   await ensureColumn('whatsapp_messages', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+  await ensureColumn('whatsapp_dispatch_queue', 'dispatch_dedupe_key', 'VARCHAR(80) NULL');
+  await ensureIndex('whatsapp_dispatch_queue', 'uniq_whatsapp_dispatch_dedupe_key', 'UNIQUE KEY uniq_whatsapp_dispatch_dedupe_key (dispatch_dedupe_key)');
   await ensureDefaultWhatsAppCrcSessions();
   await ensurePartnerVideoContactSeeds();
 
@@ -11579,20 +11591,53 @@ async function autoAssignWhatsAppQueue(actor = null) {
   return assigned;
 }
 
+const WHATSAPP_DISPATCH_DEDUPE_BUCKET_SECONDS = 15 * 60;
+
+function buildWhatsAppDispatchDedupeKey({
+  instanceName,
+  recipientPhone,
+  messageText,
+  messageType = 'manual',
+  bucketTimestamp = Date.now()
+} = {}) {
+  const normalizedInstance = sanitizeFinancialString(instanceName, 120).toLowerCase();
+  const normalizedPhone = normalizeWhatsAppPhone(recipientPhone);
+  const normalizedText = String(messageText || '').replace(/\s+/g, ' ').trim();
+  const normalizedType = sanitizeFinancialString(messageType || 'manual', 80).toLowerCase() || 'manual';
+  if (!normalizedInstance || !normalizedPhone || !normalizedText) return null;
+
+  const bucket = Math.floor(Number(bucketTimestamp || Date.now()) / 1000 / WHATSAPP_DISPATCH_DEDUPE_BUCKET_SECONDS);
+  return crypto
+    .createHash('sha256')
+    .update([normalizedInstance, normalizedPhone, normalizedType, normalizedText, bucket].join('|'))
+    .digest('hex');
+}
+
 async function findRecentWhatsAppDispatchQueueDuplicate(payload = {}, maxAgeSeconds = 900) {
   const instanceName = sanitizeFinancialString(payload.instance_name || payload.instanceName, 120);
   const recipientPhone = normalizeWhatsAppPhone(payload.recipient_phone || payload.recipientPhone);
   const messageText = String(payload.message_text || payload.messageText || '').trim();
   const messageType = sanitizeFinancialString(payload.message_type || payload.messageType || 'manual', 80) || 'manual';
+  const dispatchDedupeKey = sanitizeFinancialString(payload.dispatch_dedupe_key || payload.dispatchDedupeKey, 80);
   if (!instanceName || !recipientPhone || !messageText) return null;
+
+  const params = [];
+  const duplicatePredicates = [];
+
+  if (dispatchDedupeKey) {
+    duplicatePredicates.push('dispatch_dedupe_key = ?');
+    params.push(dispatchDedupeKey);
+  }
+
+  duplicatePredicates.push('(instance_name = ? AND recipient_phone = ? AND message_text = ? AND COALESCE(message_type, \'manual\') = ?)');
+  params.push(instanceName, recipientPhone, messageText, messageType);
+
+  params.push(Math.max(60, Number(maxAgeSeconds || 900)));
 
   const [rows] = await pool.query(
     `SELECT *
        FROM whatsapp_dispatch_queue
-      WHERE instance_name = ?
-        AND recipient_phone = ?
-        AND message_text = ?
-        AND COALESCE(message_type, 'manual') = ?
+      WHERE (${duplicatePredicates.join(' OR ')})
         AND status IN ('pendente', 'processando', 'enviada')
         AND COALESCE(sent_at, updated_at, created_at) >= DATE_SUB(NOW(), INTERVAL ? SECOND)
       ORDER BY
@@ -11601,12 +11646,78 @@ async function findRecentWhatsAppDispatchQueueDuplicate(payload = {}, maxAgeSeco
           WHEN 'processando' THEN 1
           ELSE 2
         END,
-        id DESC
+        id ASC
       LIMIT 1`,
-    [instanceName, recipientPhone, messageText, messageType, Math.max(60, Number(maxAgeSeconds || 900))]
+    params
   );
 
   return rows[0] || null;
+}
+
+async function findPriorWhatsAppDispatchQueueDuplicate(item = {}, maxAgeSeconds = 900) {
+  const instanceName = sanitizeFinancialString(item.instance_name || item.instanceName, 120);
+  const recipientPhone = normalizeWhatsAppPhone(item.recipient_phone || item.recipientPhone);
+  const messageText = String(item.message_text || item.messageText || '').trim();
+  const messageType = sanitizeFinancialString(item.message_type || item.messageType || 'manual', 80) || 'manual';
+  const dispatchDedupeKey = sanitizeFinancialString(item.dispatch_dedupe_key || item.dispatchDedupeKey, 80);
+  if (!item.id || !instanceName || !recipientPhone || !messageText) return null;
+
+  const params = [Number(item.id || 0)];
+  const duplicatePredicates = [];
+
+  if (dispatchDedupeKey) {
+    duplicatePredicates.push('dispatch_dedupe_key = ?');
+    params.push(dispatchDedupeKey);
+  }
+
+  duplicatePredicates.push('(instance_name = ? AND recipient_phone = ? AND message_text = ? AND COALESCE(message_type, \'manual\') = ?)');
+  params.push(instanceName, recipientPhone, messageText, messageType);
+  params.push(Math.max(60, Number(maxAgeSeconds || 900)));
+
+  const [rows] = await pool.query(
+    `SELECT id, message_id, status, sent_at, locked_at, dispatch_dedupe_key
+       FROM whatsapp_dispatch_queue
+      WHERE id < ?
+        AND (${duplicatePredicates.join(' OR ')})
+        AND status IN ('pendente', 'processando', 'enviada')
+        AND COALESCE(sent_at, locked_at, updated_at, created_at) >= DATE_SUB(NOW(), INTERVAL ? SECOND)
+      ORDER BY id ASC
+      LIMIT 1`,
+    params
+  );
+
+  return rows[0] || null;
+}
+
+async function cancelDuplicateWhatsAppDispatch(item = {}, duplicate = null, duplicateMessage = '') {
+  const message = duplicateMessage || 'Envio duplicado cancelado automaticamente antes de chamar a VPS.';
+  await pool.query(
+    `UPDATE whatsapp_dispatch_queue
+        SET status = 'cancelada',
+            error_message = ?
+      WHERE id = ?
+        AND status IN ('pendente', 'processando')`,
+    [message, item.id]
+  );
+  if (item.message_id) {
+    await pool.query(
+      `UPDATE whatsapp_messages
+          SET status = 'cancelada',
+              error_message = ?
+        WHERE id = ?
+          AND status IN ('pendente', 'processando')`,
+      [message, item.message_id]
+    );
+  }
+  await logEvolutionEvent('dispatch_duplicate_suppressed_before_send', {
+    queueId: item.id,
+    messageId: item.message_id,
+    conversationId: item.conversation_id,
+    instanceName: item.instance_name,
+    status: 'info',
+    request: { number: item.recipient_phone, messageType: item.message_type || 'manual', textLength: String(item.message_text || '').length },
+    response: { duplicateQueueId: duplicate?.id || null, duplicateMessageId: duplicate?.message_id || null, duplicateStatus: duplicate?.status || null }
+  });
 }
 
 async function enqueueWhatsAppDispatch(payload = {}) {
@@ -11614,6 +11725,12 @@ async function enqueueWhatsAppDispatch(payload = {}) {
   const recipientPhone = normalizeWhatsAppPhone(payload.recipient_phone || payload.recipientPhone);
   const messageText = String(payload.message_text || payload.messageText || '').trim();
   const messageType = sanitizeFinancialString(payload.message_type || payload.messageType || 'manual', 80) || 'manual';
+  const dispatchDedupeKey = buildWhatsAppDispatchDedupeKey({
+    instanceName,
+    recipientPhone,
+    messageText,
+    messageType
+  });
 
   if (!instanceName || !recipientPhone || !messageText) {
     throw new Error('Fila WhatsApp inválida: instância, telefone e mensagem são obrigatórios.');
@@ -11623,7 +11740,8 @@ async function enqueueWhatsAppDispatch(payload = {}) {
     instance_name: instanceName,
     recipient_phone: recipientPhone,
     message_text: messageText,
-    message_type: messageType
+    message_type: messageType,
+    dispatch_dedupe_key: dispatchDedupeKey
   }, payload.duplicateWindowSeconds || 900);
 
   if (duplicate) {
@@ -11666,26 +11784,67 @@ async function enqueueWhatsAppDispatch(payload = {}) {
   const scheduledDelaySeconds = Math.max(1, Number.isFinite(requestedDelaySeconds) && requestedDelaySeconds > 0
     ? Math.ceil(requestedDelaySeconds)
     : Math.ceil(antiBanDelayMs / 1000));
-  const [result] = await pool.query(
-    `INSERT INTO whatsapp_dispatch_queue
-     (message_id, conversation_id, instance_name, recipient_phone, message_text, message_type, status, scheduled_at,
-      operator_id, operator_name, anti_ban_delay_ms, humanization_profile, payload)
-     VALUES (?, ?, ?, ?, ?, ?, 'pendente', DATE_ADD(NOW(), INTERVAL ? SECOND), ?, ?, ?, ?, ?)`,
-    [
-      payload.message_id || payload.messageId || null,
-      payload.conversation_id || payload.conversationId || null,
+  let result;
+  try {
+    [result] = await pool.query(
+      `INSERT INTO whatsapp_dispatch_queue
+       (message_id, conversation_id, instance_name, recipient_phone, message_text, message_type, status, scheduled_at,
+        operator_id, operator_name, anti_ban_delay_ms, humanization_profile, dispatch_dedupe_key, payload)
+       VALUES (?, ?, ?, ?, ?, ?, 'pendente', DATE_ADD(NOW(), INTERVAL ? SECOND), ?, ?, ?, ?, ?, ?)`,
+      [
+        payload.message_id || payload.messageId || null,
+        payload.conversation_id || payload.conversationId || null,
+        instanceName,
+        recipientPhone,
+        messageText,
+        messageType,
+        scheduledDelaySeconds,
+        payload.operator_id || payload.operatorId || null,
+        payload.operator_name || payload.operatorName || null,
+        antiBanDelayMs,
+        payload.humanization_profile || 'humano_padrao',
+        dispatchDedupeKey,
+        serializeEvolutionPayload(payload.payload || {})
+      ]
+    );
+  } catch (error) {
+    if (!['ER_DUP_ENTRY', 'ER_DUP_UNIQUE'].includes(error.code) && Number(error.errno || 0) !== 1062) {
+      throw error;
+    }
+
+    const [duplicates] = await pool.query(
+      'SELECT * FROM whatsapp_dispatch_queue WHERE dispatch_dedupe_key = ? ORDER BY id ASC LIMIT 1',
+      [dispatchDedupeKey]
+    );
+    const duplicateItem = duplicates[0] || null;
+    const duplicateMessage = `Envio duplicado bloqueado por chave unica: fila ${duplicateItem?.id || 'existente'} ja contem a mesma mensagem.`;
+    if (payload.message_id || payload.messageId) {
+      await pool.query(
+        `UPDATE whatsapp_messages
+            SET status = 'cancelada',
+                error_message = ?
+          WHERE id = ?
+            AND status IN ('pendente', 'processando')`,
+        [duplicateMessage, payload.message_id || payload.messageId]
+      );
+    }
+    await logEvolutionEvent('dispatch_duplicate_unique_suppressed', {
+      queueId: duplicateItem?.id || null,
+      messageId: payload.message_id || payload.messageId || null,
+      conversationId: payload.conversation_id || payload.conversationId || null,
       instanceName,
-      recipientPhone,
-      messageText,
-      messageType,
-      scheduledDelaySeconds,
-      payload.operator_id || payload.operatorId || null,
-      payload.operator_name || payload.operatorName || null,
-      antiBanDelayMs,
-      payload.humanization_profile || 'humano_padrao',
-      serializeEvolutionPayload(payload.payload || {})
-    ]
-  );
+      status: 'info',
+      request: { number: recipientPhone, messageType, textLength: messageText.length },
+      response: { duplicateQueueId: duplicateItem?.id || null, duplicateStatus: duplicateItem?.status || null }
+    });
+    return {
+      ...(duplicateItem || {}),
+      id: duplicateItem?.id || null,
+      duplicateSuppressed: true,
+      duplicateQueueId: duplicateItem?.id || null,
+      duplicateReason: duplicateMessage
+    };
+  }
 
   const [rows] = await pool.query('SELECT * FROM whatsapp_dispatch_queue WHERE id = ? LIMIT 1', [result.insertId]);
   emitWhatsAppRealtime('whatsapp:dispatch:queued', { item: rows[0], at: new Date().toISOString() }, {
@@ -12495,6 +12654,16 @@ async function processWhatsAppDispatchQueue() {
         [item.id]
       );
       if (!lockResult?.affectedRows) {
+        continue;
+      }
+
+      const priorDuplicate = await findPriorWhatsAppDispatchQueueDuplicate(item);
+      if (priorDuplicate) {
+        await cancelDuplicateWhatsAppDispatch(
+          item,
+          priorDuplicate,
+          'Envio duplicado cancelado automaticamente antes da VPS: ja existe item anterior igual na fila.'
+        );
         continue;
       }
 

@@ -2009,18 +2009,18 @@ function WhatsAppManagement() {
             </div>
             <Button actionKey={`campaign-template-${campaignDraft.campaign_type}`} className="outline-action" onClick={() => downloadCampaignTemplate(campaignDraft.campaign_type)}>Baixar template Excel</Button>
           </div>
-          <section className="whatsapp-campaign-hero">
-            <article>
+          <section className="whatsapp-campaign-hero whatsapp-campaign-command-grid">
+            <article className="campaign-command-card is-primary">
               <span>Canal do lote</span>
               <strong>{campaignDraft.campaign_type === 'confirmacao' ? 'WhatsApp da clinica logada' : 'Sessao central NPS'}</strong>
               <p>{campaignDraft.campaign_type === 'confirmacao' ? 'A clinica selecionada define o numero de envio do lote; se ficar em branco, vale a clinica informada na base.' : 'Os disparos de NPS seguem pela sessao central configurada para satisfacao.'}</p>
             </article>
-            <article>
+            <article className="campaign-command-card is-template">
               <span>Template em uso</span>
               <strong>{selectedTemplate?.title || 'Mensagem livre'}</strong>
               <p>{String(selectedTemplate?.message_text || campaignDraft.message_text || '').slice(0, 180) || 'Defina o texto base da campanha para liberar o lote.'}</p>
             </article>
-            <article>
+            <article className="campaign-command-card is-pattern">
               <span>Padrao da base</span>
               <strong>nome_paciente;telefone</strong>
               <p>Campos extras aceitos: clinica;data_consulta;hora_consulta. O nome sempre sai em CAIXA ALTA na mensagem final.</p>
@@ -2045,7 +2045,7 @@ function WhatsAppManagement() {
               <p>{selectedCampaignClinic ? (selectedCampaignClinicReady ? 'Sessao conectada para envio pela clinica.' : `Status: ${selectedCampaignClinicInstance?.status || 'sem conexao cadastrada'}.`) : 'Selecione uma clinica para conferir a sessao antes do envio.'}</p>
             </div>
           </section>
-          <div className="whatsapp-campaign-control-grid">
+          <div className="whatsapp-campaign-control-grid whatsapp-campaign-form-surface">
             <label className="campaign-type-field">Tipo
               <select className="field" value={campaignDraft.campaign_type} onChange={(event) => {
                 const nextType = event.target.value;
@@ -2095,19 +2095,25 @@ function WhatsAppManagement() {
               {remainingClinicCount > 0 ? <em>+{remainingClinicCount}</em> : null}
             </div>
           </section>
-          <section className="whatsapp-campaign-import-grid">
-            <div className="campaign-recipient-field">
-              <label>Lista para disparo</label>
+          <section className="whatsapp-campaign-import-grid whatsapp-campaign-workbench">
+            <div className="campaign-recipient-field campaign-workbench-main">
+              <div className="campaign-workbench-head">
+                <div>
+                  <span>Base operacional</span>
+                  <strong>Lista para disparo</strong>
+                </div>
+                <button type="button" className="outline-action mini-action campaign-preview-text-action" onClick={previewCampaignTextList}>
+                  Conferir lista digitada
+                </button>
+              </div>
               <textarea className="field textarea" rows="11" value={campaignDraft.recipients} onChange={(event) => {
                 setCampaignDraft((current) => ({ ...current, recipients: event.target.value }));
                 resetCampaignPreview();
                 setCampaignFile(null);
               }} />
-              <button type="button" className="outline-action mini-action campaign-preview-text-action" onClick={previewCampaignTextList}>
-                Conferir lista digitada
-              </button>
+              <small className="whatsapp-field-hint">Cole uma linha por paciente ou importe o Excel padrao. A conferencia valida telefone, clinica, sessao e bloqueios antes do envio.</small>
             </div>
-            <div className="whatsapp-campaign-upload-box campaign-upload-field">
+            <div className="whatsapp-campaign-upload-box campaign-upload-field campaign-workbench-side">
               <label>Upload da lista
                 <input className="field" type="file" accept=".xlsx,.xls,.csv,.txt" onChange={(event) => handleCampaignFileChange(event.target.files?.[0] || null)} />
               </label>
@@ -2197,23 +2203,23 @@ function WhatsAppManagement() {
               <p className="whatsapp-panel-note">Resumo rapido para validar governanca, texto e comportamento antes do lote sair.</p>
             </div>
           </div>
-          <div className="whatsapp-card-list compact">
-            <article>
+          <div className="whatsapp-card-list compact campaign-readiness-stack">
+            <article className="campaign-readiness-card is-featured">
               <span>Roteamento</span>
               <strong>{campaignDraft.campaign_type === 'confirmacao' ? 'Automatico por clinica' : 'Sessao central NPS'}</strong>
               <p>{campaignDraft.campaign_type === 'confirmacao' ? 'Cada paciente segue pelo WhatsApp vinculado à própria clínica.' : 'Os disparos de NPS seguem pela sessão central configurada.'}</p>
             </article>
-            <article>
+            <article className="campaign-readiness-card">
               <span>Fluxo conversacional</span>
               <strong>{campaignDraft.campaign_type === 'nps' ? 'NPS' : 'Confirmacao'}</strong>
               <p>{campaignDraft.campaign_type === 'nps' ? 'A resposta pode ser capturada pelo fluxo NPS quando o paciente interagir no numero dedicado.' : 'A assistente registra SIM, reagendamento ou pedido de atendimento humano direto no sistema.'}</p>
             </article>
-            <article>
+            <article className="campaign-readiness-card">
               <span>Escopo do operador</span>
               <strong>{normalizeRoleValue(user?.role) === 'crc_operator' ? 'Clinicas vinculadas' : 'Gestao ampliada'}</strong>
               <p>{normalizeRoleValue(user?.role) === 'crc_operator' ? 'O operador CRC nao consegue visualizar nem disparar para clinicas fora do proprio cadastro.' : 'Liderancas e perfis administrativos mantem visao consolidada da operacao.'}</p>
             </article>
-            <article>
+            <article className="campaign-readiness-card">
               <span>Persistencia</span>
               <strong>Lote auditavel</strong>
               <p>Pacientes enviados ficam registrados com lote, clinica, sessao e status no banco para rastreabilidade posterior.</p>
