@@ -250,11 +250,42 @@ async function waitForQrImage(sessionId, config = {}) {
   throw lastError;
 }
 
-async function sendMessage({ sessionId, number, message }, config = {}) {
+function normalizeIdempotencyKey(value) {
+  return String(value || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9._:-]/g, '')
+    .slice(0, 120);
+}
+
+function buildSendMessagePayload({ sessionId, number, message, idempotencyKey }) {
+  const payload = { sessionId, number, message };
+  const key = normalizeIdempotencyKey(idempotencyKey);
+  if (key) {
+    payload.idempotencyKey = key;
+    payload.clientRequestId = key;
+  }
+  return payload;
+}
+
+function buildIdempotencyHeaders(idempotencyKey) {
+  const key = normalizeIdempotencyKey(idempotencyKey);
+  return key
+    ? {
+        headers: {
+          'Idempotency-Key': key,
+          'x-idempotency-key': key,
+          'x-client-request-id': key
+        }
+      }
+    : undefined;
+}
+
+async function sendMessage({ sessionId, number, message, idempotencyKey, clientRequestId }, config = {}) {
   const api = config.apiClient || client(config);
   const fallbackEnabled = String(config.phoneFallbackEnabled ?? process.env.WHATSAPP_PHONE_FALLBACK_ENABLED ?? 'true').trim().toLowerCase() !== 'false';
   const reconnectOnCommsError = String(config.reconnectOnCommsError ?? process.env.WHATSAPP_RECONNECT_ON_COMMS_ERROR ?? 'true').trim().toLowerCase() !== 'false';
   const reconnectDelayMs = Math.max(500, Number(config.reconnectDelayMs || process.env.WHATSAPP_RECONNECT_SEND_DELAY_MS || 3500));
+  const resolvedIdempotencyKey = normalizeIdempotencyKey(idempotencyKey || clientRequestId || config.idempotencyKey || config.clientRequestId);
   const candidates = fallbackEnabled
     ? buildWhatsAppNumberVariants(number)
     : [normalizeBrazilWhatsAppNumber(number) || onlyDigits(number)];
@@ -266,11 +297,12 @@ async function sendMessage({ sessionId, number, message }, config = {}) {
     attemptedNumbers.push(candidate);
 
     try {
-      const response = await api.post('/messages/send', {
+      const response = await api.post('/messages/send', buildSendMessagePayload({
         sessionId,
         number: candidate,
-        message
-      });
+        message,
+        idempotencyKey: resolvedIdempotencyKey
+      }), buildIdempotencyHeaders(resolvedIdempotencyKey));
       return {
         ...response.data,
         resolvedNumber: candidate,
@@ -284,11 +316,12 @@ async function sendMessage({ sessionId, number, message }, config = {}) {
         try {
           await api.post('/sessions/start', { sessionId, qrcode: false, reason: 'auto_reconnect_before_send' });
           await sleep(reconnectDelayMs);
-          const response = await api.post('/messages/send', {
+          const response = await api.post('/messages/send', buildSendMessagePayload({
             sessionId,
             number: candidate,
-            message
-          });
+            message,
+            idempotencyKey: resolvedIdempotencyKey
+          }), buildIdempotencyHeaders(resolvedIdempotencyKey));
           return {
             ...response.data,
             resolvedNumber: candidate,
@@ -363,6 +396,7 @@ async function diagnostic(config = {}) {
 
 module.exports = {
   buildWhatsAppNumberVariants,
+  buildSendMessagePayload,
   createSession,
   diagnostic,
   disconnectSession,

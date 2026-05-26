@@ -43,8 +43,8 @@ test('buildWhatsAppNumberVariants tries Brazilian mobile with and without ninth 
 test('sendMessage retries the alternate phone format when whatsapp-service cannot resolve LID', async () => {
   const calls = [];
   const apiClient = {
-    async post(path, payload) {
-      calls.push({ path, payload });
+    async post(path, payload, options) {
+      calls.push({ path, payload, options });
       if (calls.length === 1) {
         const error = new Error('Request failed');
         error.response = { data: { error: 'No LID for user' } };
@@ -64,6 +64,30 @@ test('sendMessage retries the alternate phone format when whatsapp-service canno
   assert.equal(result.success, true);
   assert.equal(result.resolvedNumber, '556299669966');
   assert.deepEqual(result.attemptedNumbers, ['5562999669966', '556299669966']);
+});
+
+test('sendMessage forwards idempotency key to whatsapp-service payload and headers', async () => {
+  const calls = [];
+  const apiClient = {
+    async post(path, payload, options) {
+      calls.push({ path, payload, options });
+      return { data: { success: true, messageId: 'idem-1' } };
+    }
+  };
+
+  const result = await whatsappVpsService.sendMessage({
+    sessionId: 'canaa',
+    number: '5562999669966',
+    message: 'teste',
+    idempotencyKey: 'dispatch-key-123'
+  }, { apiClient });
+
+  assert.equal(result.success, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].payload.idempotencyKey, 'dispatch-key-123');
+  assert.equal(calls[0].payload.clientRequestId, 'dispatch-key-123');
+  assert.equal(calls[0].options.headers['Idempotency-Key'], 'dispatch-key-123');
+  assert.equal(calls[0].options.headers['x-idempotency-key'], 'dispatch-key-123');
 });
 
 test('friendlyApiError hides whatsapp-web.js internal comms stack', () => {

@@ -12,8 +12,8 @@ function getProviderMessageId(response = {}) {
     || null;
 }
 
-async function sendText({ sessionId, number, message }) {
-  const response = await whatsappVpsService.sendMessage({ sessionId, number, message });
+async function sendText({ sessionId, number, message, idempotencyKey, clientRequestId }) {
+  const response = await whatsappVpsService.sendMessage({ sessionId, number, message, idempotencyKey, clientRequestId });
   return {
     provider: 'whatsapp_service',
     success: true,

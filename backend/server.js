@@ -5644,7 +5644,13 @@ async function sendWhatsAppServiceSystemNotification({ to, protocol, message, ev
   const serviceResponse = await whatsappProvider.sendText({
     sessionId,
     number,
-    message
+    message,
+    idempotencyKey: buildWhatsAppDispatchDedupeKey({
+      instanceName: sessionId,
+      recipientPhone: number,
+      messageText: message,
+      messageType: eventType || 'system_notification'
+    })
   });
   const providerMessageId = serviceResponse.messageId || null;
 
@@ -9792,7 +9798,13 @@ async function sendComplaintReportToWhatsAppRecipients({ recipients, actor }) {
       const response = await whatsappProvider.sendText({
         sessionId: instanceName,
         number: phone,
-        message
+        message,
+        idempotencyKey: buildWhatsAppDispatchDedupeKey({
+          instanceName,
+          recipientPhone: phone,
+          messageText: message,
+          messageType: 'complaint_report_whatsapp'
+        })
       });
       await updateWhatsAppLog(logId, { success: true, provider: 'whatsapp_service', providerMessageId: response.messageId, response });
       try {
@@ -11720,6 +11732,39 @@ async function cancelDuplicateWhatsAppDispatch(item = {}, duplicate = null, dupl
   });
 }
 
+async function acquireWhatsAppDispatchSendLock(item = {}, timeoutSeconds = 3) {
+  const dedupeKey = sanitizeFinancialString(
+    item.dispatch_dedupe_key
+    || buildWhatsAppDispatchDedupeKey({
+      instanceName: item.instance_name || item.instanceName,
+      recipientPhone: item.recipient_phone || item.recipientPhone,
+      messageText: item.message_text || item.messageText,
+      messageType: item.message_type || item.messageType || 'manual'
+    }),
+    80
+  );
+  if (!dedupeKey) {
+    return { acquired: true, lockKey: null, release: async () => {} };
+  }
+
+  const lockKey = `whatsapp-send:${dedupeKey}`.slice(0, 128);
+  const [rows] = await pool.query('SELECT GET_LOCK(?, ?) AS lock_acquired', [lockKey, Math.max(1, Number(timeoutSeconds || 3))]);
+  const lockAcquired = Number(rows?.[0]?.lock_acquired ?? Object.values(rows?.[0] || {})[0] ?? 0) === 1;
+
+  return {
+    acquired: lockAcquired,
+    lockKey,
+    release: async () => {
+      if (!lockAcquired) return;
+      try {
+        await pool.query('SELECT RELEASE_LOCK(?) AS lock_released', [lockKey]);
+      } catch (error) {
+        console.warn('Nao foi possivel liberar trava de envio WhatsApp:', error.message);
+      }
+    }
+  };
+}
+
 async function enqueueWhatsAppDispatch(payload = {}) {
   const instanceName = sanitizeFinancialString(payload.instance_name || payload.instanceName, 120);
   const recipientPhone = normalizeWhatsAppPhone(payload.recipient_phone || payload.recipientPhone);
@@ -12667,14 +12712,31 @@ async function processWhatsAppDispatchQueue() {
         continue;
       }
 
+      let sendLock = null;
       const startedAt = performance.now();
       try {
+        sendLock = await acquireWhatsAppDispatchSendLock(item);
+        if (!sendLock.acquired) {
+          await cancelDuplicateWhatsAppDispatch(
+            item,
+            null,
+            'Envio duplicado cancelado automaticamente antes da VPS: outro processo ja esta enviando a mesma mensagem.'
+          );
+          continue;
+        }
+
         const useServiceProvider = isWhatsAppServiceProviderConfigured();
         const providerResponse = useServiceProvider
           ? await whatsappProvider.sendText({
               sessionId: item.instance_name,
               number: item.recipient_phone,
-              message: item.message_text
+              message: item.message_text,
+              idempotencyKey: item.dispatch_dedupe_key || buildWhatsAppDispatchDedupeKey({
+                instanceName: item.instance_name,
+                recipientPhone: item.recipient_phone,
+                messageText: item.message_text,
+                messageType: item.message_type || 'manual'
+              })
             })
           : await evolutionService.sendText(item.instance_name, item.recipient_phone, item.message_text, {
               delay: item.anti_ban_delay_ms || undefined,
@@ -12810,6 +12872,10 @@ async function processWhatsAppDispatchQueue() {
         const message = await getWhatsAppMessageById(item.message_id);
         const conversation = item.conversation_id ? await getWhatsAppConversationById(item.conversation_id) : null;
         emitWhatsAppMessageChange(nextStatus === 'erro' ? 'error' : 'retry', message, conversation || {});
+      } finally {
+        if (sendLock?.release) {
+          await sendLock.release();
+        }
       }
     }
   } catch (error) {
@@ -13691,7 +13757,17 @@ async function handleSendWhatsAppServiceMessage(req, res) {
     );
     historyId = insert.insertId;
 
-    const serviceResponse = await whatsappVpsService.sendMessage({ sessionId, number: phone, message });
+    const serviceResponse = await whatsappVpsService.sendMessage({
+      sessionId,
+      number: phone,
+      message,
+      idempotencyKey: buildWhatsAppDispatchDedupeKey({
+        instanceName: sessionId,
+        recipientPhone: phone,
+        messageText: message,
+        messageType: 'admin_whatsapp_service_send'
+      })
+    });
     const providerMessageId = getWhatsAppServiceMessageId(serviceResponse);
     await pool.query(
       `UPDATE whatsapp_service_message_history
@@ -13857,7 +13933,17 @@ async function handleTestWhatsAppInstanceMessage(req, res) {
     );
     historyId = insert.insertId;
 
-    const serviceResponse = await whatsappVpsService.sendMessage({ sessionId: instanceName, number: phone, message });
+    const serviceResponse = await whatsappVpsService.sendMessage({
+      sessionId: instanceName,
+      number: phone,
+      message,
+      idempotencyKey: buildWhatsAppDispatchDedupeKey({
+        instanceName,
+        recipientPhone: phone,
+        messageText: message,
+        messageType: 'instance_test_send'
+      })
+    });
     const providerMessageId = getWhatsAppServiceMessageId(serviceResponse);
 
     await pool.query(
@@ -14995,7 +15081,17 @@ async function handleResendWhatsAppMessage(req, res) {
     emitWhatsAppMessageChange('resend_pending', await getWhatsAppMessageById(message.id), conversation || {});
 
     try {
-      const providerResponse = await whatsappProvider.sendText({ sessionId, number: phone, message: text });
+      const providerResponse = await whatsappProvider.sendText({
+        sessionId,
+        number: phone,
+        message: text,
+        idempotencyKey: buildWhatsAppDispatchDedupeKey({
+          instanceName: sessionId,
+          recipientPhone: phone,
+          messageText: text,
+          messageType: `resend_${message.message_type || 'manual'}`
+        })
+      });
       const providerMessageId = providerResponse.messageId || null;
       await pool.query(
         `UPDATE whatsapp_messages

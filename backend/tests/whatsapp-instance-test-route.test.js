@@ -148,8 +148,10 @@ test('instance test route sends directly through whatsapp-service VPS', async (t
   assert.deepEqual(sendPayload, {
     sessionId: 'clinica-teste',
     number: '5562999669966',
-    message: 'Envio de mensagem teste'
+    message: 'Envio de mensagem teste',
+    idempotencyKey: sendPayload.idempotencyKey
   });
+  assert.match(sendPayload.idempotencyKey, /^[a-f0-9]{64}$/);
   assert.deepEqual(historyInsertParams.slice(0, 4), [
     'clinica-teste',
     '5562999669966',
@@ -175,6 +177,7 @@ test('dispatch queue does not retry after VPS accepted a message and history log
     sendCount += 1;
     assert.equal(payload.sessionId, 'garavelo');
     assert.equal(payload.number, '5562999669966');
+    assert.equal(payload.idempotencyKey, 'dedupe-key-900');
     return {
       provider: 'whatsapp_service',
       success: true,
@@ -225,6 +228,17 @@ test('dispatch queue does not retry after VPS accepted a message and history log
     {
       match: (sql) => sql.includes('FROM whatsapp_dispatch_queue') && sql.includes('id < ?') && sql.includes("status IN ('pendente', 'processando', 'enviada')"),
       reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT GET_LOCK'),
+      reply: async (_sql, params) => {
+        assert.equal(params[0], 'whatsapp-send:dedupe-key-900');
+        return [[{ lock_acquired: 1 }]];
+      }
+    },
+    {
+      match: (sql) => sql.includes('SELECT RELEASE_LOCK'),
+      reply: async () => [[{ lock_released: 1 }]]
     },
     {
       match: (sql) => sql.includes('UPDATE whatsapp_dispatch_queue') && sql.includes("SET status = 'enviada'"),
@@ -363,6 +377,94 @@ test('dispatch queue cancels newer duplicate before calling VPS', async () => {
   assert.equal(sendCount, 0);
   assert.equal(queueCanceled, true);
   assert.equal(messageCanceled, true);
+  assert.equal(duplicateLogged, true);
+});
+
+test('dispatch queue cancels duplicate when another process holds send lock', async () => {
+  let sendCount = 0;
+  let queueCanceled = false;
+  let duplicateLogged = false;
+
+  whatsappProvider.sendText = async () => {
+    sendCount += 1;
+    return { provider: 'whatsapp_service', success: true, messageId: 'should-not-send' };
+  };
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('FROM whatsapp_dispatch_queue') && sql.includes("WHERE status = 'pendente'") && sql.includes('scheduled_at <= NOW()'),
+      reply: async () => [[{
+        id: 920,
+        message_id: 921,
+        conversation_id: 922,
+        instance_name: 'garavelo',
+        recipient_phone: '5562999669966',
+        message_text: 'Mensagem de confirmacao',
+        message_type: 'confirmacao_massa',
+        status: 'pendente',
+        attempts: 0,
+        anti_ban_delay_ms: 1000,
+        dispatch_dedupe_key: 'dedupe-key-920',
+        payload: '{}'
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM whatsapp_dispatch_queue') && sql.includes("status = 'enviada'") && sql.includes('id <> ?'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_instances') && sql.includes('messages_sent_today = CASE'),
+      reply: async () => [{ affectedRows: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM whatsapp_instances WHERE instance_name = ? LIMIT 1'),
+      reply: async () => [[{ instance_name: 'garavelo', daily_send_limit: 30, messages_sent_today: 0 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT COUNT(*) AS total') && sql.includes('FROM whatsapp_dispatch_queue'),
+      reply: async () => [[{ total: 0 }]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_dispatch_queue') && sql.includes("SET status = 'processando'"),
+      reply: async () => [{ affectedRows: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('FROM whatsapp_dispatch_queue') && sql.includes('id < ?') && sql.includes("status IN ('pendente', 'processando', 'enviada')"),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT GET_LOCK'),
+      reply: async (_sql, params) => {
+        assert.equal(params[0], 'whatsapp-send:dedupe-key-920');
+        return [[{ lock_acquired: 0 }]];
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_dispatch_queue') && sql.includes("SET status = 'cancelada'"),
+      reply: async (_sql, params) => {
+        queueCanceled = true;
+        assert.equal(params[1], 920);
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_messages') && sql.includes("SET status = 'cancelada'"),
+      reply: async () => [{ affectedRows: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO whatsapp_evolution_logs'),
+      reply: async (_sql, params) => {
+        duplicateLogged = true;
+        assert.equal(params[0], 'dispatch_duplicate_suppressed_before_send');
+        return [{ insertId: 1 }];
+      }
+    }
+  ]);
+
+  await serverModule.__testables.processWhatsAppDispatchQueue();
+
+  assert.equal(sendCount, 0);
+  assert.equal(queueCanceled, true);
   assert.equal(duplicateLogged, true);
 });
 
