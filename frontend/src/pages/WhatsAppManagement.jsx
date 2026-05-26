@@ -208,6 +208,8 @@ function emptyCampaignDraft() {
   return {
     campaign_type: 'confirmacao',
     session_id: 'confirmacao-agendamento',
+    campaign_clinic_id: '',
+    campaign_clinic_name: '',
     template_id: '',
     message_text: '',
     recipients: 'nome_paciente;telefone;clinica;data_consulta;hora_consulta\nPaciente Exemplo;5562999999999;Garavelo;26/05/2026;14:30'
@@ -1071,15 +1073,18 @@ function WhatsAppManagement() {
     setCampaignSelection([]);
   };
 
-  const previewCampaignFile = async (file, nextCampaignType = campaignDraft.campaign_type) => {
+  const previewCampaignFile = async (file, nextCampaignType = campaignDraft.campaign_type, draftOverride = {}) => {
     if (!file) {
       resetCampaignPreview();
       return;
     }
+    const nextDraft = { ...campaignDraft, ...draftOverride };
     const formData = new FormData();
     formData.append('file', file);
     formData.append('campaign_type', nextCampaignType);
-    formData.append('session_id', campaignDraft.session_id || '');
+    formData.append('session_id', nextDraft.session_id || '');
+    formData.append('campaign_clinic_id', nextDraft.campaign_clinic_id || '');
+    formData.append('campaign_clinic_name', nextDraft.campaign_clinic_name || '');
     try {
       const response = await api.post('/api/whatsapp/campaigns/preview', formData);
       const recipients = Array.isArray(response.data?.recipients) ? response.data.recipients : [];
@@ -1098,14 +1103,51 @@ function WhatsAppManagement() {
     await previewCampaignFile(file || null);
   };
 
+  const applyCampaignPreviewResponse = (data = {}) => {
+    const recipients = Array.isArray(data?.recipients) ? data.recipients : [];
+    setCampaignPreview(recipients);
+    setCampaignPreviewSummary(data?.summary || null);
+    setCampaignInvalidRows([...(data?.invalidRows || []), ...(data?.skippedRows || [])]);
+    setCampaignSelection(recipients.filter((item) => item.selected).map((item) => item.preview_id));
+  };
+
+  const previewCampaignTextList = () => runAction('campaign-preview-text', async () => {
+    const response = await api.post('/api/whatsapp/campaigns/preview', {
+      campaign_type: campaignDraft.campaign_type,
+      session_id: campaignDraft.session_id || '',
+      campaign_clinic_id: campaignDraft.campaign_clinic_id || '',
+      campaign_clinic_name: campaignDraft.campaign_clinic_name || '',
+      recipients: campaignDraft.recipients || ''
+    });
+    setCampaignFile(null);
+    applyCampaignPreviewResponse(response.data);
+    return response;
+  }, 'Lista conferida. Agora selecione os telefones para o lote.', 'Nao foi possivel conferir a lista digitada.');
+
+  const handleCampaignClinicChange = async (clinicId) => {
+    const clinic = clinics.find((item) => String(item.id) === String(clinicId));
+    const nextClinic = {
+      campaign_clinic_id: clinic ? String(clinic.id) : '',
+      campaign_clinic_name: clinic?.name || ''
+    };
+    setCampaignDraft((current) => ({ ...current, ...nextClinic }));
+    resetCampaignPreview();
+    if (campaignFile) {
+      await previewCampaignFile(campaignFile, campaignDraft.campaign_type, nextClinic);
+    }
+  };
+
   const toggleCampaignRecipientSelection = (previewId) => {
+    if (!previewId) return;
     setCampaignSelection((current) => current.includes(previewId)
       ? current.filter((item) => item !== previewId)
       : [...current, previewId]);
   };
 
   const selectAllCampaignRecipients = () => {
-    setCampaignSelection(campaignPreview.filter((item) => item.resolved).map((item) => item.preview_id));
+    setCampaignSelection(campaignPreview
+      .filter((item) => item.preview_id && item.patient_phone)
+      .map((item) => item.preview_id));
   };
 
   const clearCampaignRecipientSelection = () => {
@@ -1132,6 +1174,8 @@ function WhatsAppManagement() {
             formData.append('file', campaignFile);
             formData.append('campaign_type', payload.campaign_type);
             formData.append('session_id', payload.session_id);
+            formData.append('campaign_clinic_id', payload.campaign_clinic_id || '');
+            formData.append('campaign_clinic_name', payload.campaign_clinic_name || '');
             formData.append('template_id', payload.template_id || '');
             formData.append('message_text', payload.message_text || '');
             return api.post('/api/whatsapp/campaigns/mass-send', formData);
@@ -1875,11 +1919,20 @@ function WhatsAppManagement() {
     ));
     const selectedTemplate = matchingTemplates.find((item) => String(item.id) === String(campaignDraft.template_id)) || null;
     const selectedPreviewRows = campaignPreview.filter((item) => campaignSelection.includes(item.preview_id));
+    const selectedReadyRows = selectedPreviewRows.filter((item) => item.resolved);
+    const selectedBlockedRows = selectedPreviewRows.filter((item) => !item.resolved);
     const allowedClinicNames = clinics
       .map((clinic) => String(clinic.name || clinic.nome || '').trim())
       .filter(Boolean)
       .slice(0, 8);
     const remainingClinicCount = Math.max(0, clinics.length - allowedClinicNames.length);
+    const selectedCampaignClinic = clinics.find((clinic) => String(clinic.id) === String(campaignDraft.campaign_clinic_id)) || null;
+    const selectedCampaignClinicInstance = selectedCampaignClinic
+      ? instances.find((item) => String(item.clinic_id) === String(selectedCampaignClinic.id) && String(item.sector || '').toLowerCase().includes('confirma'))
+        || instances.find((item) => String(item.clinic_id) === String(selectedCampaignClinic.id))
+      : null;
+    const selectedCampaignClinicStatus = String(selectedCampaignClinicInstance?.status || '').trim().toLowerCase();
+    const selectedCampaignClinicReady = Boolean(selectedCampaignClinicInstance) && ['conectado', 'connected'].includes(selectedCampaignClinicStatus);
 
     return (
       <section className="whatsapp-campaigns-layout">
@@ -1895,7 +1948,7 @@ function WhatsAppManagement() {
             <article>
               <span>Canal do lote</span>
               <strong>{campaignDraft.campaign_type === 'confirmacao' ? 'WhatsApp da clinica logada' : 'Sessao central NPS'}</strong>
-              <p>{campaignDraft.campaign_type === 'confirmacao' ? 'Cada paciente segue pela sessao ativa da propria clinica e o operador CRC fica restrito as clinicas do cadastro.' : 'Os disparos de NPS seguem pela sessao central configurada para satisfacao.'}</p>
+              <p>{campaignDraft.campaign_type === 'confirmacao' ? 'A clinica selecionada define o numero de envio do lote; se ficar em branco, vale a clinica informada na base.' : 'Os disparos de NPS seguem pela sessao central configurada para satisfacao.'}</p>
             </article>
             <article>
               <span>Template em uso</span>
@@ -1907,6 +1960,25 @@ function WhatsAppManagement() {
               <strong>nome_paciente;telefone</strong>
               <p>Campos extras aceitos: clinica;data_consulta;hora_consulta. O nome sempre sai em CAIXA ALTA na mensagem final.</p>
             </article>
+          </section>
+          <section className="whatsapp-campaign-clinic-card">
+            <div className="whatsapp-campaign-clinic-copy">
+              <span>Clinica de envio</span>
+              <h3>Escolha a unidade responsavel pelo lote</h3>
+              <p>A clinica selecionada sera aplicada aos pacientes da campanha e o envio usara o WhatsApp vinculado a essa unidade. Deixe em branco apenas quando a planilha ja trouxer a coluna clinica por paciente.</p>
+            </div>
+            <label className="campaign-clinic-select-card">Clinica
+              <select className="field" value={campaignDraft.campaign_clinic_id} onChange={(event) => handleCampaignClinicChange(event.target.value)}>
+                <option value="">Usar clinica informada na lista</option>
+                {clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}
+              </select>
+              <small className="whatsapp-field-hint">{clinics.length ? `${clinics.length} clinica(s) disponiveis para seu perfil.` : 'Nenhuma clinica disponivel para o seu perfil.'}</small>
+            </label>
+            <div className={`whatsapp-campaign-clinic-status ${selectedCampaignClinicReady ? 'ready' : 'blocked'}`}>
+              <span>Status do WhatsApp</span>
+              <strong>{selectedCampaignClinic ? (selectedCampaignClinicInstance?.display_name || selectedCampaignClinicInstance?.instance_name || 'Sem sessao vinculada') : 'Aguardando selecao'}</strong>
+              <p>{selectedCampaignClinic ? (selectedCampaignClinicReady ? 'Sessao conectada para envio pela clinica.' : `Status: ${selectedCampaignClinicInstance?.status || 'sem conexao cadastrada'}.`) : 'Selecione uma clinica para conferir a sessao antes do envio.'}</p>
+            </div>
           </section>
           <div className="whatsapp-campaign-control-grid">
             <label className="campaign-type-field">Tipo
@@ -1954,9 +2026,17 @@ function WhatsAppManagement() {
             </div>
           </section>
           <section className="whatsapp-campaign-import-grid">
-            <label className="campaign-recipient-field">Lista para disparo
-              <textarea className="field textarea" rows="11" value={campaignDraft.recipients} onChange={(event) => setCampaignDraft((current) => ({ ...current, recipients: event.target.value }))} />
-            </label>
+            <div className="campaign-recipient-field">
+              <label>Lista para disparo</label>
+              <textarea className="field textarea" rows="11" value={campaignDraft.recipients} onChange={(event) => {
+                setCampaignDraft((current) => ({ ...current, recipients: event.target.value }));
+                resetCampaignPreview();
+                setCampaignFile(null);
+              }} />
+              <button type="button" className="outline-action mini-action campaign-preview-text-action" onClick={previewCampaignTextList}>
+                Conferir lista digitada
+              </button>
+            </div>
             <div className="whatsapp-campaign-upload-box campaign-upload-field">
               <label>Upload da lista
                 <input className="field" type="file" accept=".xlsx,.xls,.csv,.txt" onChange={(event) => handleCampaignFileChange(event.target.files?.[0] || null)} />
@@ -1984,7 +2064,7 @@ function WhatsAppManagement() {
                   <p className="whatsapp-panel-note">Revise os pacientes importados antes do disparo. Na confirmação, cada linha segue pelo WhatsApp da clínica vinculada.</p>
                 </div>
                 <div className="whatsapp-row-actions">
-                  <button type="button" className="outline-action mini-action" onClick={selectAllCampaignRecipients}>Marcar todos</button>
+                  <button type="button" className="outline-action mini-action" onClick={selectAllCampaignRecipients}>Selecionar todos os telefones</button>
                   <button type="button" className="outline-action mini-action" onClick={clearCampaignRecipientSelection}>Desmarcar</button>
                 </div>
               </div>
@@ -2002,7 +2082,7 @@ function WhatsAppManagement() {
                 <article>
                   <span>Selecionados</span>
                   <strong>{selectedPreviewRows.length}</strong>
-                  <p>Pacientes que entrarão na fila.</p>
+                  <p>{selectedReadyRows.length} apto(s) para fila; {selectedBlockedRows.length} precisa(m) de correcao.</p>
                 </article>
                 <article>
                   <span>Inválidos</span>
@@ -2012,11 +2092,10 @@ function WhatsAppManagement() {
               </div>
               <div className="whatsapp-campaign-preview-list">
                 {campaignPreview.map((item) => (
-                  <label key={item.preview_id} className={`whatsapp-campaign-preview-item ${item.resolved ? '' : 'blocked'}`}>
+                  <label key={item.preview_id} className={`whatsapp-campaign-preview-item ${item.resolved ? '' : 'blocked'} ${campaignSelection.includes(item.preview_id) ? 'selected' : ''}`}>
                     <input
                       type="checkbox"
                       checked={campaignSelection.includes(item.preview_id)}
-                      disabled={!item.resolved}
                       onChange={() => toggleCampaignRecipientSelection(item.preview_id)}
                     />
                     <div>

@@ -15164,9 +15164,15 @@ function parseMassWhatsAppRecipients(rawText = '') {
     const columns = line.split(/[;,|\t]+/).map((item) => item.trim());
     const patientName = columns[0] || '';
     const patientPhone = normalizeWhatsAppPhone(columns[1] || columns[0] || '');
-    const clinicName = columns[2] || '';
-    const appointmentDate = columns[3] || '';
-    const appointmentTime = columns[4] || '';
+    const thirdColumn = columns[2] || '';
+    const fourthColumn = columns[3] || '';
+    const fifthColumn = columns[4] || '';
+    const thirdLooksLikeDate = /^\d{1,2}[/-]\d{1,2}([/-]\d{2,4})?$/.test(thirdColumn)
+      || /^\d{4}-\d{2}-\d{2}$/.test(thirdColumn);
+    const fourthLooksLikeTime = /^\d{1,2}:\d{2}/.test(fourthColumn);
+    const clinicName = thirdLooksLikeDate && fourthLooksLikeTime ? '' : thirdColumn;
+    const appointmentDate = thirdLooksLikeDate && fourthLooksLikeTime ? thirdColumn : fourthColumn;
+    const appointmentTime = thirdLooksLikeDate && fourthLooksLikeTime ? fourthColumn : fifthColumn;
 
     if (!patientName || !patientPhone) {
       invalidRows.push({ line: hasHeader ? index + 2 : index + 1, content: line });
@@ -15245,6 +15251,53 @@ function normalizeMassCampaignRecipientInput(recipient = {}) {
     data_consulta: String(recipient.data_consulta || recipient.dataConsulta || '').trim(),
     hora_consulta: String(recipient.hora_consulta || recipient.horaConsulta || '').trim()
   };
+}
+
+async function resolveMassCampaignSelectedClinic(req, user = null) {
+  const clinicId = Number(
+    req.body?.campaign_clinic_id
+    || req.body?.campaignClinicId
+    || req.body?.default_clinic_id
+    || req.body?.defaultClinicId
+    || 0
+  ) || null;
+  const clinicName = sanitizeFinancialString(
+    req.body?.campaign_clinic_name
+    || req.body?.campaignClinicName
+    || req.body?.default_clinic_name
+    || req.body?.defaultClinicName
+    || '',
+    180
+  );
+
+  if (!clinicId && !clinicName) return null;
+
+  let clinic = clinicId ? await getActiveClinicById(clinicId) : null;
+  if (!clinic && clinicName) {
+    const resolvedClinicId = await resolveClinicIdByName(clinicName);
+    clinic = resolvedClinicId ? await getActiveClinicById(resolvedClinicId) : null;
+  }
+
+  if (!clinic) {
+    throw new Error('A clínica selecionada para a campanha não foi encontrada ou está inativa.');
+  }
+
+  await assertCrcOperatorClinicAccess(user, clinic.id);
+
+  return {
+    clinic_id: clinic.id,
+    clinic_name: clinic.name
+  };
+}
+
+function applyMassCampaignSelectedClinic(recipients = [], selectedClinic = null) {
+  if (!selectedClinic) return recipients;
+  return recipients.map((recipient) => ({
+    ...recipient,
+    clinic_id: selectedClinic.clinic_id,
+    clinic_name: selectedClinic.clinic_name,
+    clinica: selectedClinic.clinic_name
+  }));
 }
 
 async function findWhatsAppInstanceByClinic({ clinicId = null, clinicName = '', preferredSector = null } = {}) {
@@ -16054,13 +16107,15 @@ async function handleMassWhatsAppCampaignSend(req, res) {
     const sessionId = sanitizeFinancialString(req.body.session_id || req.body.sessionId);
     const messageText = String(req.body.message_text || req.body.messageText || '').trim();
     const selectedRecipients = parseSelectedCampaignRecipients(req);
+    const selectedClinic = await resolveMassCampaignSelectedClinic(req, req.user);
     const parsedUpload = selectedRecipients.length
       ? { recipients: selectedRecipients, invalidRows: [] }
       : req.file?.path
       ? parseMassWhatsAppRecipientsFromUpload(req.file.path, req.file.originalname)
       : parseMassWhatsAppRecipients(decodeUploadedText(req.body.recipients || req.body.content || ''));
 
-    const { recipients, invalidRows } = parsedUpload;
+    const { invalidRows } = parsedUpload;
+    const recipients = applyMassCampaignSelectedClinic(parsedUpload.recipients, selectedClinic);
     if (!recipients.length) {
       return res.status(400).json({ error: 'Informe uma lista com nome e telefone para disparo em massa.' });
     }
@@ -16189,6 +16244,7 @@ async function handleMassWhatsAppCampaignSend(req, res) {
       invalidRows,
       unresolvedRecipients,
       batchId,
+      selectedClinic,
       sessionId: campaignType === 'nps' ? (sessionId || defaultInstance?.instance_name || WHATSAPP_NPS_INSTANCE_NAME) : 'automatico-por-clinica',
       antiBan
     });
@@ -16210,16 +16266,18 @@ async function handlePreviewMassWhatsAppCampaign(req, res) {
 
     const campaignType = String(req.body.campaign_type || req.body.campaignType || 'confirmacao').trim().toLowerCase();
     const sessionId = sanitizeFinancialString(req.body.session_id || req.body.sessionId);
+    const selectedClinic = await resolveMassCampaignSelectedClinic(req, req.user);
     const parsedUpload = req.file?.path
       ? parseMassWhatsAppRecipientsFromUpload(req.file.path, req.file.originalname)
       : parseMassWhatsAppRecipients(decodeUploadedText(req.body.recipients || req.body.content || ''));
+    const recipients = applyMassCampaignSelectedClinic(parsedUpload.recipients, selectedClinic);
 
-    if (!parsedUpload.recipients.length) {
+    if (!recipients.length) {
       return res.status(400).json({ error: 'Informe uma lista com nome e telefone para conferência da campanha.' });
     }
 
     const preview = await buildMassWhatsAppCampaignPreview({
-      recipients: parsedUpload.recipients,
+      recipients,
       invalidRows: parsedUpload.invalidRows,
       campaignType,
       sessionId,
@@ -16228,6 +16286,7 @@ async function handlePreviewMassWhatsAppCampaign(req, res) {
 
     return res.json({
       success: true,
+      selectedClinic,
       ...preview
     });
   } catch (error) {
