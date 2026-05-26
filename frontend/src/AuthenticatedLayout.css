@@ -64,6 +64,7 @@
 .app-sidebar-brand-copy,
 .app-sidebar-label-wrap,
 .app-sidebar-session-copy,
+.app-sidebar-powered-copy,
 .app-sidebar-section-title {
   min-width: 0;
   opacity: 0;
@@ -75,10 +76,12 @@
 .auth-shell.expanded .app-sidebar-brand-copy,
 .auth-shell.expanded .app-sidebar-label-wrap,
 .auth-shell.expanded .app-sidebar-session-copy,
+.auth-shell.expanded .app-sidebar-powered-copy,
 .auth-shell.expanded .app-sidebar-section-title,
 .auth-shell.mobile-open .app-sidebar-brand-copy,
 .auth-shell.mobile-open .app-sidebar-label-wrap,
 .auth-shell.mobile-open .app-sidebar-session-copy,
+.auth-shell.mobile-open .app-sidebar-powered-copy,
 .auth-shell.mobile-open .app-sidebar-section-title {
   opacity: 1;
   transform: translateX(0);
@@ -86,6 +89,7 @@
 }
 
 .app-sidebar-brand-copy strong,
+.app-sidebar-powered-copy strong,
 .app-sidebar-label {
   display: block;
   overflow: hidden;
@@ -101,7 +105,8 @@
 
 .app-sidebar-brand-copy span,
 .app-sidebar-label-wrap small,
-.app-sidebar-session-copy span {
+.app-sidebar-session-copy span,
+.app-sidebar-powered-copy small {
   display: block;
   margin-top: 2px;
   color: rgba(251, 243, 231, 0.62);
@@ -195,8 +200,60 @@
 }
 
 .app-sidebar-footer {
+  display: grid;
+  gap: 8px;
   padding-top: 8px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.app-sidebar-powered {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px;
+  border: 1px solid rgba(199, 154, 87, 0.24);
+  border-radius: 15px;
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.1), rgba(199, 154, 87, 0.08)),
+    rgba(255, 255, 255, 0.05);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.app-sidebar-powered-logo {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #fffaf2;
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.2);
+}
+
+.app-sidebar-powered-logo img {
+  width: 31px;
+  height: 31px;
+  object-fit: contain;
+  display: block;
+}
+
+.app-sidebar-powered-copy strong {
+  color: #fffaf2;
+  font-size: 12px;
+  line-height: 1.1;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.app-sidebar-powered-copy small {
+  margin-top: 0;
+  color: rgba(247, 224, 190, 0.76);
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
 }
 
 .app-sidebar-session {
@@ -302,6 +359,7 @@
   .app-sidebar-brand-copy,
   .app-sidebar-label-wrap,
   .app-sidebar-session-copy,
+  .app-sidebar-powered-copy,
   .app-sidebar-section-title {
     opacity: 1;
     transform: translateX(0);

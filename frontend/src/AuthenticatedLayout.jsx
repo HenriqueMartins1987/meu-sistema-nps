@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { hasPermission, isMasterAdmin, normalizeRoleValue, readUser } from './constants';
 import { clearSession } from './session';
+import grcLogo from './assets/logo3.png';
 import './AuthenticatedLayout.css';
 
 function Icon({ name }) {
@@ -212,6 +213,15 @@ export default function AuthenticatedLayout({ remainingMsLabel, remainingWarning
         </nav>
 
         <div className="app-sidebar-footer">
+          <div className="app-sidebar-powered" title="Powered by GRC Consultoria" aria-label="Powered by GRC Consultoria">
+            <span className="app-sidebar-powered-logo">
+              <img src={grcLogo} alt="GRC Consultoria" />
+            </span>
+            <span className="app-sidebar-powered-copy">
+              <small>Powered by</small>
+              <strong>GRC Consultoria</strong>
+            </span>
+          </div>
           <div className={`app-sidebar-session ${remainingWarning ? 'warning' : ''}`}>
             <span className="app-sidebar-session-icon" />
             <div className="app-sidebar-session-copy">
