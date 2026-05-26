@@ -5,7 +5,6 @@ const request = require('supertest');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-secret';
 process.env.NODE_ENV = 'test';
-process.env.WHATSAPP_API_KEY = process.env.WHATSAPP_API_KEY || 'test-key';
 
 const whatsappProvider = require('../services/whatsappProvider');
 const serverModule = require('../server');
@@ -40,7 +39,14 @@ test.afterEach(() => {
   whatsappProvider.sendText = originalSendText;
 });
 
-test('instance test route sends directly through whatsapp-service VPS', async () => {
+test('instance test route sends directly through whatsapp-service VPS', async (t) => {
+  const previousApiKey = process.env.WHATSAPP_API_KEY;
+  process.env.WHATSAPP_API_KEY = previousApiKey || 'test-key';
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.WHATSAPP_API_KEY;
+    else process.env.WHATSAPP_API_KEY = previousApiKey;
+  });
+
   let sendPayload = null;
   let historyInsertParams = null;
 
@@ -152,7 +158,14 @@ test('instance test route sends directly through whatsapp-service VPS', async ()
   ]);
 });
 
-test('dispatch queue does not retry after VPS accepted a message and history logging fails', async () => {
+test('dispatch queue does not retry after VPS accepted a message and history logging fails', async (t) => {
+  const previousApiKey = process.env.WHATSAPP_API_KEY;
+  process.env.WHATSAPP_API_KEY = previousApiKey || 'test-key';
+  t.after(() => {
+    if (previousApiKey === undefined) delete process.env.WHATSAPP_API_KEY;
+    else process.env.WHATSAPP_API_KEY = previousApiKey;
+  });
+
   let sendCount = 0;
   let retryUpdateSeen = false;
   let sentQueueUpdateSeen = false;
@@ -251,6 +264,63 @@ test('dispatch queue does not retry after VPS accepted a message and history log
   assert.equal(sentQueueUpdateSeen, true);
   assert.equal(sentMessageUpdateSeen, true);
   assert.equal(retryUpdateSeen, false);
+});
+
+test('enqueueWhatsAppDispatch suppresses recent duplicate before inserting queue item', async () => {
+  let messageCanceled = false;
+  let duplicateLogged = false;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('FROM whatsapp_dispatch_queue') && sql.includes("status IN ('pendente', 'processando', 'enviada')"),
+      reply: async (_sql, params) => {
+        assert.deepEqual(params.slice(0, 4), [
+          'garavelo',
+          '5562999669966',
+          'Mensagem de confirmacao',
+          'confirmacao_massa'
+        ]);
+        return [[{
+          id: 700,
+          message_id: 701,
+          instance_name: 'garavelo',
+          recipient_phone: '5562999669966',
+          message_text: 'Mensagem de confirmacao',
+          message_type: 'confirmacao_massa',
+          status: 'pendente'
+        }]];
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_messages') && sql.includes("SET status = 'cancelada'"),
+      reply: async (_sql, params) => {
+        messageCanceled = true;
+        assert.equal(params[1], 702);
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO whatsapp_evolution_logs'),
+      reply: async (_sql, params) => {
+        duplicateLogged = true;
+        assert.equal(params[0], 'dispatch_duplicate_enqueue_suppressed');
+        return [{ insertId: 1 }];
+      }
+    }
+  ]);
+
+  const result = await serverModule.__testables.enqueueWhatsAppDispatch({
+    message_id: 702,
+    instance_name: 'garavelo',
+    recipient_phone: '(62) 99966-9966',
+    message_text: 'Mensagem de confirmacao',
+    message_type: 'confirmacao_massa'
+  });
+
+  assert.equal(result.id, 700);
+  assert.equal(result.duplicateSuppressed, true);
+  assert.equal(messageCanceled, true);
+  assert.equal(duplicateLogged, true);
 });
 
 test('mass campaign routing refreshes stale clinic status from VPS before blocking', async () => {

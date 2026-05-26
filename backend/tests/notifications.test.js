@@ -246,6 +246,27 @@ test('parseMassWhatsAppRecipientsFromWorksheetRows accepts excel-like rows', () 
   assert.equal(parsed.invalidRows.length, 1);
 });
 
+test('parseMassWhatsAppRecipientsFromWorksheetRows normalizes Excel serial date and time', () => {
+  const parsed = __testables.parseMassWhatsAppRecipientsFromWorksheetRows([
+    {
+      'Nome do Paciente': 'Ana Clara',
+      'Número': '62 99999-9999',
+      'Clínica': 'Garavelo',
+      'Data da consulta': 46168,
+      'Horário': 0.6041666667
+    }
+  ]);
+
+  assert.equal(parsed.recipients.length, 1);
+  assert.deepEqual(parsed.recipients[0], {
+    patient_name: 'ANA CLARA',
+    patient_phone: '5562999999999',
+    clinic_name: 'Garavelo',
+    data_consulta: '26/05/2026',
+    hora_consulta: '14:30'
+  });
+});
+
 test('parseBulkNpsWorksheetRows accepts excel-like rows for NPS dispatch', () => {
   const parsed = __testables.parseBulkNpsWorksheetRows([
     { nome_paciente: 'Maria Silva', telefone: '5562999999999', clinica: 'Garavelo' },

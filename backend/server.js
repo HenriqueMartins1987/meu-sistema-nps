@@ -11579,7 +11579,82 @@ async function autoAssignWhatsAppQueue(actor = null) {
   return assigned;
 }
 
+async function findRecentWhatsAppDispatchQueueDuplicate(payload = {}, maxAgeSeconds = 900) {
+  const instanceName = sanitizeFinancialString(payload.instance_name || payload.instanceName, 120);
+  const recipientPhone = normalizeWhatsAppPhone(payload.recipient_phone || payload.recipientPhone);
+  const messageText = String(payload.message_text || payload.messageText || '').trim();
+  const messageType = sanitizeFinancialString(payload.message_type || payload.messageType || 'manual', 80) || 'manual';
+  if (!instanceName || !recipientPhone || !messageText) return null;
+
+  const [rows] = await pool.query(
+    `SELECT *
+       FROM whatsapp_dispatch_queue
+      WHERE instance_name = ?
+        AND recipient_phone = ?
+        AND message_text = ?
+        AND COALESCE(message_type, 'manual') = ?
+        AND status IN ('pendente', 'processando', 'enviada')
+        AND COALESCE(sent_at, updated_at, created_at) >= DATE_SUB(NOW(), INTERVAL ? SECOND)
+      ORDER BY
+        CASE status
+          WHEN 'enviada' THEN 0
+          WHEN 'processando' THEN 1
+          ELSE 2
+        END,
+        id DESC
+      LIMIT 1`,
+    [instanceName, recipientPhone, messageText, messageType, Math.max(60, Number(maxAgeSeconds || 900))]
+  );
+
+  return rows[0] || null;
+}
+
 async function enqueueWhatsAppDispatch(payload = {}) {
+  const instanceName = sanitizeFinancialString(payload.instance_name || payload.instanceName, 120);
+  const recipientPhone = normalizeWhatsAppPhone(payload.recipient_phone || payload.recipientPhone);
+  const messageText = String(payload.message_text || payload.messageText || '').trim();
+  const messageType = sanitizeFinancialString(payload.message_type || payload.messageType || 'manual', 80) || 'manual';
+
+  if (!instanceName || !recipientPhone || !messageText) {
+    throw new Error('Fila WhatsApp inválida: instância, telefone e mensagem são obrigatórios.');
+  }
+
+  const duplicate = await findRecentWhatsAppDispatchQueueDuplicate({
+    instance_name: instanceName,
+    recipient_phone: recipientPhone,
+    message_text: messageText,
+    message_type: messageType
+  }, payload.duplicateWindowSeconds || 900);
+
+  if (duplicate) {
+    const duplicateMessage = `Envio duplicado bloqueado automaticamente: fila ${duplicate.id} ja contem a mesma mensagem para este telefone.`;
+    if (payload.message_id || payload.messageId) {
+      await pool.query(
+        `UPDATE whatsapp_messages
+            SET status = 'cancelada',
+                error_message = ?
+          WHERE id = ?
+            AND status IN ('pendente', 'processando')`,
+        [duplicateMessage, payload.message_id || payload.messageId]
+      );
+    }
+    await logEvolutionEvent('dispatch_duplicate_enqueue_suppressed', {
+      queueId: duplicate.id,
+      messageId: payload.message_id || payload.messageId || null,
+      conversationId: payload.conversation_id || payload.conversationId || null,
+      instanceName,
+      status: 'info',
+      request: { number: recipientPhone, messageType, textLength: messageText.length },
+      response: { duplicateQueueId: duplicate.id, duplicateStatus: duplicate.status }
+    });
+    return {
+      ...duplicate,
+      duplicateSuppressed: true,
+      duplicateQueueId: duplicate.id,
+      duplicateReason: duplicateMessage
+    };
+  }
+
   const config = getWhatsAppAntiBanConfig();
   const antiBanDelayMs = randomIntegerBetween(config.minDelayMs, config.maxDelayMs);
   const requestedDelaySeconds = Number(
@@ -11599,10 +11674,10 @@ async function enqueueWhatsAppDispatch(payload = {}) {
     [
       payload.message_id || payload.messageId || null,
       payload.conversation_id || payload.conversationId || null,
-      payload.instance_name || payload.instanceName,
-      payload.recipient_phone || payload.recipientPhone,
-      payload.message_text || payload.messageText,
-      payload.message_type || payload.messageType || 'manual',
+      instanceName,
+      recipientPhone,
+      messageText,
+      messageType,
       scheduledDelaySeconds,
       payload.operator_id || payload.operatorId || null,
       payload.operator_name || payload.operatorName || null,
@@ -14646,6 +14721,7 @@ async function handleSendWhatsAppManagementMessage(req, res, options = {}) {
       success: true,
       queued: true,
       queueId: dispatch?.id || null,
+      duplicateSuppressed: Boolean(dispatch?.duplicateSuppressed),
       messageId,
       conversationId: conversation.id,
       provider: 'whatsapp_dispatch_queue'
@@ -15457,6 +15533,131 @@ function normalizeWhatsAppPatientName(value) {
     .slice(0, 180);
 }
 
+function normalizeWorksheetHeaderKey(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+}
+
+function getWorksheetRowValue(row = {}, aliases = []) {
+  const normalizedRow = {};
+  Object.entries(row || {}).forEach(([key, value]) => {
+    normalizedRow[normalizeWorksheetHeaderKey(key)] = value;
+  });
+
+  for (const alias of aliases) {
+    const key = normalizeWorksheetHeaderKey(alias);
+    const value = normalizedRow[key];
+    if (value !== undefined && value !== null && String(value).trim() !== '') return value;
+  }
+  return '';
+}
+
+function padDateTimePart(value) {
+  return String(Math.trunc(Math.abs(Number(value) || 0))).padStart(2, '0');
+}
+
+function normalizeMassCampaignDateValue(value) {
+  if (value === null || value === undefined || value === '') return '';
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${padDateTimePart(value.getDate())}/${padDateTimePart(value.getMonth() + 1)}/${value.getFullYear()}`;
+  }
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const parsed = XLSX.SSF.parse_date_code(value);
+    if (parsed?.y && parsed?.m && parsed?.d) {
+      return `${padDateTimePart(parsed.d)}/${padDateTimePart(parsed.m)}/${parsed.y}`;
+    }
+  }
+
+  const text = String(value || '').trim();
+  if (!text) return '';
+
+  if (/^\d+([.,]\d+)?$/.test(text)) {
+    const numeric = Number(text.replace(',', '.'));
+    if (Number.isFinite(numeric) && numeric > 59) {
+      const parsed = XLSX.SSF.parse_date_code(numeric);
+      if (parsed?.y && parsed?.m && parsed?.d) {
+        return `${padDateTimePart(parsed.d)}/${padDateTimePart(parsed.m)}/${parsed.y}`;
+      }
+    }
+  }
+
+  const isoMatch = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s].*)?$/);
+  if (isoMatch) {
+    return `${padDateTimePart(isoMatch[3])}/${padDateTimePart(isoMatch[2])}/${isoMatch[1]}`;
+  }
+
+  const brMatch = text.match(/^(\d{1,2})[/-](\d{1,2})(?:[/-](\d{2,4}))?$/);
+  if (brMatch) {
+    const year = brMatch[3]
+      ? (String(brMatch[3]).length === 2 ? `20${brMatch[3]}` : brMatch[3])
+      : '';
+    return year
+      ? `${padDateTimePart(brMatch[1])}/${padDateTimePart(brMatch[2])}/${year}`
+      : `${padDateTimePart(brMatch[1])}/${padDateTimePart(brMatch[2])}`;
+  }
+
+  return text;
+}
+
+function normalizeMassCampaignTimeValue(value) {
+  if (value === null || value === undefined || value === '') return '';
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${padDateTimePart(value.getHours())}:${padDateTimePart(value.getMinutes())}`;
+  }
+
+  const formatFractionalDay = (numericValue) => {
+    if (!Number.isFinite(numericValue)) return '';
+    if (Number.isInteger(numericValue) && numericValue >= 0 && numericValue <= 23) {
+      return `${padDateTimePart(numericValue)}:00`;
+    }
+    let fraction = numericValue >= 1 ? numericValue % 1 : numericValue;
+    if (fraction < 0) fraction = 0;
+    let totalMinutes = Math.round(fraction * 24 * 60);
+    if (totalMinutes >= 24 * 60) totalMinutes -= 24 * 60;
+    return `${padDateTimePart(Math.floor(totalMinutes / 60))}:${padDateTimePart(totalMinutes % 60)}`;
+  };
+
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const formatted = formatFractionalDay(value);
+    return formatted || '';
+  }
+
+  const text = String(value || '').trim();
+  if (!text) return '';
+
+  const isoTimeMatch = text.match(/[T\s](\d{1,2}):(\d{2})(?::\d{2})?/);
+  if (isoTimeMatch) {
+    return `${padDateTimePart(isoTimeMatch[1])}:${padDateTimePart(isoTimeMatch[2])}`;
+  }
+
+  const timeMatch = text.match(/^(\d{1,2})[:hH](\d{2})(?::\d{2})?$/);
+  if (timeMatch) {
+    const hour = Number(timeMatch[1]);
+    const minute = Number(timeMatch[2]);
+    if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+      return `${padDateTimePart(hour)}:${padDateTimePart(minute)}`;
+    }
+  }
+
+  if (/^\d+([.,]\d+)?$/.test(text)) {
+    const numeric = Number(text.replace(',', '.'));
+    if (Number.isFinite(numeric)) {
+      const formatted = formatFractionalDay(numeric);
+      if (formatted) return formatted;
+    }
+  }
+
+  return text;
+}
+
 function getDefaultMassWhatsAppCampaignMessage(campaignType = 'confirmacao') {
   return String(campaignType || '').trim().toLowerCase() === 'nps'
     ? 'Olá, {{nome_paciente}}! Sua opinião é essencial para nós. Em uma escala de 0 a 10, qual nota você dá para sua experiência na unidade {{clinica}}? Se preferir, também pode responder pela pesquisa: {{link_nps}}'
@@ -15501,8 +15702,8 @@ function parseMassWhatsAppRecipients(rawText = '') {
       patient_name: normalizeWhatsAppPatientName(patientName),
       patient_phone: patientPhone,
       clinic_name: clinicName,
-      data_consulta: appointmentDate,
-      hora_consulta: appointmentTime
+      data_consulta: normalizeMassCampaignDateValue(appointmentDate),
+      hora_consulta: normalizeMassCampaignTimeValue(appointmentTime)
     });
   });
 
@@ -15515,14 +15716,18 @@ function parseMassWhatsAppRecipientsFromWorksheetRows(rows = []) {
 
   rows.forEach((row, index) => {
     const patientName = normalizeWhatsAppPatientName(
-      row.nome_paciente || row.nome || row.paciente || row.patient_name || row.patient || ''
+      getWorksheetRowValue(row, ['nome_paciente', 'nome do paciente', 'nome', 'paciente', 'patient_name', 'patient'])
     );
     const patientPhone = normalizeWhatsAppPhone(
-      row.telefone || row.phone || row.patient_phone || row.whatsapp || row.celular || ''
+      getWorksheetRowValue(row, ['telefone', 'numero', 'número', 'whatsapp', 'celular', 'phone', 'patient_phone'])
     );
-    const clinicName = String(row.clinica || row.clinic || row.unidade || '').trim();
-    const appointmentDate = String(row.data_consulta || row.data || '').trim();
-    const appointmentTime = String(row.hora_consulta || row.hora || '').trim();
+    const clinicName = String(getWorksheetRowValue(row, ['clinica', 'clínica', 'unidade', 'clinic'])).trim();
+    const appointmentDate = normalizeMassCampaignDateValue(
+      getWorksheetRowValue(row, ['data_consulta', 'data da consulta', 'data atendimento', 'data', 'appointment_date'])
+    );
+    const appointmentTime = normalizeMassCampaignTimeValue(
+      getWorksheetRowValue(row, ['hora_consulta', 'horario', 'horário', 'hora da consulta', 'hora', 'appointment_time'])
+    );
 
     if (!patientName || !patientPhone) {
       invalidRows.push({ line: index + 2, content: JSON.stringify(row) });
@@ -16028,7 +16233,7 @@ async function queueManagedWhatsAppMessage({
     payload: { source, ...payload }
   });
 
-  return { conversation, messageId, dispatch };
+  return { conversation, messageId, dispatch, duplicateSuppressed: Boolean(dispatch?.duplicateSuppressed) };
 }
 
 async function getWhatsAppChatbotRecentSessions(limit = 40, user = null) {
@@ -16653,7 +16858,9 @@ async function handleMassWhatsAppCampaignSend(req, res) {
         messageId: queued?.messageId || null,
         dispatchQueueId: queued?.dispatch?.id || null
       });
-      queuedCount += 1;
+      if (!queued?.duplicateSuppressed) {
+        queuedCount += 1;
+      }
 
       if (campaignType === 'confirmacao' && confirmationFlow && queued?.conversation) {
         await primeWhatsAppChatbotSessionForFlow({
@@ -16756,38 +16963,45 @@ async function handlePreviewMassWhatsAppCampaign(req, res) {
 async function handleDownloadWhatsAppCampaignTemplate(req, res) {
   try {
     const campaignType = String(req.query?.campaign_type || req.query?.campaignType || 'confirmacao').trim().toLowerCase();
-    const rows = campaignType === 'nps'
-      ? [
-          {
-            nome_paciente: 'MARIA SILVA',
-            telefone: '5562999999999',
-            clinica: 'GARAVELO',
-            data_consulta: '',
-            hora_consulta: '',
-            observacao: 'Campos obrigatorios: nome_paciente e telefone'
-          }
-        ]
-      : [
-          {
-            nome_paciente: 'MARIA SILVA',
-            telefone: '5562999999999',
-            clinica: 'GARAVELO',
-            data_consulta: '26/05/2026',
-            hora_consulta: '14:30',
-            observacao: 'Campos obrigatorios: nome_paciente e telefone'
-          }
-        ];
     const workbook = XLSX.utils.book_new();
-    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const headers = ['nome_paciente', 'telefone', 'clinica', 'data_consulta', 'hora_consulta', 'observacao'];
+    const worksheet = XLSX.utils.aoa_to_sheet([headers]);
     worksheet['!cols'] = [
       { wch: 26 },
-      { wch: 18 },
+      { wch: 18, z: '@' },
       { wch: 20 },
-      { wch: 16 },
-      { wch: 14 },
+      { wch: 16, z: '@' },
+      { wch: 14, z: '@' },
       { wch: 48 }
     ];
+    worksheet['!autofilter'] = { ref: 'A1:F1' };
+    ['B', 'D', 'E'].forEach((column) => {
+      const cell = worksheet[`${column}1`];
+      if (cell) cell.z = '@';
+    });
     XLSX.utils.book_append_sheet(workbook, worksheet, 'Pacientes');
+
+    const exampleRows = campaignType === 'nps'
+      ? [
+          headers,
+          ['MARIA SILVA', '5562999999999', 'GARAVELO', '', '', 'Campos obrigatorios: nome_paciente e telefone']
+        ]
+      : [
+          headers,
+          ['MARIA SILVA', '5562999999999', 'GARAVELO', '26/05/2026', '14:30', 'Campos obrigatorios: nome_paciente e telefone']
+        ];
+    const exampleSheet = XLSX.utils.aoa_to_sheet([
+      ['Como usar o template'],
+      ['1. Preencha os pacientes somente na aba Pacientes, mantendo os cabecalhos exatamente iguais.'],
+      ['2. Use telefone com DDI e DDD. Exemplo: 5562999999999.'],
+      ['3. Para confirmacao, use data_consulta em DD/MM/AAAA e hora_consulta em HH:MM. O sistema tambem corrige valores que o Excel transformar em data/hora.'],
+      ['4. O nome do paciente sera enviado em CAIXA ALTA automaticamente.'],
+      [],
+      ...exampleRows
+    ]);
+    exampleSheet['!cols'] = worksheet['!cols'];
+    XLSX.utils.book_append_sheet(workbook, exampleSheet, 'Instrucoes');
+
     const filename = campaignType === 'nps'
       ? 'template-whatsapp-nps.xlsx'
       : 'template-whatsapp-confirmacao.xlsx';
@@ -25353,6 +25567,8 @@ module.exports = {
     decodeUploadedText,
     extractWhatsAppServiceEventMessage,
     extractWhatsAppServiceStatusEvent,
+    enqueueWhatsAppDispatch,
+    findRecentWhatsAppDispatchQueueDuplicate,
     findRecentSentWhatsAppDispatchDuplicate,
     findWhatsAppInstanceByClinic,
     isPasswordChangeRouteAllowed,
