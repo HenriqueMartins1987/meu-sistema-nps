@@ -15,6 +15,7 @@ const { app, pool } = serverModule;
 const originalPoolQuery = pool.query.bind(pool);
 const originalGetSessionStatus = whatsappProvider.getSessionStatus;
 const originalSendMessage = whatsappProvider.sendMessage;
+const originalSendText = whatsappProvider.sendText;
 
 function signToken(payload) {
   return jwt.sign(payload, process.env.JWT_SECRET);
@@ -36,6 +37,7 @@ test.afterEach(() => {
   pool.query = originalPoolQuery;
   whatsappProvider.getSessionStatus = originalGetSessionStatus;
   whatsappProvider.sendMessage = originalSendMessage;
+  whatsappProvider.sendText = originalSendText;
 });
 
 test('instance test route sends directly through whatsapp-service VPS', async () => {
@@ -148,4 +150,169 @@ test('instance test route sends directly through whatsapp-service VPS', async ()
     'Envio de mensagem teste',
     'Administrador Master'
   ]);
+});
+
+test('dispatch queue does not retry after VPS accepted a message and history logging fails', async () => {
+  let sendCount = 0;
+  let retryUpdateSeen = false;
+  let sentQueueUpdateSeen = false;
+  let sentMessageUpdateSeen = false;
+
+  whatsappProvider.sendText = async (payload) => {
+    sendCount += 1;
+    assert.equal(payload.sessionId, 'garavelo');
+    assert.equal(payload.number, '5562999669966');
+    return {
+      provider: 'whatsapp_service',
+      success: true,
+      messageId: 'provider-ok-1',
+      raw: { messageId: 'provider-ok-1' }
+    };
+  };
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('FROM whatsapp_dispatch_queue') && sql.includes("WHERE status = 'pendente'") && sql.includes('scheduled_at <= NOW()'),
+      reply: async () => [[{
+        id: 900,
+        message_id: 901,
+        conversation_id: 902,
+        instance_name: 'garavelo',
+        recipient_phone: '5562999669966',
+        message_text: 'Mensagem de confirmacao',
+        message_type: 'confirmacao_massa',
+        status: 'pendente',
+        attempts: 0,
+        anti_ban_delay_ms: 1000,
+        operator_name: 'Fila WhatsApp CRC',
+        payload: '{}'
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM whatsapp_dispatch_queue') && sql.includes("status = 'enviada'") && sql.includes('id <> ?'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_instances') && sql.includes('messages_sent_today = CASE'),
+      reply: async () => [{ affectedRows: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM whatsapp_instances WHERE instance_name = ? LIMIT 1'),
+      reply: async () => [[{ instance_name: 'garavelo', daily_send_limit: 30, messages_sent_today: 0 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT COUNT(*) AS total') && sql.includes('FROM whatsapp_dispatch_queue'),
+      reply: async () => [[{ total: 0 }]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_dispatch_queue') && sql.includes("SET status = 'processando'"),
+      reply: async () => [{ affectedRows: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_dispatch_queue') && sql.includes("SET status = 'enviada'"),
+      reply: async () => {
+        sentQueueUpdateSeen = true;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_messages') && sql.includes("SET status = 'enviada'"),
+      reply: async () => {
+        sentMessageUpdateSeen = true;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO whatsapp_service_message_history'),
+      reply: async () => {
+        throw new Error('history db down');
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO whatsapp_evolution_logs'),
+      reply: async (_sql, params) => {
+        assert.equal(params[0], 'send_message_postprocess_error');
+        assert.equal(params[5], 'warning');
+        return [{ insertId: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_dispatch_queue') && sql.includes('SET status = ?'),
+      reply: async () => {
+        retryUpdateSeen = true;
+        return [{ affectedRows: 1 }];
+      }
+    }
+  ]);
+
+  await serverModule.__testables.processWhatsAppDispatchQueue();
+
+  assert.equal(sendCount, 1);
+  assert.equal(sentQueueUpdateSeen, true);
+  assert.equal(sentMessageUpdateSeen, true);
+  assert.equal(retryUpdateSeen, false);
+});
+
+test('mass campaign routing refreshes stale clinic status from VPS before blocking', async () => {
+  const previousApiKey = process.env.WHATSAPP_API_KEY;
+  process.env.WHATSAPP_API_KEY = 'test-key';
+  let statusChecked = false;
+  let instanceStatusUpdated = false;
+
+  whatsappProvider.getSessionStatus = async (sessionId) => {
+    statusChecked = true;
+    assert.equal(sessionId, 'garavelo');
+    return { status: 'connected', sessionId };
+  };
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT *') && sql.includes('FROM whatsapp_instances') && sql.includes('WHERE clinic_id = ?'),
+      reply: async (_sql, params) => {
+        assert.equal(params[0], 5);
+        return [[{
+          instance_name: 'garavelo',
+          display_name: 'Garavelo',
+          clinic_id: 5,
+          clinic_name: 'Garavelo',
+          sector: 'Confirmação e Agendamento',
+          status: 'desconectado',
+          updated_at: '2026-05-26 10:00:00'
+        }]];
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_instances') && sql.includes('last_connection_at'),
+      reply: async (_sql, params) => {
+        instanceStatusUpdated = true;
+        assert.equal(params[0], 'conectado');
+        assert.equal(params[5], 'garavelo');
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_service_sessions') && sql.includes('last_status_payload'),
+      reply: async (_sql, params) => {
+        assert.equal(params[0], 'conectado');
+        assert.equal(params[3], 'garavelo');
+        return [{ affectedRows: 1 }];
+      }
+    }
+  ]);
+
+  try {
+    const instance = await serverModule.__testables.findWhatsAppInstanceByClinic({
+      clinicId: 5,
+      clinicName: 'Garavelo',
+      preferredSector: 'Confirmacao e Agendamento'
+    });
+
+    assert.equal(statusChecked, true);
+    assert.equal(instanceStatusUpdated, true);
+    assert.equal(instance.status, 'conectado');
+    assert.equal(serverModule.__testables.isWhatsAppConnectedStatus(instance.status), true);
+  } finally {
+    if (previousApiKey === undefined) delete process.env.WHATSAPP_API_KEY;
+    else process.env.WHATSAPP_API_KEY = previousApiKey;
+  }
 });

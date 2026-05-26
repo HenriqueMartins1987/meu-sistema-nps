@@ -12287,6 +12287,34 @@ async function prepareWhatsAppDispatchItem(item) {
 
 let whatsappDispatchProcessing = false;
 
+async function findRecentSentWhatsAppDispatchDuplicate(item = {}, maxAgeSeconds = 900) {
+  if (!item.instance_name || !item.recipient_phone || !String(item.message_text || '').trim()) return null;
+
+  const [rows] = await pool.query(
+    `SELECT id, message_id, sent_at
+       FROM whatsapp_dispatch_queue
+      WHERE id <> ?
+        AND instance_name = ?
+        AND recipient_phone = ?
+        AND message_text = ?
+        AND message_type = ?
+        AND status = 'enviada'
+        AND sent_at >= DATE_SUB(NOW(), INTERVAL ? SECOND)
+      ORDER BY sent_at DESC, id DESC
+      LIMIT 1`,
+    [
+      item.id || 0,
+      item.instance_name,
+      item.recipient_phone,
+      String(item.message_text || '').trim(),
+      item.message_type || 'manual',
+      Math.max(60, Number(maxAgeSeconds || 900))
+    ]
+  );
+
+  return rows[0] || null;
+}
+
 async function processWhatsAppDispatchQueue() {
   if (whatsappDispatchProcessing) return;
   whatsappDispatchProcessing = true;
@@ -12326,6 +12354,38 @@ async function processWhatsAppDispatchQueue() {
           instanceName: item.instance_name,
           status: 'skipped',
           response: { reason: dispatchPreparation.reason }
+        });
+        continue;
+      }
+
+      const recentSentDuplicate = await findRecentSentWhatsAppDispatchDuplicate(item);
+      if (recentSentDuplicate) {
+        const duplicateMessage = 'Envio duplicado cancelado automaticamente: mensagem identica ja enviada recentemente.';
+        await pool.query(
+          `UPDATE whatsapp_dispatch_queue
+              SET status = 'cancelada',
+                  error_message = ?
+            WHERE id = ?
+              AND status = 'pendente'`,
+          [duplicateMessage, item.id]
+        );
+        if (item.message_id) {
+          await pool.query(
+            `UPDATE whatsapp_messages
+                SET status = 'cancelada',
+                    error_message = ?
+              WHERE id = ?
+                AND status IN ('pendente', 'processando')`,
+            [duplicateMessage, item.message_id]
+          );
+        }
+        await logEvolutionEvent('dispatch_duplicate_suppressed', {
+          queueId: item.id,
+          messageId: item.message_id,
+          conversationId: item.conversation_id,
+          instanceName: item.instance_name,
+          status: 'info',
+          response: { duplicateQueueId: recentSentDuplicate.id, duplicateMessageId: recentSentDuplicate.message_id }
         });
         continue;
       }
@@ -12399,58 +12459,73 @@ async function processWhatsAppDispatchQueue() {
             WHERE id = ?`,
           [providerMessageId, providerMessageId, item.message_id]
         );
-        if (useServiceProvider) {
+
+        try {
+          if (useServiceProvider) {
+            await pool.query(
+              `INSERT INTO whatsapp_service_message_history
+               (session_id, patient_phone, message_text, status, provider_message_id, response_payload, created_by, sent_at)
+               VALUES (?, ?, ?, 'enviado', ?, ?, ?, NOW())`,
+              [
+                item.instance_name,
+                item.recipient_phone,
+                item.message_text,
+                providerMessageId,
+                JSON.stringify(providerResponse.raw || providerResponse),
+                item.operator_name || 'Fila WhatsApp CRC'
+              ]
+            );
+          }
+          if (item.message_type === 'nps_automatico') {
+            await pool.query(
+              `UPDATE whatsapp_nps_invites
+                  SET status = 'enviado',
+                      sent_at = NOW()
+                WHERE message_id = ?`,
+              [item.message_id]
+            );
+          }
           await pool.query(
-            `INSERT INTO whatsapp_service_message_history
-             (session_id, patient_phone, message_text, status, provider_message_id, response_payload, created_by, sent_at)
-             VALUES (?, ?, ?, 'enviado', ?, ?, ?, NOW())`,
-            [
-              item.instance_name,
-              item.recipient_phone,
-              item.message_text,
-              providerMessageId,
-              JSON.stringify(providerResponse.raw || providerResponse),
-              item.operator_name || 'Fila WhatsApp CRC'
-            ]
+            `UPDATE whatsapp_instances
+                SET messages_sent_today = messages_sent_today + 1,
+                    last_warmup_reset = CURDATE(),
+                    updated_at = NOW()
+              WHERE instance_name = ?`,
+            [item.instance_name]
           );
-        }
-        if (item.message_type === 'nps_automatico') {
           await pool.query(
-            `UPDATE whatsapp_nps_invites
-                SET status = 'enviado',
-                    sent_at = NOW()
-              WHERE message_id = ?`,
-            [item.message_id]
+            `UPDATE whatsapp_conversations
+                SET last_message_at = NOW(),
+                    status = CASE WHEN status = 'Novo' THEN 'Em atendimento' ELSE status END
+              WHERE id = ?`,
+            [item.conversation_id]
           );
+          await logEvolutionEvent('send_message', {
+            queueId: item.id,
+            messageId: item.message_id,
+            conversationId: item.conversation_id,
+            instanceName: item.instance_name,
+            status: 'success',
+            durationMs: performance.now() - startedAt,
+            request: { provider: useServiceProvider ? 'whatsapp_service' : 'evolution', number: item.recipient_phone, textLength: String(item.message_text || '').length, antiBanDelayMs: item.anti_ban_delay_ms },
+            response: providerResponse
+          });
+          const message = await getWhatsAppMessageById(item.message_id);
+          const conversation = item.conversation_id ? await getWhatsAppConversationById(item.conversation_id) : null;
+          emitWhatsAppMessageChange('sent', message, conversation || {});
+        } catch (postSendError) {
+          console.warn('Mensagem enviada, mas falhou a atualização auxiliar do WhatsApp:', postSendError.message);
+          await logEvolutionEvent('send_message_postprocess_error', {
+            queueId: item.id,
+            messageId: item.message_id,
+            conversationId: item.conversation_id,
+            instanceName: item.instance_name,
+            status: 'warning',
+            durationMs: performance.now() - startedAt,
+            request: { number: item.recipient_phone, textLength: String(item.message_text || '').length },
+            error: postSendError
+          });
         }
-        await pool.query(
-          `UPDATE whatsapp_instances
-              SET messages_sent_today = messages_sent_today + 1,
-                  last_warmup_reset = CURDATE(),
-                  updated_at = NOW()
-            WHERE instance_name = ?`,
-          [item.instance_name]
-        );
-        await pool.query(
-          `UPDATE whatsapp_conversations
-              SET last_message_at = NOW(),
-                  status = CASE WHEN status = 'Novo' THEN 'Em atendimento' ELSE status END
-            WHERE id = ?`,
-          [item.conversation_id]
-        );
-        await logEvolutionEvent('send_message', {
-          queueId: item.id,
-          messageId: item.message_id,
-          conversationId: item.conversation_id,
-          instanceName: item.instance_name,
-          status: 'success',
-          durationMs: performance.now() - startedAt,
-          request: { provider: useServiceProvider ? 'whatsapp_service' : 'evolution', number: item.recipient_phone, textLength: String(item.message_text || '').length, antiBanDelayMs: item.anti_ban_delay_ms },
-          response: providerResponse
-        });
-        const message = await getWhatsAppMessageById(item.message_id);
-        const conversation = item.conversation_id ? await getWhatsAppConversationById(item.conversation_id) : null;
-        emitWhatsAppMessageChange('sent', message, conversation || {});
       } catch (error) {
         const maxAttempts = getWhatsAppAntiBanConfig().maxAttempts;
         const nextStatus = Number(item.attempts || 0) + 1 >= maxAttempts ? 'erro' : 'pendente';
@@ -13908,16 +13983,29 @@ async function handleUpdateWhatsAppInstance(req, res) {
     );
 
     await pool.query(
-      `UPDATE whatsapp_service_sessions
-          SET display_name = ?,
-              clinic_id = ?,
-              clinic_name = ?,
-              unit_name = ?,
-              phone_number = ?,
-              notes = ?,
-              updated_by = ?
-        WHERE session_id = ?`,
-      [displayName, clinicId, clinicName, unitName, phone, notes, actorName, instanceName]
+      `INSERT INTO whatsapp_service_sessions
+       (session_id, display_name, clinic_id, clinic_name, unit_name, phone_number, status, notes, created_by, updated_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         display_name = VALUES(display_name),
+         clinic_id = VALUES(clinic_id),
+         clinic_name = VALUES(clinic_name),
+         unit_name = VALUES(unit_name),
+         phone_number = VALUES(phone_number),
+         notes = VALUES(notes),
+         updated_by = VALUES(updated_by)`,
+      [
+        instanceName,
+        displayName,
+        clinicId,
+        clinicName,
+        unitName,
+        phone,
+        currentRows[0].status || 'iniciando',
+        notes,
+        actorName,
+        actorName
+      ]
     );
 
     const [rows] = await pool.query('SELECT * FROM whatsapp_instances WHERE instance_name = ? LIMIT 1', [instanceName]);
@@ -15530,7 +15618,43 @@ function applyMassCampaignSelectedClinic(recipients = [], selectedClinic = null)
   }));
 }
 
-async function findWhatsAppInstanceByClinic({ clinicId = null, clinicName = '', preferredSector = null } = {}) {
+async function findWhatsAppInstanceByClinic({ clinicId = null, clinicName = '', preferredSector = null, routingCache = null } = {}) {
+  const cache = routingCache instanceof Map ? routingCache : null;
+  const cacheKey = cache
+    ? [
+        'clinic-instance',
+        clinicId || '',
+        normalizeClinicLookupValue(clinicName),
+        normalizeClinicLookupValue(preferredSector)
+      ].join(':')
+    : '';
+  if (cache && cache.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
+
+  const rankInstances = (rows = []) => rows.sort((left, right) => {
+    const leftConnected = isWhatsAppConnectedStatus(left.status) ? 0 : 1;
+    const rightConnected = isWhatsAppConnectedStatus(right.status) ? 0 : 1;
+    if (leftConnected !== rightConnected) return leftConnected - rightConnected;
+
+    const preferredKey = normalizeClinicLookupValue(preferredSector);
+    const leftPreferred = preferredKey && normalizeClinicLookupValue(left.sector) === preferredKey ? 0 : 1;
+    const rightPreferred = preferredKey && normalizeClinicLookupValue(right.sector) === preferredKey ? 0 : 1;
+    if (leftPreferred !== rightPreferred) return leftPreferred - rightPreferred;
+
+    return new Date(right.updated_at || 0).getTime() - new Date(left.updated_at || 0).getTime();
+  });
+
+  const resolveBest = async (rows = []) => {
+    const refreshedRows = [];
+    for (const row of rows.slice(0, 8)) {
+      refreshedRows.push(await refreshWhatsAppInstanceForRouting(row));
+    }
+    const best = rankInstances(refreshedRows)[0] || null;
+    if (cache) cache.set(cacheKey, best);
+    return best;
+  };
+
   if (clinicId) {
     const [rows] = await pool.query(
       `SELECT *
@@ -15538,11 +15662,10 @@ async function findWhatsAppInstanceByClinic({ clinicId = null, clinicName = '', 
         WHERE clinic_id = ?
         ORDER BY CASE WHEN status = 'conectado' THEN 0 ELSE 1 END,
                  CASE WHEN ? IS NOT NULL AND sector = ? THEN 0 ELSE 1 END,
-                 updated_at DESC
-        LIMIT 1`,
+                 updated_at DESC`,
       [clinicId, preferredSector, preferredSector]
     );
-    if (rows[0]) return rows[0];
+    if (rows.length) return resolveBest(rows);
   }
 
   const normalizedClinicName = normalizeClinicLookupValue(clinicName);
@@ -15558,10 +15681,45 @@ async function findWhatsAppInstanceByClinic({ clinicId = null, clinicName = '', 
     [preferredSector, preferredSector]
   );
 
-  return rows.find((row) => normalizeClinicLookupValue(row.clinic_name) === normalizedClinicName) || null;
+  const matchedRows = rows.filter((row) => normalizeClinicLookupValue(row.clinic_name) === normalizedClinicName);
+  return resolveBest(matchedRows);
 }
 
-async function resolveMassCampaignRecipientRoute(recipient, campaignType, user = null, requestedSessionId = '') {
+function isWhatsAppConnectedStatus(status) {
+  const normalized = String(status || '').trim().toLowerCase();
+  return ['conectado', 'connected', 'online', 'open', 'ready', 'authenticated'].includes(normalized)
+    || normalized.includes('conectado')
+    || normalized.includes('connected');
+}
+
+async function refreshWhatsAppInstanceForRouting(instance = null) {
+  if (!instance?.instance_name || !isWhatsAppServiceProviderConfigured()) return instance;
+
+  try {
+    const statusPayload = await whatsappVpsService.getSessionStatus(instance.instance_name);
+    const status = mapWhatsAppServiceStatus(statusPayload, instance.status || 'iniciando');
+    await updateWhatsAppInstanceAndSessionStatus(
+      instance.instance_name,
+      status,
+      statusPayload,
+      'Roteamento WhatsApp CRC'
+    );
+    return {
+      ...instance,
+      status,
+      last_status_payload: statusPayload,
+      last_status_check_at: new Date().toISOString(),
+      status_error: null
+    };
+  } catch (error) {
+    return {
+      ...instance,
+      status_error: whatsappVpsService.friendlyApiError(error) || error.message
+    };
+  }
+}
+
+async function resolveMassCampaignRecipientRoute(recipient, campaignType, user = null, requestedSessionId = '', options = {}) {
   const normalizedRecipient = normalizeMassCampaignRecipientInput(recipient);
   const requestedSession = sanitizeFinancialString(requestedSessionId);
   if (campaignType === 'confirmacao') {
@@ -15581,7 +15739,8 @@ async function resolveMassCampaignRecipientRoute(recipient, campaignType, user =
     const clinicInstance = await findWhatsAppInstanceByClinic({
       clinicId,
       clinicName: normalizedRecipient.clinic_name,
-      preferredSector: 'Confirmacao e Agendamento'
+      preferredSector: 'Confirmacao e Agendamento',
+      routingCache: options.routingCache || null
     });
 
     if (!clinicInstance) {
@@ -15595,7 +15754,7 @@ async function resolveMassCampaignRecipientRoute(recipient, campaignType, user =
       };
     }
 
-    if (String(clinicInstance.status || '').trim().toLowerCase() !== 'conectado') {
+    if (!isWhatsAppConnectedStatus(clinicInstance.status)) {
       return {
         ...normalizedRecipient,
         clinic_id: clinicId || clinicInstance.clinic_id || null,
@@ -15604,7 +15763,9 @@ async function resolveMassCampaignRecipientRoute(recipient, campaignType, user =
         resolved_instance_name: clinicInstance.instance_name,
         resolved_instance_display_name: clinicInstance.display_name || clinicInstance.instance_name,
         resolved_instance_status: clinicInstance.status || '',
-        routing_error: 'O WhatsApp da clínica foi encontrado, mas não está logado no momento.'
+        routing_error: clinicInstance.status_error
+          ? `Não foi possível confirmar a conexão da clínica na VPS: ${clinicInstance.status_error}`
+          : 'O WhatsApp da clínica foi encontrado, mas não está logado no momento.'
       };
     }
 
@@ -15671,9 +15832,10 @@ async function saveWhatsAppCampaignRecipientRecord({
 async function buildMassWhatsAppCampaignPreview({ recipients = [], invalidRows = [], campaignType = 'confirmacao', sessionId = '', user = null } = {}) {
   const previewRows = [];
   const skippedRows = [];
+  const routingCache = new Map();
 
   for (const [index, recipient] of recipients.entries()) {
-    const resolvedRecipient = await resolveMassCampaignRecipientRoute(recipient, campaignType, user, sessionId);
+    const resolvedRecipient = await resolveMassCampaignRecipientRoute(recipient, campaignType, user, sessionId, { routingCache });
     const previewId = `recipient-${index + 1}-${resolvedRecipient.patient_phone || 'sem-telefone'}`;
     if (!resolvedRecipient.patient_name || !resolvedRecipient.patient_phone) {
       skippedRows.push({
@@ -16394,10 +16556,12 @@ async function handleMassWhatsAppCampaignSend(req, res) {
     const batchId = `campaign-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const campaignSource = campaignType === 'nps' ? 'nps_bulk_dispatch' : 'confirmacao_massa';
     const unresolvedRecipients = [];
+    const routingCache = new Map();
     let queuedCount = 0;
+    const queuedRecipientKeys = new Set();
 
     for (const [index, recipient] of recipients.entries()) {
-      const route = await resolveMassCampaignRecipientRoute(recipient, campaignType, req.user, sessionId);
+      const route = await resolveMassCampaignRecipientRoute(recipient, campaignType, req.user, sessionId, { routingCache });
       if (!route.resolved || !route.resolved_instance_name) {
         const routingError = route.routing_error || 'Roteamento da clínica não encontrado.';
         await saveWhatsAppCampaignRecipientRecord({
@@ -16428,6 +16592,27 @@ async function handleMassWhatsAppCampaignSend(req, res) {
         hora_consulta: route.hora_consulta || '',
         link_nps: publicNpsLink
       }).trim();
+      const recipientKey = [
+        instanceName,
+        route.patient_phone,
+        campaignType === 'nps' ? 'nps_bulk_invite' : 'confirmacao_massa',
+        rendered
+      ].join('|');
+      if (queuedRecipientKeys.has(recipientKey)) {
+        await saveWhatsAppCampaignRecipientRecord({
+          batchId,
+          campaignType,
+          templateId,
+          route,
+          status: 'duplicado',
+          routingError: 'Registro duplicado no mesmo lote; envio unico preservado para evitar mensagem repetida.',
+          source: campaignSource,
+          createdBy: getActorName(req.user)
+        });
+        continue;
+      }
+      queuedRecipientKeys.add(recipientKey);
+
       const queued = await queueManagedWhatsAppMessage({
         actor: req.user,
         conversationPayload: {
@@ -25168,7 +25353,10 @@ module.exports = {
     decodeUploadedText,
     extractWhatsAppServiceEventMessage,
     extractWhatsAppServiceStatusEvent,
+    findRecentSentWhatsAppDispatchDuplicate,
+    findWhatsAppInstanceByClinic,
     isPasswordChangeRouteAllowed,
+    isWhatsAppConnectedStatus,
     getStoredUploadFilename,
     normalizeStoredUploadUrl,
     normalizeUploadedOriginalName,
