@@ -15147,6 +15147,12 @@ function normalizeWhatsAppPatientName(value) {
     .slice(0, 180);
 }
 
+function getDefaultMassWhatsAppCampaignMessage(campaignType = 'confirmacao') {
+  return String(campaignType || '').trim().toLowerCase() === 'nps'
+    ? 'Olá, {{nome_paciente}}! Sua opinião é essencial para nós. Em uma escala de 0 a 10, qual nota você dá para sua experiência na unidade {{clinica}}? Se preferir, também pode responder pela pesquisa: {{link_nps}}'
+    : 'Olá, {{nome_paciente}}! Tudo bem? Sou a assistente de confirmação da unidade {{clinica}} no Grupo Sorria. Passando para confirmar seu atendimento. Se estiver tudo certo, responda SIM. Se quiser remarcar, escreva REMARCAR. Se preferir falar com nossa equipe, responda ATENDENTE.';
+}
+
 function parseMassWhatsAppRecipients(rawText = '') {
   const decoded = String(rawText || '').replace(/\r/g, '').trim();
   if (!decoded) return { recipients: [], invalidRows: [] };
@@ -15162,7 +15168,9 @@ function parseMassWhatsAppRecipients(rawText = '') {
 
   contentLines.forEach((line, index) => {
     const columns = line.split(/[;,|\t]+/).map((item) => item.trim());
-    const patientName = columns[0] || '';
+    const firstColumnPhone = normalizeWhatsAppPhone(columns[0] || '');
+    const isPhoneOnlyRow = columns.length === 1 && firstColumnPhone;
+    const patientName = isPhoneOnlyRow ? 'PACIENTE' : columns[0] || '';
     const patientPhone = normalizeWhatsAppPhone(columns[1] || columns[0] || '');
     const thirdColumn = columns[2] || '';
     const fourthColumn = columns[3] || '';
@@ -16124,10 +16132,7 @@ async function handleMassWhatsAppCampaignSend(req, res) {
       ? await pool.query('SELECT * FROM whatsapp_templates WHERE id = ? LIMIT 1', [templateId])
       : [[]];
     const template = templateRows[0] || null;
-    const resolvedMessage = messageText || template?.message_text || '';
-    if (!resolvedMessage) {
-      return res.status(400).json({ error: 'Selecione um template ou informe o texto base da campanha.' });
-    }
+    const resolvedMessage = messageText || template?.message_text || getDefaultMassWhatsAppCampaignMessage(campaignType);
 
     const defaultInstance = campaignType === 'nps'
       ? await getNpsWhatsAppInstance(req.user)

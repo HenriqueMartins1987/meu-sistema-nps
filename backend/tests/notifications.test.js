@@ -199,6 +199,15 @@ test('parseMassWhatsAppRecipients accepts header and optional confirmation field
   assert.equal(parsed.invalidRows.length, 1);
 });
 
+test('parseMassWhatsAppRecipients accepts a phone-only line for simple mass send', () => {
+  const parsed = __testables.parseMassWhatsAppRecipients('62999999999');
+
+  assert.equal(parsed.recipients.length, 1);
+  assert.equal(parsed.recipients[0].patient_name, 'PACIENTE');
+  assert.equal(parsed.recipients[0].patient_phone, '5562999999999');
+  assert.equal(parsed.invalidRows.length, 0);
+});
+
 test('renderGenericWhatsAppTemplate replaces campaign variables safely', () => {
   const rendered = __testables.renderGenericWhatsAppTemplate(
     'Ola, {{nome_paciente}}. Sua consulta na {{clinica}} e {{data_consulta}} as {{hora_consulta}}.',

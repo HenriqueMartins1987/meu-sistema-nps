@@ -36,6 +36,11 @@ const sectionDescriptions = {
   settings: 'Configuracao tecnica do servico, limites de envio e diagnostico da integracao.'
 };
 
+const DEFAULT_CAMPAIGN_MESSAGES = {
+  confirmacao: 'Ola, {{nome_paciente}}! Tudo bem? Sou a assistente de confirmacao da unidade {{clinica}} no Grupo Sorria. Passando para confirmar seu atendimento. Se estiver tudo certo, responda SIM. Se quiser remarcar, escreva REMARCAR. Se preferir falar com nossa equipe, responda ATENDENTE.',
+  nps: 'Ola, {{nome_paciente}}! Sua opiniao e essencial para nos. Em uma escala de 0 a 10, qual nota voce da para sua experiencia na unidade {{clinica}}? Se preferir, tambem pode responder pela pesquisa: {{link_nps}}'
+};
+
 const sectors = ['CRC', 'SAC', 'Comercial', 'NPS', 'Reclamacoes', 'Pos-venda', 'Dentistas Parceiros', 'Confirmacao e Agendamento'];
 const attendanceStatuses = ['Novo', 'Em atendimento', 'Aguardando paciente', 'Agendado', 'Compareceu', 'Nao compareceu', 'Ausente', 'Retornar depois', 'Encerrado', 'Reclamacao', 'NPS', 'Urgente'];
 const operatorStatuses = [
@@ -211,8 +216,8 @@ function emptyCampaignDraft() {
     campaign_clinic_id: '',
     campaign_clinic_name: '',
     template_id: '',
-    message_text: '',
-    recipients: 'nome_paciente;telefone;clinica;data_consulta;hora_consulta\nPaciente Exemplo;5562999999999;Garavelo;26/05/2026;14:30'
+    message_text: DEFAULT_CAMPAIGN_MESSAGES.confirmacao,
+    recipients: 'nome_paciente;telefone;data_consulta;hora_consulta\nPaciente Exemplo;5562999999999;26/05/2026;14:30'
   };
 }
 
@@ -634,10 +639,27 @@ function WhatsAppManagement() {
   useEffect(() => {
     setCampaignDraft((current) => {
       const nextSession = current.campaign_type === 'nps' ? 'nps' : 'confirmacao-agendamento';
-      if (current.session_id === nextSession) return current;
-      return { ...current, session_id: nextSession };
+      const defaultMessage = DEFAULT_CAMPAIGN_MESSAGES[current.campaign_type] || DEFAULT_CAMPAIGN_MESSAGES.confirmacao;
+      const shouldApplyDefaultMessage = !String(current.message_text || '').trim()
+        || Object.values(DEFAULT_CAMPAIGN_MESSAGES).includes(current.message_text);
+      if (current.session_id === nextSession && !shouldApplyDefaultMessage) return current;
+      return {
+        ...current,
+        session_id: nextSession,
+        message_text: shouldApplyDefaultMessage ? defaultMessage : current.message_text
+      };
     });
   }, [campaignDraft.campaign_type]);
+
+  useEffect(() => {
+    if (clinics.length !== 1 || campaignDraft.campaign_clinic_id) return;
+    const [clinic] = clinics;
+    setCampaignDraft((current) => ({
+      ...current,
+      campaign_clinic_id: String(clinic.id),
+      campaign_clinic_name: clinic.name || ''
+    }));
+  }, [campaignDraft.campaign_clinic_id, clinics]);
 
   const runAction = async (key, action, successMessage, fallbackMessage) => {
     setSavingKey(key);
@@ -1984,7 +2006,12 @@ function WhatsAppManagement() {
             <label className="campaign-type-field">Tipo
               <select className="field" value={campaignDraft.campaign_type} onChange={(event) => {
                 const nextType = event.target.value;
-                setCampaignDraft((current) => ({ ...current, campaign_type: nextType, template_id: '' }));
+                setCampaignDraft((current) => ({
+                  ...current,
+                  campaign_type: nextType,
+                  template_id: '',
+                  message_text: DEFAULT_CAMPAIGN_MESSAGES[nextType] || DEFAULT_CAMPAIGN_MESSAGES.confirmacao
+                }));
                 resetCampaignPreview();
                 setCampaignFile(null);
               }}>
