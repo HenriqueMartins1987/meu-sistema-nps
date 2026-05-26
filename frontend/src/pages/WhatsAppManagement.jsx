@@ -158,6 +158,19 @@ function getErrorMessage(error, fallback) {
     || fallback;
 }
 
+function campaignRowsContainClinic(rawText = '') {
+  return String(rawText || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .some((line, index) => {
+      const columns = line.split(/[;,|\t]+/).map((item) => item.trim()).filter(Boolean);
+      if (!columns.length) return false;
+      if (index === 0 && columns.some((column) => /clinica|clinic|unidade/i.test(column))) return true;
+      return columns.length >= 3 && !/^\d{1,2}[/-]\d{1,2}([/-]\d{2,4})?$/.test(columns[2]) && !/^\d{4}-\d{2}-\d{2}$/.test(columns[2]);
+    });
+}
+
 function getRealtimeSocketUrl() {
   const base = String(apiBaseUrl || '').trim();
   if (/^https?:\/\//i.test(base)) {
@@ -1185,10 +1198,22 @@ function WhatsAppManagement() {
     if (campaignPreview.length && !selectedRecipients.length) {
       throw new Error('Selecione ao menos um paciente da prévia da planilha para enfileirar a campanha.');
     }
+    const readySelectedRecipients = selectedRecipients.filter((item) => item.resolved);
+    if (campaignPreview.length && !readySelectedRecipients.length) {
+      const firstBlocked = selectedRecipients.find((item) => !item.resolved);
+      throw new Error(firstBlocked?.routing_error || 'Nenhum telefone selecionado esta apto para envio. Selecione a clinica de envio e confira se o WhatsApp da clinica esta conectado.');
+    }
+    if (
+      payload.campaign_type === 'confirmacao'
+      && !payload.campaign_clinic_id
+      && !campaignRowsContainClinic(payload.recipients)
+    ) {
+      throw new Error('Selecione a clinica de envio antes de disparar uma lista que possui apenas telefone.');
+    }
     const response = selectedRecipients.length
       ? await api.post('/api/whatsapp/campaigns/mass-send', {
           ...payload,
-          selected_recipients: selectedRecipients
+          selected_recipients: readySelectedRecipients
         })
       : campaignFile
         ? await (() => {

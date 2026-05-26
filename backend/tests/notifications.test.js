@@ -208,6 +208,19 @@ test('parseMassWhatsAppRecipients accepts a phone-only line for simple mass send
   assert.equal(parsed.invalidRows.length, 0);
 });
 
+test('buildMassCampaignBlockedMessage explains zero-queued confirmation campaigns', () => {
+  const message = __testables.buildMassCampaignBlockedMessage({
+    campaignType: 'confirmacao',
+    unresolvedRecipients: [{ patient_phone: '5562999999999', error: 'O WhatsApp da clínica foi encontrado, mas não está logado no momento.' }],
+    invalidRows: [],
+    selectedClinic: { clinic_name: 'Garavelo' }
+  });
+
+  assert.match(message, /Nenhuma mensagem foi enfileirada/);
+  assert.match(message, /Garavelo/);
+  assert.match(message, /não está logado/i);
+});
+
 test('renderGenericWhatsAppTemplate replaces campaign variables safely', () => {
   const rendered = __testables.renderGenericWhatsAppTemplate(
     'Ola, {{nome_paciente}}. Sua consulta na {{clinica}} e {{data_consulta}} as {{hora_consulta}}.',

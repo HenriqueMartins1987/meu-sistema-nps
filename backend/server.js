@@ -15505,6 +15505,28 @@ function buildProgressiveDispatchDelaySeconds(index, antiBan = null) {
   return total;
 }
 
+function buildMassCampaignBlockedMessage({
+  campaignType = 'confirmacao',
+  recipients = [],
+  unresolvedRecipients = [],
+  invalidRows = [],
+  selectedClinic = null
+} = {}) {
+  const blockedCount = unresolvedRecipients.length;
+  const invalidCount = invalidRows.length;
+  const firstBlocked = unresolvedRecipients[0]?.error || '';
+  const base = `Nenhuma mensagem foi enfileirada. ${blockedCount} paciente(s) bloqueado(s) e ${invalidCount} linha(s) invalida(s).`;
+  if (campaignType === 'confirmacao') {
+    const clinicHint = selectedClinic?.clinic_name
+      ? `Clinica selecionada: ${selectedClinic.clinic_name}.`
+      : 'Selecione a clinica de envio quando a lista tiver apenas telefone.';
+    const routeHint = firstBlocked || 'Verifique se a clinica possui WhatsApp vinculado e conectado.';
+    return `${base} ${clinicHint} ${routeHint}`;
+  }
+  if (!recipients.length) return 'Nenhum paciente valido foi encontrado para o disparo em massa.';
+  return firstBlocked ? `${base} ${firstBlocked}` : base;
+}
+
 async function findRecentDuplicateWhatsAppMessage({
   instanceName,
   patientPhone,
@@ -16241,9 +16263,29 @@ async function handleMassWhatsAppCampaignSend(req, res) {
       }
     }
 
+    if (queuedCount === 0) {
+      return res.status(400).json({
+        success: false,
+        error: buildMassCampaignBlockedMessage({
+          campaignType,
+          recipients,
+          unresolvedRecipients,
+          invalidRows,
+          selectedClinic
+        }),
+        queued: 0,
+        invalid: invalidRows.length + unresolvedRecipients.length,
+        invalidRows,
+        unresolvedRecipients,
+        selectedClinic,
+        batchId,
+        sessionId: campaignType === 'nps' ? (sessionId || defaultInstance?.instance_name || WHATSAPP_NPS_INSTANCE_NAME) : 'automatico-por-clinica'
+      });
+    }
+
     return res.json({
       success: true,
-      message: `Campanha ${campaignType} enfileirada para ${queuedCount} paciente(s).`,
+      message: `Campanha ${campaignType} enfileirada para ${queuedCount} paciente(s).${unresolvedRecipients.length ? ` ${unresolvedRecipients.length} paciente(s) ficaram bloqueado(s) por clinica/sessao.` : ''}`,
       queued: queuedCount,
       invalid: invalidRows.length + unresolvedRecipients.length,
       invalidRows,
@@ -24914,6 +24956,7 @@ module.exports = {
     dispatchDailyCoordinatorDeliveryReport,
     dispatchWeeklyAdminComplaintReport,
     processWhatsAppDispatchQueue,
+    buildMassCampaignBlockedMessage,
     parseMassWhatsAppRecipientsFromWorksheetRows,
     parseBulkNpsWorksheetRows,
     fillPartnerVideoTemplate,
