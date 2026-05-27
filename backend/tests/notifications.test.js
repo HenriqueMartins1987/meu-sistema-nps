@@ -511,6 +511,21 @@ test('partner video reminder is ASCII-safe for whatsapp-service', () => {
   assert.doesNotMatch(message, /[^\x09\x0A\x0D\x20-\x7E]/);
 });
 
+test('partner video clinic coverage tolerates prefixes without crossing numbered units', () => {
+  assert.equal(
+    __testables.partnerVideoContactCoversClinic({ clinic_name: 'Grupo Sorria Garavelo' }, { name: 'Garavelo' }),
+    true
+  );
+  assert.equal(
+    __testables.partnerVideoContactCoversClinic({ clinic_name: 'Unidade Goiania 1' }, { name: 'Goiania I' }),
+    true
+  );
+  assert.equal(
+    __testables.partnerVideoContactCoversClinic({ clinic_name: 'Anapolis' }, { name: 'Anapolis 1' }),
+    false
+  );
+});
+
 test('daily coordinator delivery report includes phone, units and confirmed delivery status', () => {
   const now = new Date('2026-05-20T12:00:00.000Z');
   const period = __testables.buildDailyCoordinatorDeliveryReportPeriod(now);

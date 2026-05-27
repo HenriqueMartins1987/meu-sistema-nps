@@ -411,6 +411,7 @@ function WhatsAppManagement() {
   const selectedConversationIdRef = useRef('');
   const instanceEditorRef = useRef(null);
   const instancePhoneInputRef = useRef(null);
+  const partnerVideoEditorRef = useRef(null);
   const actionInFlightRef = useRef(new Set());
 
   const selectedQueueConversation = useMemo(
@@ -910,6 +911,22 @@ function WhatsAppManagement() {
   const cancelPartnerVideoContactEdit = () => {
     setEditingPartnerContactId('');
     setPartnerContactDraft(emptyPartnerVideoContact());
+  };
+
+  const startPartnerVideoContactForClinic = (clinicName) => {
+    const normalizedClinic = String(clinicName || '').trim();
+    setConfirmationTab('partners');
+    setEditingPartnerContactId('');
+    setPartnerContactDraft({
+      ...emptyPartnerVideoContact(),
+      clinic_name: normalizedClinic,
+      specialty: 'Parceiro clinico'
+    });
+    setPartnerVideoFilters((current) => ({ ...current, clinic: normalizedClinic, partner: '', status: '', phone: '', date: '' }));
+    setSuccess(`Cadastro de parceiro aberto para ${normalizedClinic}.`);
+    window.setTimeout(() => {
+      partnerVideoEditorRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 80);
   };
 
   const savePartnerVideoContact = () => {
@@ -2919,7 +2936,7 @@ function WhatsAppManagement() {
       ['Pendentes', pendingControls.length || summary.pendingToday || 0, `${pendingPercent}% aguardando acao`, pendingControls.length ? 'warning' : 'success'],
       ['Falhas', failedControls.length || summary.failuresToday || 0, `${failurePercent}% com erro`, failedControls.length ? 'danger' : 'success'],
       ['Sem telefone', summary.withoutPhone || 0, `${withoutPhonePercent}% dos ativos`, summary.withoutPhone ? 'warning' : 'success'],
-      ['Sem unidade vinculada', summary.unitsWithoutPartner || 0, unitsWithoutPartnerNames.slice(0, 2).join(', ') || 'Cobertura completa', summary.unitsWithoutPartner ? 'warning' : 'success'],
+      ['Unidades sem parceiro ativo', summary.unitsWithoutPartner || 0, unitsWithoutPartnerNames.slice(0, 2).join(', ') || 'Cobertura completa', summary.unitsWithoutPartner ? 'warning' : 'success'],
       ['Ultimo envio', lastSend ? formatDateTime(lastSend.message_sent_at) : '-', lastSend?.partner_name || 'Sem envio hoje', lastSend ? 'success' : 'neutral'],
       ['Proximo envio', allowedTimeList.join(' / ') || settings.standardTime || '08:00', weekdayDescription, settings.automationEnabled ? 'success' : 'warning']
     ];
@@ -2937,6 +2954,7 @@ function WhatsAppManagement() {
       ['logs', 'Logs'],
       ['settings', 'Configuracoes']
     ];
+    const missingUnitCount = unitsWithoutPartnerNames.length;
 
     const renderFilters = () => (
       <div className="partner-video-filter-grid">
@@ -3103,11 +3121,11 @@ function WhatsAppManagement() {
 
         {confirmationTab === 'partners' && (
           <section className="partner-video-partners-layout">
-            <article className="whatsapp-panel partner-video-editor-card">
+            <article className="whatsapp-panel partner-video-editor-card" ref={partnerVideoEditorRef}>
               <div className="whatsapp-panel-head">
                 <div>
                   <h2>{editingPartnerContactId ? 'Editar parceiro' : 'Novo parceiro'}</h2>
-                  <p className="whatsapp-panel-note">Atualize unidade, telefone, funcao e regra de cobranca automatica.</p>
+                  <p className="whatsapp-panel-note">Atualize unidade, telefone, funcao e regra de cobranca automatica. Ao clicar em uma unidade sem parceiro, este formulario ja abre preenchido.</p>
                 </div>
                 {editingPartnerContactId && <span className="whatsapp-editing-pill">Editando</span>}
               </div>
@@ -3317,16 +3335,24 @@ function WhatsAppManagement() {
           </section>
         )}
 
-        {Boolean(unitsWithoutPartnerNames.length) && (
+        {Boolean(missingUnitCount) && (
           <section className="whatsapp-panel partner-video-missing-section">
-            <h2>Unidades sem parceiro ativo</h2>
+            <div className="partner-video-panel-heading">
+              <div>
+                <p className="eyebrow">Cobertura cadastral</p>
+                <h2>Unidades sem parceiro ativo</h2>
+                <p className="whatsapp-panel-note">Clique em uma unidade para abrir o cadastro de parceiro ja vinculado a ela.</p>
+              </div>
+              <span className="whatsapp-badge warning">{missingUnitCount}</span>
+            </div>
             <div className="partner-video-missing-list">
               {unitsWithoutPartnerNames.map((name) => (
-                <article key={name} className="partner-video-missing-card">
+                <button key={name} type="button" className="partner-video-missing-card" onClick={() => startPartnerVideoContactForClinic(name)}>
                   <span>Sem parceiro ativo</span>
                   <strong>{name}</strong>
                   <p>Cadastre parceiro, telefone e rotina para incluir a unidade nos disparos.</p>
-                </article>
+                  <b>Adicionar parceiro</b>
+                </button>
               ))}
             </div>
           </section>

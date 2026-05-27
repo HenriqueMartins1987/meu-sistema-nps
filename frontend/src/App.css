@@ -11728,11 +11728,25 @@ a {
 .partner-video-missing-card {
   display: grid;
   gap: 6px;
+  width: 100%;
   padding: 13px;
   border: 1px solid rgba(212, 167, 100, 0.36);
   border-left: 4px solid var(--gold);
   border-radius: 8px;
   background: rgba(255, 250, 244, 0.94);
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.partner-video-missing-card:hover,
+.partner-video-missing-card:focus-visible {
+  border-color: rgba(181, 132, 61, 0.62);
+  background: linear-gradient(180deg, rgba(255, 252, 247, 0.99), rgba(246, 239, 226, 0.94));
+  box-shadow: 0 18px 34px rgba(120, 78, 30, 0.12);
+  outline: none;
+  transform: translateY(-2px);
 }
 
 .partner-video-missing-card span {
@@ -11752,6 +11766,21 @@ a {
   font-size: 12px;
   font-weight: 760;
   line-height: 1.4;
+}
+
+.partner-video-missing-card b {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 30px;
+  margin-top: 4px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(181, 132, 61, 0.14);
+  color: var(--brand-strong);
+  font-size: 11px;
+  font-weight: 950;
+  text-transform: uppercase;
 }
 
 .partner-video-noncompliance-panel {
@@ -11880,6 +11909,11 @@ a {
   box-shadow: 0 16px 32px rgba(12, 12, 16, 0.05);
 }
 
+.whatsapp-confirmation-page {
+  display: grid;
+  gap: 16px;
+}
+
 .partner-video-subtabs button {
   min-height: 38px;
   padding: 8px 14px;
@@ -11899,14 +11933,28 @@ a {
 }
 
 .partner-video-kpi-grid {
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.partner-video-kpi-grid .whatsapp-kpi {
+  min-height: 118px;
+  padding: 15px 16px 14px 18px;
+  border-radius: 18px;
+  background:
+    radial-gradient(circle at 92% 12%, rgba(181, 132, 61, 0.12), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(250, 247, 241, 0.94));
 }
 
 .partner-video-actionbar {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(240px, 0.82fr) minmax(0, 1.18fr);
   align-items: center;
   justify-content: space-between;
   gap: 18px;
+  border-top: 4px solid rgba(181, 132, 61, 0.5);
+  background:
+    linear-gradient(135deg, rgba(255, 255, 255, 0.99), rgba(248, 244, 236, 0.94)),
+    radial-gradient(circle at 100% 0, rgba(31, 122, 140, 0.1), transparent 34%);
 }
 
 .partner-video-actionbar > div:first-child {
@@ -11918,9 +11966,15 @@ a {
   justify-content: flex-end;
 }
 
+.partner-video-control-panel {
+  border-left: 4px solid rgba(31, 122, 140, 0.42);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(247, 250, 249, 0.94));
+}
+
 .partner-video-filter-grid {
   display: grid;
-  grid-template-columns: minmax(170px, 1fr) minmax(170px, 1fr) minmax(150px, 0.8fr) minmax(140px, 0.7fr) minmax(150px, 0.8fr) auto;
+  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
   gap: 10px;
   align-items: end;
   padding: 12px;
@@ -11935,6 +11989,10 @@ a {
   color: var(--muted);
   font-size: 12px;
   font-weight: 900;
+}
+
+.partner-video-filter-grid > button {
+  min-height: 42px;
 }
 
 .partner-video-dashboard-grid {
@@ -12001,14 +12059,16 @@ a {
 
 .partner-video-partners-layout {
   display: grid;
-  grid-template-columns: minmax(300px, 0.78fr) minmax(0, 1.6fr);
-  gap: 14px;
+  grid-template-columns: minmax(340px, 0.72fr) minmax(0, 1.72fr);
+  gap: 16px;
   align-items: start;
 }
 
 .partner-video-editor-card {
   position: sticky;
   top: 88px;
+  border-top: 4px solid rgba(181, 132, 61, 0.52);
+  scroll-margin-top: 108px;
 }
 
 .partner-video-table-card {
@@ -12017,10 +12077,11 @@ a {
 
 .partner-video-table-wrap {
   max-height: 640px;
+  background: rgba(255, 255, 255, 0.76);
 }
 
 .partner-video-table {
-  min-width: 1120px;
+  min-width: 1040px;
 }
 
 .partner-video-row-actions {

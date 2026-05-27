@@ -2047,6 +2047,21 @@ function normalizeClinicLookupValue(value) {
     .trim();
 }
 
+function normalizeClinicLookupRomanTokens(value) {
+  const romanMap = {
+    i: '1',
+    ii: '2',
+    iii: '3',
+    iv: '4',
+    v: '5'
+  };
+  return String(value || '')
+    .split(/\s+/)
+    .map((token) => romanMap[token] || token)
+    .join(' ')
+    .trim();
+}
+
 function buildClinicLookupKey(clinic) {
   return [
     normalizeClinicLookupValue(clinic?.name),
@@ -12727,6 +12742,70 @@ async function assertPartnerVideoPhoneAvailable(phone, ignoreId = null) {
   }
 }
 
+const partnerVideoClinicNoiseWords = new Set([
+  'grupo',
+  'sorria',
+  'clinica',
+  'clnica',
+  'clinic',
+  'unidade',
+  'crc',
+  'nps',
+  'whatsapp',
+  'whats',
+  'app',
+  'de',
+  'da',
+  'do',
+  'das',
+  'dos',
+  'a',
+  'o'
+]);
+
+function buildPartnerVideoClinicAliases(value) {
+  const normalized = normalizeClinicLookupValue(value);
+  if (!normalized) return [];
+  const compact = normalized
+    .split(/\s+/)
+    .filter((token) => !partnerVideoClinicNoiseWords.has(token))
+    .join(' ')
+    .trim();
+  return Array.from(new Set([
+    normalized,
+    compact,
+    normalizeClinicLookupRomanTokens(normalized),
+    normalizeClinicLookupRomanTokens(compact)
+  ].filter(Boolean)));
+}
+
+function hasPartnerVideoClinicSequence(value) {
+  return /\b(?:\d+|i|ii|iii|iv|v)\b/.test(String(value || ''));
+}
+
+function partnerVideoClinicAliasMatches(contactAlias, clinicAlias) {
+  if (!contactAlias || !clinicAlias) return false;
+  if (contactAlias === clinicAlias) return true;
+
+  const contactHasSequence = hasPartnerVideoClinicSequence(contactAlias);
+  const clinicHasSequence = hasPartnerVideoClinicSequence(clinicAlias);
+  if (contactHasSequence || clinicHasSequence) {
+    return contactAlias.startsWith(`${clinicAlias} `) || contactAlias.endsWith(` ${clinicAlias}`);
+  }
+
+  return contactAlias.includes(` ${clinicAlias} `)
+    || contactAlias.startsWith(`${clinicAlias} `)
+    || contactAlias.endsWith(` ${clinicAlias}`);
+}
+
+function partnerVideoContactCoversClinic(contact = {}, clinic = {}) {
+  const contactAliases = buildPartnerVideoClinicAliases(contact.clinic_name);
+  const clinicAliases = buildPartnerVideoClinicAliases(clinic.name);
+  return clinicAliases.some((clinicAlias) => (
+    contactAliases.some((contactAlias) => partnerVideoClinicAliasMatches(contactAlias, clinicAlias))
+  ));
+}
+
 async function ensurePartnerVideoDailyControl(contact, dateKey) {
   await pool.query(
     `INSERT INTO partner_video_daily_controls
@@ -13002,7 +13081,7 @@ async function getPartnerVideoDashboardData() {
     'SELECT * FROM partner_video_contacts ORDER BY active DESC, clinic_name ASC, partner_name ASC'
   );
   const [clinicRows] = await pool.query(
-    'SELECT name FROM clinics WHERE active = 1 ORDER BY name ASC'
+    'SELECT id, name, city, state, catalog_code FROM clinics WHERE active = 1 ORDER BY name ASC'
   );
   const [logs] = await pool.query(
     `SELECT *
@@ -13014,14 +13093,9 @@ async function getPartnerVideoDashboardData() {
     'SELECT * FROM whatsapp_service_sessions WHERE session_id = ? LIMIT 1',
     [WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME]
   );
-  const activePartnerClinicKeys = new Set(
-    contacts
-      .filter((item) => Number(item.active))
-      .map((item) => normalizeClinicLookupValue(item.clinic_name))
-      .filter(Boolean)
-  );
+  const activePartnerContacts = contacts.filter((item) => Number(item.active));
   const unitsWithoutPartner = clinicRows
-    .filter((clinic) => !activePartnerClinicKeys.has(normalizeClinicLookupValue(clinic.name)))
+    .filter((clinic) => !activePartnerContacts.some((contact) => partnerVideoContactCoversClinic(contact, clinic)))
     .map((clinic) => clinic.name);
   const pendingControls = controls.filter((item) => !Number(item.video_received) && !String(item.status || '').includes('finalizado'));
   const activeContacts = parseSqlCount(summary, 'activeContacts');
@@ -26675,6 +26749,7 @@ module.exports = {
     parseMassWhatsAppRecipientsFromWorksheetRows,
     parseBulkNpsWorksheetRows,
     fillPartnerVideoTemplate,
+    partnerVideoContactCoversClinic,
     normalizePartnerVideoMessageText,
     parseMassWhatsAppRecipients,
     runScheduledDailyCoordinatorDemandReminders,
