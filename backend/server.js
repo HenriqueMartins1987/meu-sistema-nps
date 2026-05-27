@@ -4475,6 +4475,58 @@ async function backfillComplaintAssignments() {
   }));
 }
 
+async function backfillComplaintEscalationDeadlines() {
+  const [coordinatorResult] = await pool.query(
+    `UPDATE complaints
+        SET coordinator_assigned_at = COALESCE(coordinator_assigned_at, forwarded_at, first_attendance_at, created_at),
+            coordinator_due_date = COALESCE(
+              coordinator_due_date,
+              DATE_ADD(COALESCE(coordinator_assigned_at, forwarded_at, first_attendance_at, created_at), INTERVAL ? DAY)
+            ),
+            current_escalation_level = COALESCE(NULLIF(current_escalation_level, ''), 'coordinator'),
+            status = CASE
+              WHEN LOWER(TRIM(COALESCE(status, 'aberta'))) IN ('aberta', 'em_andamento', 'em_analise_sac')
+              THEN 'enviada_coordenador'
+              ELSE status
+            END
+      WHERE deleted_at IS NULL
+        AND LOWER(TRIM(COALESCE(status, 'aberta'))) NOT IN ('resolvida', 'cancelada', 'finalizada', 'finalizado', 'fechada', 'fechado', 'encerrada', 'encerrado')
+        AND coordinator_treated_at IS NULL
+        AND (
+          current_escalation_level = 'coordinator'
+          OR forwarded_to_role = 'coordinator'
+          OR assigned_responsible_role = 'coordinator'
+          OR status IN ('enviada_coordenador', 'em_tratativa_coordenador', 'vencida_coordenador')
+        )`,
+    [coordinatorEscalationSlaDays]
+  );
+
+  const [managerResult] = await pool.query(
+    `UPDATE complaints
+        SET manager_assigned_at = COALESCE(manager_assigned_at, forwarded_at, created_at),
+            manager_due_date = COALESCE(
+              manager_due_date,
+              DATE_ADD(COALESCE(manager_assigned_at, forwarded_at, created_at), INTERVAL ? DAY)
+            ),
+            current_escalation_level = COALESCE(NULLIF(current_escalation_level, ''), 'manager')
+      WHERE deleted_at IS NULL
+        AND LOWER(TRIM(COALESCE(status, 'aberta'))) NOT IN ('resolvida', 'cancelada', 'finalizada', 'finalizado', 'fechada', 'fechado', 'encerrada', 'encerrado')
+        AND manager_treated_at IS NULL
+        AND (
+          current_escalation_level = 'manager'
+          OR forwarded_to_role = 'manager'
+          OR assigned_responsible_role = 'manager'
+          OR status IN ('escalonada_gerente', 'em_tratativa_gerente', 'vencida_gerente')
+        )`,
+    [managerEscalationSlaDays]
+  );
+
+  return {
+    coordinator: coordinatorResult.affectedRows || 0,
+    manager: managerResult.affectedRows || 0
+  };
+}
+
 async function repairPendingCoordinatorAssignments() {
   const [rows] = await pool.query(
     `SELECT id, protocol, clinic_id, status, first_attendance_at, forwarded_to_role, forwarded_to_label,
@@ -8698,6 +8750,218 @@ async function notifyComplaintEscalationRecipients(complaint, recipients, eventT
       });
     }
   }));
+}
+
+async function runComplaintEscalationSweep(now = new Date()) {
+  const nowSql = toMysqlDateTime(now);
+  const systemUser = { name: 'Sistema de Escalonamento', role: 'system' };
+  const result = {
+    coordinatorToManager: 0,
+    managerToAdmin: 0
+  };
+
+  const [coordinatorRows] = await pool.query(
+    `SELECT
+       c.id,
+       c.protocol,
+       c.clinic_id,
+       c.status,
+       c.patient_name,
+       c.coordinator_assigned_at,
+       c.coordinator_due_date,
+       COALESCE(c.clinic_snapshot_name, cl.name) AS clinic_name
+     FROM complaints c
+     LEFT JOIN clinics cl ON cl.id = c.clinic_id
+     WHERE c.deleted_at IS NULL
+       AND ${buildOpenComplaintStatusWhere('c')}
+       AND c.coordinator_due_date IS NOT NULL
+       AND c.coordinator_due_date < ?
+       AND c.coordinator_treated_at IS NULL
+       AND (
+         c.current_escalation_level = 'coordinator'
+         OR c.forwarded_to_role = 'coordinator'
+         OR c.status IN ('enviada_coordenador', 'em_tratativa_coordenador', 'vencida_coordenador')
+       )`,
+    [nowSql]
+  );
+
+  for (const complaint of coordinatorRows) {
+    const assignment = await resolveComplaintResponsibleAssignment(complaint.clinic_id, 'manager');
+    const dueDateSql = toMysqlDateTime(addCalendarDays(now, managerEscalationSlaDays));
+    const previousStatus = complaint.status || 'aberta';
+    const [updateResult] = await pool.query(
+      `UPDATE complaints c
+          SET status = 'escalonada_gerente',
+              forwarded_to_role = 'manager',
+              forwarded_to_label = ?,
+              forwarded_at = ?,
+              forwarded_by = ?,
+              assigned_responsible_user_id = ?,
+              assigned_responsible_name = ?,
+              assigned_responsible_role = 'manager',
+              manager_id = COALESCE(manager_id, ?),
+              manager_name = COALESCE(NULLIF(manager_name, ''), ?),
+              manager_assigned_at = COALESCE(manager_assigned_at, ?),
+              manager_due_date = COALESCE(manager_due_date, ?),
+              manager_treated_at = NULL,
+              current_escalation_level = 'manager',
+              returned_to_sac_at = NULL,
+              sac_audit_status = NULL,
+              sac_audit_comment = NULL,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE c.id = ?
+          AND c.deleted_at IS NULL
+          AND ${buildOpenComplaintStatusWhere('c')}
+          AND c.coordinator_due_date IS NOT NULL
+          AND c.coordinator_due_date < ?
+          AND c.coordinator_treated_at IS NULL
+          AND (
+            c.current_escalation_level = 'coordinator'
+            OR c.forwarded_to_role = 'coordinator'
+            OR c.status IN ('enviada_coordenador', 'em_tratativa_coordenador', 'vencida_coordenador')
+          )`,
+      [
+        assignment.label || assignment.name || 'Gerente da unidade',
+        nowSql,
+        systemUser.name,
+        assignment.userId || null,
+        assignment.name || assignment.label || 'Gerente da unidade',
+        assignment.userId || null,
+        assignment.name || assignment.label || 'Gerente da unidade',
+        nowSql,
+        dueDateSql,
+        complaint.id,
+        nowSql
+      ]
+    );
+
+    if (!updateResult.affectedRows) continue;
+
+    result.coordinatorToManager += 1;
+    await insertComplaintLog(
+      complaint.id,
+      'auto_escalated_manager',
+      `Prazo do Coordenador vencido. Protocolo escalonado automaticamente para ${assignment.name || assignment.label || 'Gerente da unidade'}.`,
+      systemUser,
+      {
+        previousStatus,
+        newStatus: 'escalonada_gerente',
+        reason: `Coordenador sem tratativa em ${coordinatorEscalationSlaDays} dias corridos.`,
+        stageDurationHours: getComplaintStageDurationHours(complaint, 'coordinator_assigned_at', now)
+      }
+    );
+
+    await notifyComplaintAssigned(complaint.id, complaint.protocol).catch((error) => {
+      console.warn('Nao foi possivel notificar gerente do escalonamento automatico:', error.message);
+    });
+    await dispatchComplaintAssignedNotifications(complaint.id, complaint.protocol).catch((error) => {
+      console.warn('Nao foi possivel disparar notificacoes de escalonamento automatico ao gerente:', error.message);
+    });
+  }
+
+  const [managerRows] = await pool.query(
+    `SELECT
+       c.id,
+       c.protocol,
+       c.clinic_id,
+       c.status,
+       c.patient_name,
+       c.manager_assigned_at,
+       c.manager_due_date,
+       COALESCE(c.clinic_snapshot_name, cl.name) AS clinic_name
+     FROM complaints c
+     LEFT JOIN clinics cl ON cl.id = c.clinic_id
+     WHERE c.deleted_at IS NULL
+       AND ${buildOpenComplaintStatusWhere('c')}
+       AND c.manager_due_date IS NOT NULL
+       AND c.manager_due_date < ?
+       AND c.manager_treated_at IS NULL
+       AND c.admin_escalated_at IS NULL
+       AND (
+         c.current_escalation_level = 'manager'
+         OR c.forwarded_to_role = 'manager'
+         OR c.status IN ('escalonada_gerente', 'em_tratativa_gerente', 'vencida_gerente')
+       )`,
+    [nowSql]
+  );
+
+  let adminRecipients = null;
+
+  for (const complaint of managerRows) {
+    const previousStatus = complaint.status || 'aberta';
+    const [updateResult] = await pool.query(
+      `UPDATE complaints c
+          SET status = 'escalonada_administracao',
+              forwarded_to_role = 'admin',
+              forwarded_to_label = 'Administração',
+              forwarded_at = ?,
+              forwarded_by = ?,
+              assigned_responsible_user_id = NULL,
+              assigned_responsible_name = 'Administração',
+              assigned_responsible_role = 'admin',
+              admin_escalated_at = COALESCE(admin_escalated_at, ?),
+              current_escalation_level = 'admin',
+              returned_to_sac_at = NULL,
+              sac_audit_status = NULL,
+              sac_audit_comment = NULL,
+              updated_at = CURRENT_TIMESTAMP
+        WHERE c.id = ?
+          AND c.deleted_at IS NULL
+          AND ${buildOpenComplaintStatusWhere('c')}
+          AND c.manager_due_date IS NOT NULL
+          AND c.manager_due_date < ?
+          AND c.manager_treated_at IS NULL
+          AND c.admin_escalated_at IS NULL
+          AND (
+            c.current_escalation_level = 'manager'
+            OR c.forwarded_to_role = 'manager'
+            OR c.status IN ('escalonada_gerente', 'em_tratativa_gerente', 'vencida_gerente')
+          )`,
+      [
+        nowSql,
+        systemUser.name,
+        nowSql,
+        complaint.id,
+        nowSql
+      ]
+    );
+
+    if (!updateResult.affectedRows) continue;
+
+    result.managerToAdmin += 1;
+    await insertComplaintLog(
+      complaint.id,
+      'auto_escalated_admin',
+      'Prazo do Gerente vencido. Protocolo escalonado automaticamente para a Administração.',
+      systemUser,
+      {
+        previousStatus,
+        newStatus: 'escalonada_administracao',
+        reason: `Gerente sem tratativa em ${managerEscalationSlaDays} dias corridos.`,
+        stageDurationHours: getComplaintStageDurationHours(complaint, 'manager_assigned_at', now)
+      }
+    );
+
+    if (!adminRecipients) {
+      adminRecipients = await getActiveComplaintAdministrators();
+    }
+
+    await notifyComplaintEscalationRecipients(
+      { ...complaint, status: 'escalonada_administracao', current_escalation_level: 'admin' },
+      adminRecipients,
+      'complaint_escalated_admin',
+      `Protocolo ${complaint.protocol || complaint.id} escalonado à Administração`,
+      [
+        `O protocolo ${complaint.protocol || complaint.id} ultrapassou o prazo do Gerente e foi escalonado automaticamente.`,
+        `Paciente: ${complaint.patient_name || 'Não informado'}`,
+        `Unidade: ${complaint.clinic_name || 'Não informada'}`
+      ].join('\n')
+    ).catch((error) => {
+      console.warn('Nao foi possivel notificar administradores do escalonamento automatico:', error.message);
+    });
+  }
+
+  return result;
 }
 
 async function getClinicsForUser(user) {
@@ -26555,7 +26819,8 @@ async function startServer() {
     await backfillComplaintDeadlines();
     await backfillComplaintAssignments();
     const coordinatorRepair = await repairPendingCoordinatorAssignments();
-    console.log(`Backfills operacionais validados. Coordenadores revisados: ${coordinatorRepair.updated}/${coordinatorRepair.checked}`);
+    const escalationBackfill = await backfillComplaintEscalationDeadlines();
+    console.log(`Backfills operacionais validados. Coordenadores revisados: ${coordinatorRepair.updated}/${coordinatorRepair.checked}. Prazos hierarquicos revisados: C${escalationBackfill.coordinator}/G${escalationBackfill.manager}`);
   } catch (error) {
     console.warn('Não foi possível executar os backfills:', error.message);
   }
@@ -26582,6 +26847,9 @@ async function startServer() {
     });
     dispatchStalledComplaintTreatmentReminders().catch((jobError) => {
       console.warn('Não foi possível executar a rotina inicial de demandas sem tratativa:', jobError.message);
+    });
+    runComplaintEscalationSweep().catch((jobError) => {
+      console.warn('Não foi possível executar a rotina inicial de escalonamento automático:', jobError.message);
     });
     runScheduledUserDemandReminders().catch((jobError) => {
       console.warn('Não foi possível executar a rotina inicial de lembretes semanais aos usuários:', jobError.message);
@@ -26641,6 +26909,12 @@ async function startServer() {
       console.warn('Não foi possível executar a rotina programada de demandas sem tratativa:', jobError.message);
     });
   }, complaintStalledTreatmentReminderHours * 60 * 60 * 1000);
+
+  setInterval(() => {
+    runComplaintEscalationSweep().catch((jobError) => {
+      console.warn('Não foi possível executar a rotina programada de escalonamento automático:', jobError.message);
+    });
+  }, complaintEscalationSweepIntervalMinutes * 60 * 1000);
 
   setInterval(() => {
     runScheduledUserDemandReminders().catch((jobError) => {
@@ -26752,6 +27026,7 @@ module.exports = {
     partnerVideoContactCoversClinic,
     normalizePartnerVideoMessageText,
     parseMassWhatsAppRecipients,
+    runComplaintEscalationSweep,
     runScheduledDailyCoordinatorDemandReminders,
     runScheduledDailyCoordinatorDeliveryReport,
     runScheduledWeeklyAdminComplaintReport,

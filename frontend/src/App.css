@@ -14191,3 +14191,72 @@ a {
     grid-template-columns: 1fr;
   }
 }
+
+.complaint-management-page {
+  --complaint-ink: #142235;
+  --complaint-gold: #b07a35;
+}
+
+.complaint-management-heading {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(176, 122, 53, 0.26);
+  background:
+    radial-gradient(circle at top right, rgba(176, 122, 53, 0.24), transparent 32%),
+    linear-gradient(135deg, #132238 0%, #1c2d44 56%, #f8f1e6 56.5%, #fffaf4 100%);
+  color: #fff9ef;
+}
+
+.complaint-management-heading::before {
+  content: "";
+  position: absolute;
+  inset: auto 28px -62px auto;
+  width: 210px;
+  height: 210px;
+  border: 1px solid rgba(176, 122, 53, 0.22);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
+.complaint-management-heading > * {
+  position: relative;
+  z-index: 1;
+}
+
+.complaint-management-heading .eyebrow {
+  color: #dcb875;
+}
+
+.complaint-management-heading h1 {
+  color: #fff9ef;
+  text-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+}
+
+.complaint-management-heading p:not(.eyebrow) {
+  max-width: 760px;
+  color: rgba(255, 249, 239, 0.86);
+}
+
+.complaint-management-heading .outline-action {
+  border-color: rgba(176, 122, 53, 0.42);
+  background: rgba(255, 252, 247, 0.92);
+  color: #6e4b23;
+}
+
+.complaint-management-page .management-kpi-grid {
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+}
+
+.complaint-management-page .operational-flow {
+  align-items: flex-start;
+}
+
+.complaint-management-page .deadline-chip + .deadline-chip {
+  margin-left: 0;
+}
+
+@media (max-width: 760px) {
+  .complaint-management-heading {
+    background: linear-gradient(145deg, #132238, #26374d);
+  }
+}

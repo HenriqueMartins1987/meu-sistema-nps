@@ -44,14 +44,28 @@ export const channels = [
 
 export const statusOptions = [
   { value: 'aberta', label: 'Aberta' },
+  { value: 'em_analise_sac', label: 'Em análise pelo SAC' },
+  { value: 'enviada_coordenador', label: 'Enviada ao Coordenador' },
+  { value: 'em_tratativa_coordenador', label: 'Em tratativa pelo Coordenador' },
+  { value: 'vencida_coordenador', label: 'Vencida no Coordenador' },
+  { value: 'escalonada_gerente', label: 'Escalonada ao Gerente' },
+  { value: 'em_tratativa_gerente', label: 'Em tratativa pelo Gerente' },
+  { value: 'vencida_gerente', label: 'Vencida no Gerente' },
+  { value: 'escalonada_administracao', label: 'Escalonada à Administração' },
+  { value: 'retornada_sac_auditoria', label: 'Retornada ao SAC para Auditoria' },
+  { value: 'devolvida_complementacao', label: 'Devolvida para Complementação' },
   { value: 'em_andamento', label: 'Em andamento' },
-  { value: 'resolvida', label: 'Fechada' }
+  { value: 'resolvida', label: 'Resolvida' },
+  { value: 'encerrada', label: 'Encerrada' },
+  { value: 'reaberta', label: 'Reaberta' },
+  { value: 'cancelada', label: 'Cancelada' }
 ];
 
 export const priorityOptions = [
   { value: 'baixa', label: 'Baixa', deadline: '72 horas' },
   { value: 'media', label: 'Média', deadline: '48 horas' },
-  { value: 'alta', label: 'Alta', deadline: '24 horas' }
+  { value: 'alta', label: 'Alta', deadline: '24 horas' },
+  { value: 'critica', label: 'Crítica', deadline: '12 horas' }
 ];
 
 export const collaboratorPositions = [

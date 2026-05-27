@@ -12,9 +12,14 @@ import {
 } from './constants';
 
 const pageSizeOptions = [10, 25, 50, 100];
+const closedStatuses = new Set(['resolvida', 'encerrada', 'cancelada', 'finalizada', 'finalizado', 'fechada', 'fechado']);
 
 function normalizeText(value) {
   return String(value || '').toLowerCase();
+}
+
+function isClosedDashboardStatus(value) {
+  return closedStatuses.has(String(value || '').trim().toLowerCase());
 }
 
 function formatProtocol(item) {
@@ -95,7 +100,7 @@ function daysSince(value) {
 }
 
 function buildDeadlineInfo(item) {
-  if (item.status === 'resolvida') {
+  if (isClosedDashboardStatus(item.status)) {
     return {
       state: 'closed',
       label: 'Fechada',
@@ -139,8 +144,137 @@ function buildDeadlineInfo(item) {
   };
 }
 
+function buildStageDeadline({ label, owner, dueAt, assignedAt, role }) {
+  const dueDate = dueAt ? new Date(dueAt) : null;
+  const assignedDate = assignedAt ? new Date(assignedAt) : null;
+
+  if (!dueDate || Number.isNaN(dueDate.getTime())) {
+    return {
+      state: 'neutral',
+      label,
+      owner,
+      detail: assignedDate && !Number.isNaN(assignedDate.getTime())
+        ? `Desde ${formatShortDate(assignedAt)}`
+        : 'Prazo interno não iniciado',
+      dueAt,
+      role
+    };
+  }
+
+  const diffMs = dueDate.getTime() - Date.now();
+  const days = Math.ceil(Math.abs(diffMs) / (1000 * 60 * 60 * 24));
+
+  if (diffMs < 0) {
+    return {
+      state: 'overdue',
+      label,
+      owner,
+      detail: `${Math.max(days, 1)} dia${days === 1 ? '' : 's'} em atraso`,
+      dueAt,
+      role
+    };
+  }
+
+  if (diffMs <= 2 * 24 * 60 * 60 * 1000) {
+    return {
+      state: 'warning',
+      label,
+      owner,
+      detail: `Vence ${formatShortDate(dueAt)}`,
+      dueAt,
+      role
+    };
+  }
+
+  return {
+    state: 'ontime',
+    label,
+    owner,
+    detail: `Limite ${formatShortDate(dueAt)}`,
+    dueAt,
+    role
+  };
+}
+
+function buildEscalationInfo(item) {
+  const status = String(item?.status || '').trim().toLowerCase();
+  const level = String(item?.current_escalation_level || '').toLowerCase();
+  const forwardedRole = String(item?.forwarded_to_role || '').trim().toLowerCase();
+
+  if (item?.deleted_at) {
+    return {
+      state: 'closed',
+      label: 'Excluído',
+      owner: item.deleted_by || 'Auditoria',
+      detail: formatShortDate(item.deleted_at),
+      dueAt: item.deleted_at
+    };
+  }
+
+  if (isClosedDashboardStatus(status)) {
+    return {
+      state: 'closed',
+      label: 'Encerrado',
+      owner: item.closed_by_role || 'SAC',
+      detail: item.closed_at ? formatShortDate(item.closed_at) : 'Sem data',
+      dueAt: item.closed_at
+    };
+  }
+
+  if (level === 'admin' || status === 'escalonada_administracao') {
+    return {
+      state: 'overdue',
+      label: 'Escalonada à Administração',
+      owner: 'Administradores',
+      detail: item.admin_escalated_at ? `Desde ${formatShortDate(item.admin_escalated_at)}` : 'Ação executiva necessária',
+      dueAt: item.admin_escalated_at,
+      role: 'admin'
+    };
+  }
+
+  if (level === 'sac_audit' || status === 'retornada_sac_auditoria') {
+    return {
+      state: 'warning',
+      label: 'Auditoria final do SAC',
+      owner: item.assigned_responsible_name || item.first_attendance_by || 'Operador de SAC',
+      detail: item.returned_to_sac_at ? `Retornou ${formatShortDate(item.returned_to_sac_at)}` : 'Validar evidências e fechamento',
+      dueAt: item.returned_to_sac_at,
+      role: 'sac_operator'
+    };
+  }
+
+  if (level === 'manager' || ['escalonada_gerente', 'em_tratativa_gerente', 'vencida_gerente'].includes(status)) {
+    return buildStageDeadline({
+      label: status === 'vencida_gerente' ? 'Vencida no Gerente' : 'Gerente responsável',
+      owner: item.assigned_responsible_name || item.manager_name || item.stored_manager_name || 'Gerente da unidade',
+      dueAt: item.manager_due_date,
+      assignedAt: item.manager_assigned_at,
+      role: 'manager'
+    });
+  }
+
+  if (level === 'coordinator' || ['enviada_coordenador', 'em_tratativa_coordenador', 'vencida_coordenador'].includes(status) || forwardedRole === 'coordinator') {
+    return buildStageDeadline({
+      label: status === 'vencida_coordenador' ? 'Vencida no Coordenador' : 'Coordenador responsável',
+      owner: item.assigned_responsible_name || item.coordinator_name || item.stored_coordinator_name || item.assigned_coordinator_name || 'Coordenador da unidade',
+      dueAt: item.coordinator_due_date,
+      assignedAt: item.coordinator_assigned_at || item.forwarded_at,
+      role: 'coordinator'
+    });
+  }
+
+  const initialSla = buildDeadlineInfo(item);
+  return {
+    ...initialSla,
+    label: initialSla.state === 'neutral' ? 'SLA inicial' : `SLA inicial ${initialSla.label.toLowerCase()}`,
+    owner: item.assigned_responsible_name || 'Operador de SAC',
+    dueAt: item.due_at,
+    role: 'sac_operator'
+  };
+}
+
 function deadlineRank(item) {
-  const deadline = buildDeadlineInfo(item);
+  const deadline = buildEscalationInfo(item);
 
   if (deadline.state === 'overdue') return 0;
   if (deadline.state === 'warning') return 1;
@@ -150,11 +284,46 @@ function deadlineRank(item) {
 }
 
 function buildOperationalStage(item) {
-  if (item.status === 'resolvida') {
+  const escalation = buildEscalationInfo(item);
+  const level = String(item?.current_escalation_level || '').trim().toLowerCase();
+
+  if (isClosedDashboardStatus(item.status)) {
     return {
       owner: 'protocolo encerrado',
       label: 'Fechada pelo SAC',
       since: item.closed_at || item.updated_at || item.created_at
+    };
+  }
+
+  if (escalation.role === 'admin') {
+    return {
+      owner: escalation.owner,
+      label: escalation.label,
+      since: item.admin_escalated_at || item.manager_due_date || item.updated_at || item.created_at
+    };
+  }
+
+  if (escalation.role === 'sac_operator' && level === 'sac_audit') {
+    return {
+      owner: escalation.owner,
+      label: escalation.label,
+      since: item.returned_to_sac_at || item.updated_at || item.created_at
+    };
+  }
+
+  if (escalation.role === 'manager') {
+    return {
+      owner: escalation.owner,
+      label: escalation.label,
+      since: item.manager_assigned_at || item.forwarded_at || item.updated_at || item.created_at
+    };
+  }
+
+  if (escalation.role === 'coordinator') {
+    return {
+      owner: escalation.owner,
+      label: escalation.label,
+      since: item.coordinator_assigned_at || item.forwarded_at || item.updated_at || item.created_at
     };
   }
 
@@ -203,15 +372,18 @@ function buildTreatmentBalloon(item) {
 
 function ComplaintListItem({ item, onOpen }) {
   const deadline = buildDeadlineInfo(item);
+  const escalation = buildEscalationInfo(item);
   const stage = buildOperationalStage(item);
   const stoppedDays = daysSince(stage.since);
   const isDeleted = Boolean(item.deleted_at);
   const treatmentBalloon = buildTreatmentBalloon(item);
+  const currentLevel = String(item.current_escalation_level || '').trim().toLowerCase();
+  const shouldShowEscalationChip = escalation.role !== 'sac_operator' || currentLevel === 'sac_audit';
 
   return (
     <button
       type="button"
-      className={`complaint-list-item deadline-${deadline.state}`}
+      className={`complaint-list-item deadline-${escalation.state}`}
       onClick={onOpen}
     >
       <div className="complaint-list-main">
@@ -234,6 +406,7 @@ function ComplaintListItem({ item, onOpen }) {
         <span>Origem {item.created_origin || 'Interno'}</span>
         <span>Cadastrado por {getComplaintCreatorName(item)}</span>
         <span>Prioridade {priorityLabel(item.priority)}</span>
+        <span>Responsável atual {escalation.owner || stage.owner}</span>
         {Boolean(item.financial_involved) && <span>Financeiro {formatCurrency(item.financial_amount)}</span>}
         <span>{item.region || 'Região não informada'}</span>
       </div>
@@ -254,6 +427,11 @@ function ComplaintListItem({ item, onOpen }) {
             <span className={`deadline-chip ${deadline.state}`}>
               {deadline.label} · {deadline.detail}
             </span>
+            {shouldShowEscalationChip && (
+              <span className={`deadline-chip ${escalation.state}`}>
+                {escalation.label} · {escalation.detail}
+              </span>
+            )}
             <span className="stage-chip">
               Parada com {stage.owner} há {stoppedDays} {stoppedDays === 1 ? 'dia' : 'dias'}
             </span>
@@ -299,6 +477,7 @@ function DashboardManagement() {
     clinic: '',
     coordinator: '',
     manager: '',
+    escalation: '',
     search: ''
   });
   const [page, setPage] = useState(1);
@@ -348,10 +527,10 @@ function DashboardManagement() {
 
   const operationalComplaints = useMemo(() => complaints.filter((item) => !item.deleted_at), [complaints]);
   const activeComplaints = useMemo(() => (
-    operationalComplaints.filter((item) => item.status !== 'resolvida')
+    operationalComplaints.filter((item) => !isClosedDashboardStatus(item.status))
   ), [operationalComplaints]);
   const finishedComplaints = useMemo(() => (
-    operationalComplaints.filter((item) => item.status === 'resolvida')
+    operationalComplaints.filter((item) => isClosedDashboardStatus(item.status))
   ), [operationalComplaints]);
   const deletedComplaints = useMemo(() => complaints.filter((item) => item.deleted_at), [complaints]);
   const scopedComplaints = useMemo(() => {
@@ -366,8 +545,9 @@ function DashboardManagement() {
     const matchesClinic = !filters.clinic || item.clinic_name === filters.clinic;
     const matchesCoordinator = !filters.coordinator || item.coordinator_name === filters.coordinator;
     const matchesManager = !filters.manager || item.manager_name === filters.manager;
-    const deadline = buildDeadlineInfo(item);
+    const deadline = buildEscalationInfo(item);
     const matchesSla = !filters.sla || deadline.state === filters.sla;
+    const matchesEscalation = !filters.escalation || deadline.role === filters.escalation;
     const searchable = [
       item.protocol,
       item.patient_name,
@@ -380,14 +560,16 @@ function DashboardManagement() {
     ].map(normalizeText).join(' ');
     const matchesSearch = !filters.search || searchable.includes(normalizeText(filters.search));
 
-    return matchesStatus && matchesType && matchesClinic && matchesCoordinator && matchesManager && matchesSla && matchesSearch;
+    return matchesStatus && matchesType && matchesClinic && matchesCoordinator && matchesManager && matchesSla && matchesEscalation && matchesSearch;
   }).sort((a, b) => {
     const rankDiff = deadlineRank(a) - deadlineRank(b);
 
     if (rankDiff !== 0) return rankDiff;
 
-    const aDue = a.due_at ? new Date(a.due_at).getTime() : Number.MAX_SAFE_INTEGER;
-    const bDue = b.due_at ? new Date(b.due_at).getTime() : Number.MAX_SAFE_INTEGER;
+    const escalationA = buildEscalationInfo(a);
+    const escalationB = buildEscalationInfo(b);
+    const aDue = escalationA.dueAt ? new Date(escalationA.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
+    const bDue = escalationB.dueAt ? new Date(escalationB.dueAt).getTime() : Number.MAX_SAFE_INTEGER;
 
     if (aDue !== bDue) return aDue - bDue;
 
@@ -412,11 +594,18 @@ function DashboardManagement() {
   const metrics = useMemo(() => {
     const total = operationalComplaints.length;
     const open = activeComplaints.filter((item) => item.status === 'aberta').length;
-    const inProgress = activeComplaints.filter((item) => item.status === 'em_andamento').length;
+    const inProgress = activeComplaints.filter((item) => ['em_andamento', 'em_analise_sac'].includes(item.status)).length;
     const resolved = finishedComplaints.length;
-    const overdue = activeComplaints.filter((item) => buildDeadlineInfo(item).state === 'overdue').length;
-    const warning = activeComplaints.filter((item) => buildDeadlineInfo(item).state === 'warning').length;
-    return { total, open, inProgress, resolved, overdue, warning };
+    const overdue = activeComplaints.filter((item) => buildEscalationInfo(item).state === 'overdue').length;
+    const warning = activeComplaints.filter((item) => buildEscalationInfo(item).state === 'warning').length;
+    const coordinator = activeComplaints.filter((item) => buildEscalationInfo(item).role === 'coordinator').length;
+    const manager = activeComplaints.filter((item) => buildEscalationInfo(item).role === 'manager').length;
+    const sacAudit = activeComplaints.filter((item) => (
+      buildEscalationInfo(item).role === 'sac_operator'
+      && String(item.current_escalation_level || '').trim().toLowerCase() === 'sac_audit'
+    )).length;
+    const admin = activeComplaints.filter((item) => buildEscalationInfo(item).role === 'admin').length;
+    return { total, open, inProgress, resolved, overdue, warning, coordinator, manager, sacAudit, admin };
   }, [activeComplaints, finishedComplaints, operationalComplaints]);
 
   const applyQuickFilter = (nextViewMode, nextFilters = {}) => {
@@ -429,6 +618,7 @@ function DashboardManagement() {
       clinic: prev.clinic,
       coordinator: prev.coordinator,
       manager: prev.manager,
+      escalation: '',
       search: prev.search,
       ...nextFilters
     }));
@@ -440,6 +630,7 @@ function DashboardManagement() {
   const paginatedComplaints = filteredComplaints.slice(pageStart, pageStart + pageSize);
   const summaryRows = useMemo(() => filteredComplaints.map((item) => {
     const deadline = buildDeadlineInfo(item);
+    const escalation = buildEscalationInfo(item);
     const stage = buildOperationalStage(item);
 
     return {
@@ -461,6 +652,10 @@ function DashboardManagement() {
       financeiro: item.financial_involved ? 'Sim' : 'Não',
       valor_financeiro: item.financial_involved ? formatCurrency(item.financial_amount) : 'Não envolve',
       sla: `${deadline.label} - ${deadline.detail}`,
+      etapa_hierarquica: escalation.label,
+      responsavel_atual: escalation.owner || stage.owner,
+      prazo_etapa: escalation.detail,
+      nivel_escalonamento: escalation.role || 'sac_operator',
       parado_com: stage.owner,
       dias_parado: daysSince(stage.since),
       cadastro: formatShortDate(item.created_at)
@@ -487,6 +682,10 @@ function DashboardManagement() {
       financeiro: '',
       valor_financeiro: '',
       sla: '',
+      etapa_hierarquica: '',
+      responsavel_atual: '',
+      prazo_etapa: '',
+      nivel_escalonamento: '',
       parado_com: '',
       dias_parado: '',
       cadastro: ''
@@ -524,6 +723,8 @@ function DashboardManagement() {
       'Status',
       'Prioridade',
       'SLA',
+      'Etapa hierárquica',
+      'Responsável atual',
       'Parado com'
     ];
     const rows = summaryRows.map((row) => [
@@ -538,6 +739,8 @@ function DashboardManagement() {
       row.status,
       row.prioridade,
       row.sla,
+      row.etapa_hierarquica,
+      row.responsavel_atual,
       row.parado_com
     ]);
     const reportWindow = window.open('', '_blank');
@@ -726,11 +929,14 @@ function DashboardManagement() {
   };
 
   return (
-    <main className="app-page">
-      <header className="page-heading">
+    <main className="app-page complaint-management-page">
+      <header className="page-heading complaint-management-heading">
         <div>
           <p className="eyebrow">Gestão de reclamações</p>
           <h1>Painel de Gestão de Reclamações</h1>
+          <p>
+            Acompanhamento executivo por SLA inicial, responsável atual e escalonamento automático para Coordenador, Gerente e Administração.
+          </p>
         </div>
 
         <div className="heading-actions">
@@ -763,6 +969,26 @@ function DashboardManagement() {
           <span>Em andamento</span>
           <strong>{metrics.inProgress}</strong>
           <p>COM ACOMPANHAMENTO</p>
+        </button>
+        <button type="button" className="kpi-card kpi-button" onClick={() => applyQuickFilter('active', { escalation: 'coordinator' })}>
+          <span>Coordenador</span>
+          <strong>{metrics.coordinator}</strong>
+          <p>PRAZO INTERNO DE 15 DIAS</p>
+        </button>
+        <button type="button" className="kpi-card progress kpi-button" onClick={() => applyQuickFilter('active', { escalation: 'manager' })}>
+          <span>Gerente</span>
+          <strong>{metrics.manager}</strong>
+          <p>PRAZO INTERNO DE 5 DIAS</p>
+        </button>
+        <button type="button" className="kpi-card warning kpi-button" onClick={() => applyQuickFilter('active', { escalation: 'sac_operator' })}>
+          <span>Auditoria SAC</span>
+          <strong>{metrics.sacAudit}</strong>
+          <p>VALIDAÇÃO FINAL</p>
+        </button>
+        <button type="button" className="kpi-card danger kpi-button" onClick={() => applyQuickFilter('active', { escalation: 'admin' })}>
+          <span>Administração</span>
+          <strong>{metrics.admin}</strong>
+          <p>ESCALONAMENTO EXECUTIVO</p>
         </button>
         <button type="button" className="kpi-card danger kpi-button" onClick={() => applyQuickFilter('active', { sla: 'overdue' })}>
           <span>Vencidas</span>
@@ -868,6 +1094,17 @@ function DashboardManagement() {
               <option value="warning">Perto de vencer</option>
               <option value="ontime">No prazo</option>
               <option value="closed">Fechadas</option>
+            </select>
+            <select
+              className="field"
+              value={filters.escalation}
+              onChange={(event) => setFilters({ ...filters, escalation: event.target.value })}
+            >
+              <option value="">Todas as etapas</option>
+              <option value="sac_operator">SAC / auditoria</option>
+              <option value="coordinator">Coordenador</option>
+              <option value="manager">Gerente</option>
+              <option value="admin">Administração</option>
             </select>
             {canFilterByLeadership && (
               <>
