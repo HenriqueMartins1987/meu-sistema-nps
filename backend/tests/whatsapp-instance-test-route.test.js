@@ -230,6 +230,14 @@ test('dispatch queue does not retry after VPS accepted a message and history log
       reply: async () => [[]]
     },
     {
+      match: (sql) => sql.includes('INSERT IGNORE INTO whatsapp_send_idempotency'),
+      reply: async () => [{ affectedRows: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_send_idempotency'),
+      reply: async () => [{ affectedRows: 1 }]
+    },
+    {
       match: (sql) => sql.includes('SELECT GET_LOCK'),
       reply: async (_sql, params) => {
         assert.equal(params[0], 'whatsapp-send:dedupe-key-900');
@@ -433,6 +441,14 @@ test('dispatch queue cancels duplicate when another process holds send lock', as
       reply: async () => [[]]
     },
     {
+      match: (sql) => sql.includes('INSERT IGNORE INTO whatsapp_send_idempotency'),
+      reply: async () => [{ affectedRows: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_send_idempotency'),
+      reply: async () => [{ affectedRows: 1 }]
+    },
+    {
       match: (sql) => sql.includes('SELECT GET_LOCK'),
       reply: async (_sql, params) => {
         assert.equal(params[0], 'whatsapp-send:dedupe-key-920');
@@ -537,6 +553,10 @@ test('enqueueWhatsAppDispatch suppresses database unique-key race duplicates', a
       reply: async () => [[]]
     },
     {
+      match: (sql) => sql.includes('INSERT IGNORE INTO whatsapp_send_idempotency'),
+      reply: async () => [{ affectedRows: 1 }]
+    },
+    {
       match: (sql) => sql.includes('INSERT INTO whatsapp_dispatch_queue'),
       reply: async () => {
         insertAttempted = true;
@@ -560,6 +580,10 @@ test('enqueueWhatsAppDispatch suppresses database unique-key race duplicates', a
           status: 'pendente'
         }]];
       }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_send_idempotency'),
+      reply: async () => [{ affectedRows: 1 }]
     },
     {
       match: (sql) => sql.includes('UPDATE whatsapp_messages') && sql.includes("SET status = 'cancelada'"),
@@ -590,6 +614,72 @@ test('enqueueWhatsAppDispatch suppresses database unique-key race duplicates', a
   assert.equal(insertAttempted, true);
   assert.equal(result.id, 710);
   assert.equal(result.duplicateSuppressed, true);
+  assert.equal(messageCanceled, true);
+  assert.equal(duplicateLogged, true);
+});
+
+test('enqueueWhatsAppDispatch suppresses persistent idempotency duplicates before inserting queue item', async () => {
+  let insertAttempted = false;
+  let messageCanceled = false;
+  let duplicateLogged = false;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('FROM whatsapp_dispatch_queue') && sql.includes("status IN ('pendente', 'processando', 'enviada')"),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT IGNORE INTO whatsapp_send_idempotency'),
+      reply: async () => [{ affectedRows: 0 }]
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM whatsapp_send_idempotency WHERE dedupe_key = ?'),
+      reply: async (_sql, params) => {
+        assert.match(params[0], /^[a-f0-9]{64}$/);
+        return [[{
+          dedupe_key: params[0],
+          status: 'queued',
+          message_id: 801,
+          dispatch_queue_id: 800
+        }]];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO whatsapp_dispatch_queue'),
+      reply: async () => {
+        insertAttempted = true;
+        return [{ insertId: 999 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_messages') && sql.includes("SET status = 'cancelada'"),
+      reply: async (_sql, params) => {
+        messageCanceled = true;
+        assert.equal(params[1], 802);
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO whatsapp_evolution_logs'),
+      reply: async (_sql, params) => {
+        duplicateLogged = true;
+        assert.equal(params[0], 'dispatch_duplicate_idempotency_suppressed');
+        return [{ insertId: 1 }];
+      }
+    }
+  ]);
+
+  const result = await serverModule.__testables.enqueueWhatsAppDispatch({
+    message_id: 802,
+    instance_name: 'garavelo',
+    recipient_phone: '5562999669966',
+    message_text: 'Mensagem de confirmacao',
+    message_type: 'confirmacao_massa'
+  });
+
+  assert.equal(result.id, 800);
+  assert.equal(result.duplicateSuppressed, true);
+  assert.equal(insertAttempted, false);
   assert.equal(messageCanceled, true);
   assert.equal(duplicateLogged, true);
 });

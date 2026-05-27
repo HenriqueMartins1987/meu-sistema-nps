@@ -401,6 +401,7 @@ function WhatsAppManagement() {
   const selectedConversationIdRef = useRef('');
   const instanceEditorRef = useRef(null);
   const instancePhoneInputRef = useRef(null);
+  const actionInFlightRef = useRef(new Set());
 
   const selectedQueueConversation = useMemo(
     () => queue.find((item) => String(item.conversation_id) === String(selectedConversationId)) || null,
@@ -677,6 +678,8 @@ function WhatsAppManagement() {
   }, [campaignDraft.campaign_clinic_id, clinics]);
 
   const runAction = async (key, action, successMessage, fallbackMessage) => {
+    if (actionInFlightRef.current.has(key)) return null;
+    actionInFlightRef.current.add(key);
     setSavingKey(key);
     setFeedback(null);
     try {
@@ -687,6 +690,7 @@ function WhatsAppManagement() {
       setError(getErrorMessage(error, fallbackMessage));
       return null;
     } finally {
+      actionInFlightRef.current.delete(key);
       setSavingKey('');
     }
   };

@@ -3404,6 +3404,25 @@ async function ensureDatabaseSchema() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS whatsapp_send_idempotency (
+      dedupe_key VARCHAR(120) PRIMARY KEY,
+      scope VARCHAR(80) NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'reserved',
+      message_id INT NULL,
+      dispatch_queue_id INT NULL,
+      campaign_batch_id VARCHAR(80) NULL,
+      recipient_phone VARCHAR(40) NULL,
+      instance_name VARCHAR(120) NULL,
+      message_type VARCHAR(80) NULL,
+      expires_at DATETIME NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_whatsapp_send_idempotency_status (status),
+      INDEX idx_whatsapp_send_idempotency_expires (expires_at)
+    )
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS whatsapp_evolution_logs (
       id INT AUTO_INCREMENT PRIMARY KEY,
       event_type VARCHAR(80) NOT NULL,
@@ -11625,6 +11644,108 @@ function buildWhatsAppDispatchDedupeKey({
     .digest('hex');
 }
 
+function normalizeWhatsAppSendIdempotencyKey(value) {
+  return sanitizeFinancialString(value, 120) || null;
+}
+
+async function reserveWhatsAppSendIdempotency({
+  dedupeKey,
+  scope = 'whatsapp_send',
+  status = 'reserved',
+  messageId = null,
+  dispatchQueueId = null,
+  campaignBatchId = null,
+  recipientPhone = null,
+  instanceName = null,
+  messageType = null,
+  ttlSeconds = 1800
+} = {}) {
+  const key = normalizeWhatsAppSendIdempotencyKey(dedupeKey);
+  if (!key) return { acquired: true, key: null, existing: null };
+
+  const [result] = await pool.query(
+    `INSERT IGNORE INTO whatsapp_send_idempotency
+     (dedupe_key, scope, status, message_id, dispatch_queue_id, campaign_batch_id, recipient_phone, instance_name, message_type, expires_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, DATE_ADD(NOW(), INTERVAL ? SECOND))`,
+    [
+      key,
+      sanitizeFinancialString(scope, 80) || 'whatsapp_send',
+      sanitizeFinancialString(status, 40) || 'reserved',
+      messageId || null,
+      dispatchQueueId || null,
+      sanitizeFinancialString(campaignBatchId, 80) || null,
+      normalizeWhatsAppPhone(recipientPhone || ''),
+      sanitizeFinancialString(instanceName, 120) || null,
+      sanitizeFinancialString(messageType, 80) || null,
+      Math.max(60, Number(ttlSeconds || 1800))
+    ]
+  );
+
+  if (result?.affectedRows > 0) {
+    return { acquired: true, key, existing: null };
+  }
+
+  const [rows] = await pool.query(
+    'SELECT * FROM whatsapp_send_idempotency WHERE dedupe_key = ? LIMIT 1',
+    [key]
+  );
+  return { acquired: false, key, existing: rows[0] || null };
+}
+
+async function updateWhatsAppSendIdempotency({
+  dedupeKey,
+  status = null,
+  messageId = null,
+  dispatchQueueId = null,
+  campaignBatchId = null,
+  scope = null
+} = {}) {
+  const key = normalizeWhatsAppSendIdempotencyKey(dedupeKey);
+  if (!key) return;
+
+  await pool.query(
+    `UPDATE whatsapp_send_idempotency
+        SET status = COALESCE(?, status),
+            message_id = COALESCE(?, message_id),
+            dispatch_queue_id = COALESCE(?, dispatch_queue_id),
+            campaign_batch_id = COALESCE(?, campaign_batch_id),
+            scope = COALESCE(?, scope),
+            updated_at = NOW()
+      WHERE dedupe_key = ?`,
+    [
+      status ? sanitizeFinancialString(status, 40) : null,
+      messageId || null,
+      dispatchQueueId || null,
+      sanitizeFinancialString(campaignBatchId, 80) || null,
+      scope ? sanitizeFinancialString(scope, 80) : null,
+      key
+    ]
+  );
+}
+
+async function releaseWhatsAppSendIdempotencyReservation(dedupeKey) {
+  const key = normalizeWhatsAppSendIdempotencyKey(dedupeKey);
+  if (!key) return;
+  await pool.query(
+    `DELETE FROM whatsapp_send_idempotency
+      WHERE dedupe_key = ?
+        AND status IN ('reserved', 'erro')`,
+    [key]
+  );
+}
+
+function isSameWhatsAppIdempotencyOwner(existing = {}, { messageId = null, dispatchQueueId = null } = {}) {
+  const existingQueueId = Number(existing.dispatch_queue_id || 0);
+  const currentQueueId = Number(dispatchQueueId || 0);
+  if (existingQueueId && currentQueueId && existingQueueId === currentQueueId) return true;
+
+  const existingMessageId = Number(existing.message_id || 0);
+  const currentMessageId = Number(messageId || 0);
+  if (existingMessageId && currentMessageId && existingMessageId === currentMessageId) return true;
+
+  return false;
+}
+
 async function findRecentWhatsAppDispatchQueueDuplicate(payload = {}, maxAgeSeconds = 900) {
   const instanceName = sanitizeFinancialString(payload.instance_name || payload.instanceName, 120);
   const recipientPhone = normalizeWhatsAppPhone(payload.recipient_phone || payload.recipientPhone);
@@ -11748,21 +11869,84 @@ async function acquireWhatsAppDispatchSendLock(item = {}, timeoutSeconds = 3) {
   }
 
   const lockKey = `whatsapp-send:${dedupeKey}`.slice(0, 128);
-  const [rows] = await pool.query('SELECT GET_LOCK(?, ?) AS lock_acquired', [lockKey, Math.max(1, Number(timeoutSeconds || 3))]);
+  if (process.env.NODE_ENV === 'test' || typeof pool.getConnection !== 'function') {
+    const [rows] = await pool.query('SELECT GET_LOCK(?, ?) AS lock_acquired', [lockKey, Math.max(1, Number(timeoutSeconds || 3))]);
+    const lockAcquired = Number(rows?.[0]?.lock_acquired ?? Object.values(rows?.[0] || {})[0] ?? 0) === 1;
+
+    return {
+      acquired: lockAcquired,
+      lockKey,
+      release: async () => {
+        if (!lockAcquired) return;
+        try {
+          await pool.query('SELECT RELEASE_LOCK(?) AS lock_released', [lockKey]);
+        } catch (error) {
+          console.warn('Nao foi possivel liberar trava de envio WhatsApp:', error.message);
+        }
+      }
+    };
+  }
+
+  const connection = await pool.getConnection();
+  const [rows] = await connection.query('SELECT GET_LOCK(?, ?) AS lock_acquired', [lockKey, Math.max(1, Number(timeoutSeconds || 3))]);
   const lockAcquired = Number(rows?.[0]?.lock_acquired ?? Object.values(rows?.[0] || {})[0] ?? 0) === 1;
 
   return {
     acquired: lockAcquired,
     lockKey,
     release: async () => {
-      if (!lockAcquired) return;
       try {
-        await pool.query('SELECT RELEASE_LOCK(?) AS lock_released', [lockKey]);
+        if (lockAcquired) {
+          await connection.query('SELECT RELEASE_LOCK(?) AS lock_released', [lockKey]);
+        }
       } catch (error) {
         console.warn('Nao foi possivel liberar trava de envio WhatsApp:', error.message);
+      } finally {
+        connection.release();
       }
     }
   };
+}
+
+async function ensureWhatsAppDispatchIdempotencyOwner(item = {}) {
+  const dedupeKey = normalizeWhatsAppSendIdempotencyKey(
+    item.dispatch_dedupe_key
+    || buildWhatsAppDispatchDedupeKey({
+      instanceName: item.instance_name || item.instanceName,
+      recipientPhone: item.recipient_phone || item.recipientPhone,
+      messageText: item.message_text || item.messageText,
+      messageType: item.message_type || item.messageType || 'manual'
+    })
+  );
+  if (!dedupeKey) return { allowed: true, key: null, existing: null };
+
+  const reservation = await reserveWhatsAppSendIdempotency({
+    dedupeKey,
+    scope: 'dispatch_send',
+    status: 'sending',
+    messageId: item.message_id || null,
+    dispatchQueueId: item.id || null,
+    recipientPhone: item.recipient_phone || item.recipientPhone,
+    instanceName: item.instance_name || item.instanceName,
+    messageType: item.message_type || item.messageType || 'manual'
+  });
+
+  if (!reservation.acquired && !isSameWhatsAppIdempotencyOwner(reservation.existing, {
+    messageId: item.message_id,
+    dispatchQueueId: item.id
+  })) {
+    return { allowed: false, key: dedupeKey, existing: reservation.existing || null };
+  }
+
+  await updateWhatsAppSendIdempotency({
+    dedupeKey,
+    scope: 'dispatch_send',
+    status: 'sending',
+    messageId: item.message_id || null,
+    dispatchQueueId: item.id || null
+  });
+
+  return { allowed: true, key: dedupeKey, existing: reservation.existing || null };
 }
 
 async function enqueueWhatsAppDispatch(payload = {}) {
@@ -11770,7 +11954,8 @@ async function enqueueWhatsAppDispatch(payload = {}) {
   const recipientPhone = normalizeWhatsAppPhone(payload.recipient_phone || payload.recipientPhone);
   const messageText = String(payload.message_text || payload.messageText || '').trim();
   const messageType = sanitizeFinancialString(payload.message_type || payload.messageType || 'manual', 80) || 'manual';
-  const dispatchDedupeKey = buildWhatsAppDispatchDedupeKey({
+  const dispatchDedupeKey = normalizeWhatsAppSendIdempotencyKey(payload.dispatch_dedupe_key || payload.dispatchDedupeKey)
+    || buildWhatsAppDispatchDedupeKey({
     instanceName,
     recipientPhone,
     messageText,
@@ -11818,6 +12003,55 @@ async function enqueueWhatsAppDispatch(payload = {}) {
     };
   }
 
+  let idempotencyReservation = null;
+  if (!payload.skipIdempotencyReserve) {
+    idempotencyReservation = await reserveWhatsAppSendIdempotency({
+      dedupeKey: dispatchDedupeKey,
+      scope: 'dispatch_enqueue',
+      status: 'queued',
+      messageId: payload.message_id || payload.messageId || null,
+      recipientPhone,
+      instanceName,
+      messageType,
+      campaignBatchId: payload.payload?.batchId || payload.payload?.campaignBatchId || null
+    });
+
+    if (!idempotencyReservation.acquired) {
+      const duplicateMessage = 'Envio duplicado bloqueado por idempotencia persistente antes de entrar na fila.';
+      if (payload.message_id || payload.messageId) {
+        await pool.query(
+          `UPDATE whatsapp_messages
+              SET status = 'cancelada',
+                  error_message = ?
+            WHERE id = ?
+              AND status IN ('pendente', 'processando')`,
+          [duplicateMessage, payload.message_id || payload.messageId]
+        );
+      }
+      await logEvolutionEvent('dispatch_duplicate_idempotency_suppressed', {
+        queueId: idempotencyReservation.existing?.dispatch_queue_id || null,
+        messageId: payload.message_id || payload.messageId || null,
+        conversationId: payload.conversation_id || payload.conversationId || null,
+        instanceName,
+        status: 'info',
+        request: { number: recipientPhone, messageType, textLength: messageText.length },
+        response: {
+          dedupeKey: dispatchDedupeKey,
+          existingMessageId: idempotencyReservation.existing?.message_id || null,
+          existingQueueId: idempotencyReservation.existing?.dispatch_queue_id || null,
+          existingStatus: idempotencyReservation.existing?.status || null
+        }
+      });
+      return {
+        id: idempotencyReservation.existing?.dispatch_queue_id || null,
+        message_id: idempotencyReservation.existing?.message_id || null,
+        duplicateSuppressed: true,
+        duplicateQueueId: idempotencyReservation.existing?.dispatch_queue_id || null,
+        duplicateReason: duplicateMessage
+      };
+    }
+  }
+
   const config = getWhatsAppAntiBanConfig();
   const antiBanDelayMs = randomIntegerBetween(config.minDelayMs, config.maxDelayMs);
   const requestedDelaySeconds = Number(
@@ -11854,6 +12088,13 @@ async function enqueueWhatsAppDispatch(payload = {}) {
     );
   } catch (error) {
     if (!['ER_DUP_ENTRY', 'ER_DUP_UNIQUE'].includes(error.code) && Number(error.errno || 0) !== 1062) {
+      if (idempotencyReservation?.acquired) {
+        await updateWhatsAppSendIdempotency({
+          dedupeKey: dispatchDedupeKey,
+          status: 'erro',
+          messageId: payload.message_id || payload.messageId || null
+        });
+      }
       throw error;
     }
 
@@ -11862,6 +12103,15 @@ async function enqueueWhatsAppDispatch(payload = {}) {
       [dispatchDedupeKey]
     );
     const duplicateItem = duplicates[0] || null;
+    if (duplicateItem?.id) {
+      await updateWhatsAppSendIdempotency({
+        dedupeKey: dispatchDedupeKey,
+        scope: 'dispatch_enqueue',
+        status: 'queued',
+        messageId: duplicateItem.message_id || null,
+        dispatchQueueId: duplicateItem.id
+      });
+    }
     const duplicateMessage = `Envio duplicado bloqueado por chave unica: fila ${duplicateItem?.id || 'existente'} ja contem a mesma mensagem.`;
     if (payload.message_id || payload.messageId) {
       await pool.query(
@@ -11892,6 +12142,14 @@ async function enqueueWhatsAppDispatch(payload = {}) {
   }
 
   const [rows] = await pool.query('SELECT * FROM whatsapp_dispatch_queue WHERE id = ? LIMIT 1', [result.insertId]);
+  await updateWhatsAppSendIdempotency({
+    dedupeKey: dispatchDedupeKey,
+    scope: 'dispatch_enqueue',
+    status: 'queued',
+    messageId: payload.message_id || payload.messageId || null,
+    dispatchQueueId: result.insertId,
+    campaignBatchId: payload.payload?.batchId || payload.payload?.campaignBatchId || null
+  });
   emitWhatsAppRealtime('whatsapp:dispatch:queued', { item: rows[0], at: new Date().toISOString() }, {
     operatorId: payload.operator_id || payload.operatorId,
     conversationId: payload.conversation_id || payload.conversationId
@@ -12715,6 +12973,20 @@ async function processWhatsAppDispatchQueue() {
       let sendLock = null;
       const startedAt = performance.now();
       try {
+        const idempotencyOwner = await ensureWhatsAppDispatchIdempotencyOwner(item);
+        if (!idempotencyOwner.allowed) {
+          await cancelDuplicateWhatsAppDispatch(
+            item,
+            {
+              id: idempotencyOwner.existing?.dispatch_queue_id || null,
+              message_id: idempotencyOwner.existing?.message_id || null,
+              status: idempotencyOwner.existing?.status || null
+            },
+            'Envio duplicado cancelado automaticamente antes da VPS: idempotencia persistente ja possui esta mensagem.'
+          );
+          continue;
+        }
+
         sendLock = await acquireWhatsAppDispatchSendLock(item);
         if (!sendLock.acquired) {
           await cancelDuplicateWhatsAppDispatch(
@@ -12755,6 +13027,13 @@ async function processWhatsAppDispatchQueue() {
             WHERE id = ?`,
           [item.id]
         );
+        await updateWhatsAppSendIdempotency({
+          dedupeKey: item.dispatch_dedupe_key,
+          scope: 'dispatch_send',
+          status: 'sent',
+          messageId: item.message_id || null,
+          dispatchQueueId: item.id || null
+        });
         await pool.query(
           `UPDATE whatsapp_messages
               SET status = 'enviada',
@@ -16436,69 +16715,133 @@ async function queueManagedWhatsAppMessage({
     throw new Error('Não foi possível enfileirar a mensagem do WhatsApp.');
   }
 
-  const duplicateMessage = await findRecentDuplicateWhatsAppMessage({
+  const dispatchDedupeKey = buildWhatsAppDispatchDedupeKey({
     instanceName,
-    patientPhone: normalizedPhone,
+    recipientPhone: normalizedPhone,
     messageText: text,
-    messageType,
-    maxAgeSeconds: 180
+    messageType
   });
-  if (duplicateMessage) {
+  const idempotencyReservation = await reserveWhatsAppSendIdempotency({
+    dedupeKey: dispatchDedupeKey,
+    scope: 'managed_message_enqueue',
+    status: 'reserved',
+    recipientPhone: normalizedPhone,
+    instanceName,
+    messageType,
+    campaignBatchId: payload.batchId || payload.campaignBatchId || null
+  });
+
+  if (!idempotencyReservation.acquired) {
+    const existingMessageId = Number(idempotencyReservation.existing?.message_id || 0) || null;
+    const existingConversationId = existingMessageId
+      ? (await getWhatsAppMessageById(existingMessageId))?.conversation_id || null
+      : null;
     return {
-      conversation: duplicateMessage.conversation_id ? await getWhatsAppConversationById(duplicateMessage.conversation_id) : null,
-      messageId: duplicateMessage.id,
-      dispatch: null,
-      duplicateSuppressed: true
+      conversation: existingConversationId ? await getWhatsAppConversationById(existingConversationId) : null,
+      messageId: existingMessageId,
+      dispatch: idempotencyReservation.existing?.dispatch_queue_id
+        ? { id: idempotencyReservation.existing.dispatch_queue_id, duplicateSuppressed: true }
+        : null,
+      duplicateSuppressed: true,
+      duplicateReason: 'Mensagem identica ja reservada para envio. Clique repetido ou requisicao duplicada bloqueada.'
     };
   }
 
-  const conversation = await findOrCreateWhatsAppConversation({
-    ...conversationPayload,
-    patient_name: normalizeWhatsAppPatientName(patientName || conversationPayload.patient_name || 'Paciente WhatsApp'),
-    patient_phone: normalizedPhone,
-    phone: normalizedPhone,
-    clinic_id: clinicId || conversationPayload.clinic_id || null,
-    clinic_name: clinicName || conversationPayload.clinic_name || null,
-    instance_name: instanceName,
-    session_id: instanceName,
-    source,
-    status: conversationPayload.status || 'Em atendimento'
-  }, actor || { id: null, name: 'Sistema WhatsApp', role: 'system' });
+  let messageId = null;
+  try {
+    const duplicateMessage = await findRecentDuplicateWhatsAppMessage({
+      instanceName,
+      patientPhone: normalizedPhone,
+      messageText: text,
+      messageType,
+      maxAgeSeconds: 180
+    });
+    if (duplicateMessage) {
+      await updateWhatsAppSendIdempotency({
+        dedupeKey: dispatchDedupeKey,
+        scope: 'managed_message_enqueue',
+        status: 'duplicate',
+        messageId: duplicateMessage.id
+      });
+      return {
+        conversation: duplicateMessage.conversation_id ? await getWhatsAppConversationById(duplicateMessage.conversation_id) : null,
+        messageId: duplicateMessage.id,
+        dispatch: null,
+        duplicateSuppressed: true
+      };
+    }
 
-  const messageId = await insertWhatsAppMessage({
-    conversation_id: conversation.id,
-    instance_name: instanceName,
-    session_id: instanceName,
-    patient_phone: normalizedPhone,
-    phone: normalizedPhone,
-    patient_name: patientName || conversation.patient_name || null,
-    direction: 'outbound',
-    message_text: text,
-    message: text,
-    message_type: messageType,
-    source,
-    status: 'pendente',
-    operator_id: actor?.id || conversation.operator_id || null,
-    operator_name: actor ? getActorName(actor) : (conversation.operator_name || 'Sistema WhatsApp'),
-    clinic_id: conversation.clinic_id,
-    clinic_name: conversation.clinic_name,
-    campaign: conversation.campaign
-  });
+    const conversation = await findOrCreateWhatsAppConversation({
+      ...conversationPayload,
+      patient_name: normalizeWhatsAppPatientName(patientName || conversationPayload.patient_name || 'Paciente WhatsApp'),
+      patient_phone: normalizedPhone,
+      phone: normalizedPhone,
+      clinic_id: clinicId || conversationPayload.clinic_id || null,
+      clinic_name: clinicName || conversationPayload.clinic_name || null,
+      instance_name: instanceName,
+      session_id: instanceName,
+      source,
+      status: conversationPayload.status || 'Em atendimento'
+    }, actor || { id: null, name: 'Sistema WhatsApp', role: 'system' });
 
-  const dispatch = await enqueueWhatsAppDispatch({
-    message_id: messageId,
-    conversation_id: conversation.id,
-    instance_name: instanceName,
-    recipient_phone: normalizedPhone,
-    message_text: text,
-    message_type: messageType,
-    operator_id: actor?.id || conversation.operator_id || null,
-    operator_name: actor ? getActorName(actor) : (conversation.operator_name || 'Sistema WhatsApp'),
-    scheduleDelaySeconds,
-    payload: { source, ...payload }
-  });
+    messageId = await insertWhatsAppMessage({
+      conversation_id: conversation.id,
+      instance_name: instanceName,
+      session_id: instanceName,
+      patient_phone: normalizedPhone,
+      phone: normalizedPhone,
+      patient_name: patientName || conversation.patient_name || null,
+      direction: 'outbound',
+      message_text: text,
+      message: text,
+      message_type: messageType,
+      source,
+      status: 'pendente',
+      operator_id: actor?.id || conversation.operator_id || null,
+      operator_name: actor ? getActorName(actor) : (conversation.operator_name || 'Sistema WhatsApp'),
+      clinic_id: conversation.clinic_id,
+      clinic_name: conversation.clinic_name,
+      campaign: conversation.campaign,
+      client_request_id: dispatchDedupeKey
+    });
 
-  return { conversation, messageId, dispatch, duplicateSuppressed: Boolean(dispatch?.duplicateSuppressed) };
+    const dispatch = await enqueueWhatsAppDispatch({
+      message_id: messageId,
+      conversation_id: conversation.id,
+      instance_name: instanceName,
+      recipient_phone: normalizedPhone,
+      message_text: text,
+      message_type: messageType,
+      operator_id: actor?.id || conversation.operator_id || null,
+      operator_name: actor ? getActorName(actor) : (conversation.operator_name || 'Sistema WhatsApp'),
+      scheduleDelaySeconds,
+      dispatch_dedupe_key: dispatchDedupeKey,
+      skipIdempotencyReserve: true,
+      payload: { source, ...payload }
+    });
+
+    await updateWhatsAppSendIdempotency({
+      dedupeKey: dispatchDedupeKey,
+      scope: 'managed_message_enqueue',
+      status: dispatch?.duplicateSuppressed ? 'duplicate' : 'queued',
+      messageId,
+      dispatchQueueId: dispatch?.id || null,
+      campaignBatchId: payload.batchId || payload.campaignBatchId || null
+    });
+
+    return { conversation, messageId, dispatch, duplicateSuppressed: Boolean(dispatch?.duplicateSuppressed) };
+  } catch (error) {
+    if (messageId) {
+      await updateWhatsAppSendIdempotency({
+        dedupeKey: dispatchDedupeKey,
+        status: 'erro',
+        messageId
+      });
+    } else {
+      await releaseWhatsAppSendIdempotencyReservation(dispatchDedupeKey);
+    }
+    throw error;
+  }
 }
 
 async function getWhatsAppChatbotRecentSessions(limit = 40, user = null) {
