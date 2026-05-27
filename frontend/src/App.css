@@ -10408,7 +10408,7 @@ a {
   align-items: end;
   width: 100%;
   margin: 0;
-  padding: 28px 30px;
+  padding: 22px 26px;
   border: 1px solid rgba(31, 122, 140, 0.14);
   border-top: 5px solid #1f7a8c;
   border-radius: 22px;
@@ -10451,7 +10451,7 @@ a {
 
 .whatsapp-hero-metrics {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 12px;
 }
 
@@ -11833,6 +11833,222 @@ a {
   font-weight: 760;
 }
 
+.whatsapp-tabbar-grouped {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 12px;
+  overflow: visible;
+  padding: 12px;
+}
+
+.whatsapp-tab-group {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.whatsapp-tab-group > strong {
+  color: var(--brand-strong);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.whatsapp-tab-group > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.whatsapp-tab-group .whatsapp-tabbar button,
+.whatsapp-tab-group button {
+  min-height: 38px;
+  padding: 8px 11px;
+  white-space: normal;
+}
+
+.partner-video-subtabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid rgba(221, 207, 188, 0.78);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 245, 240, 0.94));
+  box-shadow: 0 16px 32px rgba(12, 12, 16, 0.05);
+}
+
+.partner-video-subtabs button {
+  min-height: 38px;
+  padding: 8px 14px;
+  border: 1px solid rgba(221, 207, 188, 0.8);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: var(--muted);
+  font-weight: 950;
+  cursor: pointer;
+}
+
+.partner-video-subtabs button.active,
+.partner-video-subtabs button:hover {
+  border-color: rgba(31, 122, 140, 0.28);
+  background: rgba(31, 122, 140, 0.12);
+  color: #1f5f6d;
+}
+
+.partner-video-kpi-grid {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.partner-video-actionbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.partner-video-actionbar > div:first-child {
+  min-width: 260px;
+}
+
+.partner-video-actionbar .row-actions,
+.partner-video-row-actions {
+  justify-content: flex-end;
+}
+
+.partner-video-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(170px, 1fr) minmax(170px, 1fr) minmax(150px, 0.8fr) minmax(140px, 0.7fr) minmax(150px, 0.8fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px;
+  border: 1px solid rgba(221, 207, 188, 0.74);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.partner-video-filter-grid label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.partner-video-dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.95fr) minmax(260px, 1fr) minmax(260px, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.partner-video-progress-panel {
+  align-content: start;
+}
+
+.partner-video-progress-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) auto;
+  gap: 8px 12px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid rgba(221, 207, 188, 0.54);
+}
+
+.partner-video-progress-row:last-child {
+  border-bottom: 0;
+}
+
+.partner-video-progress-row span {
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.partner-video-progress-row strong {
+  color: var(--brand-strong);
+  font-size: 18px;
+}
+
+.partner-video-progress-row i {
+  grid-column: 1 / -1;
+  display: block;
+  width: 100%;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(101, 117, 139, 0.12);
+}
+
+.partner-video-progress-row b {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.partner-video-progress-row b.success {
+  background: #2f855a;
+}
+
+.partner-video-progress-row b.warning {
+  background: #c9892f;
+}
+
+.partner-video-progress-row b.danger {
+  background: #c44536;
+}
+
+.partner-video-partners-layout {
+  display: grid;
+  grid-template-columns: minmax(300px, 0.78fr) minmax(0, 1.6fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.partner-video-editor-card {
+  position: sticky;
+  top: 88px;
+}
+
+.partner-video-table-card {
+  min-width: 0;
+}
+
+.partner-video-table-wrap {
+  max-height: 640px;
+}
+
+.partner-video-table {
+  min-width: 1120px;
+}
+
+.partner-video-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 240px;
+}
+
+.partner-video-log-detail {
+  max-width: 360px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.partner-video-history-modal {
+  width: min(1040px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 32px));
+  overflow: auto;
+}
+
+.partner-video-missing-section .partner-video-missing-list {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  max-height: 300px;
+}
+
 .whatsapp-inline-select {
   display: grid;
   gap: 6px;
@@ -13096,6 +13312,8 @@ a {
   .whatsapp-bi-grid,
   .whatsapp-bi-session-grid,
   .whatsapp-bi-queue-list,
+  .partner-video-dashboard-grid,
+  .partner-video-partners-layout,
   .whatsapp-allowed-clinic-strip {
     grid-template-columns: 1fr;
   }
@@ -13112,6 +13330,19 @@ a {
   .whatsapp-chart-grid,
   .whatsapp-filter-row {
     grid-template-columns: 1fr;
+  }
+
+  .partner-video-actionbar,
+  .partner-video-panel-heading {
+    align-items: stretch;
+  }
+
+  .partner-video-actionbar {
+    flex-direction: column;
+  }
+
+  .partner-video-editor-card {
+    position: static;
   }
 
   .whatsapp-kpi-grid {
@@ -13174,6 +13405,7 @@ a {
 
   .whatsapp-heading .heading-actions,
   .whatsapp-form-grid,
+  .partner-video-filter-grid,
   .whatsapp-campaign-hero,
   .whatsapp-campaign-import-grid,
   .whatsapp-instances-card-grid,
@@ -13249,6 +13481,8 @@ a {
   .whatsapp-settings-rule-grid,
   .whatsapp-settings-action-panel,
   .whatsapp-service-session-card .whatsapp-service-row-actions,
+  .partner-video-dashboard-grid,
+  .partner-video-partners-layout,
   .partner-video-contact-card {
     grid-template-columns: 1fr;
   }

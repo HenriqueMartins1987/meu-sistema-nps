@@ -7,18 +7,18 @@ import { hasActionPermission, hasPermission, isMasterAdmin, normalizeRoleValue, 
 import { readToken } from '../session';
 
 const sections = [
-  { id: 'dashboard', label: 'Visao geral', path: '/home/whatsapp-management/dashboard', permission: 'whatsapp_dashboard', leader: true },
-  { id: 'instances', label: 'Cadastro de Numero', path: '/home/whatsapp-management/instances', permission: 'whatsapp_instances', leader: true },
-  { id: 'attendance', label: 'Atendimento', path: '/home/whatsapp-management/attendance', permission: 'whatsapp_attendance', operator: true },
-  { id: 'send', label: 'Envio manual', path: '/home/whatsapp-management/send', permission: 'whatsapp_send', operator: true },
-  { id: 'templates', label: 'Mensagens padrao', path: '/home/whatsapp-management/templates', permission: 'whatsapp_templates', operator: true },
-  { id: 'campaigns', label: 'Disparos em massa', path: '/home/whatsapp-management/campaigns', permission: 'whatsapp_send', operator: true },
-  { id: 'chatbot', label: 'Chatbot', path: '/home/whatsapp-management/chatbot', permission: 'whatsapp_chatbot', operator: true },
-  { id: 'absent', label: 'Ausentes', path: '/home/whatsapp-management/absent', permission: 'whatsapp_absent', operator: true },
-  { id: 'history', label: 'Historico', path: '/home/whatsapp-management/history', permission: 'whatsapp_history', operator: true },
-  { id: 'confirmation', label: 'Confirmacao e Agendamento', path: '/home/whatsapp-management/confirmation', permission: 'whatsapp_reports', leader: true },
-  { id: 'reports', label: 'Relatorios', path: '/home/whatsapp-management/reports', permission: 'whatsapp_reports', leader: true },
-  { id: 'settings', label: 'Configuracoes', path: '/admin/controle-master', permission: 'whatsapp_settings', masterOnly: true }
+  { id: 'dashboard', label: 'Visao geral', path: '/home/whatsapp-management/dashboard', permission: 'whatsapp_dashboard', leader: true, group: 'Operacao' },
+  { id: 'instances', label: 'Cadastro de Numero', path: '/home/whatsapp-management/instances', permission: 'whatsapp_instances', leader: true, group: 'Operacao' },
+  { id: 'attendance', label: 'Atendimento', path: '/home/whatsapp-management/attendance', permission: 'whatsapp_attendance', operator: true, group: 'Operacao' },
+  { id: 'send', label: 'Envio manual', path: '/home/whatsapp-management/send', permission: 'whatsapp_send', operator: true, group: 'Mensagens' },
+  { id: 'templates', label: 'Mensagens padrao', path: '/home/whatsapp-management/templates', permission: 'whatsapp_templates', operator: true, group: 'Mensagens' },
+  { id: 'campaigns', label: 'Disparos em massa', path: '/home/whatsapp-management/campaigns', permission: 'whatsapp_send', operator: true, group: 'Mensagens' },
+  { id: 'chatbot', label: 'Chatbot', path: '/home/whatsapp-management/chatbot', permission: 'whatsapp_chatbot', operator: true, group: 'Mensagens' },
+  { id: 'absent', label: 'Ausentes', path: '/home/whatsapp-management/absent', permission: 'whatsapp_absent', operator: true, group: 'Parceiros' },
+  { id: 'history', label: 'Historico', path: '/home/whatsapp-management/history', permission: 'whatsapp_history', operator: true, group: 'Relatorios' },
+  { id: 'confirmation', label: 'Confirmacao e Agendamento', path: '/home/whatsapp-management/confirmation', permission: 'whatsapp_reports', leader: true, group: 'Parceiros' },
+  { id: 'reports', label: 'Relatorios', path: '/home/whatsapp-management/reports', permission: 'whatsapp_reports', leader: true, group: 'Relatorios' },
+  { id: 'settings', label: 'Configuracoes', path: '/admin/controle-master', permission: 'whatsapp_settings', masterOnly: true, group: 'Configuracoes' }
 ];
 
 const sectionDescriptions = {
@@ -262,6 +262,7 @@ function emptyPartnerVideoContact() {
     clinic_name: '',
     partner_name: '',
     phone_number: '',
+    specialty: '',
     active: true,
     receives_automatic_message: true,
     default_send_time: '08:00',
@@ -343,6 +344,12 @@ function WhatsAppManagement() {
   const role = normalizeRoleValue(user?.role);
   const allowedSections = useMemo(() => sections.filter((item) => canAccessSection(user, item)), [user]);
   const currentSection = allowedSections.some((item) => item.id === section) ? section : (allowedSections[0]?.id || 'dashboard');
+  const groupedAllowedSections = useMemo(() => allowedSections.reduce((acc, item) => {
+    const group = item.group || 'Geral';
+    acc[group] = acc[group] || [];
+    acc[group].push(item);
+    return acc;
+  }, {}), [allowedSections]);
   const allowed = hasPermission(user, 'whatsapp_management') || isMasterAdmin(user) || ['admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator'].includes(role);
   const canConfigure = isMasterAdmin(user) || hasActionPermission(user, 'whatsapp_config_manage') || ['admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager'].includes(role);
   const canRouteAttendance = canConfigure && role !== 'crc_operator';
@@ -394,6 +401,9 @@ function WhatsAppManagement() {
   const [partnerContactDraft, setPartnerContactDraft] = useState(emptyPartnerVideoContact());
   const [editingPartnerContactId, setEditingPartnerContactId] = useState('');
   const [partnerNoVideoSelection, setPartnerNoVideoSelection] = useState([]);
+  const [confirmationTab, setConfirmationTab] = useState('daily');
+  const [partnerVideoFilters, setPartnerVideoFilters] = useState({ clinic: '', partner: '', status: '', phone: '', date: '' });
+  const [partnerHistoryContact, setPartnerHistoryContact] = useState(null);
   const [transferTargetId, setTransferTargetId] = useState('');
   const [settingsDraft, setSettingsDraft] = useState({ baseUrl: '', apiKey: '', antiBan: {} });
   const [historyFilters, setHistoryFilters] = useState({ search: '', status: '', instanceName: '' });
@@ -443,28 +453,26 @@ function WhatsAppManagement() {
     && selectedSendInstanceStatus !== 'conectado'
     && selectedSendInstanceStatus !== 'connected';
   const currentSectionMeta = allowedSections.find((item) => item.id === currentSection) || allowedSections[0] || null;
-  const headerMetrics = useMemo(() => ([
-    {
-      label: 'Sessoes conectadas',
-      value: formatNumber(instances.filter((item) => String(item.status || '').toLowerCase() === 'conectado').length),
-      tone: 'success'
-    },
-    {
-      label: 'Fila aberta',
-      value: formatNumber(queue.length),
-      tone: queue.length ? 'warning' : 'neutral'
-    },
-    {
-      label: 'Mensagens hoje',
-      value: formatNumber(dashboard?.summary?.sentToday || 0),
-      tone: 'neutral'
-    },
-    {
-      label: 'Operadores',
-      value: formatNumber(operators.length),
-      tone: 'neutral'
+  const headerMetrics = useMemo(() => {
+    const connectedSessions = instances.filter((item) => String(item.status || '').toLowerCase() === 'conectado').length;
+    if (currentSection === 'confirmation') {
+      const summary = partnersVideo?.summary || {};
+      return [
+        { label: 'Sessoes conectadas', value: formatNumber(connectedSessions), tone: connectedSessions ? 'success' : 'warning' },
+        { label: 'Fila aberta', value: formatNumber(queue.length), tone: queue.length ? 'warning' : 'neutral' },
+        { label: 'Mensagens hoje', value: formatNumber(summary.sentToday || dashboard?.summary?.sentToday || 0), tone: 'neutral' },
+        { label: 'Parceiros ativos', value: formatNumber(summary.activeContacts || 0), tone: 'success' },
+        { label: 'Pendencias do dia', value: formatNumber(summary.pendingToday || 0), tone: summary.pendingToday ? 'warning' : 'success' },
+        { label: 'Falhas de envio', value: formatNumber(summary.failuresToday || 0), tone: summary.failuresToday ? 'danger' : 'success' }
+      ];
     }
-  ]), [dashboard?.summary?.sentToday, instances, operators.length, queue.length]);
+    return [
+      { label: 'Sessoes conectadas', value: formatNumber(connectedSessions), tone: 'success' },
+      { label: 'Fila aberta', value: formatNumber(queue.length), tone: queue.length ? 'warning' : 'neutral' },
+      { label: 'Mensagens hoje', value: formatNumber(dashboard?.summary?.sentToday || 0), tone: 'neutral' },
+      { label: 'Operadores', value: formatNumber(operators.length), tone: 'neutral' }
+    ];
+  }, [currentSection, dashboard?.summary?.sentToday, instances, operators.length, partnersVideo?.summary, queue.length]);
 
   const setSuccess = (message) => setFeedback({ type: 'success', message });
   const setError = (message) => setFeedback({ type: 'error', message });
@@ -889,6 +897,7 @@ function WhatsAppManagement() {
       clinic_name: contact.clinic_name || '',
       partner_name: contact.partner_name || '',
       phone_number: contact.phone_number || '',
+      specialty: contact.specialty || '',
       active: Boolean(contact.active),
       receives_automatic_message: Boolean(contact.receives_automatic_message),
       default_send_time: String(contact.default_send_time || '08:00').slice(0, 5),
@@ -903,20 +912,60 @@ function WhatsAppManagement() {
     setPartnerContactDraft(emptyPartnerVideoContact());
   };
 
-  const savePartnerVideoContact = () => runAction('partner-video-contact-save', async () => {
-    const payload = {
-      ...partnerContactDraft,
-      phone_number: normalizePhone(partnerContactDraft.phone_number),
-      default_send_time: partnerContactDraft.default_send_time || '08:00',
-      allowed_weekdays: partnerContactDraft.allowed_weekdays || '1,2,3,4,5,6'
-    };
-    const response = editingPartnerContactId
-      ? await api.put(`/api/partners-video/contacts/${editingPartnerContactId}`, payload)
-      : await api.post('/api/partners-video/contacts', payload);
-    cancelPartnerVideoContactEdit();
+  const savePartnerVideoContact = () => {
+    const normalizedPhone = normalizePhone(partnerContactDraft.phone_number);
+    if (normalizedPhone && !/^55\d{10,11}$/.test(normalizedPhone)) {
+      setError('Telefone invalido. Use DDI + DDD + numero, por exemplo 5562999999999.');
+      return null;
+    }
+    const duplicatePhone = normalizedPhone && (partnersVideo?.contacts || []).find((contact) => (
+      String(contact.id) !== String(editingPartnerContactId || '')
+      && normalizePhone(contact.phone_number) === normalizedPhone
+    ));
+    const allowDuplicatePhone = Boolean(duplicatePhone);
+    if (duplicatePhone) {
+      const confirmed = window.confirm(`O telefone ja esta vinculado a ${duplicatePhone.partner_name || 'outro parceiro'}. Deseja continuar mesmo assim?`);
+      if (!confirmed) return null;
+    }
+    return runAction('partner-video-contact-save', async () => {
+      const payload = {
+        ...partnerContactDraft,
+        phone_number: normalizedPhone,
+        default_send_time: partnerContactDraft.default_send_time || '08:00',
+        allowed_weekdays: partnerContactDraft.allowed_weekdays || '1,2,3,4,5,6',
+        allow_duplicate_phone: allowDuplicatePhone
+      };
+      const response = editingPartnerContactId
+        ? await api.put(`/api/partners-video/contacts/${editingPartnerContactId}`, payload)
+        : await api.post('/api/partners-video/contacts', payload);
+      cancelPartnerVideoContactEdit();
+      await loadBaseData({ silent: true });
+      return response;
+    }, editingPartnerContactId ? 'Parceiro atualizado.' : 'Parceiro cadastrado.', 'Nao foi possivel salvar o parceiro.');
+  };
+
+  const togglePartnerVideoContactActive = (contact) => runAction(`partner-video-contact-active-${contact.id}`, async () => {
+    const response = await api.put(`/api/partners-video/contacts/${contact.id}`, {
+      ...contact,
+      active: !Number(contact.active),
+      receives_automatic_message: Boolean(contact.receives_automatic_message),
+      phone_number: normalizePhone(contact.phone_number)
+    });
     await loadBaseData({ silent: true });
     return response;
-  }, editingPartnerContactId ? 'Parceiro atualizado.' : 'Parceiro cadastrado.', 'Nao foi possivel salvar o parceiro.');
+  }, Number(contact.active) ? 'Parceiro inativado.' : 'Parceiro ativado.', 'Nao foi possivel alterar o status do parceiro.');
+
+  const sendPartnerVideoContactTest = (contact) => runAction(`partner-video-contact-test-${contact.id}`, async () => {
+    const response = await api.post(`/api/partners-video/contacts/${contact.id}/test-send`);
+    await loadBaseData({ silent: true });
+    return response;
+  }, 'Teste enfileirado para o parceiro.', 'Nao foi possivel enviar teste para este parceiro.');
+
+  const resendPartnerVideoContact = (contact) => runAction(`partner-video-contact-resend-${contact.id}`, async () => {
+    const response = await api.post(`/api/partners-video/contacts/${contact.id}/resend`);
+    await loadBaseData({ silent: true });
+    return response;
+  }, 'Cobranca reenfileirada para o parceiro.', 'Nao foi possivel reenviar a cobranca para este parceiro.');
 
   const deletePartnerVideoContact = (contactId) => {
     if (!window.confirm('Excluir este parceiro da rotina de videos?')) return null;
@@ -926,6 +975,14 @@ function WhatsAppManagement() {
       await loadBaseData({ silent: true });
       return response;
     }, 'Parceiro removido.', 'Nao foi possivel excluir o parceiro.');
+  };
+
+  const updatePartnerVideoFilter = (field, value) => {
+    setPartnerVideoFilters((current) => ({ ...current, [field]: value }));
+  };
+
+  const clearPartnerVideoFilters = () => {
+    setPartnerVideoFilters({ clinic: '', partner: '', status: '', phone: '', date: '' });
   };
 
   const assignInstanceOperator = (instanceName, operatorId) => runAction(`assign-${instanceName}`, async () => {
@@ -2655,6 +2712,659 @@ function WhatsAppManagement() {
     );
   };
 
+  void renderConfirmationScheduling;
+
+  const renderConfirmationSchedulingPro = () => {
+    const summary = partnersVideo?.summary || {};
+    const controls = Array.isArray(partnersVideo?.controls) ? partnersVideo.controls : [];
+    const contacts = Array.isArray(partnersVideo?.contacts) ? partnersVideo.contacts : [];
+    const logs = Array.isArray(partnersVideo?.logs) ? partnersVideo.logs : [];
+    const session = partnersVideo?.session || instances.find((item) => item.instance_name === 'confirmacao-agendamento') || {};
+    const settings = partnerSettingsDraft || normalizePartnerVideoSettingsDraft(partnersVideo?.settings || {});
+    const allowedTimeList = String(settings.allowedTimes || '08:00\n18:00').split(/\n|,|;/).map((item) => item.trim()).filter(Boolean);
+    const unitsWithoutPartnerNames = Array.isArray(summary.unitsWithoutPartnerNames) ? summary.unitsWithoutPartnerNames : [];
+    const formatDateTime = (value) => String(value || '-').slice(0, 16).replace('T', ' ');
+    const cleanText = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    const statusIsFailure = (value) => cleanText(value).includes('erro') || cleanText(value).includes('falh');
+    const statusIsSent = (value) => cleanText(value).includes('envi') || cleanText(value).includes('entreg') || cleanText(value).includes('lido') || cleanText(value).includes('fila');
+    const activeContacts = contacts.filter((item) => Number(item.active));
+    const plannedMessages = activeContacts.filter((item) => Number(item.receives_automatic_message)).length;
+    const sentControls = controls.filter((item) => item.message_sent_at || statusIsSent(item.message_status || item.status));
+    const failedControls = controls.filter((item) => statusIsFailure(`${item.message_status || ''} ${item.status || ''}`));
+    const pendingControls = controls.filter((item) => !Number(item.video_received) && !failedControls.some((failed) => String(failed.id) === String(item.id)));
+    const controlsByPartnerId = new Map();
+    controls.forEach((item) => {
+      const key = String(item.partner_id || '');
+      const current = controlsByPartnerId.get(key);
+      const currentDate = String(current?.message_sent_at || current?.updated_at || '');
+      const nextDate = String(item.message_sent_at || item.updated_at || '');
+      if (!current || nextDate > currentDate) controlsByPartnerId.set(key, item);
+    });
+    const contactRows = contacts.map((contact) => {
+      const lastControl = controlsByPartnerId.get(String(contact.id)) || null;
+      const contactLogs = logs.filter((log) => String(log.contact_id || '') === String(contact.id));
+      const lastLog = contactLogs[0] || null;
+      return {
+        ...contact,
+        specialty: contact.specialty || contact.role || contact.function || 'Parceiro clinico',
+        lastControl,
+        lastLog,
+        last_send_at: lastControl?.message_sent_at || lastLog?.created_at || null,
+        last_send_status: lastControl?.message_status || lastControl?.status || lastLog?.status || (Number(contact.active) ? 'pendente' : 'inativo')
+      };
+    });
+    const clinicOptions = Array.from(new Set([
+      ...clinics.map((clinic) => clinic.name).filter(Boolean),
+      ...contacts.map((contact) => contact.clinic_name).filter(Boolean),
+      ...controls.map((control) => control.clinic_name).filter(Boolean)
+    ])).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+    const contactById = new Map(contactRows.map((item) => [String(item.id), item]));
+    const decoratedLogs = logs.map((item) => {
+      const contact = contactById.get(String(item.contact_id || '')) || {};
+      return {
+        ...item,
+        clinic_name: item.clinic_name || contact.clinic_name || '',
+        partner_name: item.partner_name || contact.partner_name || '',
+        phone_number: item.recipient_phone || contact.phone_number || '',
+        status: item.status || item.event_type || ''
+      };
+    });
+    const statusMatches = (row = {}, type = 'control') => {
+      const selected = partnerVideoFilters.status;
+      const status = cleanText(row.status || row.message_status || row.last_send_status || row.event_type);
+      const phone = normalizePhone(row.phone_number || row.recipient_phone || '');
+      if (!selected) return true;
+      if (selected === 'sem_telefone') return !phone;
+      if (selected === 'inativo') return type === 'contact' && !Number(row.active);
+      if (selected === 'falhou') return status.includes('erro') || status.includes('falh');
+      if (selected === 'enviado') return status.includes('envi') || status.includes('entreg') || status.includes('lido') || Boolean(row.message_sent_at || row.last_send_at);
+      if (selected === 'pendente') return status.includes('pend') || status.includes('aguard') || status.includes('fila') || status.includes('nao enviado') || status.includes('acionado');
+      return status.includes(cleanText(selected));
+    };
+    const rowMatches = (row = {}, type = 'control') => {
+      const clinic = cleanText(row.clinic_name);
+      const partner = cleanText(row.partner_name);
+      const phone = normalizePhone(row.phone_number || row.recipient_phone || '');
+      const rowDate = String(row.date || row.created_at || row.message_sent_at || row.last_send_at || '').slice(0, 10);
+      if (partnerVideoFilters.clinic && clinic !== cleanText(partnerVideoFilters.clinic)) return false;
+      if (partnerVideoFilters.partner && !partner.includes(cleanText(partnerVideoFilters.partner))) return false;
+      if (partnerVideoFilters.phone && !phone.includes(normalizePhone(partnerVideoFilters.phone))) return false;
+      if (partnerVideoFilters.date && rowDate && rowDate !== partnerVideoFilters.date) return false;
+      return statusMatches(row, type);
+    };
+    const filteredContacts = contactRows.filter((item) => rowMatches(item, 'contact'));
+    const filteredControls = controls.filter((item) => rowMatches(item, 'control'));
+    const filteredLogs = decoratedLogs.filter((item) => rowMatches(item, 'log'));
+    const completionPercent = plannedMessages ? Math.round((sentControls.length / plannedMessages) * 100) : 0;
+    const pendingPercent = plannedMessages ? Math.round((pendingControls.length / plannedMessages) * 100) : 0;
+    const failurePercent = plannedMessages ? Math.round((failedControls.length / plannedMessages) * 100) : 0;
+    const withoutPhonePercent = activeContacts.length ? Math.round(((summary.withoutPhone || 0) / activeContacts.length) * 100) : 0;
+    const lastSend = [...controls].filter((item) => item.message_sent_at).sort((a, b) => String(b.message_sent_at).localeCompare(String(a.message_sent_at)))[0];
+    const weekdayDescription = formatPartnerWeekdayLabels(settings.allowedWeekdays || [1, 2, 3, 4, 5, 6]);
+    const qrUrl = `${(configStatus?.baseUrl || adminSettings?.baseUrl || 'http://2.24.101.6:3005').replace(/\/+$/, '')}/public/sessions/confirmacao-agendamento/qr-image`;
+    const noVideoOptions = [
+      ...controls.map((item) => ({
+        key: `control:${item.id}`,
+        clinicName: item.clinic_name,
+        partnerName: item.partner_name,
+        status: item.status || 'controle diario',
+        phone: item.phone_number || ''
+      })),
+      ...contacts
+        .filter((item) => Number(item.active) && !controlsByPartnerId.has(String(item.id)))
+        .map((item) => ({
+          key: `contact:${item.id}`,
+          clinicName: item.clinic_name,
+          partnerName: item.partner_name,
+          status: 'sem controle no dia',
+          phone: item.phone_number || ''
+        }))
+    ];
+    const confirmationConfirmed = confirmationResponses.filter((item) => item.confirmation_confirmed);
+    const confirmationReschedule = confirmationResponses.filter((item) => item.confirmation_decision === 'reagendar');
+    const confirmationHuman = confirmationResponses.filter((item) => item.confirmation_decision === 'humano');
+    const reportRows = filteredControls.map((item) => ({
+      data: String(item.date || '').slice(0, 10),
+      unidade: item.clinic_name || '',
+      parceiro: item.partner_name || '',
+      telefone: item.phone_number || '',
+      tipo: 'cobranca_video',
+      status: item.message_status || item.status || '',
+      tentativas: item.attempts || item.retry_count || 1,
+      erro: item.error_message || '',
+      enviado_em: formatDateTime(item.message_sent_at),
+      recebido_em: item.video_received ? formatDateTime(item.video_received_at) : '',
+      origem: item.created_by || 'automatico/manual'
+    }));
+    const unitRanking = Object.values(filteredControls.reduce((acc, item) => {
+      const key = item.clinic_name || 'Sem unidade';
+      acc[key] = acc[key] || { label: key, total: 0 };
+      if (!Number(item.video_received)) acc[key].total += 1;
+      return acc;
+    }, {})).filter((item) => item.total).sort((a, b) => b.total - a.total).slice(0, 6);
+    const failureRanking = Object.values(filteredLogs.reduce((acc, item) => {
+      if (!statusIsFailure(item.status)) return acc;
+      const key = item.partner_name || item.recipient_phone || 'Sem parceiro';
+      acc[key] = acc[key] || { label: key, total: 0 };
+      acc[key].total += 1;
+      return acc;
+    }, {})).sort((a, b) => b.total - a.total).slice(0, 6);
+    const pendingReportRows = reportRows.filter((item) => cleanText(item.status).includes('pend') || cleanText(item.status).includes('aguard') || cleanText(item.status).includes('fila'));
+    const failureReportRows = reportRows.filter((item) => statusIsFailure(item.status || item.erro));
+    const unitReportRows = Object.values(reportRows.reduce((acc, item) => {
+      const key = item.unidade || 'Sem unidade';
+      acc[key] = acc[key] || { unidade: key, previstos: 0, enviados: 0, pendentes: 0, falhas: 0 };
+      acc[key].previstos += 1;
+      if (statusIsSent(item.status) || item.enviado_em !== '-') acc[key].enviados += 1;
+      if (cleanText(item.status).includes('pend') || cleanText(item.status).includes('aguard')) acc[key].pendentes += 1;
+      if (statusIsFailure(item.status || item.erro)) acc[key].falhas += 1;
+      return acc;
+    }, {}));
+    const printFilteredPartnerVideoPdf = () => {
+      if (!reportRows.length) {
+        setError('Nenhum envio encontrado nos filtros atuais para gerar PDF.');
+        return;
+      }
+      const htmlRows = reportRows.map((row) => `
+        <tr>
+          <td>${escapeHtml(row.unidade)}</td>
+          <td>${escapeHtml(row.parceiro)}</td>
+          <td>${escapeHtml(row.telefone)}</td>
+          <td>${escapeHtml(row.status)}</td>
+          <td>${escapeHtml(row.enviado_em)}</td>
+          <td>${escapeHtml(row.erro || '-')}</td>
+        </tr>
+      `).join('');
+      const reportWindow = window.open('', '_blank', 'width=1120,height=780');
+      if (!reportWindow) {
+        setError('Nao foi possivel abrir a janela de PDF. Verifique o bloqueador de pop-up.');
+        return;
+      }
+      reportWindow.document.write(`
+        <html>
+          <head>
+            <title>Relatorio filtrado - Confirmacao e Agendamento</title>
+            <style>
+              body { font-family: Arial, sans-serif; color: #211a16; margin: 32px; }
+              header { border-bottom: 3px solid #8e6731; padding-bottom: 16px; margin-bottom: 20px; }
+              h1 { margin: 0; font-size: 26px; }
+              p { color: #5f5146; }
+              table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+              th, td { border-bottom: 1px solid #ddcfbc; padding: 9px; text-align: left; vertical-align: top; font-size: 12px; }
+              th { background: #f4ecdf; color: #6d573b; text-transform: uppercase; }
+            </style>
+          </head>
+          <body>
+            <header>
+              <h1>Relatorio filtrado de envios</h1>
+              <p>Confirmacao e Agendamento - Emitido em ${escapeHtml(new Date().toLocaleString('pt-BR'))}</p>
+            </header>
+            <table>
+              <thead><tr><th>Unidade</th><th>Parceiro</th><th>Telefone</th><th>Status</th><th>Envio</th><th>Erro</th></tr></thead>
+              <tbody>${htmlRows}</tbody>
+            </table>
+            <script>window.onload = () => { window.print(); };</script>
+          </body>
+        </html>
+      `);
+      reportWindow.document.close();
+    };
+    const historyLogs = partnerHistoryContact
+      ? decoratedLogs.filter((item) => String(item.contact_id || '') === String(partnerHistoryContact.id))
+      : [];
+    const operationalCards = [
+      ['Parceiros ativos', summary.activeContacts || activeContacts.length, 'Base apta para rotina diaria', 'success'],
+      ['Mensagens previstas', plannedMessages, 'Ativos com automacao ligada', 'neutral'],
+      ['Mensagens enviadas', sentControls.length || summary.sentToday || 0, `${completionPercent}% da base prevista`, sentControls.length ? 'success' : 'neutral'],
+      ['Pendentes', pendingControls.length || summary.pendingToday || 0, `${pendingPercent}% aguardando acao`, pendingControls.length ? 'warning' : 'success'],
+      ['Falhas', failedControls.length || summary.failuresToday || 0, `${failurePercent}% com erro`, failedControls.length ? 'danger' : 'success'],
+      ['Sem telefone', summary.withoutPhone || 0, `${withoutPhonePercent}% dos ativos`, summary.withoutPhone ? 'warning' : 'success'],
+      ['Sem unidade vinculada', summary.unitsWithoutPartner || 0, unitsWithoutPartnerNames.slice(0, 2).join(', ') || 'Cobertura completa', summary.unitsWithoutPartner ? 'warning' : 'success'],
+      ['Ultimo envio', lastSend ? formatDateTime(lastSend.message_sent_at) : '-', lastSend?.partner_name || 'Sem envio hoje', lastSend ? 'success' : 'neutral'],
+      ['Proximo envio', allowedTimeList.join(' / ') || settings.standardTime || '08:00', weekdayDescription, settings.automationEnabled ? 'success' : 'warning']
+    ];
+    const statusOptions = [
+      ['enviado', 'Enviado'],
+      ['pendente', 'Pendente'],
+      ['falhou', 'Falhou'],
+      ['sem_telefone', 'Sem telefone'],
+      ['inativo', 'Inativo']
+    ];
+    const confirmationTabs = [
+      ['daily', 'Painel diario'],
+      ['partners', 'Parceiros'],
+      ['shipments', 'Envios'],
+      ['logs', 'Logs'],
+      ['settings', 'Configuracoes']
+    ];
+
+    const renderFilters = () => (
+      <div className="partner-video-filter-grid">
+        <label>Unidade
+          <select className="field" value={partnerVideoFilters.clinic} onChange={(event) => updatePartnerVideoFilter('clinic', event.target.value)}>
+            <option value="">Todas</option>
+            {clinicOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+          </select>
+        </label>
+        <label>Parceiro<input className="field" value={partnerVideoFilters.partner} onChange={(event) => updatePartnerVideoFilter('partner', event.target.value)} placeholder="Buscar nome" /></label>
+        <label>Status
+          <select className="field" value={partnerVideoFilters.status} onChange={(event) => updatePartnerVideoFilter('status', event.target.value)}>
+            <option value="">Todos</option>
+            {statusOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <label>Data<input className="field" type="date" value={partnerVideoFilters.date} onChange={(event) => updatePartnerVideoFilter('date', event.target.value)} /></label>
+        <label>Telefone<input className="field" value={partnerVideoFilters.phone} onChange={(event) => updatePartnerVideoFilter('phone', event.target.value)} placeholder="5562..." /></label>
+        <button type="button" className="outline-action" onClick={clearPartnerVideoFilters}>Limpar filtros</button>
+      </div>
+    );
+
+    return (
+      <section className="whatsapp-confirmation-page">
+        <nav className="partner-video-subtabs" aria-label="Subabas de Confirmacao e Agendamento">
+          {confirmationTabs.map(([key, label]) => (
+            <button key={key} type="button" className={confirmationTab === key ? 'active' : ''} onClick={() => setConfirmationTab(key)}>{label}</button>
+          ))}
+        </nav>
+
+        {confirmationTab === 'daily' && (
+          <>
+            <section className="whatsapp-kpi-grid partner-video-kpi-grid">
+              {operationalCards.map(([title, value, helper, tone]) => (
+                <article className={`whatsapp-kpi ${tone || 'neutral'}`} key={title}>
+                  <span>{title}</span>
+                  <strong>{value}</strong>
+                  <small>{helper}</small>
+                </article>
+              ))}
+            </section>
+
+            <section className="whatsapp-panel partner-video-actionbar">
+              <div>
+                <p className="eyebrow">Barra operacional</p>
+                <h2>Controle diario de envios</h2>
+                <p className="whatsapp-panel-note">Acoes sensiveis exigem confirmacao e respeitam a fila anti-ban configurada.</p>
+              </div>
+              <div className="row-actions">
+                <Button actionKey="qr-confirmacao-agendamento" className="outline-action" onClick={() => generateQrCode('confirmacao-agendamento')}>QR Code</Button>
+                <Button actionKey="reconnect-confirmacao-agendamento" className="outline-action" onClick={() => {
+                  if (window.confirm('Reiniciar a sessao de Confirmacao e Agendamento?')) reconnectInstance('confirmacao-agendamento');
+                }}>Reiniciar sessao</Button>
+                <Button actionKey="partner-video-test" className="outline-action" onClick={sendPartnerVideoTests}>Enviar teste</Button>
+                <Button actionKey="partner-video-daily" className="primary-action" onClick={sendPartnerVideoDailyReminders}>Enviar cobranca diaria</Button>
+                <Button actionKey="partner-video-settings" className="outline-action" onClick={() => {
+                  if (window.confirm('Alterar o estado da rotina automatica?')) togglePartnerVideoAutomation();
+                }}>
+                  {partnersVideo?.settings?.automationEnabled ? 'Pausar rotina' : 'Ativar rotina'}
+                </Button>
+                <button type="button" className="outline-action" onClick={() => loadBaseData()}>Atualizar dados</button>
+              </div>
+            </section>
+
+            <section className="whatsapp-panel partner-video-control-panel">
+              <div className="partner-video-panel-heading">
+                <div>
+                  <h2>Painel de controle de envios</h2>
+                  <p className="whatsapp-panel-note">Filtros por unidade, parceiro, status, data, telefone e resultado do envio.</p>
+                </div>
+                <div className="whatsapp-report-actions">
+                  <button type="button" className="outline-action icon-action" onClick={() => exportCsv('confirmacao-agendamento-envios.csv', reportRows)}><span className="file-icon xls">XLS</span>Excel filtrado</button>
+                  <button type="button" className="outline-action icon-action" onClick={printFilteredPartnerVideoPdf}><span className="file-icon pdf">PDF</span>PDF filtrado</button>
+                  <button type="button" className="outline-action icon-action" onClick={() => exportCsv('parceiros-pendentes-confirmacao.csv', pendingReportRows)}><span className="file-icon xls">XLS</span>Pendentes</button>
+                  <button type="button" className="outline-action icon-action" onClick={() => exportCsv('falhas-confirmacao-agendamento.csv', failureReportRows)}><span className="file-icon xls">XLS</span>Falhas</button>
+                  <button type="button" className="outline-action icon-action" onClick={() => exportCsv('envios-por-unidade-confirmacao.csv', unitReportRows)}><span className="file-icon xls">XLS</span>Por unidade</button>
+                </div>
+              </div>
+              {renderFilters()}
+            </section>
+
+            <section className="partner-video-dashboard-grid">
+              <article className="whatsapp-panel partner-video-progress-panel">
+                <h2>Dashboard operacional</h2>
+                {[
+                  ['% cobrados', completionPercent, 'success'],
+                  ['% pendentes', pendingPercent, 'warning'],
+                  ['% falhas', failurePercent, 'danger'],
+                  ['% sem telefone', withoutPhonePercent, withoutPhonePercent ? 'warning' : 'success']
+                ].map(([label, value, tone]) => (
+                  <div className="partner-video-progress-row" key={label}>
+                    <span>{label}</span>
+                    <strong>{value}%</strong>
+                    <i><b className={tone} style={{ width: `${Math.min(100, Number(value) || 0)}%` }} /></i>
+                  </div>
+                ))}
+              </article>
+              <article className="whatsapp-panel">
+                <h2>Unidades com mais pendencias</h2>
+                <div className="whatsapp-ranking-list">
+                  {unitRanking.map((item) => <p key={item.label}><span>{item.label}</span><strong>{item.total}</strong></p>)}
+                  {!unitRanking.length && <p className="empty-state">Sem pendencias nos filtros atuais.</p>}
+                </div>
+              </article>
+              <article className="whatsapp-panel">
+                <h2>Parceiros com mais falhas</h2>
+                <div className="whatsapp-ranking-list">
+                  {failureRanking.map((item) => <p key={item.label}><span>{item.label}</span><strong>{item.total}</strong></p>)}
+                  {!failureRanking.length && <p className="empty-state">Sem falhas registradas.</p>}
+                </div>
+              </article>
+            </section>
+
+            <section className="whatsapp-two-column">
+              <article className="whatsapp-panel">
+                <div className="whatsapp-panel-head">
+                  <div>
+                    <h2>Pacientes que confirmaram</h2>
+                    <p className="whatsapp-panel-note">Respostas SIM registradas pela assistente conversacional.</p>
+                  </div>
+                  <span className="whatsapp-badge success">{confirmationConfirmed.length}</span>
+                </div>
+                <div className="whatsapp-table-wrap compact-report-table">
+                  <table className="whatsapp-table">
+                    <thead><tr><th>Paciente</th><th>Unidade</th><th>Telefone</th><th>Confirmacao</th></tr></thead>
+                    <tbody>{confirmationConfirmed.slice(0, 18).map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.patient_name || '-'}</td>
+                        <td>{item.clinic_name || '-'}</td>
+                        <td>{item.patient_phone || '-'}</td>
+                        <td>{formatDateTime(item.completed_at || item.last_interaction_at || item.started_at)}</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                  {!confirmationConfirmed.length && <p className="empty-state">Nenhuma confirmacao concluida ainda.</p>}
+                </div>
+              </article>
+              <article className="whatsapp-panel">
+                <div className="whatsapp-panel-head">
+                  <div>
+                    <h2>Ajustes e atendimento humano</h2>
+                    <p className="whatsapp-panel-note">Reagendamentos e pedidos de atendimento humano.</p>
+                  </div>
+                  <span className="whatsapp-badge warning">{confirmationReschedule.length + confirmationHuman.length}</span>
+                </div>
+                <div className="whatsapp-table-wrap compact-report-table">
+                  <table className="whatsapp-table">
+                    <thead><tr><th>Paciente</th><th>Telefone</th><th>Decisao</th><th>Status</th></tr></thead>
+                    <tbody>{[...confirmationReschedule, ...confirmationHuman].slice(0, 18).map((item) => (
+                      <tr key={item.id}>
+                        <td>{item.patient_name || '-'}</td>
+                        <td>{item.patient_phone || '-'}</td>
+                        <td>{item.confirmation_label || item.confirmation_decision}</td>
+                        <td>{item.operator_name || item.conversation_status || 'Encaminhado'}</td>
+                      </tr>
+                    ))}</tbody>
+                  </table>
+                  {!confirmationReschedule.length && !confirmationHuman.length && <p className="empty-state">Nenhum ajuste pendente.</p>}
+                </div>
+              </article>
+            </section>
+          </>
+        )}
+
+        {confirmationTab === 'partners' && (
+          <section className="partner-video-partners-layout">
+            <article className="whatsapp-panel partner-video-editor-card">
+              <div className="whatsapp-panel-head">
+                <div>
+                  <h2>{editingPartnerContactId ? 'Editar parceiro' : 'Novo parceiro'}</h2>
+                  <p className="whatsapp-panel-note">Atualize unidade, telefone, funcao e regra de cobranca automatica.</p>
+                </div>
+                {editingPartnerContactId && <span className="whatsapp-editing-pill">Editando</span>}
+              </div>
+              <div className="whatsapp-form-grid">
+                <label>Unidade vinculada
+                  <select className="field" value={partnerContactDraft.clinic_name} onChange={(event) => updatePartnerContactDraft('clinic_name', event.target.value)}>
+                    <option value="">Selecione</option>
+                    {partnerContactDraft.clinic_name && !clinicOptions.includes(partnerContactDraft.clinic_name) && <option value={partnerContactDraft.clinic_name}>{partnerContactDraft.clinic_name}</option>}
+                    {clinicOptions.map((name) => <option key={name} value={name}>{name}</option>)}
+                  </select>
+                </label>
+                <label>Nome do parceiro<input className="field" value={partnerContactDraft.partner_name} onChange={(event) => updatePartnerContactDraft('partner_name', event.target.value)} placeholder="Nome do dentista/parceiro" /></label>
+                <label>Telefone WhatsApp<input className="field" value={partnerContactDraft.phone_number} onChange={(event) => updatePartnerContactDraft('phone_number', event.target.value)} placeholder="5562999999999" /></label>
+                <label>Especialidade / funcao<input className="field" value={partnerContactDraft.specialty || ''} onChange={(event) => updatePartnerContactDraft('specialty', event.target.value)} placeholder="Ex.: Implantodontia, avaliador, parceiro" /></label>
+                <label>Horario preferencial<input className="field" type="time" value={partnerContactDraft.default_send_time || '08:00'} onChange={(event) => updatePartnerContactDraft('default_send_time', event.target.value)} /></label>
+                <label>Dias permitidos<input className="field" value={partnerContactDraft.allowed_weekdays} onChange={(event) => updatePartnerContactDraft('allowed_weekdays', event.target.value)} placeholder="1,2,3,4,5,6" /></label>
+                <label className="checkbox-line"><input type="checkbox" checked={Boolean(partnerContactDraft.active)} onChange={(event) => updatePartnerContactDraft('active', event.target.checked)} /> Parceiro ativo</label>
+                <label className="checkbox-line"><input type="checkbox" checked={Boolean(partnerContactDraft.receives_automatic_message)} onChange={(event) => updatePartnerContactDraft('receives_automatic_message', event.target.checked)} /> Recebe cobranca automatica</label>
+              </div>
+              <label>Observacoes internas<textarea className="field" rows="4" value={partnerContactDraft.notes || ''} onChange={(event) => updatePartnerContactDraft('notes', event.target.value)} /></label>
+              <div className="row-actions">
+                <Button actionKey="partner-video-contact-save" className="primary-action" onClick={savePartnerVideoContact}>{editingPartnerContactId ? 'Salvar alteracao' : 'Cadastrar parceiro'}</Button>
+                {editingPartnerContactId && <button type="button" className="outline-action" onClick={cancelPartnerVideoContactEdit}>Cancelar edicao</button>}
+              </div>
+            </article>
+
+            <article className="whatsapp-panel partner-video-table-card">
+              <div className="partner-video-panel-heading">
+                <div>
+                  <h2>Parceiros cadastrados</h2>
+                  <p className="whatsapp-panel-note">Tabela operacional com edicao, status, teste, reenvio e historico por parceiro.</p>
+                </div>
+                <button type="button" className="outline-action icon-action" onClick={() => exportCsv('parceiros-confirmacao-agendamento.csv', filteredContacts)}><span className="file-icon xls">XLS</span>Exportar parceiros</button>
+              </div>
+              {renderFilters()}
+              <div className="whatsapp-table-wrap partner-video-table-wrap">
+                <table className="whatsapp-table partner-video-table">
+                  <thead><tr><th>Nome do parceiro</th><th>Telefone</th><th>Unidade</th><th>Especialidade/funcao</th><th>Status</th><th>Automatico</th><th>Ultimo envio</th><th>Status ultimo envio</th><th>Acoes</th></tr></thead>
+                  <tbody>{filteredContacts.map((item) => (
+                    <tr key={item.id}>
+                      <td>{item.partner_name || '-'}</td>
+                      <td>{item.phone_number || <span className="whatsapp-badge warning">sem telefone</span>}</td>
+                      <td>{item.clinic_name || '-'}</td>
+                      <td>{item.specialty || '-'}</td>
+                      <td><span className={`whatsapp-badge ${Number(item.active) ? 'success' : 'neutral'}`}>{Number(item.active) ? 'Ativo' : 'Inativo'}</span></td>
+                      <td>{Number(item.receives_automatic_message) ? 'Sim' : 'Nao'}</td>
+                      <td>{item.last_send_at ? formatDateTime(item.last_send_at) : '-'}</td>
+                      <td><span className={`whatsapp-badge ${statusTone(item.last_send_status)}`}>{item.last_send_status || '-'}</span></td>
+                      <td>
+                        <div className="row-actions partner-video-row-actions">
+                          <button type="button" className="outline-action mini-action" onClick={() => editPartnerVideoContact(item)}>Editar</button>
+                          <Button actionKey={`partner-video-contact-active-${item.id}`} className="outline-action mini-action" onClick={() => togglePartnerVideoContactActive(item)}>{Number(item.active) ? 'Inativar' : 'Ativar'}</Button>
+                          <Button actionKey={`partner-video-contact-test-${item.id}`} className="outline-action mini-action" onClick={() => sendPartnerVideoContactTest(item)} disabled={!item.phone_number}>Teste</Button>
+                          <Button actionKey={`partner-video-contact-resend-${item.id}`} className="outline-action mini-action" onClick={() => resendPartnerVideoContact(item)} disabled={!item.phone_number}>Reenviar</Button>
+                          <button type="button" className="outline-action mini-action" onClick={() => setPartnerHistoryContact(item)}>Historico</button>
+                          {canDeleteWhatsappItems && <Button actionKey={`partner-video-contact-delete-${item.id}`} className="outline-action danger-action mini-action" onClick={() => deletePartnerVideoContact(item.id)}>Excluir</Button>}
+                        </div>
+                      </td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+                {!filteredContacts.length && <p className="empty-state">Nenhum parceiro encontrado nos filtros atuais.</p>}
+              </div>
+            </article>
+          </section>
+        )}
+
+        {confirmationTab === 'shipments' && (
+          <section className="whatsapp-panel">
+            <div className="partner-video-panel-heading">
+              <div>
+                <h2>Controle de Envios</h2>
+                <p className="whatsapp-panel-note">Rastreio de cada envio com status, tentativa, origem e erro retornado.</p>
+              </div>
+              <button type="button" className="outline-action icon-action" onClick={() => exportCsv('controle-envios-confirmacao-agendamento.csv', reportRows)}><span className="file-icon xls">XLS</span>Exportar envios</button>
+            </div>
+            {renderFilters()}
+            <div className="whatsapp-table-wrap partner-video-table-wrap">
+              <table className="whatsapp-table">
+                <thead><tr><th>Data/hora</th><th>Parceiro</th><th>Unidade</th><th>Telefone</th><th>Tipo</th><th>Status</th><th>Tentativas</th><th>Erro</th><th>Origem</th><th>Acoes</th></tr></thead>
+                <tbody>{filteredControls.map((item) => (
+                  <tr key={item.id}>
+                    <td>{formatDateTime(item.message_sent_at || item.updated_at || item.created_at)}</td>
+                    <td>{item.partner_name || '-'}</td>
+                    <td>{item.clinic_name || '-'}</td>
+                    <td>{item.phone_number || <span className="whatsapp-badge warning">sem telefone</span>}</td>
+                    <td>cobranca_video</td>
+                    <td><span className={`whatsapp-badge ${statusTone(item.message_status || item.status)}`}>{item.message_status || item.status || '-'}</span></td>
+                    <td>{item.attempts || item.retry_count || 1}</td>
+                    <td>{item.error_message || '-'}</td>
+                    <td>{item.created_by || 'automatico/manual'}</td>
+                    <td>
+                      <div className="row-actions partner-video-row-actions">
+                        <Button actionKey={`partner-video-resend-${item.id}`} className="outline-action mini-action" onClick={() => resendPartnerVideoControl(item.id)}>Reenviar</Button>
+                        <Button actionKey={`partner-video-mark-video-received-${item.id}`} className="outline-action mini-action" onClick={() => updatePartnerVideoControl(item.id, 'mark-video-received', 'Video recebido registrado.')}>Recebido</Button>
+                        <Button actionKey={`partner-video-mark-not-sent-${item.id}`} className="outline-action mini-action" onClick={() => updatePartnerVideoControl(item.id, 'mark-not-sent', 'Pendencia registrada.')}>Nao enviado</Button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}</tbody>
+              </table>
+              {!filteredControls.length && <p className="empty-state">Nenhum envio encontrado nos filtros atuais.</p>}
+            </div>
+          </section>
+        )}
+
+        {confirmationTab === 'logs' && (
+          <section className="whatsapp-panel" id="partner-video-logs">
+            <div className="partner-video-panel-heading">
+              <div>
+                <h2>Logs organizados</h2>
+                <p className="whatsapp-panel-note">Auditoria de envios, testes, edicoes, falhas, baixas e acionamentos.</p>
+              </div>
+              <div className="whatsapp-report-actions">
+                <button type="button" className="outline-action" onClick={clearPartnerVideoFilters}>Limpar filtros</button>
+                <button type="button" className="outline-action icon-action" onClick={() => exportCsv('logs-confirmacao-agendamento.csv', filteredLogs)}><span className="file-icon xls">XLS</span>Exportar logs</button>
+              </div>
+            </div>
+            {renderFilters()}
+            <div className="whatsapp-table-wrap partner-video-table-wrap">
+              <table className="whatsapp-table">
+                <thead><tr><th>Data/hora</th><th>Evento</th><th>Parceiro</th><th>Telefone</th><th>Status</th><th>Detalhe</th><th>Origem</th></tr></thead>
+                <tbody>{filteredLogs.map((item) => (
+                  <tr key={item.id}>
+                    <td>{formatDateTime(item.created_at)}</td>
+                    <td>{item.event_type || '-'}</td>
+                    <td>{item.partner_name || '-'}</td>
+                    <td>{item.recipient_phone || item.phone_number || '-'}</td>
+                    <td><span className={`whatsapp-badge ${statusTone(item.status)}`}>{item.status || '-'}</span></td>
+                    <td className="partner-video-log-detail">{String(item.error_message || item.message_text || item.response_payload || '-').slice(0, 180)}</td>
+                    <td>{item.created_by || item.channel || '-'}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+              {!filteredLogs.length && <p className="empty-state">Nenhum log encontrado nos filtros atuais.</p>}
+            </div>
+          </section>
+        )}
+
+        {confirmationTab === 'settings' && (
+          <section className="whatsapp-two-column partner-video-config-grid">
+            <article className="whatsapp-panel">
+              <h2>Canal Confirmacao e Agendamento</h2>
+              <div className="whatsapp-card-list compact">
+                <article><span>Status</span><strong>{session.status || 'nao_iniciada'}</strong><p>Numero remetente: {session.phone_number || settings.senderPhone || '5562998647043'}</p></article>
+                <article><span>QR Code</span><strong>Link da VPS</strong><p>{qrUrl}</p></article>
+                <article><span>Calendario</span><strong>{weekdayDescription}</strong><p>Rotina de segunda a sabado, entre 08:00 e 18:00.</p></article>
+                <article><span>Anti-ban</span><strong>{settings.minDelaySeconds || 20}s - {settings.maxDelaySeconds || 60}s</strong><p>{settings.limitPerMinute || 2}/min e {settings.limitPerHour || 60}/hora.</p></article>
+              </div>
+            </article>
+            <article className="whatsapp-panel">
+              <h2>Configuracoes da rotina</h2>
+              <div className="whatsapp-form-grid">
+                <label>Horario de referencia<input className="field" type="time" value={settings.standardTime || '08:00'} onChange={(event) => updatePartnerSettingsDraft('standardTime', event.target.value)} /></label>
+                <label>Sessao WhatsApp<input className="field" value={settings.sessionId || 'confirmacao-agendamento'} onChange={(event) => updatePartnerSettingsDraft('sessionId', event.target.value)} /></label>
+                <label>Numero remetente<input className="field" value={settings.senderPhone || ''} onChange={(event) => updatePartnerSettingsDraft('senderPhone', event.target.value)} /></label>
+                <label>Limite por minuto<input className="field" type="number" min="1" value={settings.limitPerMinute || 2} onChange={(event) => updatePartnerSettingsDraft('limitPerMinute', event.target.value)} /></label>
+                <label>Intervalo minimo (s)<input className="field" type="number" min="20" value={settings.minDelaySeconds || 20} onChange={(event) => updatePartnerSettingsDraft('minDelaySeconds', event.target.value)} /></label>
+                <label>Intervalo maximo (s)<input className="field" type="number" min="20" value={settings.maxDelaySeconds || 60} onChange={(event) => updatePartnerSettingsDraft('maxDelaySeconds', event.target.value)} /></label>
+                <label>Limite por hora<input className="field" type="number" min="1" value={settings.limitPerHour || 60} onChange={(event) => updatePartnerSettingsDraft('limitPerHour', event.target.value)} /></label>
+                <label className="checkbox-line"><input type="checkbox" checked={Boolean(settings.automationEnabled)} onChange={(event) => updatePartnerSettingsDraft('automationEnabled', event.target.checked)} /> Rotina automatica ativa</label>
+                <label className="checkbox-line"><input type="checkbox" checked={Boolean(settings.testMode)} onChange={(event) => updatePartnerSettingsDraft('testMode', event.target.checked)} /> Modo teste</label>
+              </div>
+              <label>Horarios permitidos<textarea className="field" rows="2" value={settings.allowedTimes || '08:00\n18:00'} onChange={(event) => updatePartnerSettingsDraft('allowedTimes', event.target.value)} /></label>
+              <div className="partner-video-weekdays">
+                {partnerVideoWeekdays.map((day) => (
+                  <label key={day.value} className="checkbox-line compact-check">
+                    <input type="checkbox" checked={(settings.allowedWeekdays || []).map(Number).includes(day.value)} onChange={() => togglePartnerSettingsWeekday(day.value)} />
+                    {day.label}
+                  </label>
+                ))}
+              </div>
+              <label>Numeros de teste<textarea className="field" rows="3" value={settings.testNumbers || ''} onChange={(event) => updatePartnerSettingsDraft('testNumbers', event.target.value)} /></label>
+              <label>Template editavel<textarea className="field partner-video-template-field" rows="10" value={settings.template || ''} onChange={(event) => updatePartnerSettingsDraft('template', event.target.value)} /></label>
+              <div className="row-actions">
+                <Button actionKey="partner-video-settings-save" className="primary-action" onClick={savePartnerVideoSettings}>Salvar parametros</Button>
+                <Button actionKey="partner-video-test" className="outline-action" onClick={sendPartnerVideoTests}>Testar numeros informados</Button>
+                <button type="button" className="outline-action" onClick={() => setPartnerSettingsDraft(normalizePartnerVideoSettingsDraft(partnersVideo?.settings || {}))}>Restaurar tela</button>
+              </div>
+            </article>
+          </section>
+        )}
+
+        {confirmationTab !== 'settings' && (
+          <section className="whatsapp-panel partner-video-noncompliance-panel">
+            <div className="partner-video-panel-heading">
+              <div>
+                <h2>Baixa operacional dos videos nao enviados</h2>
+                <p className="whatsapp-panel-note">Selecione unidades/parceiros para alimentar as metricas de cobranca e os escalonamentos do dia.</p>
+              </div>
+              <div className="row-actions">
+                <Button actionKey="partner-video-bulk-not-sent" className="primary-action" onClick={markSelectedPartnerVideosNotSent} disabled={!partnerNoVideoSelection.length}>Marcar selecionados</Button>
+              </div>
+            </div>
+            <div className="partner-video-noncompliance-grid">
+              {noVideoOptions.map((item) => (
+                <label key={item.key} className="partner-video-noncompliance-item">
+                  <input type="checkbox" checked={partnerNoVideoSelection.includes(item.key)} onChange={() => togglePartnerNoVideoSelection(item.key)} />
+                  <span>
+                    <strong>{item.clinicName}</strong>
+                    <small>{item.partnerName || 'Parceiro nao informado'} - {item.phone || 'sem telefone'} - {item.status}</small>
+                  </span>
+                </label>
+              ))}
+              {!noVideoOptions.length && <p className="empty-state">Nenhuma unidade/parceiro disponivel para baixa no momento.</p>}
+            </div>
+          </section>
+        )}
+
+        {Boolean(unitsWithoutPartnerNames.length) && (
+          <section className="whatsapp-panel partner-video-missing-section">
+            <h2>Unidades sem parceiro ativo</h2>
+            <div className="partner-video-missing-list">
+              {unitsWithoutPartnerNames.map((name) => (
+                <article key={name} className="partner-video-missing-card">
+                  <span>Sem parceiro ativo</span>
+                  <strong>{name}</strong>
+                  <p>Cadastre parceiro, telefone e rotina para incluir a unidade nos disparos.</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {partnerHistoryContact && (
+          <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setPartnerHistoryContact(null)}>
+            <section className="modal-panel partner-video-history-modal" onClick={(event) => event.stopPropagation()}>
+              <div className="whatsapp-panel-head">
+                <div>
+                  <p className="eyebrow">Historico do parceiro</p>
+                  <h2>{partnerHistoryContact.partner_name}</h2>
+                  <p className="whatsapp-panel-note">{partnerHistoryContact.clinic_name} - {partnerHistoryContact.phone_number || 'sem telefone'}</p>
+                </div>
+                <button type="button" className="outline-action" onClick={() => setPartnerHistoryContact(null)}>Fechar</button>
+              </div>
+              <div className="whatsapp-table-wrap">
+                <table className="whatsapp-table">
+                  <thead><tr><th>Data/hora</th><th>Evento</th><th>Status</th><th>Mensagem/detalhe</th><th>Usuario</th></tr></thead>
+                  <tbody>{historyLogs.map((item) => (
+                    <tr key={item.id}>
+                      <td>{formatDateTime(item.created_at)}</td>
+                      <td>{item.event_type}</td>
+                      <td><span className={`whatsapp-badge ${statusTone(item.status)}`}>{item.status}</span></td>
+                      <td className="partner-video-log-detail">{String(item.error_message || item.message_text || item.response_payload || '-').slice(0, 220)}</td>
+                      <td>{item.created_by || '-'}</td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+                {!historyLogs.length && <p className="empty-state">Nenhum historico registrado para este parceiro.</p>}
+              </div>
+            </section>
+          </div>
+        )}
+      </section>
+    );
+  };
+
   const updateSettingsDraft = (field, value) => {
     if (field.startsWith('antiBan.')) {
       const key = field.replace('antiBan.', '');
@@ -2708,7 +3418,7 @@ function WhatsAppManagement() {
     if (currentSection === 'chatbot') return renderChatbot();
     if (currentSection === 'absent') return renderAbsent();
     if (currentSection === 'history') return renderHistory();
-    if (currentSection === 'confirmation') return renderConfirmationScheduling();
+    if (currentSection === 'confirmation') return renderConfirmationSchedulingPro();
     if (currentSection === 'reports') return renderReports();
     if (currentSection === 'settings') return renderSettings();
     return renderDashboard();
@@ -2753,14 +3463,21 @@ function WhatsAppManagement() {
         ))}
       </section>
 
-      <nav className="whatsapp-tabbar">
-        {allowedSections.map((item) => (
-          <button key={item.id} type="button" className={currentSection === item.id ? 'active' : ''} onClick={() => navigate(item.path)}>
-            <span>{item.label}</span>
-            {sectionBadgeValue(item.id, { instances, queue, templates, flows, absent, history }) ? (
-              <small>{sectionBadgeValue(item.id, { instances, queue, templates, flows, absent, history })}</small>
-            ) : null}
-          </button>
+      <nav className="whatsapp-tabbar whatsapp-tabbar-grouped">
+        {Object.entries(groupedAllowedSections).map(([group, items]) => (
+          <section className="whatsapp-tab-group" key={group}>
+            <strong>{group}</strong>
+            <div>
+              {items.map((item) => (
+                <button key={item.id} type="button" className={currentSection === item.id ? 'active' : ''} onClick={() => navigate(item.path)}>
+                  <span>{item.label}</span>
+                  {sectionBadgeValue(item.id, { instances, queue, templates, flows, absent, history }) ? (
+                    <small>{sectionBadgeValue(item.id, { instances, queue, templates, flows, absent, history })}</small>
+                  ) : null}
+                </button>
+              ))}
+            </div>
+          </section>
         ))}
       </nav>
 

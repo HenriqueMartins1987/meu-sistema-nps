@@ -399,6 +399,49 @@ const partnerVideoContactSeeds = [
   ['SENADOR CANEDO', 'GABRIEL LOPES', '5517981119054']
 ];
 const closedComplaintStatuses = new Set(['resolvida', 'cancelada', 'finalizada', 'finalizado', 'fechada', 'fechado', 'encerrada', 'encerrado']);
+const complaintStatusLabels = {
+  aberta: 'Aberta',
+  em_analise_sac: 'Em análise pelo SAC',
+  enviada_coordenador: 'Enviada ao Coordenador',
+  em_tratativa_coordenador: 'Em tratativa pelo Coordenador',
+  vencida_coordenador: 'Vencida no Coordenador',
+  escalonada_gerente: 'Escalonada ao Gerente',
+  em_tratativa_gerente: 'Em tratativa pelo Gerente',
+  vencida_gerente: 'Vencida no Gerente',
+  escalonada_administracao: 'Escalonada à Administração',
+  retornada_sac_auditoria: 'Retornada ao SAC para Auditoria',
+  devolvida_complementacao: 'Devolvida para Complementação',
+  resolvida: 'Resolvida',
+  encerrada: 'Encerrada',
+  reaberta: 'Reaberta',
+  cancelada: 'Cancelada',
+  em_andamento: 'Em andamento'
+};
+
+function normalizeComplaintStatusForStorage(status) {
+  const normalized = normalizeComplaintStatusValue(status)
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  const aliases = {
+    em_analise_pelo_sac: 'em_analise_sac',
+    enviada_ao_coordenador: 'enviada_coordenador',
+    em_tratativa_pelo_coordenador: 'em_tratativa_coordenador',
+    vencida_no_coordenador: 'vencida_coordenador',
+    escalonada_ao_gerente: 'escalonada_gerente',
+    em_tratativa_pelo_gerente: 'em_tratativa_gerente',
+    vencida_no_gerente: 'vencida_gerente',
+    escalonada_a_administracao: 'escalonada_administracao',
+    retornada_ao_sac_para_auditoria: 'retornada_sac_auditoria',
+    devolvida_para_complementacao: 'devolvida_complementacao',
+    fechada: 'encerrada',
+    fechado: 'encerrada',
+    finalizada: 'encerrada',
+    finalizado: 'encerrada'
+  };
+
+  return aliases[normalized] || normalized || 'aberta';
+}
 
 function normalizeComplaintStatusValue(status) {
   return String(status || '')
@@ -635,9 +678,13 @@ const screenPermissions = {
 const deadlineHoursByPriority = {
   baixa: 72,
   media: 48,
-  alta: 24
+  alta: 24,
+  critica: 12
 };
 const resolutionSlaDays = 15;
+const coordinatorEscalationSlaDays = Math.max(1, Number(process.env.COMPLAINT_COORDINATOR_SLA_DAYS || 15));
+const managerEscalationSlaDays = Math.max(1, Number(process.env.COMPLAINT_MANAGER_SLA_DAYS || 5));
+const complaintEscalationSweepIntervalMinutes = Math.max(30, Number(process.env.COMPLAINT_ESCALATION_SWEEP_INTERVAL_MINUTES || 60));
 const patientInteractionTypeLabels = {
   confirmacao: 'Confirmação',
   agendamento: 'Agendamento',
@@ -2287,17 +2334,23 @@ function buildNpsNarrative(payload, classification, profile) {
   return notes.join(' ');
 }
 
-async function insertComplaintLog(complaintId, action, message, user) {
+async function insertComplaintLog(complaintId, action, message, user, metadata = {}) {
   await pool.query(
     `INSERT INTO complaint_logs
-     (complaint_id, action, message, actor_name, actor_role)
-     VALUES (?, ?, ?, ?, ?)`,
+     (complaint_id, action, message, actor_name, actor_role, previous_status, new_status, reason, stage_duration_hours)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       complaintId,
       action,
       message || null,
       getActorName(user),
-      user?.role || null
+      user?.role || null,
+      metadata.previousStatus || metadata.previous_status || null,
+      metadata.newStatus || metadata.new_status || null,
+      metadata.reason || null,
+      Number.isFinite(Number(metadata.stageDurationHours || metadata.stage_duration_hours))
+        ? Number(metadata.stageDurationHours || metadata.stage_duration_hours)
+        : null
     ]
   );
 }
@@ -2488,10 +2541,11 @@ async function ensurePartnerVideoContactSeeds() {
     const normalizedPhone = normalizeWhatsAppPhone(phoneNumber);
     await pool.query(
       `INSERT INTO partner_video_contacts
-       (clinic_name, partner_name, phone_number, active, receives_automatic_message, default_send_time, allowed_weekdays, notes)
-       VALUES (?, ?, ?, 1, ?, '08:00:00', '1,2,3,4,5,6', ?)
+       (clinic_name, partner_name, phone_number, specialty, active, receives_automatic_message, default_send_time, allowed_weekdays, notes)
+       VALUES (?, ?, ?, 'Dentista parceiro', 1, ?, '08:00:00', '1,2,3,4,5,6', ?)
        ON DUPLICATE KEY UPDATE
          phone_number = VALUES(phone_number),
+         specialty = COALESCE(NULLIF(specialty, ''), VALUES(specialty)),
          active = 1,
          receives_automatic_message = VALUES(receives_automatic_message),
          updated_at = CURRENT_TIMESTAMP`,
@@ -3449,6 +3503,7 @@ async function ensureDatabaseSchema() {
       clinic_name VARCHAR(180) NOT NULL,
       partner_name VARCHAR(220) NOT NULL,
       phone_number VARCHAR(40) NULL,
+      specialty VARCHAR(160) NULL,
       active TINYINT(1) NOT NULL DEFAULT 1,
       receives_automatic_message TINYINT(1) NOT NULL DEFAULT 1,
       default_send_time TIME NULL DEFAULT '08:00:00',
@@ -3532,6 +3587,7 @@ async function ensureDatabaseSchema() {
   await ensureColumn('whatsapp_messages', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
   await ensureColumn('whatsapp_dispatch_queue', 'dispatch_dedupe_key', 'VARCHAR(80) NULL');
   await ensureIndex('whatsapp_dispatch_queue', 'uniq_whatsapp_dispatch_dedupe_key', 'UNIQUE KEY uniq_whatsapp_dispatch_dedupe_key (dispatch_dedupe_key)');
+  await ensureColumn('partner_video_contacts', 'specialty', 'VARCHAR(160) NULL');
   await ensureDefaultWhatsAppCrcSessions();
   await ensurePartnerVideoContactSeeds();
 
@@ -3847,6 +3903,21 @@ async function ensureDatabaseSchema() {
   await ensureColumn('complaints', 'assigned_responsible_user_id', 'INT NULL');
   await ensureColumn('complaints', 'assigned_responsible_name', 'VARCHAR(160) NULL');
   await ensureColumn('complaints', 'assigned_responsible_role', 'VARCHAR(80) NULL');
+  await ensureColumn('complaints', 'coordinator_id', 'INT NULL');
+  await ensureColumn('complaints', 'coordinator_name', 'VARCHAR(160) NULL');
+  await ensureColumn('complaints', 'coordinator_assigned_at', 'DATETIME NULL');
+  await ensureColumn('complaints', 'coordinator_due_date', 'DATETIME NULL');
+  await ensureColumn('complaints', 'coordinator_treated_at', 'DATETIME NULL');
+  await ensureColumn('complaints', 'manager_id', 'INT NULL');
+  await ensureColumn('complaints', 'manager_name', 'VARCHAR(160) NULL');
+  await ensureColumn('complaints', 'manager_assigned_at', 'DATETIME NULL');
+  await ensureColumn('complaints', 'manager_due_date', 'DATETIME NULL');
+  await ensureColumn('complaints', 'manager_treated_at', 'DATETIME NULL');
+  await ensureColumn('complaints', 'admin_escalated_at', 'DATETIME NULL');
+  await ensureColumn('complaints', 'returned_to_sac_at', 'DATETIME NULL');
+  await ensureColumn('complaints', 'sac_audit_status', "VARCHAR(80) NULL");
+  await ensureColumn('complaints', 'sac_audit_comment', 'TEXT NULL');
+  await ensureColumn('complaints', 'current_escalation_level', "VARCHAR(80) NULL");
   await ensureColumn('complaints', 'clinic_snapshot_name', 'VARCHAR(180) NULL');
   await ensureColumn('complaints', 'created_origin', "VARCHAR(80) DEFAULT 'Interno'");
   await ensureColumn('complaints', 'created_by_user_id', 'INT NULL');
@@ -3868,7 +3939,7 @@ async function ensureDatabaseSchema() {
   await pool.query('ALTER TABLE complaints MODIFY COLUMN channel VARCHAR(160) NULL');
   await pool.query('ALTER TABLE complaints MODIFY COLUMN complaint_type VARCHAR(160) NULL');
   await pool.query('ALTER TABLE complaints MODIFY COLUMN service_type VARCHAR(160) NULL');
-  await pool.query("ALTER TABLE complaints MODIFY COLUMN status VARCHAR(40) NOT NULL DEFAULT 'aberta'");
+  await pool.query("ALTER TABLE complaints MODIFY COLUMN status VARCHAR(80) NOT NULL DEFAULT 'aberta'");
   await pool.query("ALTER TABLE complaints MODIFY COLUMN priority VARCHAR(40) DEFAULT 'media'");
   await pool.query("ALTER TABLE complaints MODIFY COLUMN created_origin VARCHAR(80) DEFAULT 'Interno'");
   await pool.query(`
@@ -3959,12 +4030,20 @@ async function ensureDatabaseSchema() {
       complaint_id INT NOT NULL,
       action VARCHAR(120) NOT NULL,
       message TEXT NULL,
+      previous_status VARCHAR(80) NULL,
+      new_status VARCHAR(80) NULL,
+      reason TEXT NULL,
+      stage_duration_hours DECIMAL(12,2) NULL,
       actor_name VARCHAR(160) NULL,
       actor_role VARCHAR(80) NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       INDEX idx_complaint_logs_complaint_id (complaint_id)
     )
   `);
+  await ensureColumn('complaint_logs', 'previous_status', 'VARCHAR(80) NULL');
+  await ensureColumn('complaint_logs', 'new_status', 'VARCHAR(80) NULL');
+  await ensureColumn('complaint_logs', 'reason', 'TEXT NULL');
+  await ensureColumn('complaint_logs', 'stage_duration_hours', 'DECIMAL(12,2) NULL');
 
   await pool.query(
     "UPDATE clinics SET state = 'GO', region = 'Centro-Oeste' WHERE LOWER(city) = 'trindade' OR LOWER(name) LIKE '%trindade%'"
@@ -4227,7 +4306,7 @@ async function backfillComplaintDeadlines() {
 
 async function backfillComplaintAssignments() {
   const [rows] = await pool.query(
-    `SELECT id, clinic_id, first_attendance_at, forwarded_to_role, forwarded_to_label, forwarded_at, forwarded_by, assigned_coordinator_user_id, assigned_coordinator_name, assigned_responsible_user_id, assigned_responsible_name, assigned_responsible_role, clinic_snapshot_name
+    `SELECT id, clinic_id, first_attendance_at, forwarded_to_role, forwarded_to_label, forwarded_at, forwarded_by, assigned_coordinator_user_id, assigned_coordinator_name, assigned_responsible_user_id, assigned_responsible_name, assigned_responsible_role, coordinator_id, coordinator_name, manager_id, manager_name, clinic_snapshot_name
        FROM complaints`
   );
 
@@ -4295,11 +4374,12 @@ async function backfillComplaintAssignments() {
         && (currentForwardRole !== 'coordinator' || row.assigned_responsible_user_id)
       );
 
-    if (coordinatorNameLooksFinal && row.clinic_snapshot_name && responsibleLooksFinal) {
+    if (coordinatorNameLooksFinal && row.coordinator_name && row.manager_name && row.clinic_snapshot_name && responsibleLooksFinal) {
       return null;
     }
 
     const assignment = await resolveCoordinatorAssignment(row.clinic_id);
+    const managerAssignment = await resolveManagerAssignment(row.clinic_id);
     const shouldBackfillResponsible = ['coordinator', 'manager', 'supervisor_crc', 'sac_operator'].includes(
       currentForwardRole
     );
@@ -4323,6 +4403,10 @@ async function backfillComplaintAssignments() {
                  assigned_responsible_user_id = ?,
                  assigned_responsible_name = ?,
                  assigned_responsible_role = ?,
+                 coordinator_id = COALESCE(coordinator_id, ?),
+                 coordinator_name = COALESCE(NULLIF(coordinator_name, ''), ?),
+                 manager_id = COALESCE(manager_id, ?),
+                 manager_name = COALESCE(NULLIF(manager_name, ''), ?),
                  forwarded_to_role = ?,
                  forwarded_to_label = ?,
                  forwarded_at = COALESCE(forwarded_at, NOW()),
@@ -4335,6 +4419,10 @@ async function backfillComplaintAssignments() {
           responsibleAssignment?.userId || null,
           responsibleAssignment?.name || null,
           currentForwardRole,
+          assignment.coordinatorUserId || null,
+          assignment.coordinatorName || null,
+          managerAssignment.managerUserId || null,
+          managerAssignment.managerName || null,
           currentForwardRole,
           responsibleAssignment?.label || responsibleAssignment?.name || row.forwarded_to_label || null,
           inferredForwardedBy,
@@ -4352,11 +4440,19 @@ async function backfillComplaintAssignments() {
                  THEN ?
                  ELSE assigned_coordinator_name
                END,
+               coordinator_id = COALESCE(coordinator_id, ?),
+               coordinator_name = COALESCE(NULLIF(coordinator_name, ''), ?),
+               manager_id = COALESCE(manager_id, ?),
+               manager_name = COALESCE(NULLIF(manager_name, ''), ?),
                clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)
         WHERE id = ?`,
       [
         assignment.coordinatorUserId,
         assignment.coordinatorName || null,
+        assignment.coordinatorUserId || null,
+        assignment.coordinatorName || null,
+        managerAssignment.managerUserId || null,
+        managerAssignment.managerName || null,
         assignment.clinicSnapshotName || null,
         row.id
       ]
@@ -4649,6 +4745,21 @@ async function getComplaintRows(query = {}, user = null) {
         c.assigned_responsible_user_id,
         c.assigned_responsible_name,
         c.assigned_responsible_role,
+        c.coordinator_id,
+        c.coordinator_name AS stored_coordinator_name,
+        c.coordinator_assigned_at,
+        c.coordinator_due_date,
+        c.coordinator_treated_at,
+        c.manager_id,
+        c.manager_name AS stored_manager_name,
+        c.manager_assigned_at,
+        c.manager_due_date,
+        c.manager_treated_at,
+        c.admin_escalated_at,
+        c.returned_to_sac_at,
+        c.sac_audit_status,
+        c.sac_audit_comment,
+        c.current_escalation_level,
         c.clinic_snapshot_name,
       c.created_origin,
       c.created_by_user_id,
@@ -4670,6 +4781,7 @@ async function getComplaintRows(query = {}, user = null) {
       cl.region,
       COALESCE(
         NULLIF(acu.name, ''),
+        NULLIF(c.coordinator_name, ''),
         NULLIF(c.assigned_coordinator_name, ''),
         NULLIF(cl.coordinator_name, ''),
         (
@@ -4698,15 +4810,18 @@ async function getComplaintRows(query = {}, user = null) {
         ),
         NULLIF(cl.responsible_whatsapp, '')
       ) AS coordinator_phone,
-      (
-        SELECT NULLIF(u.name, '')
-        FROM users u
-        INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = c.clinic_id
-        WHERE u.active = 1
-          AND u.deleted_at IS NULL
-          AND ${buildRoleAliasWhere('u.role', managerAccessRoleAliases)}
-        ORDER BY u.updated_at DESC, u.id DESC
-        LIMIT 1
+      COALESCE(
+        NULLIF(c.manager_name, ''),
+        (
+          SELECT NULLIF(u.name, '')
+          FROM users u
+          INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = c.clinic_id
+          WHERE u.active = 1
+            AND u.deleted_at IS NULL
+            AND ${buildRoleAliasWhere('u.role', managerAccessRoleAliases)}
+          ORDER BY u.updated_at DESC, u.id DESC
+          LIMIT 1
+        )
       ) AS manager_name,
       (
         SELECT COALESCE(NULLIF(u.whatsapp, ''), NULLIF(u.phone, ''))
@@ -4765,6 +4880,10 @@ async function getComplaintRows(query = {}, user = null) {
         complaint_id,
         action,
         message,
+        previous_status,
+        new_status,
+        reason,
+        stage_duration_hours,
         actor_name,
         actor_role,
         created_at
@@ -5178,6 +5297,21 @@ async function getComplaintNotificationContext(complaintId) {
        c.assigned_responsible_user_id,
        c.assigned_responsible_name,
        c.assigned_responsible_role,
+       c.coordinator_id,
+       c.coordinator_name,
+       c.coordinator_assigned_at,
+       c.coordinator_due_date,
+       c.coordinator_treated_at,
+       c.manager_id,
+       c.manager_name,
+       c.manager_assigned_at,
+       c.manager_due_date,
+       c.manager_treated_at,
+       c.admin_escalated_at,
+       c.returned_to_sac_at,
+       c.sac_audit_status,
+       c.sac_audit_comment,
+       c.current_escalation_level,
        c.patient_name,
        c.complaint_type,
        c.description,
@@ -8374,6 +8508,183 @@ async function resolveComplaintResponsibleAssignment(clinicId, forwardRole, opti
   };
 }
 
+function addCalendarDays(date = new Date(), days = 0) {
+  const next = new Date(date);
+  next.setDate(next.getDate() + Number(days || 0));
+  return next;
+}
+
+function getComplaintStageDurationHours(complaint = {}, sinceField = null, untilDate = new Date()) {
+  const since = sinceField ? complaint?.[sinceField] : null;
+  if (!since) return null;
+  const start = new Date(since);
+  const end = untilDate instanceof Date ? untilDate : new Date(untilDate);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  return Math.max(0, Math.round(((end.getTime() - start.getTime()) / (1000 * 60 * 60)) * 100) / 100);
+}
+
+async function assignInitialComplaintEscalationResponsibles(complaintId, clinicId) {
+  const [coordinator, manager] = await Promise.all([
+    resolveCoordinatorAssignment(clinicId),
+    resolveManagerAssignment(clinicId)
+  ]);
+
+  await pool.query(
+    `UPDATE complaints
+        SET assigned_coordinator_user_id = COALESCE(assigned_coordinator_user_id, ?),
+            assigned_coordinator_name = COALESCE(NULLIF(assigned_coordinator_name, ''), ?),
+            coordinator_id = COALESCE(coordinator_id, ?),
+            coordinator_name = COALESCE(NULLIF(coordinator_name, ''), ?),
+            manager_id = COALESCE(manager_id, ?),
+            manager_name = COALESCE(NULLIF(manager_name, ''), ?),
+            clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)
+      WHERE id = ?`,
+    [
+      coordinator.coordinatorUserId || null,
+      coordinator.coordinatorName || null,
+      coordinator.coordinatorUserId || null,
+      coordinator.coordinatorName || null,
+      manager.managerUserId || null,
+      manager.managerName || null,
+      coordinator.clinicSnapshotName || null,
+      complaintId
+    ]
+  );
+
+  return { coordinator, manager };
+}
+
+function appendComplaintForwardingUpdates({
+  updates,
+  values,
+  forwardRole,
+  assignment = {},
+  actorName = null,
+  forwardedLabel = null
+}) {
+  const role = normalizeAccessRole(forwardRole);
+  const label = forwardedLabel || assignment.label || assignment.name || complaintStatusLabels[role] || role;
+
+  updates.push('forwarded_to_role = ?');
+  values.push(role);
+  updates.push('forwarded_to_label = ?');
+  values.push(label);
+  updates.push('forwarded_at = NOW()');
+  updates.push('forwarded_by = ?');
+  values.push(actorName);
+  updates.push('assigned_responsible_user_id = ?');
+  values.push(assignment.userId || null);
+  updates.push('assigned_responsible_name = ?');
+  values.push(assignment.name || label);
+  updates.push('assigned_responsible_role = ?');
+  values.push(assignment.role || role);
+
+  if (role === 'coordinator') {
+    updates.push('status = ?');
+    values.push('enviada_coordenador');
+    updates.push('coordinator_id = ?');
+    values.push(assignment.userId || null);
+    updates.push('coordinator_name = ?');
+    values.push(assignment.name || label);
+    updates.push('assigned_coordinator_user_id = ?');
+    values.push(assignment.userId || null);
+    updates.push('assigned_coordinator_name = ?');
+    values.push(assignment.name || label);
+    updates.push('coordinator_assigned_at = NOW()');
+    updates.push('coordinator_due_date = DATE_ADD(NOW(), INTERVAL ? DAY)');
+    values.push(coordinatorEscalationSlaDays);
+    updates.push('coordinator_treated_at = NULL');
+    updates.push("current_escalation_level = 'coordinator'");
+    updates.push('returned_to_sac_at = NULL');
+    updates.push('sac_audit_status = NULL');
+    updates.push('sac_audit_comment = NULL');
+    if (assignment.clinicSnapshotName) {
+      updates.push('clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)');
+      values.push(assignment.clinicSnapshotName);
+    }
+  } else if (role === 'manager') {
+    updates.push('status = ?');
+    values.push('escalonada_gerente');
+    updates.push('manager_id = ?');
+    values.push(assignment.userId || null);
+    updates.push('manager_name = ?');
+    values.push(assignment.name || label);
+    updates.push('manager_assigned_at = NOW()');
+    updates.push('manager_due_date = DATE_ADD(NOW(), INTERVAL ? DAY)');
+    values.push(managerEscalationSlaDays);
+    updates.push('manager_treated_at = NULL');
+    updates.push("current_escalation_level = 'manager'");
+    updates.push('returned_to_sac_at = NULL');
+    updates.push('sac_audit_status = NULL');
+    updates.push('sac_audit_comment = NULL');
+  } else if (role === 'sac_operator') {
+    updates.push('status = ?');
+    values.push('retornada_sac_auditoria');
+    updates.push('returned_to_sac_at = NOW()');
+    updates.push("sac_audit_status = 'pendente'");
+    updates.push("current_escalation_level = 'sac_audit'");
+  }
+
+  return { role, label };
+}
+
+async function getActiveComplaintAdministrators() {
+  const [rows] = await pool.query(
+    `SELECT id, name, email, whatsapp, phone, role
+       FROM users
+      WHERE active = 1
+        AND deleted_at IS NULL
+        AND role IN ('admin', 'master_admin')
+      ORDER BY CASE WHEN role = 'master_admin' THEN 0 ELSE 1 END, name ASC`
+  );
+
+  return rows;
+}
+
+async function notifyComplaintEscalationRecipients(complaint, recipients, eventType, title, message) {
+  const link = `${frontendUrl}/gestao/${complaint.id}`;
+  const payload = {
+    complaintId: complaint.id,
+    protocol: complaint.protocol || `GRC-${complaint.id}`,
+    escalationLevel: complaint.current_escalation_level || null
+  };
+
+  await Promise.all((recipients || []).filter(Boolean).map(async (recipient) => {
+    if (recipient.id || recipient.userId) {
+      await createNotification(
+        recipient.id || recipient.userId,
+        eventType,
+        title,
+        message,
+        link,
+        payload
+      ).catch((error) => {
+        console.warn('Nao foi possivel criar notificacao interna de escalonamento:', error.message);
+      });
+    }
+
+    if (isValidNotificationEmail(recipient.email)) {
+      const html = emailService.renderBrandedEmail({
+        eyebrow: 'Escalonamento de Reclamação',
+        title,
+        intro: `Olá, <strong>${escapeNotificationHtml(recipient.name || 'responsável')}</strong>.`,
+        bodyHtml: `<p style="margin:0 0 18px;white-space:pre-line;">${escapeNotificationHtml(message)}</p>`,
+        actionLabel: 'Abrir protocolo',
+        actionUrl: link,
+        footerText: 'Escalonamento automático registrado no histórico do protocolo.'
+      });
+      await sendLoggedNotificationEmail({
+        eventType: eventType.toUpperCase(),
+        protocol: complaint.protocol || `GRC-${complaint.id}`,
+        recipient,
+        template: { subject: title, html }
+      }).catch((error) => {
+        console.warn('Nao foi possivel enviar e-mail de escalonamento:', error.message);
+      });
+    }
+  }));
+}
+
 async function getClinicsForUser(user) {
   if (!user) return [];
 
@@ -10430,7 +10741,6 @@ async function convertNpsToComplaint(npsId, user) {
   const dueAt = calculateDueAt(priority);
   const resolutionDueAt = calculateResolutionDueAt();
   const description = buildNpsComplaintDescription(nps);
-  const assignment = await resolveCoordinatorAssignment(nps.clinic_id || null);
   const creatorAudit = buildComplaintCreatorAudit(user, 'Externo');
   const [result] = await pool.query(
     `INSERT INTO complaints
@@ -10452,10 +10762,7 @@ async function convertNpsToComplaint(npsId, user) {
   );
   const protocol = `GRC-${new Date().getFullYear()}-${String(result.insertId).padStart(6, '0')}`;
   await pool.query('UPDATE complaints SET protocol = ? WHERE id = ?', [protocol, result.insertId]);
-  await pool.query(
-    'UPDATE complaints SET assigned_coordinator_user_id = ?, assigned_coordinator_name = ?, clinic_snapshot_name = ? WHERE id = ?',
-    [assignment.coordinatorUserId, assignment.coordinatorName, assignment.clinicSnapshotName, result.insertId]
-  );
+  await assignInitialComplaintEscalationResponsibles(result.insertId, nps.clinic_id || null);
   await pool.query(
     'UPDATE nps_responses SET converted_complaint_id = ?, converted_at = NOW(), converted_by = ? WHERE id = ?',
     [result.insertId, getActorName(user), npsId]
@@ -12359,6 +12666,65 @@ async function logPartnerVideoEvent(event = {}) {
       event.createdBy || 'Sistema'
     ]
   );
+}
+
+function isValidPartnerVideoPhone(phone) {
+  return !phone || /^55\d{10,11}$/.test(String(phone));
+}
+
+function buildPartnerVideoContactPayload(body = {}, fallback = {}) {
+  return {
+    clinic_name: sanitizeFinancialString(body.clinic_name || body.clinicName || fallback.clinic_name, 180),
+    partner_name: sanitizeFinancialString(body.partner_name || body.partnerName || fallback.partner_name, 220),
+    phone_number: normalizeWhatsAppPhone(body.phone_number || body.phoneNumber || fallback.phone_number || ''),
+    specialty: sanitizeFinancialString(body.specialty || body.function || body.role || fallback.specialty, 160),
+    active: body.active === undefined ? (fallback.active === undefined ? 1 : Number(fallback.active)) : (body.active ? 1 : 0),
+    receives_automatic_message: body.receives_automatic_message === undefined && body.receivesAutomaticMessage === undefined
+      ? (fallback.receives_automatic_message === undefined ? 1 : Number(fallback.receives_automatic_message))
+      : ((body.receives_automatic_message ?? body.receivesAutomaticMessage) ? 1 : 0),
+    default_send_time: normalizePartnerVideoTime(body.default_send_time || body.defaultSendTime || fallback.default_send_time || '08:00') || '08:00',
+    allowed_weekdays: sanitizeFinancialString(body.allowed_weekdays || body.allowedWeekdays || fallback.allowed_weekdays || '1,2,3,4,5,6', 40),
+    notes: sanitizeFinancialString(body.notes ?? fallback.notes, 2000)
+  };
+}
+
+function getPartnerVideoContactChanges(before = {}, after = {}) {
+  const fields = [
+    'clinic_name',
+    'partner_name',
+    'phone_number',
+    'specialty',
+    'active',
+    'receives_automatic_message',
+    'default_send_time',
+    'allowed_weekdays',
+    'notes'
+  ];
+  return fields
+    .map((field) => ({
+      field,
+      previous: before[field] === undefined || before[field] === null ? '' : String(before[field]),
+      next: after[field] === undefined || after[field] === null ? '' : String(after[field])
+    }))
+    .filter((item) => item.previous !== item.next);
+}
+
+async function assertPartnerVideoPhoneAvailable(phone, ignoreId = null) {
+  if (!phone) return;
+  const params = [phone];
+  let sql = 'SELECT id, partner_name, clinic_name FROM partner_video_contacts WHERE phone_number = ?';
+  if (ignoreId) {
+    sql += ' AND id <> ?';
+    params.push(ignoreId);
+  }
+  sql += ' LIMIT 1';
+  const [rows] = await pool.query(sql, params);
+  if (rows.length) {
+    const owner = rows[0].partner_name || rows[0].clinic_name || `ID ${rows[0].id}`;
+    const error = new Error(`Telefone ja vinculado ao parceiro ${owner}.`);
+    error.statusCode = 409;
+    throw error;
+  }
 }
 
 async function ensurePartnerVideoDailyControl(contact, dateKey) {
@@ -18858,31 +19224,42 @@ app.post('/api/partners-video/contacts', authenticate, requireWhatsAppView, asyn
     if (!canConfigureWhatsAppManagement(req.user)) {
       return res.status(403).json({ error: 'Seu perfil não pode cadastrar parceiros.' });
     }
-    const clinicName = sanitizeFinancialString(req.body.clinic_name || req.body.clinicName, 180);
-    const partnerName = sanitizeFinancialString(req.body.partner_name || req.body.partnerName, 220);
-    if (!clinicName || !partnerName) return res.status(400).json({ error: 'Informe unidade e parceiro.' });
-    const phone = normalizeWhatsAppPhone(req.body.phone_number || req.body.phoneNumber || '');
+    const payload = buildPartnerVideoContactPayload(req.body || {});
+    if (!payload.clinic_name || !payload.partner_name) return res.status(400).json({ error: 'Informe unidade e parceiro.' });
+    if (!isValidPartnerVideoPhone(payload.phone_number)) {
+      return res.status(400).json({ error: 'Telefone inválido. Use DDI + DDD + número, por exemplo 5562999999999.' });
+    }
+    if (!req.body?.allow_duplicate_phone && !req.body?.allowDuplicatePhone) {
+      await assertPartnerVideoPhoneAvailable(payload.phone_number);
+    }
     const [result] = await pool.query(
       `INSERT INTO partner_video_contacts
-       (clinic_name, partner_name, phone_number, active, receives_automatic_message, default_send_time, allowed_weekdays, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (clinic_name, partner_name, phone_number, specialty, active, receives_automatic_message, default_send_time, allowed_weekdays, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
-        clinicName,
-        partnerName,
-        phone || null,
-        req.body.active === undefined ? 1 : (req.body.active ? 1 : 0),
-        req.body.receives_automatic_message === undefined ? 1 : (req.body.receives_automatic_message ? 1 : 0),
-        req.body.default_send_time || req.body.defaultSendTime || '08:00:00',
-        req.body.allowed_weekdays || req.body.allowedWeekdays || '1,2,3,4,5,6',
-        sanitizeFinancialString(req.body.notes, 2000)
+        payload.clinic_name,
+        payload.partner_name,
+        payload.phone_number || null,
+        payload.specialty || null,
+        payload.active,
+        payload.receives_automatic_message,
+        payload.default_send_time,
+        payload.allowed_weekdays,
+        payload.notes
       ]
     );
-    await logPartnerVideoEvent({ contactId: result.insertId, eventType: 'contact_created', status: 'info', createdBy: getActorName(req.user) });
+    await logPartnerVideoEvent({
+      contactId: result.insertId,
+      eventType: 'contact_created',
+      status: 'info',
+      createdBy: getActorName(req.user),
+      responsePayload: { created: payload }
+    });
     const [rows] = await pool.query('SELECT * FROM partner_video_contacts WHERE id = ? LIMIT 1', [result.insertId]);
     return res.status(201).json(rows[0]);
   } catch (error) {
     console.error(error);
-    return res.status(400).json({ error: error.message || 'Erro ao cadastrar parceiro.' });
+    return res.status(error.statusCode || 400).json({ error: error.message || 'Erro ao cadastrar parceiro.' });
   }
 });
 
@@ -18891,12 +19268,24 @@ app.put('/api/partners-video/contacts/:id', authenticate, requireWhatsAppView, a
     if (!canConfigureWhatsAppManagement(req.user)) {
       return res.status(403).json({ error: 'Seu perfil não pode editar parceiros.' });
     }
-    const phone = normalizeWhatsAppPhone(req.body.phone_number || req.body.phoneNumber || '');
+    const [currentRows] = await pool.query('SELECT * FROM partner_video_contacts WHERE id = ? LIMIT 1', [req.params.id]);
+    if (!currentRows.length) return res.status(404).json({ error: 'Parceiro não encontrado.' });
+    const current = currentRows[0];
+    const payload = buildPartnerVideoContactPayload(req.body || {}, current);
+    if (!payload.clinic_name || !payload.partner_name) return res.status(400).json({ error: 'Informe unidade e parceiro.' });
+    if (!isValidPartnerVideoPhone(payload.phone_number)) {
+      return res.status(400).json({ error: 'Telefone inválido. Use DDI + DDD + número, por exemplo 5562999999999.' });
+    }
+    if (!req.body?.allow_duplicate_phone && !req.body?.allowDuplicatePhone) {
+      await assertPartnerVideoPhoneAvailable(payload.phone_number, req.params.id);
+    }
+    const changes = getPartnerVideoContactChanges(current, payload);
     await pool.query(
       `UPDATE partner_video_contacts
           SET clinic_name = ?,
               partner_name = ?,
               phone_number = ?,
+              specialty = ?,
               active = ?,
               receives_automatic_message = ?,
               default_send_time = ?,
@@ -18905,23 +19294,30 @@ app.put('/api/partners-video/contacts/:id', authenticate, requireWhatsAppView, a
               updated_at = CURRENT_TIMESTAMP
         WHERE id = ?`,
       [
-        sanitizeFinancialString(req.body.clinic_name || req.body.clinicName, 180),
-        sanitizeFinancialString(req.body.partner_name || req.body.partnerName, 220),
-        phone || null,
-        req.body.active ? 1 : 0,
-        req.body.receives_automatic_message ? 1 : 0,
-        req.body.default_send_time || req.body.defaultSendTime || '08:00:00',
-        req.body.allowed_weekdays || req.body.allowedWeekdays || '1,2,3,4,5,6',
-        sanitizeFinancialString(req.body.notes, 2000),
+        payload.clinic_name,
+        payload.partner_name,
+        payload.phone_number || null,
+        payload.specialty || null,
+        payload.active,
+        payload.receives_automatic_message,
+        payload.default_send_time,
+        payload.allowed_weekdays,
+        payload.notes,
         req.params.id
       ]
     );
-    await logPartnerVideoEvent({ contactId: req.params.id, eventType: 'contact_updated', status: 'info', createdBy: getActorName(req.user) });
+    await logPartnerVideoEvent({
+      contactId: req.params.id,
+      eventType: 'contact_updated',
+      status: 'info',
+      createdBy: getActorName(req.user),
+      responsePayload: { changes }
+    });
     const [rows] = await pool.query('SELECT * FROM partner_video_contacts WHERE id = ? LIMIT 1', [req.params.id]);
     return res.json(rows[0] || null);
   } catch (error) {
     console.error(error);
-    return res.status(400).json({ error: error.message || 'Erro ao editar parceiro.' });
+    return res.status(error.statusCode || 400).json({ error: error.message || 'Erro ao editar parceiro.' });
   }
 });
 
@@ -19119,6 +19515,53 @@ app.post('/api/partners-video/mark-not-sent-bulk', authenticate, requireWhatsApp
     return res.status(500).json({ error: 'Erro ao marcar vídeos não enviados em lote.' });
   }
 });
+
+async function enqueuePartnerVideoContactAction(req, res, type) {
+  try {
+    if (!canConfigureWhatsAppManagement(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode disparar mensagens para parceiros.' });
+    }
+    const [rows] = await pool.query('SELECT * FROM partner_video_contacts WHERE id = ? LIMIT 1', [req.params.id]);
+    const contact = rows[0];
+    if (!contact) return res.status(404).json({ error: 'Parceiro não encontrado.' });
+    const phone = normalizeWhatsAppPhone(contact.phone_number);
+    if (!phone) return res.status(400).json({ error: 'Parceiro sem telefone válido.' });
+    if (!Number(contact.active) && type !== 'partner_video_test') {
+      return res.status(409).json({ error: 'Parceiro inativo não recebe cobrança automática.' });
+    }
+    const settings = await getPartnerVideoSettings();
+    const control = type === 'partner_video_test'
+      ? null
+      : await ensurePartnerVideoDailyControl(contact, getSaoPauloParts().dateKey);
+    const delaySeconds = randomIntegerBetween(settings.minDelaySeconds, settings.maxDelaySeconds);
+    const result = await enqueuePartnerVideoMessage({
+      contact,
+      control,
+      number: phone,
+      message: fillPartnerVideoTemplate(settings.template, contact),
+      delaySeconds,
+      actor: req.user,
+      type
+    });
+    if (!result) return res.status(400).json({ error: 'Não foi possível enfileirar a mensagem.' });
+    return res.json({
+      message: type === 'partner_video_test' ? 'Teste enfileirado para o parceiro.' : 'Cobrança reenfileirada para o parceiro.',
+      delaySeconds,
+      queueId: result.dispatch?.id || null
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao enfileirar mensagem do parceiro.' });
+  }
+}
+
+app.post('/api/partners-video/contacts/:id/test-send', authenticate, requireWhatsAppView, (req, res) => (
+  enqueuePartnerVideoContactAction(req, res, 'partner_video_test')
+));
+
+app.post('/api/partners-video/contacts/:id/resend', authenticate, requireWhatsAppView, (req, res) => (
+  enqueuePartnerVideoContactAction(req, res, 'partner_video_resend')
+));
 
 app.post('/api/partners-video/:id/resend', authenticate, requireWhatsAppView, async (req, res) => {
   try {
@@ -21596,6 +22039,7 @@ app.post('/nps/public', async (req, res) => {
       );
       const protocol = `GRC-${new Date().getFullYear()}-${String(result.insertId).padStart(6, '0')}`;
       await pool.query('UPDATE complaints SET protocol = ? WHERE id = ?', [protocol, result.insertId]);
+      await assignInitialComplaintEscalationResponsibles(result.insertId, clinic_id || null);
       await pool.query(
         'UPDATE nps_responses SET converted_complaint_id = ?, converted_at = NOW(), converted_by = ? WHERE id = ?',
         [result.insertId, 'Link público NPS', npsInsert.insertId]
@@ -22364,7 +22808,6 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
       await persistUploadedFile(req.file);
     }
 
-    const assignment = await resolveCoordinatorAssignment(clinic_id);
     const creatorAudit = buildComplaintCreatorAudit(req.user, normalizedOrigin);
 
     const [result] = await pool.query(
@@ -22396,10 +22839,7 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
 
     const protocol = `GRC-${new Date().getFullYear()}-${String(result.insertId).padStart(6, '0')}`;
     await pool.query('UPDATE complaints SET protocol = ? WHERE id = ?', [protocol, result.insertId]);
-    await pool.query(
-      'UPDATE complaints SET assigned_coordinator_user_id = ?, assigned_coordinator_name = ?, clinic_snapshot_name = ? WHERE id = ?',
-      [assignment.coordinatorUserId, assignment.coordinatorName, assignment.clinicSnapshotName, result.insertId]
-    );
+    const assignment = await assignInitialComplaintEscalationResponsibles(result.insertId, clinic_id);
     await insertComplaintLog(result.insertId, 'created', `Protocolo ${protocol} cadastrado com origem ${normalizedOrigin}.`, {
       name: creatorAudit.name,
       role: creatorAudit.role
@@ -22431,7 +22871,7 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
           const marketingProtocolEmail = emailService.renderMarketingProtocolEmail({
             protocol,
             patientName: patient_name,
-            clinicName: assignment?.clinicSnapshotName || '',
+            clinicName: assignment?.coordinator?.clinicSnapshotName || '',
             complaintUrl: `${frontendUrl}/reclamacoes/${result.insertId}`
           });
 
@@ -22769,7 +23209,9 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       patient_contacted,
       first_attendance,
       forward_to_role,
-      reassign_forward
+      reassign_forward,
+      sac_audit_status,
+      sac_audit_comment
     } = req.body;
     const rows = await getComplaintRows({ id }, req.user);
 
@@ -22794,7 +23236,9 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
     const cleanedComment = typeof operator_comment === 'string' ? operator_comment.trim() : '';
     const hasCommentChange = Boolean(cleanedComment) && cleanedComment !== String(complaint.operator_comment || '').trim();
     const nextPriority = priority ? normalizePriority(priority) : normalizePriority(complaint.priority);
-    const nextStatus = status || (cleanedComment && canAddTreatment(req.user) ? 'em_andamento' : complaint.status || 'aberta');
+    const nextStatus = normalizeComplaintStatusForStorage(
+      status || (cleanedComment && canAddTreatment(req.user) ? 'em_andamento' : complaint.status || 'aberta')
+    );
     const actorName = getActorName(req.user);
     let assignmentNotificationResult = null;
     const logEntries = [];
@@ -22853,6 +23297,14 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         }
 
         const assignment = await resolveCoordinatorAssignment(nextClinicId);
+        let managerAssignment = null;
+        try {
+          managerAssignment = await resolveManagerAssignment(nextClinicId);
+        } catch (assignmentError) {
+          if (!String(assignmentError.message || '').includes('Unexpected query during test')) {
+            console.warn('Não foi possível resolver gerente da unidade ao alterar reclamação:', assignmentError.message);
+          }
+        }
         const previousClinicLabel = complaint.clinic_name
           || complaint.clinic_snapshot_name
           || (currentClinicId ? `Unidade ${currentClinicId}` : 'Unidade não informada');
@@ -22894,6 +23346,17 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
           values.push(nextCoordinatorName || 'Coordenador da unidade');
         }
 
+        updates.push('coordinator_id = ?');
+        values.push(assignment?.coordinatorUserId || null);
+        updates.push('coordinator_name = ?');
+        values.push(nextCoordinatorName);
+        if (managerAssignment) {
+          updates.push('manager_id = ?');
+          values.push(managerAssignment.managerUserId || null);
+          updates.push('manager_name = ?');
+          values.push(managerAssignment.managerName || null);
+        }
+
         logEntries.push({
           action: 'clinic_changed',
           message: `Unidade alterada de ${previousClinicLabel} para ${nextClinicLabel}.`
@@ -22910,6 +23373,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
     }
 
     if (cleanedComment && canAddTreatment(req.user)) {
+      const treatmentRole = normalizeAccessRole(req.user?.role);
       updates.push('treatment_comment = ?');
       values.push(cleanedComment);
       updates.push('treatment_by_role = ?');
@@ -22917,12 +23381,49 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       updates.push('treatment_by_name = ?');
       values.push(actorName);
       updates.push('treatment_at = COALESCE(treatment_at, NOW())');
+
+      if (treatmentRole === 'coordinator') {
+        updates.push('coordinator_treated_at = COALESCE(coordinator_treated_at, NOW())');
+      }
+
+      if (treatmentRole === 'manager') {
+        updates.push('manager_treated_at = COALESCE(manager_treated_at, NOW())');
+      }
+
+      if (['coordinator', 'manager'].includes(treatmentRole) && !reassign_forward) {
+        const sacAssignment = await resolveComplaintResponsibleAssignment(complaint.clinic_id, 'sac_operator', {
+          preferredName: complaint.first_attendance_by || complaint.patient_contacted_by || complaint.forwarded_by
+        });
+        appendComplaintForwardingUpdates({
+          updates,
+          values,
+          forwardRole: 'sac_operator',
+          assignment: sacAssignment,
+          actorName,
+          forwardedLabel: sacAssignment.label || 'Operador de SAC'
+        });
+        logEntries.push({
+          action: 'returned_to_sac_audit',
+          message: `Tratativa registrada por ${treatmentRole === 'coordinator' ? 'Coordenador' : 'Gerente'} e retornada ao SAC para auditoria.`,
+          previousStatus: complaint.status,
+          newStatus: 'retornada_sac_auditoria',
+          stageDurationHours: getComplaintStageDurationHours(
+            complaint,
+            treatmentRole === 'coordinator' ? 'coordinator_assigned_at' : 'manager_assigned_at'
+          ),
+          reason: 'Tratativa registrada pela gestão; encerramento final permanece com SAC.'
+        });
+      }
     }
 
     if (hasCommentChange) {
       logEntries.push({
         action: canAddTreatment(req.user) ? 'treatment_saved' : 'comment_saved',
-        message: cleanedComment
+        message: cleanedComment,
+        previousStatus: complaint.status,
+        newStatus: ['coordinator', 'manager'].includes(normalizeAccessRole(req.user?.role)) && !reassign_forward
+          ? 'retornada_sac_auditoria'
+          : nextStatus
       });
     }
 
@@ -22999,32 +23500,21 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         updates.push('first_attendance_by_role = COALESCE(first_attendance_by_role, ?)');
         values.push(req.user.role);
         updates.push('deadline_locked_at = COALESCE(deadline_locked_at, NOW())');
-        updates.push('forwarded_to_role = ?');
-        values.push(forward_to_role);
-        updates.push('forwarded_to_label = ?');
-        values.push(forwardedLabel);
-        updates.push('forwarded_at = NOW()');
-        updates.push('forwarded_by = ?');
-        values.push(actorName);
-        updates.push('assigned_responsible_user_id = ?');
-        values.push(assignment?.userId || null);
-        updates.push('assigned_responsible_name = ?');
-        values.push(assignment?.name || forwardedLabel);
-        updates.push('assigned_responsible_role = ?');
-        values.push(assignment?.role || forward_to_role);
-
-        if (forward_to_role === 'coordinator') {
-          updates.push('assigned_coordinator_user_id = ?');
-          values.push(assignment?.userId || null);
-          updates.push('assigned_coordinator_name = ?');
-          values.push(assignment?.name || forwardedLabel);
-          updates.push('clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)');
-          values.push(assignment?.clinicSnapshotName || null);
-        }
+        appendComplaintForwardingUpdates({
+          updates,
+          values,
+          forwardRole: forward_to_role,
+          assignment,
+          actorName,
+          forwardedLabel
+        });
 
         logEntries.push({
           action: 'patient_contact_forwarded',
-          message: `Contato com paciente registrado e protocolo encaminhado para ${forwardedLabel}.`
+          message: `Contato com paciente registrado e protocolo encaminhado para ${forwardedLabel}.`,
+          previousStatus: complaint.status,
+          newStatus: forward_to_role === 'coordinator' ? 'enviada_coordenador' : forward_to_role === 'manager' ? 'escalonada_gerente' : nextStatus,
+          reason: 'Encaminhamento após contato inicial do SAC.'
         });
       }
     }
@@ -23060,32 +23550,21 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       updates.push('first_attendance_by_role = COALESCE(first_attendance_by_role, ?)');
       values.push(req.user.role);
       updates.push('deadline_locked_at = COALESCE(deadline_locked_at, NOW())');
-      updates.push('forwarded_to_role = ?');
-      values.push(forward_to_role);
-      updates.push('forwarded_to_label = ?');
-      values.push(forwardedLabel);
-      updates.push('forwarded_at = NOW()');
-      updates.push('forwarded_by = ?');
-      values.push(actorName);
-      updates.push('assigned_responsible_user_id = ?');
-      values.push(assignment?.userId || null);
-      updates.push('assigned_responsible_name = ?');
-      values.push(assignment?.name || forwardedLabel);
-      updates.push('assigned_responsible_role = ?');
-      values.push(assignment?.role || forward_to_role);
-
-      if (forward_to_role === 'coordinator') {
-        updates.push('assigned_coordinator_user_id = ?');
-        values.push(assignment?.userId || null);
-        updates.push('assigned_coordinator_name = ?');
-        values.push(assignment?.name || forwardedLabel);
-        updates.push('clinic_snapshot_name = COALESCE(clinic_snapshot_name, ?)');
-        values.push(assignment?.clinicSnapshotName || null);
-      }
+      appendComplaintForwardingUpdates({
+        updates,
+        values,
+        forwardRole: forward_to_role,
+        assignment,
+        actorName,
+        forwardedLabel
+      });
 
       logEntries.push({
         action: 'first_attendance_forwarded',
-        message: `Primeiro atendimento registrado. Deadline travado e protocolo enviado para ${forwardedLabel}.`
+        message: `Primeiro atendimento registrado. Deadline travado e protocolo enviado para ${forwardedLabel}.`,
+        previousStatus: complaint.status,
+        newStatus: forward_to_role === 'coordinator' ? 'enviada_coordenador' : forward_to_role === 'manager' ? 'escalonada_gerente' : nextStatus,
+        reason: 'Primeiro encaminhamento do SAC para tratativa.'
       });
     }
 
@@ -23097,7 +23576,9 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       const requesterRole = normalizeAccessRole(req.user?.role);
       const requesterIsOperational = ['coordinator', 'manager'].includes(requesterRole);
       const allowedReassignRoles = requesterIsOperational
-        ? { sac_operator: 'Operador de SAC' }
+        ? (requesterRole === 'manager'
+          ? { sac_operator: 'Operador de SAC', coordinator: 'Coordenador' }
+          : { sac_operator: 'Operador de SAC' })
         : {
             coordinator: 'Coordenador',
             manager: 'Gerente'
@@ -23111,7 +23592,9 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       if (!allowedReassignRoles[forward_to_role]) {
         return res.status(400).json({
           error: requesterIsOperational
-            ? 'Selecione o Operador de SAC para devolver a demanda.'
+            ? (requesterRole === 'manager'
+              ? 'Selecione o Operador de SAC ou o Coordenador para devolver a demanda.'
+              : 'Selecione o Operador de SAC para devolver a demanda.')
             : 'Selecione Coordenador ou Gerente para reencaminhar a demanda.'
         });
       }
@@ -23129,30 +23612,27 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         ? assignment.name || complaint.assigned_coordinator_name || allowedReassignRoles[forward_to_role]
         : assignment.label || allowedReassignRoles[forward_to_role];
 
-      updates.push('forwarded_to_role = ?');
-      values.push(forward_to_role);
-      updates.push('forwarded_to_label = ?');
-      values.push(forwardedLabel);
-      updates.push('forwarded_at = NOW()');
-      updates.push('forwarded_by = ?');
-      values.push(actorName);
-      updates.push('assigned_responsible_user_id = ?');
-      values.push(assignment?.userId || null);
-      updates.push('assigned_responsible_name = ?');
-      values.push(assignment?.name || forwardedLabel);
-      updates.push('assigned_responsible_role = ?');
-      values.push(assignment?.role || forward_to_role);
-
-      if (forward_to_role === 'coordinator') {
-        updates.push('assigned_coordinator_user_id = ?');
-        values.push(assignment?.userId || null);
-        updates.push('assigned_coordinator_name = ?');
-        values.push(assignment?.name || forwardedLabel);
-      }
+      appendComplaintForwardingUpdates({
+        updates,
+        values,
+        forwardRole: forward_to_role,
+        assignment,
+        actorName,
+        forwardedLabel
+      });
 
       logEntries.push({
         action: 'reassigned_forward',
-        message: `Demanda reencaminhada para ${forwardedLabel}.`
+        message: `Demanda reencaminhada para ${forwardedLabel}.`,
+        previousStatus: complaint.status,
+        newStatus: forward_to_role === 'sac_operator'
+          ? 'retornada_sac_auditoria'
+          : forward_to_role === 'coordinator'
+          ? 'enviada_coordenador'
+          : forward_to_role === 'manager'
+          ? 'escalonada_gerente'
+          : nextStatus,
+        reason: requesterIsOperational ? 'Devolução operacional após tratativa.' : 'Reencaminhamento manual.'
       });
     }
 
