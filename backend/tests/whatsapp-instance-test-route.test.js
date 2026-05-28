@@ -32,11 +32,32 @@ function buildQueryStub(handlers) {
   };
 }
 
+function assertSafeMysqlWhatsappLock(lockName, item) {
+  assert.equal(lockName, serverModule.__testables.buildWhatsAppDispatchSendLockName(item));
+  assert.ok(lockName.length <= 64);
+  assert.match(lockName, /^whatsapp-send:[a-f0-9]{40}$/);
+}
+
 test.afterEach(() => {
   pool.query = originalPoolQuery;
   whatsappProvider.getSessionStatus = originalGetSessionStatus;
   whatsappProvider.sendMessage = originalSendMessage;
   whatsappProvider.sendText = originalSendText;
+});
+
+test('whatsapp dispatch mysql lock names stay under MySQL limit', () => {
+  const lockName = serverModule.__testables.buildWhatsAppDispatchSendLockName({
+    id: 999999,
+    message_id: 888888,
+    instance_name: 'garavelo-confirmacao-agendamento-whatsapp-clinica-logada-com-nome-muito-longo',
+    recipient_phone: '5562999669966',
+    message_text: 'Mensagem grande '.repeat(120),
+    message_type: 'confirmacao_massa',
+    dispatch_dedupe_key: 'dedupe-key-' + 'x'.repeat(180)
+  });
+
+  assert.ok(lockName.length <= 64);
+  assert.match(lockName, /^whatsapp-send:[a-f0-9]{40}$/);
 });
 
 test('instance test route sends directly through whatsapp-service VPS', async (t) => {
@@ -188,6 +209,10 @@ test('dispatch queue does not retry after VPS accepted a message and history log
 
   pool.query = buildQueryStub([
     {
+      match: (sql) => sql.includes('UPDATE whatsapp_dispatch_queue') && sql.includes("status = CASE WHEN attempts >= ?"),
+      reply: async () => [{ affectedRows: 0 }]
+    },
+    {
       match: (sql) => sql.includes('FROM whatsapp_dispatch_queue') && sql.includes("WHERE status = 'pendente'") && sql.includes('scheduled_at <= NOW()'),
       reply: async () => [[{
         id: 900,
@@ -240,7 +265,15 @@ test('dispatch queue does not retry after VPS accepted a message and history log
     {
       match: (sql) => sql.includes('SELECT GET_LOCK'),
       reply: async (_sql, params) => {
-        assert.equal(params[0], 'whatsapp-send:dedupe-key-900');
+        assertSafeMysqlWhatsappLock(params[0], {
+          id: 900,
+          message_id: 901,
+          instance_name: 'garavelo',
+          recipient_phone: '5562999669966',
+          message_text: 'Mensagem de confirmacao',
+          message_type: 'confirmacao_massa',
+          dispatch_dedupe_key: 'dedupe-key-900'
+        });
         return [[{ lock_acquired: 1 }]];
       }
     },
@@ -305,6 +338,10 @@ test('dispatch queue cancels newer duplicate before calling VPS', async () => {
   };
 
   pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('UPDATE whatsapp_dispatch_queue') && sql.includes("status = CASE WHEN attempts >= ?"),
+      reply: async () => [{ affectedRows: 0 }]
+    },
     {
       match: (sql) => sql.includes('FROM whatsapp_dispatch_queue') && sql.includes("WHERE status = 'pendente'") && sql.includes('scheduled_at <= NOW()'),
       reply: async () => [[{
@@ -400,6 +437,10 @@ test('dispatch queue cancels duplicate when another process holds send lock', as
 
   pool.query = buildQueryStub([
     {
+      match: (sql) => sql.includes('UPDATE whatsapp_dispatch_queue') && sql.includes("status = CASE WHEN attempts >= ?"),
+      reply: async () => [{ affectedRows: 0 }]
+    },
+    {
       match: (sql) => sql.includes('FROM whatsapp_dispatch_queue') && sql.includes("WHERE status = 'pendente'") && sql.includes('scheduled_at <= NOW()'),
       reply: async () => [[{
         id: 920,
@@ -451,7 +492,15 @@ test('dispatch queue cancels duplicate when another process holds send lock', as
     {
       match: (sql) => sql.includes('SELECT GET_LOCK'),
       reply: async (_sql, params) => {
-        assert.equal(params[0], 'whatsapp-send:dedupe-key-920');
+        assertSafeMysqlWhatsappLock(params[0], {
+          id: 920,
+          message_id: 921,
+          instance_name: 'garavelo',
+          recipient_phone: '5562999669966',
+          message_text: 'Mensagem de confirmacao',
+          message_type: 'confirmacao_massa',
+          dispatch_dedupe_key: 'dedupe-key-920'
+        });
         return [[{ lock_acquired: 0 }]];
       }
     },

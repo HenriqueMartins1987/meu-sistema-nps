@@ -3523,9 +3523,12 @@ async function ensureDatabaseSchema() {
       message_text TEXT NOT NULL,
       message_type VARCHAR(80) NULL,
       status VARCHAR(40) NOT NULL DEFAULT 'pendente',
+      send_status VARCHAR(40) NULL,
       attempts INT NOT NULL DEFAULT 0,
       scheduled_at DATETIME NOT NULL,
       locked_at DATETIME NULL,
+      last_attempt_at DATETIME NULL,
+      processed_at DATETIME NULL,
       sent_at DATETIME NULL,
       operator_id INT NULL,
       operator_name VARCHAR(180) NULL,
@@ -3671,6 +3674,9 @@ async function ensureDatabaseSchema() {
   await ensureColumn('whatsapp_messages', 'whatsapp_message_id', 'VARCHAR(180) NULL');
   await ensureColumn('whatsapp_messages', 'client_request_id', 'VARCHAR(120) NULL');
   await ensureColumn('whatsapp_messages', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
+  await ensureColumn('whatsapp_dispatch_queue', 'send_status', 'VARCHAR(40) NULL');
+  await ensureColumn('whatsapp_dispatch_queue', 'last_attempt_at', 'DATETIME NULL');
+  await ensureColumn('whatsapp_dispatch_queue', 'processed_at', 'DATETIME NULL');
   await ensureColumn('whatsapp_dispatch_queue', 'dispatch_dedupe_key', 'VARCHAR(80) NULL');
   await ensureIndex('whatsapp_dispatch_queue', 'uniq_whatsapp_dispatch_dedupe_key', 'UNIQUE KEY uniq_whatsapp_dispatch_dedupe_key (dispatch_dedupe_key)');
   await ensureColumn('partner_video_contacts', 'specialty', 'VARCHAR(160) NULL');
@@ -12064,6 +12070,29 @@ function parseSerializedPayload(value) {
   }
 }
 
+function makeMysqlLockName(prefix, rawKey) {
+  const safePrefix = String(prefix || 'lock')
+    .replace(/[^a-zA-Z0-9:_-]/g, '')
+    .slice(0, 20) || 'lock';
+  const hash = crypto
+    .createHash('sha256')
+    .update(String(rawKey || ''))
+    .digest('hex')
+    .slice(0, 40);
+
+  return `${safePrefix}:${hash}`.slice(0, 64);
+}
+
+function assertMysqlLockName(lockName) {
+  if (!lockName || typeof lockName !== 'string') {
+    throw new Error('Invalid MySQL lock name.');
+  }
+  if (lockName.length > 64) {
+    throw new Error(`Invalid MySQL lock name length: ${lockName.length}`);
+  }
+  return lockName;
+}
+
 async function logEvolutionEvent(eventType, payload = {}) {
   const status = payload.status || (payload.error ? 'error' : 'info');
   const errorMessage = payload.error?.response?.data?.message
@@ -12583,7 +12612,9 @@ async function cancelDuplicateWhatsAppDispatch(item = {}, duplicate = null, dupl
   });
 }
 
-async function acquireWhatsAppDispatchSendLock(item = {}, timeoutSeconds = 3) {
+function buildWhatsAppDispatchSendLockName(item = {}) {
+  const instanceName = sanitizeFinancialString(item.instance_name || item.instanceName, 120);
+  const recipientPhone = normalizeWhatsAppPhone(item.recipient_phone || item.recipientPhone);
   const dedupeKey = sanitizeFinancialString(
     item.dispatch_dedupe_key
     || buildWhatsAppDispatchDedupeKey({
@@ -12594,22 +12625,41 @@ async function acquireWhatsAppDispatchSendLock(item = {}, timeoutSeconds = 3) {
     }),
     80
   );
-  if (!dedupeKey) {
+  if (!dedupeKey) return null;
+
+  return assertMysqlLockName(makeMysqlLockName(
+    'whatsapp-send',
+    `${instanceName}:${recipientPhone}:${item.message_id || item.messageId || ''}:${item.id || item.queueId || ''}:${dedupeKey}`
+  ));
+}
+
+function getWhatsAppDispatchSendLockForLog(item = {}, sendLock = null) {
+  if (sendLock?.lockName || sendLock?.lockKey) return sendLock.lockName || sendLock.lockKey;
+  try {
+    return buildWhatsAppDispatchSendLockName(item);
+  } catch (error) {
+    return null;
+  }
+}
+
+async function acquireWhatsAppDispatchSendLock(item = {}, timeoutSeconds = 3) {
+  const lockName = buildWhatsAppDispatchSendLockName(item);
+  if (!lockName) {
     return { acquired: true, lockKey: null, release: async () => {} };
   }
 
-  const lockKey = `whatsapp-send:${dedupeKey}`.slice(0, 128);
   if (process.env.NODE_ENV === 'test' || typeof pool.getConnection !== 'function') {
-    const [rows] = await pool.query('SELECT GET_LOCK(?, ?) AS lock_acquired', [lockKey, Math.max(1, Number(timeoutSeconds || 3))]);
+    const [rows] = await pool.query('SELECT GET_LOCK(?, ?) AS lock_acquired', [lockName, Math.max(1, Number(timeoutSeconds || 3))]);
     const lockAcquired = Number(rows?.[0]?.lock_acquired ?? Object.values(rows?.[0] || {})[0] ?? 0) === 1;
 
     return {
       acquired: lockAcquired,
-      lockKey,
+      lockKey: lockName,
+      lockName,
       release: async () => {
         if (!lockAcquired) return;
         try {
-          await pool.query('SELECT RELEASE_LOCK(?) AS lock_released', [lockKey]);
+          await pool.query('SELECT RELEASE_LOCK(?) AS lock_released', [lockName]);
         } catch (error) {
           console.warn('Nao foi possivel liberar trava de envio WhatsApp:', error.message);
         }
@@ -12618,16 +12668,17 @@ async function acquireWhatsAppDispatchSendLock(item = {}, timeoutSeconds = 3) {
   }
 
   const connection = await pool.getConnection();
-  const [rows] = await connection.query('SELECT GET_LOCK(?, ?) AS lock_acquired', [lockKey, Math.max(1, Number(timeoutSeconds || 3))]);
+  const [rows] = await connection.query('SELECT GET_LOCK(?, ?) AS lock_acquired', [lockName, Math.max(1, Number(timeoutSeconds || 3))]);
   const lockAcquired = Number(rows?.[0]?.lock_acquired ?? Object.values(rows?.[0] || {})[0] ?? 0) === 1;
 
   return {
     acquired: lockAcquired,
-    lockKey,
+    lockKey: lockName,
+    lockName,
     release: async () => {
       try {
         if (lockAcquired) {
-          await connection.query('SELECT RELEASE_LOCK(?) AS lock_released', [lockKey]);
+          await connection.query('SELECT RELEASE_LOCK(?) AS lock_released', [lockName]);
         }
       } catch (error) {
         console.warn('Nao foi possivel liberar trava de envio WhatsApp:', error.message);
@@ -12797,9 +12848,9 @@ async function enqueueWhatsAppDispatch(payload = {}) {
   try {
     [result] = await pool.query(
       `INSERT INTO whatsapp_dispatch_queue
-       (message_id, conversation_id, instance_name, recipient_phone, message_text, message_type, status, scheduled_at,
+       (message_id, conversation_id, instance_name, recipient_phone, message_text, message_type, status, send_status, scheduled_at,
         operator_id, operator_name, anti_ban_delay_ms, humanization_profile, dispatch_dedupe_key, payload)
-       VALUES (?, ?, ?, ?, ?, ?, 'pendente', DATE_ADD(NOW(), INTERVAL ? SECOND), ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, 'pendente', 'queued', DATE_ADD(NOW(), INTERVAL ? SECOND), ?, ?, ?, ?, ?, ?)`,
       [
         payload.message_id || payload.messageId || null,
         payload.conversation_id || payload.conversationId || null,
@@ -13704,13 +13755,31 @@ async function processWhatsAppDispatchQueue() {
   if (whatsappDispatchProcessing) return;
   whatsappDispatchProcessing = true;
   try {
+    const maxAttempts = getWhatsAppAntiBanConfig().maxAttempts;
+    const staleLockMinutes = Math.max(2, Number(process.env.WHATSAPP_DISPATCH_STALE_LOCK_MINUTES || 5));
+    await pool.query(
+      `UPDATE whatsapp_dispatch_queue
+          SET status = CASE WHEN attempts >= ? THEN 'erro' ELSE 'pendente' END,
+              send_status = CASE WHEN attempts >= ? THEN 'failed' ELSE 'retrying' END,
+              scheduled_at = CASE WHEN attempts >= ? THEN scheduled_at ELSE DATE_ADD(NOW(), INTERVAL 60 SECOND) END,
+              locked_at = NULL,
+              processed_at = CASE WHEN attempts >= ? THEN NOW() ELSE processed_at END,
+              error_message = COALESCE(error_message, 'Envio retomado apos trava expirada.')
+        WHERE status = 'processando'
+          AND locked_at IS NOT NULL
+          AND locked_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)`,
+      [maxAttempts, maxAttempts, maxAttempts, maxAttempts, staleLockMinutes]
+    );
+
     const [items] = await pool.query(
       `SELECT *
          FROM whatsapp_dispatch_queue
         WHERE status = 'pendente'
+          AND attempts < ?
           AND scheduled_at <= NOW()
         ORDER BY scheduled_at ASC, id ASC
-        LIMIT 5`
+        LIMIT 5`,
+      [maxAttempts]
     );
 
     for (const item of items) {
@@ -13798,8 +13867,10 @@ async function processWhatsAppDispatchQueue() {
       const [lockResult] = await pool.query(
         `UPDATE whatsapp_dispatch_queue
             SET status = 'processando',
+                send_status = 'sending',
                 attempts = attempts + 1,
-                locked_at = NOW()
+                locked_at = NOW(),
+                last_attempt_at = NOW()
           WHERE id = ?
             AND status = 'pendente'`,
         [item.id]
@@ -13870,7 +13941,10 @@ async function processWhatsAppDispatchQueue() {
         await pool.query(
           `UPDATE whatsapp_dispatch_queue
               SET status = 'enviada',
+                  send_status = 'sent',
                   sent_at = NOW(),
+                  locked_at = NULL,
+                  processed_at = NOW(),
                   error_message = NULL
             WHERE id = ?`,
           [item.id]
@@ -13960,16 +14034,27 @@ async function processWhatsAppDispatchQueue() {
           });
         }
       } catch (error) {
-        const maxAttempts = getWhatsAppAntiBanConfig().maxAttempts;
         const nextStatus = Number(item.attempts || 0) + 1 >= maxAttempts ? 'erro' : 'pendente';
+        const nextSendStatus = nextStatus === 'erro' ? 'failed' : 'retrying';
         const retrySeconds = randomIntegerBetween(45, 120);
+        const lockName = getWhatsAppDispatchSendLockForLog(item, sendLock);
+        console.error('[Evolution:send_message_error]', {
+          instance: item.instance_name,
+          phone: item.recipient_phone,
+          lockName,
+          lockNameLength: lockName?.length || 0,
+          error: error.response?.data?.message || error.message
+        });
         await pool.query(
           `UPDATE whatsapp_dispatch_queue
               SET status = ?,
+                  send_status = ?,
                   scheduled_at = CASE WHEN ? = 'pendente' THEN DATE_ADD(NOW(), INTERVAL ? SECOND) ELSE scheduled_at END,
+                  locked_at = NULL,
+                  processed_at = CASE WHEN ? = 'erro' THEN NOW() ELSE processed_at END,
                   error_message = ?
             WHERE id = ?`,
-          [nextStatus, nextStatus, retrySeconds, error.response?.data?.message || error.message, item.id]
+          [nextStatus, nextSendStatus, nextStatus, retrySeconds, nextStatus, error.response?.data?.message || error.message, item.id]
         );
         await pool.query(
           `UPDATE whatsapp_messages
@@ -27096,8 +27181,10 @@ module.exports = {
     findRecentWhatsAppDispatchQueueDuplicate,
     findRecentSentWhatsAppDispatchDuplicate,
     findWhatsAppInstanceByClinic,
+    buildWhatsAppDispatchSendLockName,
     isPasswordChangeRouteAllowed,
     isWhatsAppConnectedStatus,
+    makeMysqlLockName,
     getStoredUploadFilename,
     normalizeStoredUploadUrl,
     normalizeUploadedOriginalName,
