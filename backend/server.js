@@ -6410,13 +6410,28 @@ async function getOverviewMetrics() {
       (SELECT COUNT(*) FROM email_delivery_logs WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS emails_24h,
       (SELECT COUNT(*) FROM email_delivery_logs WHERE status = 'sent' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS emails_sent_24h,
       (SELECT COUNT(*) FROM email_delivery_logs WHERE status = 'failed' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS emails_failed_24h,
-      (SELECT COUNT(*) FROM system_activity_logs WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS activities_24h
+      (SELECT COUNT(*) FROM system_activity_logs WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS activities_24h,
+      (SELECT COUNT(*) FROM system_activity_logs WHERE status_code >= 500 AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS http_errors_24h,
+      (SELECT COUNT(*) FROM complaints c WHERE c.deleted_at IS NULL AND c.resolution_due_at IS NOT NULL AND c.resolution_due_at BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 48 HOUR) AND ${buildOpenComplaintStatusWhere('c')}) AS complaints_due_48h,
+      (SELECT COUNT(*) FROM complaints c WHERE c.deleted_at IS NULL AND c.coordinator_due_date IS NOT NULL AND c.coordinator_treated_at IS NULL AND c.manager_assigned_at IS NULL AND ${buildOpenComplaintStatusWhere('c')}) AS internal_coordinator_waiting,
+      (SELECT COUNT(*) FROM complaints c WHERE c.deleted_at IS NULL AND c.coordinator_due_date IS NOT NULL AND c.coordinator_due_date < NOW() AND c.coordinator_treated_at IS NULL AND c.manager_assigned_at IS NULL AND ${buildOpenComplaintStatusWhere('c')}) AS internal_coordinator_overdue,
+      (SELECT COUNT(*) FROM complaints c WHERE c.deleted_at IS NULL AND c.manager_due_date IS NOT NULL AND c.manager_treated_at IS NULL AND c.admin_escalated_at IS NULL AND ${buildOpenComplaintStatusWhere('c')}) AS internal_manager_waiting,
+      (SELECT COUNT(*) FROM complaints c WHERE c.deleted_at IS NULL AND c.manager_due_date IS NOT NULL AND c.manager_due_date < NOW() AND c.manager_treated_at IS NULL AND c.admin_escalated_at IS NULL AND ${buildOpenComplaintStatusWhere('c')}) AS internal_manager_overdue,
+      (SELECT COUNT(*) FROM complaints c WHERE c.deleted_at IS NULL AND (c.status = 'retornada_sac_auditoria' OR c.current_escalation_level = 'sac_audit') AND ${buildOpenComplaintStatusWhere('c')}) AS internal_sac_audit_waiting,
+      (SELECT COUNT(*) FROM complaints c WHERE c.deleted_at IS NULL AND c.admin_escalated_at IS NOT NULL AND ${buildOpenComplaintStatusWhere('c')}) AS internal_admin_escalated,
+      (SELECT COUNT(*) FROM whatsapp_dispatch_queue WHERE processed_at IS NULL AND (status IN ('pendente', 'processando') OR send_status IN ('queued', 'retrying', 'sending'))) AS whatsapp_dispatch_pending,
+      (SELECT COUNT(*) FROM whatsapp_dispatch_queue WHERE locked_at IS NOT NULL AND processed_at IS NULL) AS whatsapp_dispatch_locked,
+      (SELECT COUNT(*) FROM whatsapp_dispatch_queue WHERE (status = 'erro' OR send_status = 'failed') AND COALESCE(processed_at, updated_at, created_at) >= DATE_SUB(NOW(), INTERVAL 24 HOUR)) AS whatsapp_dispatch_failed_24h,
+      (SELECT COUNT(*) FROM whatsapp_campaign_recipients WHERE status IN ('pendente', 'enfileirado')) AS whatsapp_campaign_pending
   `);
   const row = rows[0] || {};
   const emailFailures = parseSqlCount(row, 'emails_failed_24h');
   const whatsappFailures = parseSqlCount(row, 'whatsapp_failed_24h');
   const overdue = parseSqlCount(row, 'complaints_overdue');
-  const healthScore = Math.max(0, 100 - (emailFailures * 4) - (whatsappFailures * 4) - (overdue * 2));
+  const internalOverdue = parseSqlCount(row, 'internal_coordinator_overdue') + parseSqlCount(row, 'internal_manager_overdue');
+  const dispatchFailures = parseSqlCount(row, 'whatsapp_dispatch_failed_24h');
+  const httpErrors = parseSqlCount(row, 'http_errors_24h');
+  const healthScore = Math.max(0, 100 - (emailFailures * 4) - (whatsappFailures * 4) - (dispatchFailures * 3) - (overdue * 2) - (internalOverdue * 3) - (httpErrors * 5));
 
   return {
     healthScore,
@@ -6446,6 +6461,24 @@ async function getOverviewMetrics() {
       whatsapp24h: parseSqlCount(row, 'whatsapp_24h'),
       whatsappFailed24h: whatsappFailures,
       unreadNotifications: parseSqlCount(row, 'notifications_unread')
+    },
+    internalSla: {
+      due48h: parseSqlCount(row, 'complaints_due_48h'),
+      coordinatorWaiting: parseSqlCount(row, 'internal_coordinator_waiting'),
+      coordinatorOverdue: parseSqlCount(row, 'internal_coordinator_overdue'),
+      managerWaiting: parseSqlCount(row, 'internal_manager_waiting'),
+      managerOverdue: parseSqlCount(row, 'internal_manager_overdue'),
+      sacAuditWaiting: parseSqlCount(row, 'internal_sac_audit_waiting'),
+      adminEscalated: parseSqlCount(row, 'internal_admin_escalated')
+    },
+    queue: {
+      whatsappPending: parseSqlCount(row, 'whatsapp_dispatch_pending'),
+      whatsappLocked: parseSqlCount(row, 'whatsapp_dispatch_locked'),
+      whatsappFailed24h: dispatchFailures,
+      campaignPending: parseSqlCount(row, 'whatsapp_campaign_pending')
+    },
+    system: {
+      httpErrors24h: httpErrors
     },
     activities24h: parseSqlCount(row, 'activities_24h')
   };

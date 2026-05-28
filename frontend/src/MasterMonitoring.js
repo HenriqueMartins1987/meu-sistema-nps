@@ -118,34 +118,35 @@ function clampPercent(value, fallback = 0) {
   return Math.max(0, Math.min(100, number));
 }
 
-function percentFromStatus(status) {
-  if (status === 'online') return 100;
-  if (status === 'attention') return 68;
-  if (status === 'not_configured') return 42;
-  if (status === 'unknown') return 50;
-  if (status === 'error') return 8;
-  return 0;
-}
-
 function statusClass(status) {
   return `monitor-status ${status || 'unknown'}`;
 }
 
 function GaugeCard({ label, percent, value, detail, tone = 'neutral' }) {
-  const safePercent = clampPercent(percent);
-  const gaugeDeg = safePercent * 1.8;
-
   return (
-    <article className={`monitor-gauge-card ${tone}`} style={{ '--gauge-deg': `${gaugeDeg}deg` }}>
-      <div className="monitor-gauge-dial" aria-hidden="true">
-        <span className="monitor-gauge-needle" />
-        <span className="monitor-gauge-pin" />
-      </div>
-      <div className="monitor-gauge-copy">
+    <article className={`monitor-metric-card ${tone}`}>
+      <div className="monitor-metric-copy">
         <span>{label}</span>
         <strong>{value}</strong>
         {detail && <small>{detail}</small>}
       </div>
+      {percent !== null && percent !== undefined && (
+        <div className="monitor-metric-progress" aria-hidden="true">
+          <i style={{ width: `${clampPercent(percent)}%` }} />
+        </div>
+      )}
+    </article>
+  );
+}
+
+function ActionItem({ tone = 'neutral', title, detail, value }) {
+  return (
+    <article className={`monitor-action-item ${tone}`}>
+      <div>
+        <strong>{title}</strong>
+        <span>{detail}</span>
+      </div>
+      {value !== undefined && <em>{value}</em>}
     </article>
   );
 }
@@ -172,7 +173,7 @@ function ProviderCard({ provider }) {
       </dl>
       {notes.length > 0 && (
         <ul className="monitor-note-list">
-          {notes.slice(0, 3).map((note) => <li key={note}>{note}</li>)}
+          {notes.slice(0, 2).map((note) => <li key={note}>{note}</li>)}
         </ul>
       )}
     </article>
@@ -221,19 +222,133 @@ function MasterMonitoring() {
   const email = data?.email || {};
   const activity = data?.activity || {};
   const providers = data?.providers || {};
-  const whatsapp = data?.whatsapp || providers.twilio || {};
-  const whatsappService = data?.evolution || providers.evolution || {};
+  const whatsapp = useMemo(() => data?.whatsapp || providers.twilio || {}, [data?.whatsapp, providers.twilio]);
+  const whatsappService = useMemo(() => data?.evolution || providers.evolution || {}, [data?.evolution, providers.evolution]);
+  const internalSla = overview.internalSla || {};
+  const queue = overview.queue || {};
+  const system = overview.system || {};
   const memoryUsagePercent = runtime.memory?.systemTotalBytes
     ? (runtime.memory.systemTotalBytes - runtime.memory.systemFreeBytes) / runtime.memory.systemTotalBytes * 100
     : null;
   const emailTotal24h = Number(email.summary?.last24h || overview.communications?.emails24h || 0);
   const emailFailed24h = Number(overview.communications?.emailsFailed24h || 0);
-  const emailSuccessPercent = emailTotal24h ? ((emailTotal24h - emailFailed24h) / emailTotal24h) * 100 : 100;
-  const resendNote = Array.isArray(providers.resend?.notes) ? providers.resend.notes[0] : '';
   const openComplaints = Number(overview.complaints?.open || 0);
   const overdueComplaints = Number(overview.complaints?.overdue || 0);
   const complaintSlaPercent = openComplaints ? ((openComplaints - overdueComplaints) / openComplaints) * 100 : 100;
   const mysqlLatencyHealth = Math.max(0, 100 - (Number(database.latencyMs || 0) / 500) * 100);
+  const coordinatorOverdue = Number(internalSla.coordinatorOverdue || 0);
+  const managerOverdue = Number(internalSla.managerOverdue || 0);
+  const internalOverdueTotal = coordinatorOverdue + managerOverdue;
+  const internalOpenTotal = Number(internalSla.coordinatorWaiting || 0)
+    + Number(internalSla.managerWaiting || 0)
+    + Number(internalSla.sacAuditWaiting || 0)
+    + Number(internalSla.adminEscalated || 0);
+  const internalSlaPercent = internalOpenTotal
+    ? ((internalOpenTotal - internalOverdueTotal) / internalOpenTotal) * 100
+    : 100;
+  const dispatchPending = Number(queue.whatsappPending || 0);
+  const dispatchFailed24h = Number(queue.whatsappFailed24h || 0);
+  const dispatchLocked = Number(queue.whatsappLocked || 0);
+  const campaignPending = Number(queue.campaignPending || 0);
+  const whatsappErrors24h = Number(overview.communications?.whatsappFailed24h || 0) + dispatchFailed24h;
+  const httpErrors24h = Number(system.httpErrors24h || 0);
+  const communicationTotal24h = emailTotal24h + Number(overview.communications?.whatsapp24h || 0) + Number(whatsappService?.metrics?.messages24h || 0);
+  const communicationFailures24h = emailFailed24h + whatsappErrors24h + Number(whatsappService?.metrics?.errors24h || 0);
+  const communicationHealth = communicationTotal24h
+    ? ((communicationTotal24h - communicationFailures24h) / communicationTotal24h) * 100
+    : 100;
+  const usefulProviders = useMemo(() => {
+    const legacyWhatsAppHasUse = Boolean(whatsapp?.configured)
+      || Number(whatsapp?.metrics?.total || 0) > 0
+      || Number(whatsapp?.metrics?.last24h || 0) > 0
+      || Number(whatsapp?.metrics?.failed || 0) > 0;
+
+    return [
+      whatsappService,
+      providers.resend,
+      providers.vercel,
+      providers.railway,
+      legacyWhatsAppHasUse ? whatsapp : null
+    ].filter(Boolean);
+  }, [providers.railway, providers.resend, providers.vercel, whatsapp, whatsappService]);
+  const actionItems = useMemo(() => {
+    const items = [];
+
+    if (internalOverdueTotal > 0) {
+      items.push({
+        tone: 'danger',
+        title: 'Prazos internos vencidos',
+        detail: `${formatNumber(coordinatorOverdue)} no coordenador e ${formatNumber(managerOverdue)} no gerente.`,
+        value: formatNumber(internalOverdueTotal)
+      });
+    }
+
+    if (overdueComplaints > 0) {
+      items.push({
+        tone: 'danger',
+        title: 'SLA inicial vencido',
+        detail: 'Protocolos abertos acima do prazo de criticidade.',
+        value: formatNumber(overdueComplaints)
+      });
+    }
+
+    if (dispatchLocked > 0) {
+      items.push({
+        tone: 'warning',
+        title: 'Fila WhatsApp com lock ativo',
+        detail: 'Monitorar se os itens destravam no próximo ciclo automático.',
+        value: formatNumber(dispatchLocked)
+      });
+    }
+
+    if (dispatchFailed24h > 0 || whatsappErrors24h > 0) {
+      items.push({
+        tone: 'danger',
+        title: 'Falhas WhatsApp nas últimas 24h',
+        detail: 'Acompanhar logs recentes e reprocessar apenas quando necessário.',
+        value: formatNumber(whatsappErrors24h)
+      });
+    }
+
+    if (emailFailed24h > 0) {
+      items.push({
+        tone: 'warning',
+        title: 'Falhas de e-mail',
+        detail: 'Verificar destinatários, provedor e eventos de entrega.',
+        value: formatNumber(emailFailed24h)
+      });
+    }
+
+    if (httpErrors24h > 0) {
+      items.push({
+        tone: 'danger',
+        title: 'Erros HTTP recentes',
+        detail: 'Priorizar rotas com status 500 nos logs operacionais.',
+        value: formatNumber(httpErrors24h)
+      });
+    }
+
+    if (!items.length) {
+      items.push({
+        tone: 'success',
+        title: 'Operação sem alerta crítico',
+        detail: 'Monitoria não encontrou vencimentos ou falhas relevantes agora.',
+        value: 'OK'
+      });
+    }
+
+    return items.slice(0, 6);
+  }, [
+    coordinatorOverdue,
+    dispatchFailed24h,
+    dispatchLocked,
+    emailFailed24h,
+    httpErrors24h,
+    internalOverdueTotal,
+    managerOverdue,
+    overdueComplaints,
+    whatsappErrors24h
+  ]);
   const recentActivity = useMemo(() => (
     Array.isArray(activity.recent) ? activity.recent.slice(0, 40) : []
   ), [activity.recent]);
@@ -304,30 +419,48 @@ function MasterMonitoring() {
             </div>
           </section>
 
-          <section className="monitor-kpi-grid" aria-label="Mostradores principais">
+          <section className="monitor-kpi-grid" aria-label="Indicadores principais">
             <GaugeCard label="Saúde geral" percent={overview.healthScore} value={formatPercent(overview.healthScore)} detail={`${formatNumber(overview.activities24h)} movimentações em 24h`} tone="gold" />
-            <GaugeCard label="SLA protocolos" percent={complaintSlaPercent} value={formatPercent(complaintSlaPercent)} detail={`${formatNumber(overdueComplaints)} atrasados de ${formatNumber(openComplaints)} abertos`} tone={overdueComplaints ? 'danger' : 'neutral'} />
-            <GaugeCard label="CPU API" percent={runtime.processCpuPercent} value={formatPercent(runtime.processCpuPercent)} detail={`${runtime.cpuCount || 0} núcleos · uptime ${formatDuration(runtime.uptimeSeconds)}`} />
-            <GaugeCard label="Memória host" percent={memoryUsagePercent} value={formatPercent(memoryUsagePercent)} detail={`${formatBytes(runtime.memory?.rssBytes)} em uso no Node`} />
-            <GaugeCard label="Latência MySQL" percent={mysqlLatencyHealth} value={`${formatNumber(database.latencyMs)} ms`} detail={`${formatBytes(database.capacity?.totalBytes)} em storage`} tone={database.latencyMs > 250 ? 'danger' : 'neutral'} />
-            <GaugeCard label="Conexões MySQL" percent={database.connections?.usagePercent} value={formatPercent(database.connections?.usagePercent)} detail={`${formatNumber(database.connections?.current)} de ${formatNumber(database.connections?.max)} conexões`} />
-            <GaugeCard label="Entrega de e-mail" percent={emailSuccessPercent} value={formatPercent(emailSuccessPercent)} detail={`${formatNumber(emailTotal24h)} envios em 24h · ${formatNumber(emailFailed24h)} falhas`} tone={emailFailed24h ? 'danger' : 'neutral'} />
-            <GaugeCard label="Resend API" percent={percentFromStatus(providers.resend?.status)} value={statusLabels[providers.resend?.status] || 'N/D'} detail={resendNote || 'Monitoria do provedor de e-mail'} tone={providers.resend?.status === 'error' ? 'danger' : 'neutral'} />
-            <GaugeCard label="Twilio WhatsApp" percent={percentFromStatus(whatsapp?.status)} value={statusLabels[whatsapp?.status] || 'N/D'} detail={`${formatNumber(whatsapp?.metrics?.last24h)} envios em 24h · ${formatNumber(whatsapp?.metrics?.failed)} falhas`} tone={whatsapp?.status === 'error' || Number(whatsapp?.metrics?.failed || 0) ? 'danger' : 'neutral'} />
-            <GaugeCard label="WhatsApp Service" percent={percentFromStatus(whatsappService?.status)} value={statusLabels[whatsappService?.status] || 'N/D'} detail={`${formatNumber(whatsappService?.metrics?.instances)} número(s) · ${formatNumber(whatsappService?.metrics?.messages24h)} mensagens em 24h`} tone={whatsappService?.status === 'error' || Number(whatsappService?.metrics?.errors24h || 0) ? 'danger' : 'neutral'} />
-            <GaugeCard label="Vercel" percent={percentFromStatus(providers.vercel?.status)} value={statusLabels[providers.vercel?.status] || 'N/D'} detail={providers.vercel?.metrics?.latestState || providers.vercel?.publicStatus || 'Frontend'} tone={providers.vercel?.status === 'error' ? 'danger' : 'neutral'} />
-            <GaugeCard label="Railway API" percent={percentFromStatus(providers.railway?.status)} value={statusLabels[providers.railway?.status] || 'N/D'} detail={providers.railway?.metrics?.projectName || 'Métricas do banco'} tone={providers.railway?.status === 'error' ? 'danger' : 'neutral'} />
+            <GaugeCard label="SLA de reclamações" percent={complaintSlaPercent} value={formatPercent(complaintSlaPercent)} detail={`${formatNumber(overdueComplaints)} vencidas de ${formatNumber(openComplaints)} abertas`} tone={overdueComplaints ? 'danger' : 'success'} />
+            <GaugeCard label="Prazos internos" percent={internalSlaPercent} value={formatPercent(internalSlaPercent)} detail={`${formatNumber(internalOpenTotal)} em tratativa interna · ${formatNumber(internalOverdueTotal)} vencidas`} tone={internalOverdueTotal ? 'danger' : 'success'} />
+            <GaugeCard label="Fila WhatsApp" percent={dispatchPending ? Math.max(15, 100 - dispatchPending) : 100} value={formatNumber(dispatchPending)} detail={`${formatNumber(campaignPending)} campanhas pendentes · ${formatNumber(dispatchLocked)} locks`} tone={dispatchFailed24h || dispatchLocked ? 'danger' : 'neutral'} />
+            <GaugeCard label="Comunicação 24h" percent={communicationHealth} value={formatPercent(communicationHealth)} detail={`${formatNumber(communicationTotal24h)} eventos · ${formatNumber(communicationFailures24h)} falhas`} tone={communicationFailures24h ? 'danger' : 'success'} />
+            <GaugeCard label="API e banco" percent={mysqlLatencyHealth} value={`${formatNumber(database.latencyMs)} ms`} detail={`CPU ${formatPercent(runtime.processCpuPercent)} · ${formatPercent(memoryUsagePercent)} memória`} tone={database.latencyMs > 250 || httpErrors24h ? 'danger' : 'neutral'} />
           </section>
 
-          {providers.resend?.status && providers.resend.status !== 'online' && (
-            <section className="monitor-diagnostic-panel" aria-label="Diagnóstico Resend">
-              <div>
-                <p className="eyebrow">Diagnóstico Resend</p>
-                <h2>{statusLabels[providers.resend.status] || 'Verificação do provedor'}</h2>
+          <section className="monitor-action-grid">
+            <article className="management-panel monitor-panel monitor-priority-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="eyebrow">Ações necessárias</p>
+                  <h2>Fila de atenção da monitoria</h2>
+                  <p className="base-subtitle">Mostra somente o que exige acompanhamento real, sem cards decorativos.</p>
+                </div>
               </div>
-              <p>{resendNote || 'A monitoria do Resend retornou uma condição que exige revisão da configuração.'}</p>
-            </section>
-          )}
+              <div className="monitor-action-list">
+                {actionItems.map((item) => (
+                  <ActionItem key={`${item.title}-${item.value}`} {...item} />
+                ))}
+              </div>
+            </article>
+
+            <article className="management-panel monitor-panel">
+              <div className="panel-heading">
+                <div>
+                  <p className="eyebrow">Reclamações</p>
+                  <h2>SLA interno e auditoria SAC</h2>
+                </div>
+              </div>
+              <dl className="monitor-detail-grid compact">
+                <div><dt>Coordenador</dt><dd>{formatNumber(internalSla.coordinatorWaiting)}</dd><small>{formatNumber(coordinatorOverdue)} vencidas</small></div>
+                <div><dt>Gerente</dt><dd>{formatNumber(internalSla.managerWaiting)}</dd><small>{formatNumber(managerOverdue)} vencidas</small></div>
+                <div><dt>Auditoria SAC</dt><dd>{formatNumber(internalSla.sacAuditWaiting)}</dd><small>aguardando validação</small></div>
+                <div><dt>Administração</dt><dd>{formatNumber(internalSla.adminEscalated)}</dd><small>escaladas</small></div>
+                <div><dt>Próximas 48h</dt><dd>{formatNumber(internalSla.due48h)}</dd><small>SLA inicial a vencer</small></div>
+                <div><dt>Abertas</dt><dd>{formatNumber(openComplaints)}</dd><small>{formatNumber(overdueComplaints)} fora do prazo</small></div>
+              </dl>
+            </article>
+          </section>
 
           <section className="monitor-grid">
             <article className="management-panel monitor-panel">
@@ -342,7 +475,7 @@ function MasterMonitoring() {
                 <div><dt>Uptime</dt><dd>{formatDuration(runtime.uptimeSeconds)}</dd></div>
                 <div><dt>Heap usado</dt><dd>{formatBytes(runtime.memory?.heapUsedBytes)}</dd></div>
                 <div><dt>RSS</dt><dd>{formatBytes(runtime.memory?.rssBytes)}</dd></div>
-                <div><dt>Node</dt><dd>{runtime.nodeVersion || 'N/D'}</dd></div>
+                <div><dt>Erros HTTP 24h</dt><dd>{formatNumber(httpErrors24h)}</dd></div>
               </dl>
             </article>
 
@@ -363,12 +496,10 @@ function MasterMonitoring() {
             </article>
           </section>
 
-          <section className="monitor-provider-grid">
-            <ProviderCard provider={providers.vercel} />
-            <ProviderCard provider={providers.railway} />
-            <ProviderCard provider={providers.resend} />
-            <ProviderCard provider={whatsapp} />
-            <ProviderCard provider={whatsappService} />
+          <section className="monitor-provider-grid" aria-label="Serviços monitorados">
+            {usefulProviders.map((provider) => (
+              <ProviderCard key={provider?.label || provider?.metrics?.baseUrl || provider?.status} provider={provider} />
+            ))}
           </section>
 
           <section className="management-panel monitor-panel">
