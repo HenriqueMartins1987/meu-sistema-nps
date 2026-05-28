@@ -116,7 +116,7 @@ function buildPasswordChangeUrl() {
 
 function buildWelcomeMessage(user) {
   return [
-    `Olá ${user.name || 'colaborador'}, seu acesso foi criado com sucesso.`,
+    `Olá ${user.name || 'parceiro'}, seu acesso foi criado com sucesso.`,
     '',
     `Login: ${user.email}`,
     `Senha inicial: ${user.temporaryPassword || 'Não informada'}`,
@@ -129,7 +129,7 @@ function buildWelcomeMessage(user) {
 
 function buildPasswordResetMessage(user) {
   return [
-    `Olá ${user.name || 'colaborador'}, sua senha foi reiniciada.`,
+    `Olá ${user.name || 'parceiro'}, sua senha foi reiniciada.`,
     '',
     `Senha temporária: ${user.temporaryPassword || 'Não informada'}`,
     '',
@@ -141,7 +141,7 @@ function buildPasswordResetMessage(user) {
 
 function buildApprovalMessage(user) {
   return [
-    `Olá ${user.name || 'colaborador'}, seu cadastro foi aprovado e seu acesso está liberado.`,
+    `Olá ${user.name || 'parceiro'}, seu cadastro foi aprovado e seu acesso está liberado.`,
     '',
     'Acesse:',
     buildSystemUrl()

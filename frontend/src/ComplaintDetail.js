@@ -343,6 +343,17 @@ function buildOperationalStage(complaint) {
     };
   }
 
+  const status = String(complaint.status || '').trim().toLowerCase();
+  const escalationLevel = String(complaint.current_escalation_level || '').trim().toLowerCase();
+  const closedStatuses = ['retornada_sac_auditoria', 'resolvida', 'encerrada', 'cancelada'];
+  const hasManagerInternalDeadline = Boolean(complaint.manager_due_date)
+    && !complaint.manager_treated_at
+    && !closedStatuses.includes(status);
+  const hasCoordinatorInternalDeadline = Boolean(complaint.coordinator_due_date)
+    && !complaint.coordinator_treated_at
+    && !complaint.manager_due_date
+    && !closedStatuses.includes(status);
+
   if (complaint.status === 'resolvida') {
     return {
       owner: 'Protocolo encerrado',
@@ -351,9 +362,41 @@ function buildOperationalStage(complaint) {
     };
   }
 
+  if (escalationLevel === 'admin' || status === 'escalonada_administracao') {
+    return {
+      owner: complaint.assigned_responsible_name || 'Administração',
+      label: 'Escalonada à Administração',
+      since: complaint.admin_escalated_at || complaint.manager_due_date || complaint.updated_at || complaint.created_at
+    };
+  }
+
+  if (escalationLevel === 'sac_audit' || status === 'retornada_sac_auditoria') {
+    return {
+      owner: complaint.assigned_responsible_name || complaint.first_attendance_by || 'Operador de SAC',
+      label: 'Retornada ao SAC para auditoria',
+      since: complaint.returned_to_sac_at || complaint.updated_at || complaint.created_at
+    };
+  }
+
+  if (escalationLevel === 'manager' || hasManagerInternalDeadline || ['escalonada_gerente', 'em_tratativa_gerente', 'vencida_gerente'].includes(status)) {
+    return {
+      owner: complaint.assigned_responsible_name || complaint.manager_name || complaint.stored_manager_name || 'Gerente da unidade',
+      label: 'Prazo interno do Gerente',
+      since: complaint.manager_assigned_at || complaint.forwarded_at || complaint.updated_at || complaint.created_at
+    };
+  }
+
+  if (escalationLevel === 'coordinator' || hasCoordinatorInternalDeadline || ['enviada_coordenador', 'em_tratativa_coordenador', 'vencida_coordenador'].includes(status)) {
+    return {
+      owner: complaint.assigned_responsible_name || complaint.coordinator_name || complaint.stored_coordinator_name || complaint.assigned_coordinator_name || complaint.forwarded_to_label || 'Coordenador da unidade',
+      label: 'Prazo interno do Coordenador',
+      since: complaint.coordinator_assigned_at || complaint.forwarded_at || complaint.first_attendance_at || complaint.created_at
+    };
+  }
+
   if (!complaint.treatment_at) {
     return {
-      owner: complaint.forwarded_to_label || 'Coordenador, Gerente ou Supervisor CRC',
+      owner: complaint.assigned_responsible_name || complaint.forwarded_to_label || 'Coordenador, Gerente ou Supervisor CRC',
       label: complaint.forwarded_to_label ? 'Encaminhada para tratativa' : 'Aguardando tratativa da gestão',
       since: complaint.forwarded_at || complaint.first_attendance_at || complaint.created_at
     };

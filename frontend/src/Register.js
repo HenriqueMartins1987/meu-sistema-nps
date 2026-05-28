@@ -211,7 +211,7 @@ function Register() {
                   className="field"
                   value={form.positionOther}
                   onChange={(event) => updateForm('positionOther', event.target.value.slice(0, 120))}
-                  placeholder="Cargo do colaborador"
+                  placeholder="Cargo do parceiro"
                   maxLength={120}
                   required
                 />

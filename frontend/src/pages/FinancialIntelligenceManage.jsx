@@ -86,7 +86,7 @@ const allExportFields = [
   ...productionFields.map(([field, label]) => [field, label]),
   ...marketingCostFields,
   ['notes', 'Observações'],
-  ['total_collaborator_cost', 'Custo Total Colaborador'],
+  ['total_collaborator_cost', 'Custo Total Parceiro'],
   ['total_operational_cost', 'Custo Total Operacional'],
   ['total_marketing_cost', 'Custo Total Marketing'],
   ['total_administrative_cost', 'Custo Total Administrativo'],
@@ -741,10 +741,10 @@ function FinancialIntelligenceManage() {
       await api.post('/crc-collaborators', payload);
       setCollaboratorModalOpen(false);
       resetCollaboratorDraft();
-      setToast('Colaborador cadastrado com sucesso.');
+      setToast('Parceiro cadastrado com sucesso.');
       await loadData();
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível cadastrar o colaborador.');
+      setFeedback(error.response?.data?.error || 'Não foi possível cadastrar o parceiro.');
     } finally {
       setSaving(false);
     }
@@ -811,7 +811,7 @@ function FinancialIntelligenceManage() {
 
     try {
       if (!vacationDraft.collaborator_id) {
-        throw new Error('Selecione o colaborador que teve férias no mês.');
+        throw new Error('Selecione o parceiro que teve férias no mês.');
       }
       if (!vacationDraft.reference_month) {
         throw new Error('Informe o mês de referência das férias.');
@@ -839,7 +839,7 @@ function FinancialIntelligenceManage() {
         vacation_amount: '',
         notes: ''
       });
-      setToast('Férias do mês lançadas no custo do colaborador.');
+      setToast('Férias do mês lançadas no custo do parceiro.');
       await loadData();
     } catch (error) {
       setFeedback(error.response?.data?.error || error.message || 'Não foi possível lançar o custo de férias.');
@@ -1046,7 +1046,7 @@ function FinancialIntelligenceManage() {
         <div>
           <p className="eyebrow">Inteligência Financeira CRC</p>
           <h1>Gestão Financeira CRC</h1>
-          <p>Lançamento profissional com custos centralizados no cadastro do colaborador, ROI de mercado e SELIC fixa de 15% ao ano.</p>
+          <p>Lançamento profissional com custos centralizados no cadastro do parceiro, ROI de mercado e SELIC fixa de 15% ao ano.</p>
         </div>
         <div className="heading-actions">
           {canOpenDashboard && <button className="outline-action" onClick={() => navigate('/home/financial-intelligence')}>Dashboard</button>}
@@ -1067,10 +1067,10 @@ function FinancialIntelligenceManage() {
 
       <section className="financial-toolbar">
         <button className="primary-action" onClick={addRecord}>+ Novo Lançamento</button>
-        <button className="secondary-action" onClick={() => setCollaboratorModalOpen(true)}>+ Cadastrar Colaborador</button>
+        <button className="secondary-action" onClick={() => setCollaboratorModalOpen(true)}>+ Cadastrar Parceiro</button>
         <button className="secondary-action" onClick={openCommissionModal}>Lançar comissão</button>
         <button className="secondary-action" onClick={() => setOperationalCostModalOpen(true)}>Custos operacionais</button>
-        <button className="outline-action" onClick={() => navigate('/home/financial-intelligence/manage/collaborators')}>Gestão de colaboradores</button>
+        <button className="outline-action" onClick={() => navigate('/home/financial-intelligence/manage/collaborators')}>Gestão de parceiros</button>
         <button className="outline-action" onClick={() => setFilters({ search: '', clinicId: '', clinicName: '', status: '' })}>Limpar filtros</button>
       </section>
 
@@ -1131,9 +1131,9 @@ function FinancialIntelligenceManage() {
 
         <article className="financial-collaborator-cost-panel">
           <div className="financial-card-heading">
-            <p className="eyebrow">Colaboradores</p>
+            <p className="eyebrow">Parceiros</p>
             <h2>Custo mensal cadastrado</h2>
-            <p>Base usada para compor o custo de colaborador no ROI do CRC.</p>
+            <p>Base usada para compor o custo de parceiro no ROI do CRC.</p>
           </div>
           <label>Mês de referência<input className="field" type="month" value={collaboratorMonth} onChange={(event) => setCollaboratorMonth(event.target.value)} /></label>
           <strong className="financial-total-line">{formatCurrency(collaboratorCostTotal)}</strong>
@@ -1147,7 +1147,7 @@ function FinancialIntelligenceManage() {
                 <span>{formatCurrency(item.monthlyCost)}</span>
               </div>
             ))}
-            {!collaboratorCostRows.length && <p className="empty-state">Nenhum colaborador cadastrado.</p>}
+            {!collaboratorCostRows.length && <p className="empty-state">Nenhum parceiro cadastrado.</p>}
           </div>
         </article>
 
@@ -1324,11 +1324,11 @@ function FinancialIntelligenceManage() {
           <section className="modal-panel financial-collaborator-modal" onClick={(event) => event.stopPropagation()}>
             <div className="financial-card-heading">
               <p className="eyebrow">Cadastro CRC</p>
-              <h2>Novo colaborador</h2>
-              <p>Os custos do colaborador ficam centralizados aqui e entram no ROI dos lançamentos automaticamente quando houver vínculo pelo nome do usuário.</p>
+              <h2>Novo parceiro</h2>
+              <p>Os custos do parceiro ficam centralizados aqui e entram no ROI dos lançamentos automaticamente quando houver vínculo pelo nome do usuário.</p>
             </div>
             <div className="financial-editor-grid">
-              <label>Nome do colaborador<input className="field" value={collaboratorDraft.name} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, name: event.target.value }))} /></label>
+              <label>Nome do parceiro<input className="field" value={collaboratorDraft.name} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, name: event.target.value }))} /></label>
               <label>Função/Cargo<select className="field" value={collaboratorDraft.function_name} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, function_name: event.target.value }))}><option value="">Selecione</option>{CRC_FUNCTION_OPTIONS.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
               <label>Clínica<select className="field" value={collaboratorDraft.clinic_id} onChange={(event) => handleCollaboratorClinicChange(event.target.value)}><option value="">Selecione</option><option value={FINANCIAL_CENTRAL_CLINIC.id}>{FINANCIAL_CENTRAL_CLINIC.name}</option>{clinics.map((clinic) => <option key={clinic.id} value={clinic.id}>{clinic.name}</option>)}</select></label>
               <label>Unidade<input className="field" value={collaboratorDraft.unit_name} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, unit_name: event.target.value }))} /></label>
@@ -1339,7 +1339,7 @@ function FinancialIntelligenceManage() {
               <label>Encargos<input className="field" type="number" step="0.01" value={collaboratorDraft.charges} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, charges: event.target.value }))} /></label>
               <label>Benefícios<input className="field" type="number" step="0.01" value={collaboratorDraft.benefits} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, benefits: event.target.value }))} /></label>
               <label>Recebe comissão?<select className="field" value={collaboratorDraft.receives_commission ? 'sim' : 'nao'} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, receives_commission: event.target.value === 'sim', commission_default: '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
-              {collaboratorDraft.receives_commission && <div className="financial-commission-note wide-field">Colaborador habilitado para lançamento mensal de comissão. O valor não é informado neste cadastro.</div>}
+              {collaboratorDraft.receives_commission && <div className="financial-commission-note wide-field">Parceiro habilitado para lançamento mensal de comissão. O valor não é informado neste cadastro.</div>}
               <div className="financial-commission-note wide-field">O 13º é provisionado automaticamente mês a mês pela data de contratação. Férias são lançadas separadamente no custo mensal.</div>
               <label>Possui outros custos?<select className="field" value={collaboratorDraft.has_other_costs ? 'sim' : 'nao'} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, has_other_costs: event.target.value === 'sim', other_costs_default: event.target.value === 'sim' ? current.other_costs_default : '', other_costs_description: event.target.value === 'sim' ? current.other_costs_description : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
               {collaboratorDraft.has_other_costs && <label>Valor de outros custos<input className="field" type="number" step="0.01" value={collaboratorDraft.other_costs_default} onChange={(event) => setCollaboratorDraft((current) => ({ ...current, other_costs_default: event.target.value }))} /></label>}
@@ -1347,7 +1347,7 @@ function FinancialIntelligenceManage() {
             </div>
             <div className="row-actions">
               <button className="outline-action" onClick={() => { setCollaboratorModalOpen(false); resetCollaboratorDraft(); }} disabled={saving}>Cancelar</button>
-              <button className="primary-action" onClick={saveCollaborator} disabled={saving}>{saving ? 'Salvando...' : 'Salvar colaborador'}</button>
+              <button className="primary-action" onClick={saveCollaborator} disabled={saving}>{saving ? 'Salvando...' : 'Salvar parceiro'}</button>
             </div>
           </section>
         </div>
@@ -1359,12 +1359,12 @@ function FinancialIntelligenceManage() {
             <div className="financial-card-heading">
               <p className="eyebrow">Custo variável</p>
               <h2>Lançar comissão mensal</h2>
-              <p>Use este lançamento para ajustar comissões variáveis por mês sem alterar o cadastro base do colaborador.</p>
+              <p>Use este lançamento para ajustar comissões variáveis por mês sem alterar o cadastro base do parceiro.</p>
             </div>
             <div className="financial-vacation-question">
               <div>
                 <strong>Houve férias no mês?</strong>
-                <span>Se houver, lance o custo em uma janela separada escolhendo qualquer colaborador cadastrado.</span>
+                <span>Se houver, lance o custo em uma janela separada escolhendo qualquer parceiro cadastrado.</span>
               </div>
               <div className="row-actions">
                 <button type="button" className={`outline-action mini-action ${commissionVacationAnswer === 'nao' ? 'active' : ''}`} onClick={() => setCommissionVacationAnswer('nao')}>Não</button>
@@ -1372,7 +1372,7 @@ function FinancialIntelligenceManage() {
               </div>
             </div>
             <div className="financial-editor-grid">
-              <label>Colaborador<select className="field" value={commissionDraft.collaborator_id} onChange={(event) => setCommissionDraft((current) => ({ ...current, collaborator_id: event.target.value }))}><option value="">Selecione</option>{commissionEligibleCollaborators.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+              <label>Parceiro<select className="field" value={commissionDraft.collaborator_id} onChange={(event) => setCommissionDraft((current) => ({ ...current, collaborator_id: event.target.value }))}><option value="">Selecione</option>{commissionEligibleCollaborators.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
               <label>Mês/Ano<input className="field" type="month" value={commissionDraft.reference_month} onChange={(event) => setCommissionDraft((current) => ({ ...current, reference_month: event.target.value }))} /></label>
               <label>Comissão<input className="field" type="number" step="0.01" value={commissionDraft.commission} onChange={(event) => setCommissionDraft((current) => ({ ...current, commission: event.target.value }))} /></label>
               <label>DSR sobre comissão<input className="field" value={formatCurrency(calculateDsrOnCommission(commissionDraft.commission))} readOnly /></label>
@@ -1394,10 +1394,10 @@ function FinancialIntelligenceManage() {
             <div className="financial-card-heading">
               <p className="eyebrow">Férias no mês</p>
               <h2>Lançar custo de férias</h2>
-              <p>Selecione o colaborador cadastrado e informe o custo de férias para o mês analisado.</p>
+              <p>Selecione o parceiro cadastrado e informe o custo de férias para o mês analisado.</p>
             </div>
             <div className="financial-editor-grid">
-              <label>Colaborador<select className="field" value={vacationDraft.collaborator_id} onChange={(event) => setVacationDraft((current) => ({ ...current, collaborator_id: event.target.value }))}><option value="">Selecione</option>{activeCollaborators.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+              <label>Parceiro<select className="field" value={vacationDraft.collaborator_id} onChange={(event) => setVacationDraft((current) => ({ ...current, collaborator_id: event.target.value }))}><option value="">Selecione</option>{activeCollaborators.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
               <label>Mês/Ano<input className="field" type="month" value={vacationDraft.reference_month} onChange={(event) => setVacationDraft((current) => ({ ...current, reference_month: event.target.value }))} /></label>
               <label>Valor das férias<input className="field" type="number" step="0.01" value={vacationDraft.vacation_amount} onChange={(event) => setVacationDraft((current) => ({ ...current, vacation_amount: event.target.value }))} /></label>
             </div>

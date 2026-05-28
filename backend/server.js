@@ -7494,7 +7494,7 @@ async function sendPasswordResetNotifications(user, temporaryPassword) {
   await notifyMasterPasswordSecurityEvent(
     'password_reset_by_admin',
     'Senha reiniciada pelo painel',
-    `${user.name || 'Colaborador'} (${user.email || 'sem e-mail'}) teve a senha reiniciada pelo painel administrativo.`,
+    `${user.name || 'Parceiro'} (${user.email || 'sem e-mail'}) teve a senha reiniciada pelo painel administrativo.`,
     {
       userId: user.id,
       email: user.email,
@@ -7532,7 +7532,7 @@ async function sendPasswordChangedNotifications(user) {
         'Senha alterada - Sistema GRC',
         emailService.renderBrandedEmail({
           title: 'Senha alterada com sucesso',
-          intro: `Olá, <strong>${user.name || 'colaborador'}</strong>.`,
+          intro: `Olá, <strong>${user.name || 'parceiro'}</strong>.`,
           bodyHtml: `
             <p style="margin:0 0 18px;">Registramos uma alteração de senha no seu acesso ao Sistema GRC.</p>
             <p style="margin:0;">Se foi você quem realizou a mudança, nenhuma ação adicional é necessária. Se não reconhece esta alteração, procure imediatamente o administrador.</p>
@@ -7556,7 +7556,7 @@ async function sendPasswordChangedNotifications(user) {
         to: whatsapp,
         userId: user.id,
         message: [
-          `Olá, ${user.name || 'colaborador'}.`,
+          `Olá, ${user.name || 'parceiro'}.`,
           '',
           'Registramos uma alteração de senha no seu acesso ao Sistema GRC.',
           'Se foi você quem realizou a mudança, nenhuma ação adicional é necessária.',
@@ -7574,7 +7574,7 @@ async function sendPasswordChangedNotifications(user) {
   await notifyMasterPasswordSecurityEvent(
     'password_changed',
     'Alteração de senha registrada',
-    `${user.name || 'Colaborador'} (${user.email || 'sem e-mail'}) alterou a própria senha no sistema.`,
+    `${user.name || 'Parceiro'} (${user.email || 'sem e-mail'}) alterou a própria senha no sistema.`,
     {
       userId: user.id,
       email: user.email,
@@ -9435,7 +9435,7 @@ function buildWeeklyDemandReminderEmail(user, demandCount) {
     html: emailService.renderBrandedEmail({
       eyebrow: 'Lembrete semanal',
       title: 'Verifique suas demandas',
-      intro: `Olá, <strong>${escapeNotificationHtml(user.name || 'colaborador')}</strong>.`,
+      intro: `Olá, <strong>${escapeNotificationHtml(user.name || 'parceiro')}</strong>.`,
       bodyHtml: `
         <p style="margin:0 0 18px;">Este é o lembrete semanal para acessar o sistema NPS/Reclamações e verificar protocolos, tratativas e retornos pendentes sob sua responsabilidade.</p>
         <div style="margin:0 0 20px;padding:16px;border:1px solid #ddcfbc;border-radius:8px;background:#ffffff;">
@@ -9455,7 +9455,7 @@ function buildWeeklyDemandReminderWhatsAppMessage(user, demandCount) {
   const demandLabel = demandCount === 1 ? '1 demanda aberta' : `${demandCount} demandas abertas`;
 
   return [
-    `Olá, ${user.name || 'colaborador'}.`,
+    `Olá, ${user.name || 'parceiro'}.`,
     '',
     'Lembrete semanal: acesse o sistema NPS/Reclamações e verifique suas demandas, tratativas e retornos pendentes.',
     `Resumo atual: ${demandLabel}.`,
@@ -20551,7 +20551,7 @@ app.post('/auth/request-password-reset', passwordRecoveryRequestLimiter, async (
     await notifyMasterPasswordSecurityEvent(
       'password_recovery_requested',
       'Solicitação de recuperação de senha',
-      `${user.name || 'Colaborador'} (${user.email}) solicitou a recuperação de senha no portal.`,
+      `${user.name || 'Parceiro'} (${user.email}) solicitou a recuperação de senha no portal.`,
       {
         userId: user.id,
         email: user.email,
@@ -26593,22 +26593,22 @@ async function buildCrcCollaboratorPayload(body = {}, user = {}) {
   const functionName = sanitizeFinancialString(body.function_name || body.functionName);
 
   if (!name || !functionName) {
-    throw new Error('Informe nome do colaborador e função/cargo.');
+    throw new Error('Informe nome do parceiro e função/cargo.');
   }
 
   const clinic = await getClinicSnapshot(body.clinic_id);
   const unitName = sanitizeFinancialString(body.unit_name) || clinic?.city || null;
 
   if (!clinic && !sanitizeFinancialString(body.clinic_name)) {
-    throw new Error('Selecione a clínica do colaborador.');
+    throw new Error('Selecione a clínica do parceiro.');
   }
 
   if (!unitName) {
-    throw new Error('Informe a unidade do colaborador.');
+    throw new Error('Informe a unidade do parceiro.');
   }
 
   if (body.salary === undefined || body.salary === null || body.salary === '') {
-    throw new Error('Informe o salário do colaborador.');
+    throw new Error('Informe o salário do parceiro.');
   }
 
   const receivesCommission = toFinancialBoolean(body.receives_commission ?? body.receivesCommission) ? 1 : 0;
@@ -26659,7 +26659,7 @@ async function buildCrcCollaboratorPayload(body = {}, user = {}) {
 async function handleGetCrcCollaborators(req, res) {
   try {
     if (!canViewFinancialIntelligence(req.user)) {
-      return res.status(403).json({ error: 'Acesso restrito aos colaboradores do CRC.' });
+      return res.status(403).json({ error: 'Acesso restrito aos parceiros do CRC.' });
     }
 
     const [rows] = await pool.query(
@@ -26676,14 +26676,14 @@ async function handleGetCrcCollaborators(req, res) {
     })));
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ error: 'Erro ao carregar colaboradores do CRC.' });
+    return res.status(500).json({ error: 'Erro ao carregar parceiros do CRC.' });
   }
 }
 
 async function handleCreateCrcCollaborator(req, res) {
   try {
     if (!canManageCrcCollaborators(req.user)) {
-      return res.status(403).json({ error: 'Seu perfil não pode cadastrar colaboradores do CRC.' });
+      return res.status(403).json({ error: 'Seu perfil não pode cadastrar parceiros do CRC.' });
     }
 
     const payload = await buildCrcCollaboratorPayload(req.body, req.user);
@@ -26703,14 +26703,14 @@ async function handleCreateCrcCollaborator(req, res) {
     });
   } catch (error) {
     console.error(error);
-    return res.status(400).json({ error: error.message || 'Erro ao cadastrar colaborador.' });
+    return res.status(400).json({ error: error.message || 'Erro ao cadastrar parceiro.' });
   }
 }
 
 async function handleUpdateCrcCollaborator(req, res) {
   try {
     if (!canManageCrcCollaborators(req.user)) {
-      return res.status(403).json({ error: 'Seu perfil não pode editar colaboradores do CRC.' });
+      return res.status(403).json({ error: 'Seu perfil não pode editar parceiros do CRC.' });
     }
 
     const [existingRows] = await pool.query(
@@ -26719,7 +26719,7 @@ async function handleUpdateCrcCollaborator(req, res) {
     );
 
     if (!existingRows.length) {
-      return res.status(404).json({ error: 'Colaborador não encontrado.' });
+      return res.status(404).json({ error: 'Parceiro não encontrado.' });
     }
 
     const payload = await buildCrcCollaboratorPayload({ ...existingRows[0], ...req.body }, req.user);
@@ -26742,14 +26742,14 @@ async function handleUpdateCrcCollaborator(req, res) {
     });
   } catch (error) {
     console.error(error);
-    return res.status(400).json({ error: error.message || 'Erro ao editar colaborador.' });
+    return res.status(400).json({ error: error.message || 'Erro ao editar parceiro.' });
   }
 }
 
 async function handleDeleteCrcCollaborator(req, res) {
   try {
     if (!canDeleteCrcCollaborators(req.user)) {
-      return res.status(403).json({ error: 'Somente Administrador Master pode excluir colaboradores.' });
+      return res.status(403).json({ error: 'Somente Administrador Master pode excluir parceiros.' });
     }
 
     await pool.query(
@@ -26759,10 +26759,10 @@ async function handleDeleteCrcCollaborator(req, res) {
       [getActorName(req.user), getActorName(req.user), req.params.id]
     );
 
-    return res.json({ message: 'Colaborador excluído com histórico preservado.' });
+    return res.json({ message: 'Parceiro excluído com histórico preservado.' });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ error: 'Erro ao excluir colaborador.' });
+    return res.status(500).json({ error: 'Erro ao excluir parceiro.' });
   }
 }
 
@@ -26804,12 +26804,12 @@ async function handleUpsertCrcCollaboratorMonthlyCost(req, res) {
 
     const collaborator = await getCrcCollaboratorById(req.body.collaborator_id || req.body.collaboratorId);
     if (!collaborator) {
-      return res.status(404).json({ error: 'Colaborador não encontrado.' });
+      return res.status(404).json({ error: 'Parceiro não encontrado.' });
     }
 
     const commission = toFinancialNumber(req.body.commission);
     if (commission > 0 && !Number(collaborator.receives_commission || 0)) {
-      return res.status(400).json({ error: 'Este colaborador não está marcado para receber comissão.' });
+      return res.status(400).json({ error: 'Este parceiro não está marcado para receber comissão.' });
     }
 
     const referenceMonth = normalizeFinancialMonth(req.body.reference_month || req.body.referenceMonth);

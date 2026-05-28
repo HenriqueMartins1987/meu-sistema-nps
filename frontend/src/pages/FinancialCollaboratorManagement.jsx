@@ -352,7 +352,7 @@ function FinancialCollaboratorManagement() {
       setClinics(Array.isArray(clinicsRes.data) ? clinicsRes.data : []);
       setSettings(settingsRes.data || {});
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível carregar a gestão de colaboradores.');
+      setFeedback(error.response?.data?.error || 'Não foi possível carregar a gestão de parceiros.');
     } finally {
       setLoading(false);
     }
@@ -453,24 +453,24 @@ function FinancialCollaboratorManagement() {
       }
       setModalOpen(false);
       await loadData();
-      setFeedback('Colaborador salvo com sucesso.');
+      setFeedback('Parceiro salvo com sucesso.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível salvar o colaborador.');
+      setFeedback(error.response?.data?.error || 'Não foi possível salvar o parceiro.');
     } finally {
       setSaving(false);
     }
   };
 
   const deleteCollaborator = async (item) => {
-    if (!window.confirm(`Confirma excluir o colaborador ${item.name}?`)) return;
+    if (!window.confirm(`Confirma excluir o parceiro ${item.name}?`)) return;
     setSaving(true);
     setFeedback('');
     try {
       await api.delete(`/crc-collaborators/${item.id}`);
       await loadData();
-      setFeedback('Colaborador excluído.');
+      setFeedback('Parceiro excluído.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível excluir o colaborador.');
+      setFeedback(error.response?.data?.error || 'Não foi possível excluir o parceiro.');
     } finally {
       setSaving(false);
     }
@@ -508,7 +508,7 @@ function FinancialCollaboratorManagement() {
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
-    link.download = 'gestao-colaboradores-crc.csv';
+    link.download = 'gestao-parceiros-crc.csv';
     link.click();
     URL.revokeObjectURL(url);
   };
@@ -517,7 +517,7 @@ function FinancialCollaboratorManagement() {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
     printWindow.document.write(`
-      <html><head><title>Gestão de Colaboradores CRC</title>
+      <html><head><title>Gestão de Parceiros CRC</title>
       <style>
         body{font-family:Arial,sans-serif;padding:28px;color:#17120f;background:#fffdfa}
         h1{margin:0;color:#2a2218}.sub{color:#6d5b4b;margin:6px 0 18px}
@@ -528,10 +528,10 @@ function FinancialCollaboratorManagement() {
         table{width:100%;border-collapse:collapse;font-size:11px}th,td{border:1px solid #ddcfbc;padding:7px;text-align:left}
         th{background:#efe6d8;text-transform:uppercase;font-size:9px}
       </style></head><body>
-      <h1>Gestão de Colaboradores CRC</h1>
+      <h1>Gestão de Parceiros CRC</h1>
       <p class="sub">Relatório exportado em ${new Date().toLocaleString('pt-BR')} · mês ${referenceMonth}</p>
       <section class="cards">
-        <article class="card"><span>Colaboradores</span><strong>${rows.length}</strong></article>
+        <article class="card"><span>Parceiros</span><strong>${rows.length}</strong></article>
         <article class="card"><span>Mês analisado</span><strong>${referenceMonth}</strong></article>
         <article class="card"><span>Custo mensal</span><strong>${formatCurrency(totalCost)}</strong></article>
       </section>
@@ -548,7 +548,7 @@ function FinancialCollaboratorManagement() {
       <main className="app-page">
         <section className="restricted-panel">
           <p className="eyebrow">Acesso restrito</p>
-          <h1>Gestão de colaboradores CRC</h1>
+          <h1>Gestão de parceiros CRC</h1>
           <p>Seu perfil não possui autorização para acessar esta página.</p>
           <button className="primary-action" onClick={() => navigate('/home')}>Voltar para Home</button>
         </section>
@@ -561,7 +561,7 @@ function FinancialCollaboratorManagement() {
       <header className="page-heading financial-heading">
         <div>
           <p className="eyebrow">Gestão Financeira CRC</p>
-          <h1>Gestão de colaboradores</h1>
+          <h1>Gestão de parceiros</h1>
           <p>Cadastro, edição, custos mensais, férias e comissão para análise do ROI geral.</p>
         </div>
         <div className="heading-actions">
@@ -571,13 +571,13 @@ function FinancialCollaboratorManagement() {
       </header>
 
       <section className="financial-sheet-summary">
-        <article><span>Colaboradores</span><strong>{rows.length}</strong></article>
+        <article><span>Parceiros</span><strong>{rows.length}</strong></article>
         <article><span>Mês analisado</span><strong>{referenceMonth}</strong></article>
         <article><span>Custo mensal</span><strong>{formatCurrency(totalCost)}</strong></article>
       </section>
 
       <section className="financial-export-bar">
-        <button className="primary-action" onClick={openNew}>+ Novo colaborador</button>
+        <button className="primary-action" onClick={openNew}>+ Novo parceiro</button>
         <button className="outline-action icon-action" onClick={exportExcel}><span className="file-icon xls">XLS</span>Exportar Excel</button>
         <button className="outline-action icon-action" onClick={exportPdf}><span className="file-icon pdf">PDF</span>Exportar PDF</button>
       </section>
@@ -589,7 +589,7 @@ function FinancialCollaboratorManagement() {
       {feedback && <p className="form-feedback">{feedback}</p>}
 
       <section className="financial-sheet-wrap">
-        {loading ? <p className="empty-state">Carregando colaboradores...</p> : (
+        {loading ? <p className="empty-state">Carregando parceiros...</p> : (
           <table className="financial-sheet-table">
             <thead>
               <tr>
@@ -645,8 +645,8 @@ function FinancialCollaboratorManagement() {
         <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setModalOpen(false)}>
           <section className="modal-panel financial-collaborator-modal" onClick={(event) => event.stopPropagation()}>
             <div className="financial-card-heading">
-              <p className="eyebrow">Colaborador CRC</p>
-              <h2>{editingId ? 'Editar colaborador' : 'Novo colaborador'}</h2>
+              <p className="eyebrow">Parceiro CRC</p>
+              <h2>{editingId ? 'Editar parceiro' : 'Novo parceiro'}</h2>
             </div>
             <div className="financial-editor-grid">
               <label>Nome<input className="field" value={draft.name} onChange={(event) => setDraft((current) => ({ ...current, name: event.target.value }))} /></label>
@@ -669,7 +669,7 @@ function FinancialCollaboratorManagement() {
               <label>Bonificação<input className="field" type="number" step="0.01" value={draft.bonus || ''} onChange={(event) => setDraft((current) => ({ ...current, bonus: event.target.value }))} /></label>
               <label>Outros benefícios<input className="field" type="number" step="0.01" value={draft.other_benefits || ''} onChange={(event) => setDraft((current) => ({ ...current, other_benefits: event.target.value }))} /></label>
               <label>Recebe comissão?<select className="field" value={toFlag(draft.receives_commission) ? 'sim' : 'nao'} onChange={(event) => setDraft((current) => ({ ...current, receives_commission: event.target.value === 'sim', commission_default: '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
-              {toFlag(draft.receives_commission) && <div className="financial-commission-note wide-field">Colaborador habilitado para lançamento mensal de comissão. O valor não é informado neste cadastro.</div>}
+              {toFlag(draft.receives_commission) && <div className="financial-commission-note wide-field">Parceiro habilitado para lançamento mensal de comissão. O valor não é informado neste cadastro.</div>}
               <div className="financial-commission-note wide-field">O 13º é provisionado automaticamente mês a mês pela data de contratação. Férias são lançadas nos custos mensais.</div>
               <label>Houve outros custos?<select className="field" value={toFlag(draft.has_other_costs) ? 'sim' : 'nao'} onChange={(event) => setDraft((current) => ({ ...current, has_other_costs: event.target.value === 'sim', other_costs_default: event.target.value === 'sim' ? current.other_costs_default : '', other_costs_description: event.target.value === 'sim' ? current.other_costs_description : '' }))}><option value="nao">Não</option><option value="sim">Sim</option></select></label>
               {toFlag(draft.has_other_costs) && <label>Valor de outros custos<input className="field" type="number" step="0.01" value={draft.other_costs_default || ''} onChange={(event) => setDraft((current) => ({ ...current, other_costs_default: event.target.value }))} /></label>}
@@ -689,7 +689,7 @@ function FinancialCollaboratorManagement() {
         <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setDetailCollaborator(null)}>
           <section className="modal-panel financial-collaborator-modal" onClick={(event) => event.stopPropagation()}>
             <div className="financial-card-heading">
-              <p className="eyebrow">Detalhe do colaborador</p>
+              <p className="eyebrow">Detalhe do parceiro</p>
               <h2>{detailCollaborator.name}</h2>
               <p>{detailCollaborator.function_name || 'Função não informada'} · {detailCollaborator.clinic_name || 'Clínica não informada'}</p>
             </div>

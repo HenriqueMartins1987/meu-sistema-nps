@@ -205,7 +205,7 @@ function Dashboard() {
   const currentUserRole = normalizeRoleValue(currentUser?.role);
   const canViewCollaboratorWorkload = isMasterAdmin(currentUser)
     || isAdmin(currentUser)
-    || ['manager', 'sac_operator', 'supervisor_crc'].includes(currentUserRole);
+    || currentUserRole === 'manager';
   const [rows, setRows] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [filters, setFilters] = useState(initialFilters);
@@ -752,7 +752,7 @@ function Dashboard() {
             {canViewCollaboratorWorkload && (
               <>
                 <article className="chart-card">
-                  <h2>Carteira por colaborador</h2>
+                  <h2>Carteira por parceiro</h2>
                   <div className="chart-box">
                     <Bar data={buildBarData(byCoordinator, '#8a4f7d')} options={chartOptions} />
                   </div>
@@ -770,9 +770,9 @@ function Dashboard() {
               <article className="chart-card dashboard-coordinator-card">
                 <div className="dashboard-section-head">
                   <div>
-                    <p className="eyebrow">Colaboradores</p>
-                    <h2>Colaboradores com mais reclamações</h2>
-                    <p className="base-subtitle">Clique no nome do colaborador para filtrar a carteira e aprofundar a análise do responsável.</p>
+                    <p className="eyebrow">Parceiros</p>
+                    <h2>Parceiros com mais reclamações</h2>
+                    <p className="base-subtitle">Clique no nome do parceiro para filtrar a carteira e aprofundar a análise do responsável.</p>
                   </div>
                 </div>
                 <div className="dashboard-coordinator-list">
@@ -795,7 +795,7 @@ function Dashboard() {
                       </div>
                     </article>
                   )) : (
-                    <p className="empty-state">Sem colaboradores vinculados na base filtrada.</p>
+                    <p className="empty-state">Sem parceiros vinculados na base filtrada.</p>
                   )}
                 </div>
               </article>

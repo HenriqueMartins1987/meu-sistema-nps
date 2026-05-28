@@ -96,7 +96,7 @@ function buildMenuSections(user) {
       items: [
         { key: 'clinics', label: 'Clinicas', icon: 'clinics', path: '', visible: true, disabled: true, helper: 'Em preparacao' },
         { key: 'patients', label: 'Pacientes', icon: 'patients', path: '/pacientes', visible: hasPermission(user, 'patient_management') },
-        { key: 'partners', label: 'Parceiros', icon: 'users', path: '/dental-card', visible: hasPermission(user, 'dental_card') },
+        { key: 'partners', label: 'Parceiros', icon: 'users', path: '/home/whatsapp-management/confirmation?tab=partners', visible: whatsappVisible },
         { key: 'users', label: 'Usuarios', icon: 'users', path: '/admin', visible: master || hasPermission(user, 'admin_panel') }
       ]
     },
@@ -121,8 +121,9 @@ function buildMenuSections(user) {
 
 function matchPath(pathname, targetPath, exact = false) {
   if (!targetPath) return false;
-  if (pathname === targetPath) return true;
-  return !exact && pathname.startsWith(`${targetPath}/`);
+  const normalizedTargetPath = String(targetPath).split('?')[0];
+  if (pathname === normalizedTargetPath) return true;
+  return !exact && pathname.startsWith(`${normalizedTargetPath}/`);
 }
 
 export default function AuthenticatedLayout({ remainingMsLabel, remainingWarning = false }) {

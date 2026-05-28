@@ -200,6 +200,14 @@ function buildEscalationInfo(item) {
   const status = String(item?.status || '').trim().toLowerCase();
   const level = String(item?.current_escalation_level || '').toLowerCase();
   const forwardedRole = String(item?.forwarded_to_role || '').trim().toLowerCase();
+  const closedInternalStatuses = ['retornada_sac_auditoria', 'resolvida', 'encerrada', 'cancelada'];
+  const hasManagerInternalDeadline = Boolean(item?.manager_due_date)
+    && !item?.manager_treated_at
+    && !closedInternalStatuses.includes(status);
+  const hasCoordinatorInternalDeadline = Boolean(item?.coordinator_due_date)
+    && !item?.coordinator_treated_at
+    && !item?.manager_due_date
+    && !closedInternalStatuses.includes(status);
 
   if (item?.deleted_at) {
     return {
@@ -243,7 +251,7 @@ function buildEscalationInfo(item) {
     };
   }
 
-  if (level === 'manager' || ['escalonada_gerente', 'em_tratativa_gerente', 'vencida_gerente'].includes(status)) {
+  if (level === 'manager' || hasManagerInternalDeadline || ['escalonada_gerente', 'em_tratativa_gerente', 'vencida_gerente'].includes(status)) {
     return buildStageDeadline({
       label: status === 'vencida_gerente' ? 'Vencida no Gerente' : 'Gerente responsável',
       owner: item.assigned_responsible_name || item.manager_name || item.stored_manager_name || 'Gerente da unidade',
@@ -253,7 +261,7 @@ function buildEscalationInfo(item) {
     });
   }
 
-  if (level === 'coordinator' || ['enviada_coordenador', 'em_tratativa_coordenador', 'vencida_coordenador'].includes(status) || forwardedRole === 'coordinator') {
+  if (level === 'coordinator' || hasCoordinatorInternalDeadline || ['enviada_coordenador', 'em_tratativa_coordenador', 'vencida_coordenador'].includes(status) || forwardedRole === 'coordinator') {
     return buildStageDeadline({
       label: status === 'vencida_coordenador' ? 'Vencida no Coordenador' : 'Coordenador responsável',
       owner: item.assigned_responsible_name || item.coordinator_name || item.stored_coordinator_name || item.assigned_coordinator_name || 'Coordenador da unidade',

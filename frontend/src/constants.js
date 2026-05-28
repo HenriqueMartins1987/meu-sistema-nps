@@ -175,7 +175,7 @@ export const actionPermissions = [
   { value: 'nps_finish', label: 'Finalizar NPS', area: 'NPS' },
   { value: 'deleted_view', label: 'Visualizar aba excluidos', area: 'Excluidos' },
   { value: 'financial_record_delete', label: 'Excluir lancamento financeiro', area: 'Financeiro CRC' },
-  { value: 'financial_collaborator_delete', label: 'Excluir colaborador CRC', area: 'Financeiro CRC' },
+  { value: 'financial_collaborator_delete', label: 'Excluir parceiro CRC', area: 'Financeiro CRC' },
   { value: 'whatsapp_config_manage', label: 'Configurar WhatsApp CRC', area: 'WhatsApp CRC' },
   { value: 'whatsapp_instance_delete', label: 'Excluir instancia WhatsApp', area: 'WhatsApp CRC' },
   { value: 'whatsapp_template_delete', label: 'Excluir mensagem padrao', area: 'WhatsApp CRC' },

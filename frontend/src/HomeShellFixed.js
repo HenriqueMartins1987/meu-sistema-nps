@@ -1197,7 +1197,7 @@ function HomeShellFixed() {
             <span className="quick-tag">Alçadas</span>
           </div>
           <h2>Painel gerencial para usuários, telas e unidades</h2>
-          <p>Administrador e master ajustam acesso, vínculo com clínicas e status dos colaboradores.</p>
+          <p>Administrador e master ajustam acesso, vínculo com clínicas e status dos parceiros.</p>
           <strong className="quick-highlight">Links sem permissão deixam de aparecer para o usuário.</strong>
         </article>
       </section>

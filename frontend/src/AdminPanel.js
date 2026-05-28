@@ -419,7 +419,7 @@ function AdminPanel() {
 
   const sendRecurringEmailTest = async () => {
     if (!selectedUser?.email) {
-      setFeedback('Selecione um colaborador com e-mail válido para enviar o teste.');
+      setFeedback('Selecione um parceiro com e-mail válido para enviar o teste.');
       return;
     }
 
@@ -450,7 +450,7 @@ function AdminPanel() {
     const phoneTarget = formatBrazilPhoneInput(selectedUser?.whatsapp || selectedUser?.phone);
 
     if (!phoneTarget || !isCompleteBrazilPhone(phoneTarget)) {
-      setFeedback('Selecione um colaborador com WhatsApp válido para enviar o teste.');
+      setFeedback('Selecione um parceiro com WhatsApp válido para enviar o teste.');
       return;
     }
 
@@ -465,7 +465,7 @@ function AdminPanel() {
       });
 
       if (response.data?.success) {
-        setFeedback(`WhatsApp de teste enviado para ${selectedUser.name || 'colaborador'}.`);
+        setFeedback(`WhatsApp de teste enviado para ${selectedUser.name || 'parceiro'}.`);
       } else {
         setFeedback(response.data?.warning || 'O teste de WhatsApp foi processado, mas o provedor não concluiu o envio.');
       }
@@ -616,7 +616,7 @@ function AdminPanel() {
         <div>
           <p className="eyebrow">Painel Gerencial</p>
           <h1>Gestão de Usuários</h1>
-          <p>Controle quem acessa cada tela e quais clínicas ficam sob responsabilidade do colaborador.</p>
+          <p>Controle quem acessa cada tela e quais clínicas ficam sob responsabilidade do parceiro.</p>
         </div>
 
         <div className="heading-actions">
@@ -754,13 +754,13 @@ function AdminPanel() {
           <aside className="admin-user-list">
             <div className="panel-heading">
               <div>
-                <p className="eyebrow">Colaboradores</p>
+                <p className="eyebrow">Parceiros</p>
                 <h2>Usuários cadastrados</h2>
               </div>
             </div>
 
             <label className="admin-selector">
-              Selecionar colaborador
+              Selecionar parceiro
               <input
                 className="field"
                 value={userSearch}
@@ -768,7 +768,7 @@ function AdminPanel() {
                 placeholder="Pesquisar por nome, e-mail, cargo ou perfil"
               />
               <select className="field" value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
-                {filteredUsers.length === 0 && <option value="">Nenhum colaborador encontrado</option>}
+                {filteredUsers.length === 0 && <option value="">Nenhum parceiro encontrado</option>}
                 {filteredUsers.map((user) => (
                   <option key={user.id} value={user.id}>
                     {user.name} · {user.username || user.email || '-'} · {authorizationStatusLabel(normalizeAuthorizationStatus(user))}
@@ -834,7 +834,7 @@ function AdminPanel() {
                 <div className="admin-section-heading">
                   <div>
                     <p className="eyebrow">Cadastro</p>
-                    <h3>Dados do colaborador</h3>
+                    <h3>Dados do parceiro</h3>
                   </div>
                 </div>
 
@@ -1054,8 +1054,8 @@ function AdminPanel() {
           <section className="modal-panel create-user-modal" onClick={(event) => event.stopPropagation()}>
             <div>
               <p className="eyebrow">Novo usuário</p>
-              <h2>Cadastrar colaborador</h2>
-              <p>O sistema gerará uma senha temporária segura e enviará o acesso automaticamente para o colaborador.</p>
+              <h2>Cadastrar parceiro</h2>
+              <p>O sistema gerará uma senha temporária segura e enviará o acesso automaticamente para o parceiro.</p>
             </div>
 
             <div className="admin-form-grid">

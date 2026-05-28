@@ -49,7 +49,7 @@ const statusOptions = [
 ];
 
 const originOptions = ['IA', 'Joyce', 'CRC', 'Dentista', 'Indicação manual', 'Planilha', 'Outro'];
-const indicatorTypes = ['paciente', 'colaborador', 'dentista', 'visitante', 'outro'];
+const indicatorTypes = ['paciente', 'parceiro', 'dentista', 'visitante', 'outro'];
 const contactChannels = ['WhatsApp', 'Ligação', 'Presencial', 'Outro'];
 const paymentOptions = ['pendente', 'pagou', 'parcial', 'nao'];
 const pageSizeOptions = [10, 25, 50, 100];

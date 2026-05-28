@@ -305,14 +305,14 @@ function FinancialIntelligence() {
       value: formatCurrency(summary.totalCost),
       detail: 'Soma de todos os centros de custo',
       tone: 'warning',
-      explanation: 'Consolida custos operacionais, marketing, administrativos e custos de colaboradores vinculados ao CRC no período.'
+      explanation: 'Consolida custos operacionais, marketing, administrativos e custos de parceiros vinculados ao CRC no período.'
     },
     {
       label: 'Custo da Hora Trabalhada',
       value: formatCurrency(summary.averageWorkedHourCost),
-      detail: `${Number(summary.totalCollaboratorWorkedHours || 0).toLocaleString('pt-BR')} h de colaboradores no periodo`,
+      detail: `${Number(summary.totalCollaboratorWorkedHours || 0).toLocaleString('pt-BR')} h de parceiros no periodo`,
       tone: toNumber(summary.averageWorkedHourCost) > 0 ? 'neutral' : 'warning',
-      explanation: 'Custo total mensal dos colaboradores dividido pela carga horaria trabalhada estimada no periodo. A base de horas e configuravel no Centro Master > Financeiro > Custos Trabalhistas.'
+      explanation: 'Custo total mensal dos parceiros dividido pela carga horaria trabalhada estimada no periodo. A base de horas e configuravel no Centro Master > Financeiro > Custos Trabalhistas.'
     },
     {
       label: 'Lucro/Prejuízo CRC',
@@ -438,7 +438,7 @@ function FinancialIntelligence() {
       value: formatCurrency(summary.costByClinic),
       detail: 'Média por clínica filtrada',
       tone: 'neutral',
-      explanation: 'Custo médio por clínica considerando somente investimento e custos de marketing/campanha. Custos operacionais e de colaboradores ficam no ROI geral mensal, sem distorcer a análise por unidade.'
+      explanation: 'Custo médio por clínica considerando somente investimento e custos de marketing/campanha. Custos operacionais e de parceiros ficam no ROI geral mensal, sem distorcer a análise por unidade.'
     },
     {
       label: 'Lucro por Clínica',
@@ -450,7 +450,7 @@ function FinancialIntelligence() {
   ];
 
   const executiveDiagnostics = useMemo(
-    () => (data?.diagnostics || []).filter((item) => !/^(Colaborador|Função)\b/i.test(item)),
+    () => (data?.diagnostics || []).filter((item) => !/^(Parceiro|Função)\b/i.test(item)),
     [data?.diagnostics]
   );
 
@@ -480,7 +480,7 @@ function FinancialIntelligence() {
       ['Status EBITDA CRC', ebitdaStatusLabel(summary.ebitdaStatus)],
       ['ROI CRC', summary.roiCrc],
       ['SELIC anual fixa', realSelicRate],
-      ['Custo mensal colaboradores', summary.totalCollaboratorCost],
+      ['Custo mensal parceiros', summary.totalCollaboratorCost],
       ['Custo da hora trabalhada', summary.averageWorkedHourCost],
       ['Horas trabalhadas consideradas', summary.totalCollaboratorWorkedHours],
       ['Custo mensal operacional', summary.totalOperationalCost]

@@ -350,7 +350,7 @@ function renderUserAccessEmail({ name, email, temporaryPassword, appUrl }) {
     subject: 'Seu acesso ao portal foi criado',
     html: renderBrandedEmail({
       title: 'Seu acesso ao portal foi criado',
-      intro: `Olá, <strong>${escapeHtml(name || 'colaborador')}</strong>.`,
+      intro: `Olá, <strong>${escapeHtml(name || 'parceiro')}</strong>.`,
       bodyHtml: `
         <p style="margin:0 0 20px;">Seu acesso ao portal foi criado com sucesso. Use as credenciais abaixo para entrar no sistema com segurança.</p>
         ${renderMetricGrid([
@@ -375,7 +375,7 @@ function renderRegistrationApprovedEmail({ name, appUrl }) {
     subject: 'Seu cadastro foi aprovado',
     html: renderBrandedEmail({
       title: 'Seu cadastro foi aprovado',
-      intro: `Olá, <strong>${escapeHtml(name || 'colaborador')}</strong>.`,
+      intro: `Olá, <strong>${escapeHtml(name || 'parceiro')}</strong>.`,
       bodyHtml: `
         <p style="margin:0 0 18px;">Seu cadastro foi aprovado e o acesso ao sistema já está liberado.</p>
         ${renderMetricGrid([{ label: 'Portal', value: approvedUrl }])}
@@ -392,7 +392,7 @@ function renderPasswordResetEmail({ name, temporaryPassword, appUrl }) {
     subject: 'Senha reiniciada - Sistema GRC',
     html: renderBrandedEmail({
       title: 'Sua senha foi reiniciada',
-      intro: `Olá, <strong>${escapeHtml(name || 'colaborador')}</strong>.`,
+      intro: `Olá, <strong>${escapeHtml(name || 'parceiro')}</strong>.`,
       bodyHtml: `
         <p style="margin:0 0 20px;">Uma nova senha temporária foi gerada para o seu acesso. Entre no portal e conclua a alteração para manter sua conta protegida.</p>
         ${renderMetricGrid([
@@ -416,7 +416,7 @@ function renderPasswordRecoveryCodeEmail({ name, code, appUrl, expirationMinutes
     subject: 'Código para redefinição de senha - Sistema GRC',
     html: renderBrandedEmail({
       title: 'Recuperação de senha',
-      intro: `Olá, <strong>${escapeHtml(name || 'colaborador')}</strong>.`,
+      intro: `Olá, <strong>${escapeHtml(name || 'parceiro')}</strong>.`,
       bodyHtml: `
         <p style="margin:0 0 20px;">Recebemos uma solicitação para redefinir a senha do seu acesso.</p>
         ${renderCodePanel('Código de confirmação', code)}
@@ -437,7 +437,7 @@ function renderRegistrationReviewEmail({ name, email, position, profileLabel, ph
     html: renderBrandedEmail({
       eyebrow: 'Solicitação de acesso',
       title: 'Novo cadastro aguardando aprovação',
-      intro: 'Um novo colaborador solicitou acesso ao sistema.',
+      intro: 'Um novo parceiro solicitou acesso ao sistema.',
       bodyHtml: renderMetricGrid([
         { label: 'Nome', value: name },
         { label: 'E-mail', value: email },
@@ -460,7 +460,7 @@ function renderRegistrationRejectedEmail({ name }) {
     html: renderBrandedEmail({
       eyebrow: 'Solicitação encerrada',
       title: 'Cadastro não aprovado',
-      intro: `Olá, <strong>${escapeHtml(name || 'colaborador')}</strong>.`,
+      intro: `Olá, <strong>${escapeHtml(name || 'parceiro')}</strong>.`,
       bodyHtml: `
         <p style="margin:0;">Seu cadastro foi analisado e não foi aprovado neste momento. Se precisar de esclarecimentos, procure o responsável pela administração do sistema.</p>
       `

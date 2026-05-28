@@ -467,7 +467,7 @@ function buildRowDiagnosis(row, metrics, rules = DEFAULT_FINANCIAL_RULES) {
 function calculateFinancialMetrics(row, rules = DEFAULT_FINANCIAL_RULES) {
   const normalizedRules = normalizeFinancialRules(rules);
   const revenue = toNumber(row.revenue);
-  // Lançamentos registram produção/campanha. Custos de colaborador e operação são mensais,
+  // Lançamentos registram produção/campanha. Custos de parceiro e operação são mensais,
   // aplicados no resumo consolidado para não multiplicar custo por linha lançada.
   const allocationFactor = Math.max(0, toNumber(normalizedRules.costAllocationPercent)) / 100;
   const totalCollaboratorCost = toNumber(row.total_collaborator_cost_override) * allocationFactor;
@@ -628,10 +628,10 @@ function buildFinancialDiagnostics(summary, clinicFinancials, collaboratorFinanc
   if (bestClinic) diagnostics.push(`Clínica ${bestClinic.label} apresenta maior ROI da rede.`);
 
   const highestCostCollaborator = [...collaboratorFinancials].sort(sortBy('collaboratorCost'))[0];
-  if (highestCostCollaborator) diagnostics.push(`Colaborador ${highestCostCollaborator.label} apresenta maior custo operacional.`);
+  if (highestCostCollaborator) diagnostics.push(`Parceiro ${highestCostCollaborator.label} apresenta maior custo operacional.`);
 
   const bestCollaborator = [...collaboratorFinancials].sort(sortBy('roi'))[0];
-  if (bestCollaborator) diagnostics.push(`Colaborador ${bestCollaborator.label} apresenta melhor ROI.`);
+  if (bestCollaborator) diagnostics.push(`Parceiro ${bestCollaborator.label} apresenta melhor ROI.`);
 
   const highestCostRole = [...roleFinancials].sort(sortBy('collaboratorCost'))[0];
   if (highestCostRole) diagnostics.push(`Função ${highestCostRole.label} concentra maior custo no período.`);

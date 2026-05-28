@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { io as createSocket } from 'socket.io-client';
 
 import api, { apiBaseUrl } from '../api';
@@ -339,6 +339,7 @@ function exportCsv(filename, rows = []) {
 
 function WhatsAppManagement() {
   const navigate = useNavigate();
+  const location = useLocation();
   const { section } = useParams();
   const user = useMemo(() => readUser(), []);
   const role = normalizeRoleValue(user?.role);
@@ -418,6 +419,14 @@ function WhatsAppManagement() {
     () => queue.find((item) => String(item.conversation_id) === String(selectedConversationId)) || null,
     [queue, selectedConversationId]
   );
+
+  useEffect(() => {
+    if (currentSection !== 'confirmation') return;
+    const tab = new URLSearchParams(location.search).get('tab');
+    if (['daily', 'partners', 'shipments', 'logs', 'settings'].includes(tab)) {
+      setConfirmationTab(tab);
+    }
+  }, [currentSection, location.search]);
   const selectedConversation = useMemo(() => {
     const found = conversations.find((item) => String(item.id) === String(selectedConversationId));
     if (found) return found;

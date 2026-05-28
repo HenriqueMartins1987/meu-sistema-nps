@@ -49,7 +49,7 @@ const defaultLaborCostRules = [
   { key: 'percentualProvisaoRescisoria', label: 'Provisao rescisoria (%)', value: 4, step: '0.01' },
   { key: 'percentualAbsenteismo', label: 'Absenteismo (%)', value: 2, step: '0.01' },
   { key: 'percentualTurnover', label: 'Turnover (%)', value: 2, step: '0.01' },
-  { key: 'monthlyWorkHours', label: 'Horas mensais por colaborador', value: 220, step: '1' }
+  { key: 'monthlyWorkHours', label: 'Horas mensais por parceiro', value: 220, step: '1' }
 ];
 
 const permissionGroups = [
@@ -149,7 +149,7 @@ const authorityRules = [
   { area: 'Financeiro CRC', action: 'Unidade x campanha', permission: 'financial_campaigns', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Analise por unidade/campanha.' },
   { area: 'Financeiro CRC', action: 'Gestao financeira e lancamentos', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Permite lancar/editar dados conforme perfil.' },
   { area: 'Financeiro CRC', action: 'Excluir lancamento financeiro', actionPermission: 'financial_record_delete', roles: ['master_admin'], note: 'Exclusao definitiva restrita ao Master.' },
-  { area: 'Financeiro CRC', action: 'Excluir colaborador CRC', actionPermission: 'financial_collaborator_delete', roles: ['master_admin'], note: 'Preserva a base do ROI.' },
+  { area: 'Financeiro CRC', action: 'Excluir parceiro CRC', actionPermission: 'financial_collaborator_delete', roles: ['master_admin'], note: 'Preserva a base do ROI.' },
   { area: 'Dental Card', action: 'Acessar CRM Dental Card', permission: 'dental_card', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator', 'manager'], note: 'Controle de indicacoes, follow-up, agendamento, comparecimento e receita.' },
   { area: 'WhatsApp CRC', action: 'Acessar central WhatsApp', permission: 'whatsapp_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator'], note: 'Central operacional, cadastro de números, mensagens, chatbot e relatórios.' },
   { area: 'WhatsApp CRC', action: 'Configurar whatsapp-service VPS', permission: 'whatsapp_settings', actionPermission: 'whatsapp_config_manage', roles: ['master_admin'], note: 'URL do serviço, API Key, teste de conexão e anti-ban ficam em tela segura.' },
@@ -178,7 +178,7 @@ const routeControls = [
   { area: 'Financeiro CRC', type: 'Caminho', title: 'Dashboard executivo CRC', path: '/home/financial-intelligence', permission: 'financial_dashboard', roles: ['master_admin', 'admin'], note: 'Visao financeira executiva.' },
   { area: 'Financeiro CRC', type: 'Caminho', title: 'Unidade x campanha', path: '/home/financial-intelligence/campaigns', permission: 'financial_campaigns', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Analise por unidade e campanha.' },
   { area: 'Financeiro CRC', type: 'Caminho', title: 'Gestao financeira CRC', path: '/home/financial-intelligence/manage', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Lancamentos, edicoes e despesas mensais.' },
-  { area: 'Financeiro CRC', type: 'Caminho', title: 'Gestao de colaboradores CRC', path: '/home/financial-intelligence/manage/collaborators', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Cadastro e custos dos colaboradores.' },
+  { area: 'Financeiro CRC', type: 'Caminho', title: 'Gestao de parceiros CRC', path: '/home/financial-intelligence/manage/collaborators', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Cadastro e custos dos parceiros.' },
   { area: 'Financeiro CRC', type: 'Caminho', title: 'Detalhe do lancamento financeiro', path: '/home/financial-intelligence/manage/:id', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Analise individual do lancamento.' },
   { area: 'Dental Card', type: 'Caminho', title: 'Dental Card', path: '/dental-card', permission: 'dental_card', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator', 'manager'], note: 'CRM operacional e dashboard executivo do Programa Dental Card.' },
   { area: 'WhatsApp CRC', type: 'Caminho', title: 'Gestao WhatsApp CRC', path: '/home/whatsapp-management/dashboard', permission: 'whatsapp_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator'], note: 'Central de atendimento, envio, chatbot e relatorios.' },
@@ -761,15 +761,15 @@ function MasterControlCenter() {
   };
 
   const deleteCollaborator = async (collaborator) => {
-    if (!window.confirm(`Confirma excluir o colaborador ${collaborator.name}?`)) return;
+    if (!window.confirm(`Confirma excluir o parceiro ${collaborator.name}?`)) return;
     setFeedback('');
 
     try {
       await api.delete(`/crc-collaborators/${collaborator.id}`);
-      setFeedback(`Colaborador ${collaborator.name} excluido.`);
+      setFeedback(`Parceiro ${collaborator.name} excluido.`);
       await loadData();
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Nao foi possivel excluir o colaborador.');
+      setFeedback(error.response?.data?.error || 'Nao foi possivel excluir o parceiro.');
     }
   };
 
@@ -799,7 +799,7 @@ function MasterControlCenter() {
             <article><span>Perfis Master</span><strong>{summary.master}</strong><small>{summary.inactive} inativos</small></article>
             <article><span>Telas controladas</span><strong>{summary.permissions}</strong><small>Autorizacao por usuario</small></article>
             <article><span>Clinicas</span><strong>{summary.clinics}</strong><small>Vinculo operacional</small></article>
-            <article><span>Colaboradores CRC</span><strong>{summary.collaborators}</strong><small>Base financeira</small></article>
+            <article><span>Parceiros CRC</span><strong>{summary.collaborators}</strong><small>Base financeira</small></article>
           </div>
 
           {selectedUser && (
@@ -1299,7 +1299,7 @@ function MasterControlCenter() {
               <article className="master-action-card">
                 <div className="master-section-heading">
                   <div>
-                    <p className="eyebrow">Colaboradores CRC</p>
+                    <p className="eyebrow">Parceiros CRC</p>
                     <h2>Exclusao controlada</h2>
                     <p>Remocao restrita ao Administrador Master para preservar a base financeira.</p>
                   </div>
@@ -1311,7 +1311,7 @@ function MasterControlCenter() {
                       <button className="outline-action danger-action mini-action" onClick={() => deleteCollaborator(collaborator)}>Excluir</button>
                     </div>
                   ))}
-                  {!collaborators.length && <p className="empty-state">Nenhum colaborador cadastrado.</p>}
+                  {!collaborators.length && <p className="empty-state">Nenhum parceiro cadastrado.</p>}
                 </div>
               </article>
             </section>
@@ -1352,7 +1352,7 @@ function MasterControlCenter() {
 
               <article className="master-tax-policy-card master-labor-policy-card">
                 <span>Custos Trabalhistas</span>
-                <strong>Parametros do colaborador</strong>
+                <strong>Parametros do parceiro</strong>
                 <small>Percentuais editaveis usados na composicao automatica de salario, encargos obrigatorios, provisoes trabalhistas e provisoes gerenciais.</small>
                 <div className="master-policy-note">
                   Regime tributario do Grupo Sorria: Lucro Presumido. INSS patronal, RAT/FAP e Terceiros/Sistema S sao sempre calculados; os percentuais abaixo continuam editaveis para ajustes contabeis.
