@@ -308,6 +308,7 @@ const pool = mysql.createPool({
   database: process.env.DB_NAME || 'nps_system',
   waitForConnections: true,
   connectionLimit: 10,
+  queueLimit: 100,
   connectTimeout: 10000,
   enableKeepAlive: true
 });
@@ -696,6 +697,36 @@ const patientInteractionTypeLabels = {
   agendamento: 'Agendamento',
   reagendamento: 'Reagendamento'
 };
+
+function createOperationTimeoutError(label, timeoutMs) {
+  const error = new Error(`${label} excedeu ${timeoutMs}ms`);
+  error.code = 'APP_OPERATION_TIMEOUT';
+  error.timeoutMs = timeoutMs;
+  return error;
+}
+
+async function withHardTimeout(promise, timeoutMs, label) {
+  let timeoutId = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => reject(createOperationTimeoutError(label, timeoutMs)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+async function poolQueryWithHardTimeout(query, params, timeoutMs, label) {
+  const queryPromise = params === undefined ? pool.query(query) : pool.query(query, params);
+  queryPromise.catch((error) => {
+    if (error?.code !== 'APP_OPERATION_TIMEOUT') {
+      console.warn(`[${label}] Consulta finalizou com erro após timeout/abandono:`, error.message);
+    }
+  });
+  return withHardTimeout(queryPromise, timeoutMs, label);
+}
 
 function isNoShowStatus(value) {
   return String(value || '')
@@ -20519,20 +20550,22 @@ app.get('/public/clinics', async (req, res) => {
     res.set('Expires', '0');
     res.set('Surrogate-Control', 'no-store');
 
-    const [rows] = await pool.query({
-      sql: `SELECT
-             id,
-             name,
-             city,
-             state,
-             region,
-             coordinator_name,
-             active
-            FROM clinics
-            WHERE active = 1
-            ORDER BY name ASC`,
-      timeout: publicDatabaseQueryTimeoutMs
-    });
+    const [rows] = await poolQueryWithHardTimeout(
+      `SELECT
+         id,
+         name,
+         city,
+         state,
+         region,
+         coordinator_name,
+         active
+        FROM clinics
+        WHERE active = 1
+        ORDER BY name ASC`,
+      undefined,
+      publicDatabaseQueryTimeoutMs,
+      'GET /public/clinics'
+    );
 
     res.json(rows);
   } catch (error) {
@@ -26847,6 +26880,30 @@ app.use((error, req, res, next) => {
 // START
 // ============================================
 async function startServer() {
+  const scheduledJobsRunning = new Set();
+  const runScheduledJob = async (jobKey, label, job) => {
+    if (scheduledJobsRunning.has(jobKey)) {
+      console.warn(`Rotina ignorada por já estar em execução: ${label}`);
+      return null;
+    }
+
+    scheduledJobsRunning.add(jobKey);
+    try {
+      return await job();
+    } catch (jobError) {
+      console.warn(`Não foi possível executar ${label}:`, jobError.message);
+      return null;
+    } finally {
+      scheduledJobsRunning.delete(jobKey);
+    }
+  };
+
+  const setManagedInterval = (jobKey, label, job, intervalMs) => {
+    setInterval(() => {
+      runScheduledJob(jobKey, label, job);
+    }, intervalMs);
+  };
+
   const runStartupBackfills = async () => {
     try {
       await ensureDefaultClinics();
@@ -26897,136 +26954,41 @@ async function startServer() {
   }, 1000);
 
   setTimeout(() => {
-    runScheduledCoordinatorReports().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina inicial de relatórios:', jobError.message);
-    });
-    dispatchUpcomingAppointmentReminders().catch((jobError) => {
-      console.warn('Nao foi possivel executar a rotina inicial de lembretes de agendamento:', jobError.message);
-    });
-    dispatchUpcomingComplaintDeadlineReminders().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina inicial de alertas de prazo das reclamações:', jobError.message);
-    });
-    dispatchExpiredComplaintManagerAlerts().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina inicial de expiração de reclamações para gerência:', jobError.message);
-    });
-    dispatchExpiredComplaintResponsibleReminders().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina inicial de expiração de reclamações para responsáveis:', jobError.message);
-    });
-    dispatchStalledComplaintTreatmentReminders().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina inicial de demandas sem tratativa:', jobError.message);
-    });
-    runComplaintEscalationSweep().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina inicial de escalonamento automático:', jobError.message);
-    });
-    runScheduledUserDemandReminders().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina inicial de lembretes semanais aos usuários:', jobError.message);
-    });
-    runScheduledWeeklyAdminComplaintReport().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina inicial de relatório semanal aos administradores:', jobError.message);
-    });
-    runScheduledDailyCoordinatorDemandReminders().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina inicial de lembretes diários aos coordenadores:', jobError.message);
-    });
-    runScheduledDailyCoordinatorDeliveryReport().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina inicial de relatório diário de entregas aos administradores:', jobError.message);
-    });
-    runDentalCardSlaNotificationSweep().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina inicial de SLA do Dental Card:', jobError.message);
-    });
-    runScheduledPartnerVideoDailyReminders().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina inicial de vídeos dos parceiros:', jobError.message);
-    });
-    processWhatsAppDispatchQueue().catch((jobError) => {
-      console.warn('Não foi possível executar a fila inicial de disparos WhatsApp:', jobError.message);
-    });
+    (async () => {
+      await runScheduledJob('startup_reports', 'a rotina inicial de relatórios', runScheduledCoordinatorReports);
+      await runScheduledJob('startup_appointment_reminders', 'a rotina inicial de lembretes de agendamento', dispatchUpcomingAppointmentReminders);
+      await runScheduledJob('startup_complaint_deadline_reminders', 'a rotina inicial de alertas de prazo das reclamações', dispatchUpcomingComplaintDeadlineReminders);
+      await runScheduledJob('startup_expired_manager_alerts', 'a rotina inicial de expiração de reclamações para gerência', dispatchExpiredComplaintManagerAlerts);
+      await runScheduledJob('startup_expired_responsible_reminders', 'a rotina inicial de expiração de reclamações para responsáveis', dispatchExpiredComplaintResponsibleReminders);
+      await runScheduledJob('startup_stalled_treatment_reminders', 'a rotina inicial de demandas sem tratativa', dispatchStalledComplaintTreatmentReminders);
+      await runScheduledJob('startup_complaint_escalation', 'a rotina inicial de escalonamento automático', runComplaintEscalationSweep);
+      await runScheduledJob('startup_weekly_user_reminders', 'a rotina inicial de lembretes semanais aos usuários', runScheduledUserDemandReminders);
+      await runScheduledJob('startup_weekly_admin_report', 'a rotina inicial de relatório semanal aos administradores', runScheduledWeeklyAdminComplaintReport);
+      await runScheduledJob('startup_daily_coordinator_reminders', 'a rotina inicial de lembretes diários aos coordenadores', runScheduledDailyCoordinatorDemandReminders);
+      await runScheduledJob('startup_daily_delivery_report', 'a rotina inicial de relatório diário de entregas aos administradores', runScheduledDailyCoordinatorDeliveryReport);
+      await runScheduledJob('startup_dental_card_sla', 'a rotina inicial de SLA do Dental Card', runDentalCardSlaNotificationSweep);
+      await runScheduledJob('startup_partner_video_reminders', 'a rotina inicial de vídeos dos parceiros', runScheduledPartnerVideoDailyReminders);
+      await runScheduledJob('startup_whatsapp_dispatch_queue', 'a fila inicial de disparos WhatsApp', processWhatsAppDispatchQueue);
+    })();
   }, 10000);
 
-  setInterval(() => {
-    runScheduledCoordinatorReports().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina programada de relatórios:', jobError.message);
-    });
-  }, 15 * 60 * 1000);
-
-  setInterval(() => {
-    dispatchUpcomingAppointmentReminders().catch((jobError) => {
-      console.warn('Nao foi possivel executar a rotina programada de lembretes de agendamento:', jobError.message);
-    });
-  }, appointmentReminderIntervalMinutes * 60 * 1000);
-
-  setInterval(() => {
-    dispatchUpcomingComplaintDeadlineReminders().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina programada de alertas de prazo das reclamações:', jobError.message);
-    });
-  }, complaintDueReminderIntervalMinutes * 60 * 1000);
-
-  setInterval(() => {
-    dispatchExpiredComplaintManagerAlerts().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina programada de expiração de reclamações para gerência:', jobError.message);
-    });
-  }, complaintDueReminderIntervalMinutes * 60 * 1000);
-
-  setInterval(() => {
-    dispatchExpiredComplaintResponsibleReminders().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina programada de expiração de reclamações para responsáveis:', jobError.message);
-    });
-  }, complaintExpiredReminderIntervalHours * 60 * 60 * 1000);
-
-  setInterval(() => {
-    dispatchStalledComplaintTreatmentReminders().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina programada de demandas sem tratativa:', jobError.message);
-    });
-  }, complaintStalledTreatmentReminderHours * 60 * 60 * 1000);
-
-  setInterval(() => {
-    runComplaintEscalationSweep().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina programada de escalonamento automático:', jobError.message);
-    });
-  }, complaintEscalationSweepIntervalMinutes * 60 * 1000);
-
-  setInterval(() => {
-    runScheduledUserDemandReminders().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina programada de lembretes semanais aos usuários:', jobError.message);
-    });
-  }, weeklyDemandReminderIntervalMinutes * 60 * 1000);
-
-  setInterval(() => {
-    runScheduledWeeklyAdminComplaintReport().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina programada de relatório semanal aos administradores:', jobError.message);
-    });
-  }, weeklyAdminComplaintReportIntervalMinutes * 60 * 1000);
-
-  setInterval(() => {
-    runScheduledDailyCoordinatorDemandReminders().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina programada de lembretes diários aos coordenadores:', jobError.message);
-    });
-  }, dailyCoordinatorDemandReminderIntervalMinutes * 60 * 1000);
-
-  setInterval(() => {
-    runScheduledDailyCoordinatorDeliveryReport().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina programada de relatório diário de entregas:', jobError.message);
-    });
-  }, dailyCoordinatorDeliveryReportIntervalMinutes * 60 * 1000);
-
-  setInterval(() => {
-    runDentalCardSlaNotificationSweep().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina programada de SLA do Dental Card:', jobError.message);
-    });
-  }, Math.max(5, Number(process.env.DENTAL_CARD_SLA_SWEEP_INTERVAL_MINUTES || 15)) * 60 * 1000);
-
-  setInterval(() => {
-    runScheduledPartnerVideoDailyReminders().catch((jobError) => {
-      console.warn('Não foi possível executar a rotina programada de vídeos dos parceiros:', jobError.message);
-    });
-    runPartnerVideoOperationalEscalationSweep().catch((jobError) => {
-      console.warn('Não foi possível executar o fluxo operacional de vídeos dos parceiros:', jobError.message);
-    });
+  setManagedInterval('reports', 'a rotina programada de relatórios', runScheduledCoordinatorReports, 15 * 60 * 1000);
+  setManagedInterval('appointment_reminders', 'a rotina programada de lembretes de agendamento', dispatchUpcomingAppointmentReminders, appointmentReminderIntervalMinutes * 60 * 1000);
+  setManagedInterval('complaint_deadline_reminders', 'a rotina programada de alertas de prazo das reclamações', dispatchUpcomingComplaintDeadlineReminders, complaintDueReminderIntervalMinutes * 60 * 1000);
+  setManagedInterval('expired_manager_alerts', 'a rotina programada de expiração de reclamações para gerência', dispatchExpiredComplaintManagerAlerts, complaintDueReminderIntervalMinutes * 60 * 1000);
+  setManagedInterval('expired_responsible_reminders', 'a rotina programada de expiração de reclamações para responsáveis', dispatchExpiredComplaintResponsibleReminders, complaintExpiredReminderIntervalHours * 60 * 60 * 1000);
+  setManagedInterval('stalled_treatment_reminders', 'a rotina programada de demandas sem tratativa', dispatchStalledComplaintTreatmentReminders, complaintStalledTreatmentReminderHours * 60 * 60 * 1000);
+  setManagedInterval('complaint_escalation', 'a rotina programada de escalonamento automático', runComplaintEscalationSweep, complaintEscalationSweepIntervalMinutes * 60 * 1000);
+  setManagedInterval('weekly_user_reminders', 'a rotina programada de lembretes semanais aos usuários', runScheduledUserDemandReminders, weeklyDemandReminderIntervalMinutes * 60 * 1000);
+  setManagedInterval('weekly_admin_report', 'a rotina programada de relatório semanal aos administradores', runScheduledWeeklyAdminComplaintReport, weeklyAdminComplaintReportIntervalMinutes * 60 * 1000);
+  setManagedInterval('daily_coordinator_reminders', 'a rotina programada de lembretes diários aos coordenadores', runScheduledDailyCoordinatorDemandReminders, dailyCoordinatorDemandReminderIntervalMinutes * 60 * 1000);
+  setManagedInterval('daily_delivery_report', 'a rotina programada de relatório diário de entregas', runScheduledDailyCoordinatorDeliveryReport, dailyCoordinatorDeliveryReportIntervalMinutes * 60 * 1000);
+  setManagedInterval('dental_card_sla', 'a rotina programada de SLA do Dental Card', runDentalCardSlaNotificationSweep, Math.max(5, Number(process.env.DENTAL_CARD_SLA_SWEEP_INTERVAL_MINUTES || 15)) * 60 * 1000);
+  setManagedInterval('partner_video_reminders', 'a rotina programada de vídeos dos parceiros', async () => {
+    await runScheduledPartnerVideoDailyReminders();
+    await runPartnerVideoOperationalEscalationSweep();
   }, Math.max(5, Number(process.env.PARTNER_VIDEO_SWEEP_INTERVAL_MINUTES || 15)) * 60 * 1000);
-
-  setInterval(() => {
-    processWhatsAppDispatchQueue().catch((jobError) => {
-      console.warn('Não foi possível processar a fila de disparos WhatsApp:', jobError.message);
-    });
-  }, Math.max(3000, Number(process.env.WHATSAPP_DISPATCH_INTERVAL_MS || 5000)));
+  setManagedInterval('whatsapp_dispatch_queue', 'a fila de disparos WhatsApp', processWhatsAppDispatchQueue, Math.max(3000, Number(process.env.WHATSAPP_DISPATCH_INTERVAL_MS || 5000)));
 
 }
 
