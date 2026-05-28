@@ -307,7 +307,9 @@ const pool = mysql.createPool({
   password: process.env.DB_PASSWORD || '123456',
   database: process.env.DB_NAME || 'nps_system',
   waitForConnections: true,
-  connectionLimit: 10
+  connectionLimit: 10,
+  connectTimeout: 10000,
+  enableKeepAlive: true
 });
 
 const WHATSAPP_EVOLUTION_SETTINGS_KEY = 'whatsapp_service_settings';
@@ -685,6 +687,10 @@ const resolutionSlaDays = 15;
 const coordinatorEscalationSlaDays = Math.max(1, Number(process.env.COMPLAINT_COORDINATOR_SLA_DAYS || 15));
 const managerEscalationSlaDays = Math.max(1, Number(process.env.COMPLAINT_MANAGER_SLA_DAYS || 5));
 const complaintEscalationSweepIntervalMinutes = Math.max(30, Number(process.env.COMPLAINT_ESCALATION_SWEEP_INTERVAL_MINUTES || 60));
+const complaintEscalationSweepBatchSize = Math.max(1, Math.min(100, Number(process.env.COMPLAINT_ESCALATION_SWEEP_BATCH_SIZE || 25)));
+const complaintEscalationBackfillBatchSize = Math.max(1, Math.min(500, Number(process.env.COMPLAINT_ESCALATION_BACKFILL_BATCH_SIZE || 200)));
+const startupDataBackfillsEnabled = String(process.env.RUN_STARTUP_DATA_BACKFILLS || '').toLowerCase() === 'true';
+const publicDatabaseQueryTimeoutMs = Math.max(2000, Math.min(15000, Number(process.env.PUBLIC_DATABASE_QUERY_TIMEOUT_MS || 8000)));
 const patientInteractionTypeLabels = {
   confirmacao: 'Confirmação',
   agendamento: 'Agendamento',
@@ -4089,6 +4095,18 @@ async function ensureDefaultClinics() {
   console.log('Clínicas padrão inseridas com sucesso.');
 }
 
+function buildPublicClinicFallbackRows() {
+  return clinicSeed.map((clinic, index) => ({
+    id: -(index + 1),
+    name: clinic.name,
+    city: clinic.city,
+    state: clinic.state,
+    region: clinic.region,
+    coordinator_name: clinic.coordinator_name || null,
+    active: Number(clinic.active ?? 1)
+  }));
+}
+
 async function syncClinicCatalog() {
   const [rows] = await pool.query(
     `SELECT
@@ -4475,7 +4493,8 @@ async function backfillComplaintAssignments() {
   }));
 }
 
-async function backfillComplaintEscalationDeadlines() {
+async function backfillComplaintEscalationDeadlines(batchSize = complaintEscalationBackfillBatchSize) {
+  const limit = Math.max(1, Math.min(500, Number(batchSize || complaintEscalationBackfillBatchSize)));
   const [coordinatorResult] = await pool.query(
     `UPDATE complaints
         SET coordinator_assigned_at = COALESCE(coordinator_assigned_at, forwarded_at, first_attendance_at, created_at),
@@ -4497,8 +4516,10 @@ async function backfillComplaintEscalationDeadlines() {
           OR forwarded_to_role = 'coordinator'
           OR assigned_responsible_role = 'coordinator'
           OR status IN ('enviada_coordenador', 'em_tratativa_coordenador', 'vencida_coordenador')
-        )`,
-    [coordinatorEscalationSlaDays]
+        )
+      ORDER BY id ASC
+      LIMIT ?`,
+    [coordinatorEscalationSlaDays, limit]
   );
 
   const [managerResult] = await pool.query(
@@ -4517,8 +4538,10 @@ async function backfillComplaintEscalationDeadlines() {
           OR forwarded_to_role = 'manager'
           OR assigned_responsible_role = 'manager'
           OR status IN ('escalonada_gerente', 'em_tratativa_gerente', 'vencida_gerente')
-        )`,
-    [managerEscalationSlaDays]
+        )
+      ORDER BY id ASC
+      LIMIT ?`,
+    [managerEscalationSlaDays, limit]
   );
 
   return {
@@ -8752,7 +8775,19 @@ async function notifyComplaintEscalationRecipients(complaint, recipients, eventT
   }));
 }
 
+let complaintEscalationSweepRunning = false;
+
 async function runComplaintEscalationSweep(now = new Date()) {
+  if (complaintEscalationSweepRunning) {
+    return {
+      coordinatorToManager: 0,
+      managerToAdmin: 0,
+      skipped: true,
+      reason: 'sweep_already_running'
+    };
+  }
+
+  complaintEscalationSweepRunning = true;
   const nowSql = toMysqlDateTime(now);
   const systemUser = { name: 'Sistema de Escalonamento', role: 'system' };
   const result = {
@@ -8760,80 +8795,83 @@ async function runComplaintEscalationSweep(now = new Date()) {
     managerToAdmin: 0
   };
 
-  const [coordinatorRows] = await pool.query(
-    `SELECT
-       c.id,
-       c.protocol,
-       c.clinic_id,
-       c.status,
-       c.patient_name,
-       c.coordinator_assigned_at,
-       c.coordinator_due_date,
-       COALESCE(c.clinic_snapshot_name, cl.name) AS clinic_name
-     FROM complaints c
-     LEFT JOIN clinics cl ON cl.id = c.clinic_id
-     WHERE c.deleted_at IS NULL
-       AND ${buildOpenComplaintStatusWhere('c')}
-       AND c.coordinator_due_date IS NOT NULL
-       AND c.coordinator_due_date < ?
-       AND c.coordinator_treated_at IS NULL
-       AND (
-         c.current_escalation_level = 'coordinator'
-         OR c.forwarded_to_role = 'coordinator'
-         OR c.status IN ('enviada_coordenador', 'em_tratativa_coordenador', 'vencida_coordenador')
-       )`,
-    [nowSql]
-  );
-
-  for (const complaint of coordinatorRows) {
-    const assignment = await resolveComplaintResponsibleAssignment(complaint.clinic_id, 'manager');
-    const dueDateSql = toMysqlDateTime(addCalendarDays(now, managerEscalationSlaDays));
-    const previousStatus = complaint.status || 'aberta';
-    const [updateResult] = await pool.query(
-      `UPDATE complaints c
-          SET status = 'escalonada_gerente',
-              forwarded_to_role = 'manager',
-              forwarded_to_label = ?,
-              forwarded_at = ?,
-              forwarded_by = ?,
-              assigned_responsible_user_id = ?,
-              assigned_responsible_name = ?,
-              assigned_responsible_role = 'manager',
-              manager_id = COALESCE(manager_id, ?),
-              manager_name = COALESCE(NULLIF(manager_name, ''), ?),
-              manager_assigned_at = COALESCE(manager_assigned_at, ?),
-              manager_due_date = COALESCE(manager_due_date, ?),
-              manager_treated_at = NULL,
-              current_escalation_level = 'manager',
-              returned_to_sac_at = NULL,
-              sac_audit_status = NULL,
-              sac_audit_comment = NULL,
-              updated_at = CURRENT_TIMESTAMP
-        WHERE c.id = ?
-          AND c.deleted_at IS NULL
-          AND ${buildOpenComplaintStatusWhere('c')}
-          AND c.coordinator_due_date IS NOT NULL
-          AND c.coordinator_due_date < ?
-          AND c.coordinator_treated_at IS NULL
-          AND (
-            c.current_escalation_level = 'coordinator'
-            OR c.forwarded_to_role = 'coordinator'
-            OR c.status IN ('enviada_coordenador', 'em_tratativa_coordenador', 'vencida_coordenador')
-          )`,
-      [
-        assignment.label || assignment.name || 'Gerente da unidade',
-        nowSql,
-        systemUser.name,
-        assignment.userId || null,
-        assignment.name || assignment.label || 'Gerente da unidade',
-        assignment.userId || null,
-        assignment.name || assignment.label || 'Gerente da unidade',
-        nowSql,
-        dueDateSql,
-        complaint.id,
-        nowSql
-      ]
+  try {
+    const [coordinatorRows] = await pool.query(
+      `SELECT
+         c.id,
+         c.protocol,
+         c.clinic_id,
+         c.status,
+         c.patient_name,
+         c.coordinator_assigned_at,
+         c.coordinator_due_date,
+         COALESCE(c.clinic_snapshot_name, cl.name) AS clinic_name
+       FROM complaints c
+       LEFT JOIN clinics cl ON cl.id = c.clinic_id
+       WHERE c.deleted_at IS NULL
+         AND ${buildOpenComplaintStatusWhere('c')}
+         AND c.coordinator_due_date IS NOT NULL
+         AND c.coordinator_due_date < ?
+         AND c.coordinator_treated_at IS NULL
+         AND (
+           c.current_escalation_level = 'coordinator'
+           OR c.forwarded_to_role = 'coordinator'
+           OR c.status IN ('enviada_coordenador', 'em_tratativa_coordenador', 'vencida_coordenador')
+         )
+       ORDER BY c.coordinator_due_date ASC, c.id ASC
+       LIMIT ?`,
+      [nowSql, complaintEscalationSweepBatchSize]
     );
+
+    for (const complaint of coordinatorRows) {
+      const assignment = await resolveComplaintResponsibleAssignment(complaint.clinic_id, 'manager');
+      const dueDateSql = toMysqlDateTime(addCalendarDays(now, managerEscalationSlaDays));
+      const previousStatus = complaint.status || 'aberta';
+      const [updateResult] = await pool.query(
+        `UPDATE complaints c
+            SET status = 'escalonada_gerente',
+                forwarded_to_role = 'manager',
+                forwarded_to_label = ?,
+                forwarded_at = ?,
+                forwarded_by = ?,
+                assigned_responsible_user_id = ?,
+                assigned_responsible_name = ?,
+                assigned_responsible_role = 'manager',
+                manager_id = COALESCE(manager_id, ?),
+                manager_name = COALESCE(NULLIF(manager_name, ''), ?),
+                manager_assigned_at = COALESCE(manager_assigned_at, ?),
+                manager_due_date = COALESCE(manager_due_date, ?),
+                manager_treated_at = NULL,
+                current_escalation_level = 'manager',
+                returned_to_sac_at = NULL,
+                sac_audit_status = NULL,
+                sac_audit_comment = NULL,
+                updated_at = CURRENT_TIMESTAMP
+          WHERE c.id = ?
+            AND c.deleted_at IS NULL
+            AND ${buildOpenComplaintStatusWhere('c')}
+            AND c.coordinator_due_date IS NOT NULL
+            AND c.coordinator_due_date < ?
+            AND c.coordinator_treated_at IS NULL
+            AND (
+              c.current_escalation_level = 'coordinator'
+              OR c.forwarded_to_role = 'coordinator'
+              OR c.status IN ('enviada_coordenador', 'em_tratativa_coordenador', 'vencida_coordenador')
+            )`,
+        [
+          assignment.label || assignment.name || 'Gerente da unidade',
+          nowSql,
+          systemUser.name,
+          assignment.userId || null,
+          assignment.name || assignment.label || 'Gerente da unidade',
+          assignment.userId || null,
+          assignment.name || assignment.label || 'Gerente da unidade',
+          nowSql,
+          dueDateSql,
+          complaint.id,
+          nowSql
+        ]
+      );
 
     if (!updateResult.affectedRows) continue;
 
@@ -8859,31 +8897,33 @@ async function runComplaintEscalationSweep(now = new Date()) {
     });
   }
 
-  const [managerRows] = await pool.query(
-    `SELECT
-       c.id,
-       c.protocol,
-       c.clinic_id,
-       c.status,
-       c.patient_name,
-       c.manager_assigned_at,
-       c.manager_due_date,
-       COALESCE(c.clinic_snapshot_name, cl.name) AS clinic_name
-     FROM complaints c
-     LEFT JOIN clinics cl ON cl.id = c.clinic_id
-     WHERE c.deleted_at IS NULL
-       AND ${buildOpenComplaintStatusWhere('c')}
-       AND c.manager_due_date IS NOT NULL
-       AND c.manager_due_date < ?
-       AND c.manager_treated_at IS NULL
-       AND c.admin_escalated_at IS NULL
-       AND (
-         c.current_escalation_level = 'manager'
-         OR c.forwarded_to_role = 'manager'
-         OR c.status IN ('escalonada_gerente', 'em_tratativa_gerente', 'vencida_gerente')
-       )`,
-    [nowSql]
-  );
+    const [managerRows] = await pool.query(
+      `SELECT
+         c.id,
+         c.protocol,
+         c.clinic_id,
+         c.status,
+         c.patient_name,
+         c.manager_assigned_at,
+         c.manager_due_date,
+         COALESCE(c.clinic_snapshot_name, cl.name) AS clinic_name
+       FROM complaints c
+       LEFT JOIN clinics cl ON cl.id = c.clinic_id
+       WHERE c.deleted_at IS NULL
+         AND ${buildOpenComplaintStatusWhere('c')}
+         AND c.manager_due_date IS NOT NULL
+         AND c.manager_due_date < ?
+         AND c.manager_treated_at IS NULL
+         AND c.admin_escalated_at IS NULL
+         AND (
+           c.current_escalation_level = 'manager'
+           OR c.forwarded_to_role = 'manager'
+           OR c.status IN ('escalonada_gerente', 'em_tratativa_gerente', 'vencida_gerente')
+         )
+       ORDER BY c.manager_due_date ASC, c.id ASC
+       LIMIT ?`,
+      [nowSql, complaintEscalationSweepBatchSize]
+    );
 
   let adminRecipients = null;
 
@@ -8961,7 +9001,10 @@ async function runComplaintEscalationSweep(now = new Date()) {
     });
   }
 
-  return result;
+    return result;
+  } finally {
+    complaintEscalationSweepRunning = false;
+  }
 }
 
 async function getClinicsForUser(user) {
@@ -11393,6 +11436,16 @@ setupRealtimeSockets();
 // ============================================
 app.get('/', (req, res) => {
   res.send('API funcionando 🚀');
+});
+
+app.get(['/health', '/api/health'], (req, res) => {
+  res.json({
+    ok: true,
+    service: 'meu-sistema-nps-backend',
+    uptime: Math.round(process.uptime()),
+    commit: process.env.RENDER_GIT_COMMIT || process.env.VERCEL_GIT_COMMIT_SHA || process.env.GIT_COMMIT || null,
+    checkedAt: new Date().toISOString()
+  });
 });
 
 async function handleManualWhatsAppSend(req, res, eventKey = 'manual_test') {
@@ -20466,24 +20519,26 @@ app.get('/public/clinics', async (req, res) => {
     res.set('Expires', '0');
     res.set('Surrogate-Control', 'no-store');
 
-    const [rows] = await pool.query(
-      `SELECT
-         id,
-         name,
-         city,
-         state,
-         region,
-         coordinator_name,
-         active
-       FROM clinics
-       WHERE active = 1
-       ORDER BY name ASC`
-    );
+    const [rows] = await pool.query({
+      sql: `SELECT
+             id,
+             name,
+             city,
+             state,
+             region,
+             coordinator_name,
+             active
+            FROM clinics
+            WHERE active = 1
+            ORDER BY name ASC`,
+      timeout: publicDatabaseQueryTimeoutMs
+    });
 
     res.json(rows);
   } catch (error) {
     console.error('[GET /public/clinics] Erro ao buscar clínicas públicas:', error);
-    res.status(500).json({ error: 'Erro ao buscar clínicas públicas.' });
+    res.set('X-Data-Source', 'seed-fallback');
+    res.status(200).json(buildPublicClinicFallbackRows());
   }
 });
 
@@ -26792,6 +26847,31 @@ app.use((error, req, res, next) => {
 // START
 // ============================================
 async function startServer() {
+  const runStartupBackfills = async () => {
+    try {
+      await ensureDefaultClinics();
+      await syncClinicCatalog();
+      await syncClinicLeadershipNamesFromUserLinks();
+      await syncDefaultWhatsAppSessionsWithClinics();
+      const escalationBackfill = await backfillComplaintEscalationDeadlines();
+
+      if (!startupDataBackfillsEnabled) {
+        console.log(`Backfills leves validados. Prazos hierarquicos revisados: C${escalationBackfill.coordinator}/G${escalationBackfill.manager}`);
+        return;
+      }
+
+      await backfillComplaintProtocols();
+      await backfillNpsProtocols();
+      await backfillPatientProtocols();
+      await backfillComplaintDeadlines();
+      await backfillComplaintAssignments();
+      const coordinatorRepair = await repairPendingCoordinatorAssignments();
+      console.log(`Backfills operacionais validados. Coordenadores revisados: ${coordinatorRepair.updated}/${coordinatorRepair.checked}. Prazos hierarquicos revisados: C${escalationBackfill.coordinator}/G${escalationBackfill.manager}`);
+    } catch (error) {
+      console.warn('Não foi possível executar os backfills:', error.message);
+    }
+  };
+
   try {
     await ensureDatabaseSchema();
     await loadWhatsAppSettingsCache(true);
@@ -26808,26 +26888,13 @@ async function startServer() {
     console.warn('Não foi possível validar o Administrador Master:', error.message);
   }
 
-  try {
-    await ensureDefaultClinics();
-    await syncClinicCatalog();
-    await syncClinicLeadershipNamesFromUserLinks();
-    await syncDefaultWhatsAppSessionsWithClinics();
-    await backfillComplaintProtocols();
-    await backfillNpsProtocols();
-    await backfillPatientProtocols();
-    await backfillComplaintDeadlines();
-    await backfillComplaintAssignments();
-    const coordinatorRepair = await repairPendingCoordinatorAssignments();
-    const escalationBackfill = await backfillComplaintEscalationDeadlines();
-    console.log(`Backfills operacionais validados. Coordenadores revisados: ${coordinatorRepair.updated}/${coordinatorRepair.checked}. Prazos hierarquicos revisados: C${escalationBackfill.coordinator}/G${escalationBackfill.manager}`);
-  } catch (error) {
-    console.warn('Não foi possível executar os backfills:', error.message);
-  }
-
   httpServer.listen(PORT, () => {
     console.log(`🚀 Servidor rodando em http://localhost:${PORT}`);
   });
+
+  setTimeout(() => {
+    runStartupBackfills();
+  }, 1000);
 
   setTimeout(() => {
     runScheduledCoordinatorReports().catch((jobError) => {
@@ -26872,7 +26939,7 @@ async function startServer() {
     processWhatsAppDispatchQueue().catch((jobError) => {
       console.warn('Não foi possível executar a fila inicial de disparos WhatsApp:', jobError.message);
     });
-  }, 3000);
+  }, 10000);
 
   setInterval(() => {
     runScheduledCoordinatorReports().catch((jobError) => {
