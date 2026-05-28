@@ -312,6 +312,8 @@ const pool = mysql.createPool({
   connectTimeout: 10000,
   enableKeepAlive: true
 });
+const rawPoolQuery = pool.query.bind(pool);
+const rawPoolGetConnection = typeof pool.getConnection === 'function' ? pool.getConnection.bind(pool) : null;
 
 const WHATSAPP_EVOLUTION_SETTINGS_KEY = 'whatsapp_service_settings';
 let whatsappSettingsCache = null;
@@ -691,6 +693,8 @@ const complaintEscalationSweepIntervalMinutes = Math.max(30, Number(process.env.
 const complaintEscalationSweepBatchSize = Math.max(1, Math.min(100, Number(process.env.COMPLAINT_ESCALATION_SWEEP_BATCH_SIZE || 25)));
 const complaintEscalationBackfillBatchSize = Math.max(1, Math.min(500, Number(process.env.COMPLAINT_ESCALATION_BACKFILL_BATCH_SIZE || 200)));
 const startupDataBackfillsEnabled = String(process.env.RUN_STARTUP_DATA_BACKFILLS || '').toLowerCase() === 'true';
+const databaseQueryTimeoutMs = Math.max(5000, Math.min(60000, Number(process.env.DB_QUERY_TIMEOUT_MS || 15000)));
+const databaseHealthTimeoutMs = Math.max(2000, Math.min(15000, Number(process.env.DB_HEALTH_TIMEOUT_MS || 5000)));
 const publicDatabaseQueryTimeoutMs = Math.max(2000, Math.min(15000, Number(process.env.PUBLIC_DATABASE_QUERY_TIMEOUT_MS || 8000)));
 const patientInteractionTypeLabels = {
   confirmacao: 'Confirmação',
@@ -718,14 +722,44 @@ async function withHardTimeout(promise, timeoutMs, label) {
   }
 }
 
-async function poolQueryWithHardTimeout(query, params, timeoutMs, label) {
-  const queryPromise = params === undefined ? pool.query(query) : pool.query(query, params);
+function buildDatabaseOperationLabel(args = []) {
+  const firstArg = args[0];
+  if (typeof firstArg === 'string') {
+    return firstArg.replace(/\s+/g, ' ').trim().slice(0, 120) || 'DB query';
+  }
+  if (firstArg?.sql) {
+    return String(firstArg.sql).replace(/\s+/g, ' ').trim().slice(0, 120) || 'DB query';
+  }
+  return 'DB query';
+}
+
+async function rawPoolQueryWithHardTimeout(args, timeoutMs, label) {
+  const queryPromise = rawPoolQuery(...args);
   queryPromise.catch((error) => {
     if (error?.code !== 'APP_OPERATION_TIMEOUT') {
       console.warn(`[${label}] Consulta finalizou com erro após timeout/abandono:`, error.message);
     }
   });
   return withHardTimeout(queryPromise, timeoutMs, label);
+}
+
+async function poolQueryWithHardTimeout(query, params, timeoutMs, label) {
+  const args = params === undefined ? [query] : [query, params];
+  return rawPoolQueryWithHardTimeout(args, timeoutMs, label);
+}
+
+pool.query = (...args) => rawPoolQueryWithHardTimeout(
+  args,
+  databaseQueryTimeoutMs,
+  buildDatabaseOperationLabel(args)
+);
+
+if (rawPoolGetConnection) {
+  pool.getConnection = () => withHardTimeout(
+    rawPoolGetConnection(),
+    databaseQueryTimeoutMs,
+    'DB getConnection'
+  );
 }
 
 function isNoShowStatus(value) {
@@ -11477,6 +11511,32 @@ app.get(['/health', '/api/health'], (req, res) => {
     commit: process.env.RENDER_GIT_COMMIT || process.env.VERCEL_GIT_COMMIT_SHA || process.env.GIT_COMMIT || null,
     checkedAt: new Date().toISOString()
   });
+});
+
+app.get(['/health/db', '/api/health/db'], async (req, res) => {
+  const startedAt = performance.now();
+  try {
+    await poolQueryWithHardTimeout(
+      'SELECT 1 AS ok',
+      undefined,
+      databaseHealthTimeoutMs,
+      'GET /health/db'
+    );
+    res.json({
+      ok: true,
+      service: 'mysql',
+      latencyMs: Math.round(performance.now() - startedAt),
+      checkedAt: new Date().toISOString()
+    });
+  } catch (error) {
+    res.status(503).json({
+      ok: false,
+      service: 'mysql',
+      error: error?.code === 'APP_OPERATION_TIMEOUT' ? 'database_timeout' : 'database_unavailable',
+      latencyMs: Math.round(performance.now() - startedAt),
+      checkedAt: new Date().toISOString()
+    });
+  }
 });
 
 async function handleManualWhatsAppSend(req, res, eventKey = 'manual_test') {
