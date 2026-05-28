@@ -29,6 +29,10 @@ export function getApiErrorMessage(error, fallback = 'Não foi possível conclui
     return error.response.data?.error || 'Seu perfil não tem permissão para acessar esta rotina.';
   }
 
+  if (error.response.status === 503 && error.response.data?.code === 'SYSTEM_MAINTENANCE') {
+    return error.response.data?.error || 'Sistema em Manutenção';
+  }
+
   if (error.response.status === 422 || error.response.status === 400) {
     return error.response.data?.error || error.response.data?.message || 'Revise os dados informados.';
   }
@@ -59,6 +63,18 @@ api.interceptors.response.use(
         window.dispatchEvent(new CustomEvent('nps:auth-expired', {
           detail: {
             code: error.response?.data?.code || 'AUTH_UNAUTHORIZED',
+            message: getApiErrorMessage(error)
+          }
+        }));
+      }
+    }
+
+    if (error.response?.status === 503 && error.response?.data?.code === 'SYSTEM_MAINTENANCE') {
+      clearSession();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('nps:maintenance-mode', {
+          detail: {
+            code: 'SYSTEM_MAINTENANCE',
             message: getApiErrorMessage(error)
           }
         }));

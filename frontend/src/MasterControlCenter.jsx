@@ -25,6 +25,7 @@ const tabs = [
   { id: 'authority', label: 'Alcadas' },
   { id: 'map', label: 'Mapa de acesso' },
   { id: 'system', label: 'Sistema' },
+  { id: 'maintenance', label: 'Manutencao' },
   { id: 'financial', label: 'Financeiro' }
 ];
 
@@ -315,6 +316,12 @@ function MasterControlCenter() {
   const [loading, setLoading] = useState(true);
   const [savingUserId, setSavingUserId] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
+  const [savingMaintenance, setSavingMaintenance] = useState(false);
+  const [maintenance, setMaintenance] = useState({
+    enabled: false,
+    maintenanceMode: false,
+    message: 'Sistema em Manutenção'
+  });
   const [clearingTests, setClearingTests] = useState(false);
 
   const permissionsByGroup = useMemo(() => {
@@ -333,17 +340,29 @@ function MasterControlCenter() {
     setFeedback('');
 
     try {
-      const [usersRes, settingsRes, collaboratorsRes, clinicsRes] = await Promise.all([
+      const [usersRes, settingsRes, collaboratorsRes, clinicsRes, maintenanceRes] = await Promise.all([
         api.get('/admin/users'),
         api.get('/admin/financial-settings'),
         api.get('/crc-collaborators'),
-        api.get('/clinics').catch(() => ({ data: [] }))
+        api.get('/clinics').catch(() => ({ data: [] })),
+        api.get('/admin/system-maintenance').catch(() => ({ data: null }))
       ]);
       const loadedUsers = Array.isArray(usersRes.data) ? usersRes.data.map(normalizeUser) : [];
       setUsers(loadedUsers);
       setSettings(settingsRes.data || null);
       setCollaborators(Array.isArray(collaboratorsRes.data) ? collaboratorsRes.data : []);
       setClinics(Array.isArray(clinicsRes.data) ? clinicsRes.data : []);
+      if (maintenanceRes.data) {
+        setMaintenance({
+          enabled: Boolean(maintenanceRes.data.enabled || maintenanceRes.data.maintenanceMode),
+          maintenanceMode: Boolean(maintenanceRes.data.enabled || maintenanceRes.data.maintenanceMode),
+          message: maintenanceRes.data.message || 'Sistema em Manutenção',
+          activatedAt: maintenanceRes.data.activatedAt || null,
+          activatedBy: maintenanceRes.data.activatedBy || null,
+          updatedAt: maintenanceRes.data.updatedAt || null,
+          updatedBy: maintenanceRes.data.updatedBy || null
+        });
+      }
       setSelectedUserId((current) => current || loadedUsers[0]?.id || '');
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Nao foi possivel carregar o Centro Master.');
@@ -412,8 +431,9 @@ function MasterControlCenter() {
     master: users.filter((user) => user.role === 'master_admin').length,
     permissions: screenPermissions.length,
     clinics: clinics.length,
-    collaborators: collaborators.length
-  }), [clinics.length, collaborators.length, users]);
+    collaborators: collaborators.length,
+    maintenanceActive: Boolean(maintenance.enabled || maintenance.maintenanceMode)
+  }), [clinics.length, collaborators.length, maintenance.enabled, maintenance.maintenanceMode, users]);
 
   const roleStats = useMemo(() => roleOptions.map((role) => {
     const roleUsers = users.filter((user) => user.role === role.value);
@@ -760,6 +780,45 @@ function MasterControlCenter() {
     }
   };
 
+  const updateMaintenance = (field, value) => {
+    setMaintenance((current) => ({ ...current, [field]: value }));
+  };
+
+  const saveMaintenance = async (enabled) => {
+    const nextEnabled = Boolean(enabled);
+    if (nextEnabled && !window.confirm('Ativar modo manutencao agora? Usuarios que nao forem Administrador Master serao bloqueados imediatamente.')) {
+      return;
+    }
+
+    if (!nextEnabled && !window.confirm('Desativar modo manutencao e liberar o acesso dos usuarios novamente?')) {
+      return;
+    }
+
+    setSavingMaintenance(true);
+    setFeedback('');
+
+    try {
+      const { data } = await api.put('/admin/system-maintenance', {
+        enabled: nextEnabled,
+        message: maintenance.message || 'Sistema em Manutenção'
+      });
+      setMaintenance({
+        enabled: Boolean(data.enabled || data.maintenanceMode),
+        maintenanceMode: Boolean(data.enabled || data.maintenanceMode),
+        message: data.message || 'Sistema em Manutenção',
+        activatedAt: data.activatedAt || null,
+        activatedBy: data.activatedBy || null,
+        updatedAt: data.updatedAt || null,
+        updatedBy: data.updatedBy || null
+      });
+      setFeedback(nextEnabled ? 'Modo manutencao ativado. Apenas o Administrador Master permanece com acesso.' : 'Modo manutencao desativado. Acesso liberado novamente.');
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Nao foi possivel atualizar o modo manutencao.');
+    } finally {
+      setSavingMaintenance(false);
+    }
+  };
+
   const deleteCollaborator = async (collaborator) => {
     if (!window.confirm(`Confirma excluir o parceiro ${collaborator.name}?`)) return;
     setFeedback('');
@@ -800,6 +859,7 @@ function MasterControlCenter() {
             <article><span>Telas controladas</span><strong>{summary.permissions}</strong><small>Autorizacao por usuario</small></article>
             <article><span>Clinicas</span><strong>{summary.clinics}</strong><small>Vinculo operacional</small></article>
             <article><span>Parceiros CRC</span><strong>{summary.collaborators}</strong><small>Base financeira</small></article>
+            <article className={summary.maintenanceActive ? 'danger' : ''}><span>Manutencao</span><strong>{summary.maintenanceActive ? 'Ativa' : 'Off'}</strong><small>{summary.maintenanceActive ? 'Apenas Master acessa' : 'Sistema liberado'}</small></article>
           </div>
 
           {selectedUser && (
@@ -1314,6 +1374,81 @@ function MasterControlCenter() {
                   {!collaborators.length && <p className="empty-state">Nenhum parceiro cadastrado.</p>}
                 </div>
               </article>
+            </section>
+          )}
+
+          {activeTab === 'maintenance' && (
+            <section className="master-console-panel master-maintenance-panel">
+              <article className={`master-maintenance-hero ${maintenance.enabled || maintenance.maintenanceMode ? 'active' : ''}`}>
+                <div>
+                  <p className="eyebrow">Manutencao global</p>
+                  <h2>{maintenance.enabled || maintenance.maintenanceMode ? 'Sistema em manutencao' : 'Sistema operando normalmente'}</h2>
+                  <p>
+                    Quando ativo, o backend bloqueia login, rotas internas e rotinas operacionais para todos os perfis,
+                    exceto Administrador Master. Usuarios recebem o pop-up "Sistema em Manutenção".
+                  </p>
+                </div>
+                <span className={`maintenance-status-badge ${maintenance.enabled || maintenance.maintenanceMode ? 'active' : ''}`}>
+                  {maintenance.enabled || maintenance.maintenanceMode ? 'Manutencao ativa' : 'Acesso liberado'}
+                </span>
+              </article>
+
+              <div className="master-maintenance-grid">
+                <article className="master-action-card">
+                  <div className="master-section-heading">
+                    <div>
+                      <p className="eyebrow">Mensagem exibida</p>
+                      <h2>Pop-up de bloqueio</h2>
+                      <p>Este texto aparece na tela de login e em sessoes bloqueadas pelo modo manutencao.</p>
+                    </div>
+                  </div>
+                  <label>
+                    Texto do pop-up
+                    <input
+                      className="field"
+                      value={maintenance.message || 'Sistema em Manutenção'}
+                      onChange={(event) => updateMaintenance('message', event.target.value)}
+                    />
+                  </label>
+                  <div className="maintenance-preview-card">
+                    <span>Preview</span>
+                    <strong>{maintenance.message || 'Sistema em Manutenção'}</strong>
+                    <p>Acesso temporariamente bloqueado. Apenas o Administrador Master permanece liberado.</p>
+                  </div>
+                </article>
+
+                <article className="master-action-card master-maintenance-actions-card">
+                  <div className="master-section-heading">
+                    <div>
+                      <p className="eyebrow">Controle operacional</p>
+                      <h2>Ativar ou liberar acesso</h2>
+                      <p>Use somente em janelas de deploy, manutencao critica ou correcao emergencial.</p>
+                    </div>
+                  </div>
+
+                  <div className="master-maintenance-facts">
+                    <article><span>Status atual</span><strong>{maintenance.enabled || maintenance.maintenanceMode ? 'Bloqueado' : 'Liberado'}</strong><small>{maintenance.updatedAt ? `Atualizado em ${String(maintenance.updatedAt).slice(0, 19).replace('T', ' ')}` : 'Sem registro anterior'}</small></article>
+                    <article><span>Ultima alteracao</span><strong>{maintenance.updatedBy || '-'}</strong><small>{maintenance.activatedBy ? `Ativado por ${maintenance.activatedBy}` : 'Sem ativacao registrada'}</small></article>
+                  </div>
+
+                  <div className="master-maintenance-actions">
+                    <button
+                      className="primary-action danger-action"
+                      onClick={() => saveMaintenance(true)}
+                      disabled={savingMaintenance || maintenance.enabled || maintenance.maintenanceMode}
+                    >
+                      {savingMaintenance ? 'Processando...' : 'Ativar manutencao'}
+                    </button>
+                    <button
+                      className="outline-action"
+                      onClick={() => saveMaintenance(false)}
+                      disabled={savingMaintenance || !(maintenance.enabled || maintenance.maintenanceMode)}
+                    >
+                      {savingMaintenance ? 'Processando...' : 'Desativar manutencao'}
+                    </button>
+                  </div>
+                </article>
+              </div>
             </section>
           )}
 

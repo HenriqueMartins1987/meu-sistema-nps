@@ -545,6 +545,25 @@ a {
   max-width: 560px;
 }
 
+.maintenance-modal-panel {
+  max-width: 460px;
+  text-align: center;
+  border-top: 5px solid var(--danger);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 248, 241, 0.96));
+}
+
+.maintenance-modal-panel h2 {
+  color: var(--danger);
+  font-size: clamp(26px, 4vw, 36px);
+}
+
+.maintenance-chip {
+  justify-self: center;
+  color: var(--danger);
+  background: rgba(196, 69, 54, 0.1);
+}
+
 .crc-operator-register-modal {
   width: min(720px, calc(100vw - 32px));
 }
@@ -9581,7 +9600,7 @@ a {
 }
 
 .master-console-summary {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
 }
 
 .master-selected-strip {
@@ -9598,6 +9617,15 @@ a {
   border-radius: 8px;
   background: linear-gradient(180deg, #fffdfa, var(--surface-soft));
   box-shadow: var(--shadow-sm);
+}
+
+.master-console-summary article.danger {
+  border-color: rgba(196, 69, 54, 0.26);
+  background: linear-gradient(180deg, rgba(255, 250, 247, 0.98), rgba(255, 239, 232, 0.92));
+}
+
+.master-console-summary article.danger strong {
+  color: var(--danger);
 }
 
 .master-selected-strip article {
@@ -12410,6 +12438,128 @@ a {
   line-height: 1.5;
 }
 
+.master-maintenance-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.master-maintenance-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 18px;
+  align-items: center;
+  padding: 20px;
+  border: 1px solid rgba(31, 122, 140, 0.16);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at top right, rgba(31, 122, 140, 0.12), transparent 30%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(245, 251, 249, 0.94));
+}
+
+.master-maintenance-hero.active {
+  border-color: rgba(196, 69, 54, 0.26);
+  background:
+    radial-gradient(circle at top right, rgba(196, 69, 54, 0.14), transparent 32%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.98), rgba(255, 243, 237, 0.94));
+}
+
+.master-maintenance-hero h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(24px, 3vw, 36px);
+}
+
+.master-maintenance-hero p {
+  max-width: 820px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.maintenance-status-badge {
+  padding: 10px 14px;
+  border: 1px solid rgba(31, 122, 140, 0.24);
+  border-radius: 999px;
+  background: rgba(31, 122, 140, 0.1);
+  color: #155f6e;
+  font-size: 12px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.maintenance-status-badge.active {
+  border-color: rgba(196, 69, 54, 0.28);
+  background: rgba(196, 69, 54, 0.1);
+  color: var(--danger);
+}
+
+.master-maintenance-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(340px, 0.95fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.maintenance-preview-card {
+  display: grid;
+  gap: 8px;
+  padding: 18px;
+  border: 1px solid rgba(196, 69, 54, 0.2);
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at top right, rgba(196, 69, 54, 0.12), transparent 34%),
+    #fffdfa;
+  text-align: center;
+}
+
+.maintenance-preview-card span,
+.master-maintenance-facts span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 950;
+  text-transform: uppercase;
+}
+
+.maintenance-preview-card strong {
+  color: var(--danger);
+  font-size: 24px;
+}
+
+.maintenance-preview-card p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.master-maintenance-facts {
+  display: grid;
+  gap: 10px;
+}
+
+.master-maintenance-facts article {
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.master-maintenance-facts strong {
+  color: var(--ink);
+  font-size: 20px;
+}
+
+.master-maintenance-facts small {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.master-maintenance-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
 .whatsapp-field-hint {
   display: block;
   margin-top: 6px;
@@ -12716,6 +12866,7 @@ a {
   .master-release-header,
   .master-release-board,
   .master-profile-grid,
+  .master-maintenance-grid,
   .master-permission-board,
   .master-system-panel,
   .master-financial-policy-box,
@@ -13468,6 +13619,8 @@ a {
   .master-release-kpis,
   .master-release-board,
   .master-profile-grid,
+  .master-maintenance-grid,
+  .master-maintenance-actions,
   .master-form-grid,
   .master-form-grid.compact,
   .master-permission-board,
@@ -13521,6 +13674,10 @@ a {
   .master-financial-rules,
   .financial-skeleton {
     width: min(100%, calc(100vw - 24px));
+  }
+
+  .master-maintenance-hero {
+    grid-template-columns: 1fr;
   }
 
   .financial-mini-row,

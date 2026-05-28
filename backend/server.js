@@ -370,6 +370,11 @@ const pool = mysql.createPool({
 const rawPoolQuery = pool.query.bind(pool);
 const rawPoolGetConnection = typeof pool.getConnection === 'function' ? pool.getConnection.bind(pool) : null;
 
+const SYSTEM_MAINTENANCE_SETTINGS_KEY = 'system_maintenance_mode';
+const SYSTEM_MAINTENANCE_DEFAULT_MESSAGE = 'Sistema em Manutenção';
+const SYSTEM_MAINTENANCE_CACHE_TTL_MS = 5000;
+let systemMaintenanceCache = null;
+let systemMaintenanceCacheLoadedAt = 0;
 const WHATSAPP_EVOLUTION_SETTINGS_KEY = 'whatsapp_service_settings';
 let whatsappSettingsCache = null;
 const WHATSAPP_SERVICE_DEFAULT_BASE_URL = 'http://2.24.101.6:3005';
@@ -1832,6 +1837,141 @@ function sendAuthorizationError(req, res, statusCode, code, message, auditMetada
     error: message,
     code
   });
+}
+
+function normalizeSystemMaintenanceSettings(raw = {}, metadata = {}) {
+  const enabled = Boolean(raw.enabled || raw.maintenanceMode);
+  const message = String(raw.message || SYSTEM_MAINTENANCE_DEFAULT_MESSAGE).trim() || SYSTEM_MAINTENANCE_DEFAULT_MESSAGE;
+  return {
+    enabled,
+    maintenanceMode: enabled,
+    message,
+    activatedAt: raw.activatedAt || raw.activated_at || null,
+    activatedBy: raw.activatedBy || raw.activated_by || null,
+    updatedAt: metadata.updatedAt || raw.updatedAt || raw.updated_at || null,
+    updatedBy: metadata.updatedBy || raw.updatedBy || raw.updated_by || null
+  };
+}
+
+function publicSystemMaintenancePayload(settings) {
+  return {
+    maintenanceMode: Boolean(settings?.enabled),
+    enabled: Boolean(settings?.enabled),
+    message: settings?.message || SYSTEM_MAINTENANCE_DEFAULT_MESSAGE
+  };
+}
+
+async function loadSystemMaintenanceSettings(force = false) {
+  const now = Date.now();
+  if (!force && systemMaintenanceCache && now - systemMaintenanceCacheLoadedAt < SYSTEM_MAINTENANCE_CACHE_TTL_MS) {
+    return systemMaintenanceCache;
+  }
+
+  try {
+    const [rows] = await pool.query(
+      'SELECT setting_value, updated_by, updated_at FROM system_settings WHERE setting_key = ? LIMIT 1',
+      [SYSTEM_MAINTENANCE_SETTINGS_KEY]
+    );
+    const row = rows[0];
+    const parsed = row?.setting_value ? JSON.parse(row.setting_value) : {};
+    systemMaintenanceCache = normalizeSystemMaintenanceSettings(parsed, {
+      updatedBy: row?.updated_by || null,
+      updatedAt: row?.updated_at || null
+    });
+  } catch (error) {
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn('[system_maintenance] Falha ao carregar configuração:', error.message);
+    }
+    systemMaintenanceCache = normalizeSystemMaintenanceSettings({});
+  }
+
+  systemMaintenanceCacheLoadedAt = Date.now();
+  return systemMaintenanceCache;
+}
+
+async function saveSystemMaintenanceSettings({ enabled, message }, user) {
+  const current = await loadSystemMaintenanceSettings(true);
+  const normalizedMessage = String(message || current.message || SYSTEM_MAINTENANCE_DEFAULT_MESSAGE).trim() || SYSTEM_MAINTENANCE_DEFAULT_MESSAGE;
+  const nextEnabled = Boolean(enabled);
+  const nowIso = new Date().toISOString();
+  const actorName = getActorName(user);
+  const nextSettings = normalizeSystemMaintenanceSettings({
+    enabled: nextEnabled,
+    message: normalizedMessage,
+    activatedAt: nextEnabled ? (current.activatedAt || nowIso) : null,
+    activatedBy: nextEnabled ? (current.activatedBy || actorName) : null,
+    updatedAt: nowIso,
+    updatedBy: actorName
+  });
+
+  await pool.query(
+    `INSERT INTO system_settings (setting_key, setting_value, updated_by)
+     VALUES (?, ?, ?)
+     ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_by = VALUES(updated_by), updated_at = CURRENT_TIMESTAMP`,
+    [SYSTEM_MAINTENANCE_SETTINGS_KEY, JSON.stringify(nextSettings), actorName]
+  );
+
+  systemMaintenanceCache = nextSettings;
+  systemMaintenanceCacheLoadedAt = Date.now();
+  return nextSettings;
+}
+
+function sendMaintenanceModeResponse(req, res, action = 'blocked_by_maintenance') {
+  const settings = systemMaintenanceCache || normalizeSystemMaintenanceSettings({});
+  insertSecurityAuditLog({
+    req,
+    module: 'system',
+    action,
+    outcome: 'denied',
+    metadata: {
+      route: req.originalUrl || req.path,
+      method: req.method
+    },
+    origin: 'api'
+  });
+
+  return res.status(503).json({
+    error: settings.message || SYSTEM_MAINTENANCE_DEFAULT_MESSAGE,
+    code: 'SYSTEM_MAINTENANCE',
+    maintenanceMode: true
+  });
+}
+
+function isSystemMaintenanceExemptRoute(req) {
+  const route = String(req.path || req.originalUrl || '').split('?')[0];
+  if (req.method === 'OPTIONS') return true;
+  if (route === '/' || route === '/health' || route === '/api/health' || route === '/health/db' || route === '/api/health/db') return true;
+  if (route === '/login' || route === '/api/login') return true;
+  if (route === '/system/maintenance-status' || route === '/api/system/maintenance-status') return true;
+  if (route.startsWith('/uploads/')) return true;
+  return false;
+}
+
+async function systemMaintenanceGate(req, res, next) {
+  if (isSystemMaintenanceExemptRoute(req)) {
+    return next();
+  }
+
+  const maintenanceSettings = await loadSystemMaintenanceSettings();
+  if (!maintenanceSettings.enabled) {
+    return next();
+  }
+
+  const header = req.headers.authorization || '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : null;
+
+  if (token) {
+    try {
+      req.user = jwt.verify(token, SECRET);
+      if (isMasterAdminUser(req.user)) {
+        return next();
+      }
+    } catch (error) {
+      // Durante manutencao, usuarios sem sessao valida recebem a mensagem operacional unica.
+    }
+  }
+
+  return sendMaintenanceModeResponse(req, res, 'blocked_by_global_maintenance');
 }
 
 async function insertSystemActivityLog(req, res, responseBody, durationMs) {
@@ -11642,6 +11782,11 @@ async function authenticate(req, res, next) {
       req.user.tokenVersion = tokenVersion;
       req.user.mustChangePassword = mustChangePassword;
 
+      const maintenanceSettings = await loadSystemMaintenanceSettings();
+      if (maintenanceSettings.enabled && !isMasterAdminUser(req.user)) {
+        return sendMaintenanceModeResponse(req, res, 'blocked_authenticated_user_by_maintenance');
+      }
+
       if (mustChangePassword && !isPasswordChangeRouteAllowed(req)) {
         insertSecurityAuditLog({
           req,
@@ -11917,6 +12062,13 @@ app.get(['/health/db', '/api/health/db'], async (req, res) => {
     });
   }
 });
+
+app.get(['/system/maintenance-status', '/api/system/maintenance-status'], async (req, res) => {
+  const settings = await loadSystemMaintenanceSettings();
+  res.json(publicSystemMaintenancePayload(settings));
+});
+
+app.use(systemMaintenanceGate);
 
 async function handleManualWhatsAppSend(req, res, eventKey = 'manual_test') {
   try {
@@ -20878,6 +21030,41 @@ app.get('/admin/master-monitoring', authenticate, requireMasterAdmin, async (req
   }
 });
 
+app.get(['/admin/system-maintenance', '/api/admin/system-maintenance'], authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    const settings = await loadSystemMaintenanceSettings(true);
+    return res.json(settings);
+  } catch (error) {
+    console.error('[system_maintenance:get_error]', { error: error.message });
+    return res.status(500).json({ error: 'Nao foi possivel carregar o modo de manutencao.' });
+  }
+});
+
+app.put(['/admin/system-maintenance', '/api/admin/system-maintenance'], authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    const settings = await saveSystemMaintenanceSettings({
+      enabled: Boolean(req.body?.enabled || req.body?.maintenanceMode),
+      message: req.body?.message || SYSTEM_MAINTENANCE_DEFAULT_MESSAGE
+    }, req.user);
+
+    await insertSecurityAuditLog({
+      req,
+      module: 'system',
+      action: settings.enabled ? 'maintenance_enabled' : 'maintenance_disabled',
+      outcome: 'success',
+      recordType: 'system_settings',
+      recordId: SYSTEM_MAINTENANCE_SETTINGS_KEY,
+      newValue: publicSystemMaintenancePayload(settings),
+      origin: 'manual'
+    });
+
+    return res.json(settings);
+  } catch (error) {
+    console.error('[system_maintenance:update_error]', { error: error.message });
+    return res.status(500).json({ error: 'Nao foi possivel atualizar o modo de manutencao.' });
+  }
+});
+
 app.post('/auth/request-password-reset', passwordRecoveryRequestLimiter, async (req, res) => {
   try {
     const parsed = parseBodyWithSchema(passwordResetRequestSchema, req.body);
@@ -22606,6 +22793,24 @@ app.post('/login', loginLimiter, async (req, res) => {
     }
 
     const authenticatedUser = await buildAuthenticatedUser(user);
+    const maintenanceSettings = await loadSystemMaintenanceSettings();
+    if (maintenanceSettings.enabled && !isMasterAdminUser(authenticatedUser)) {
+      await insertSecurityAuditLog({
+        req,
+        user: authenticatedUser,
+        module: 'auth',
+        action: 'login_blocked_maintenance',
+        outcome: 'denied',
+        metadata: { maintenanceMode: true },
+        origin: 'api'
+      });
+      return res.status(503).json({
+        error: maintenanceSettings.message || SYSTEM_MAINTENANCE_DEFAULT_MESSAGE,
+        code: 'SYSTEM_MAINTENANCE',
+        maintenanceMode: true
+      });
+    }
+
     const token = signUserToken(authenticatedUser);
     await insertSecurityAuditLog({
       req,

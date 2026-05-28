@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import logo from './assets/logo3.png';
 import api, { getApiErrorMessage } from './api';
@@ -63,6 +63,7 @@ function Login() {
   const [crcRegisterOpen, setCrcRegisterOpen] = useState(false);
   const [crcRegisterForm, setCrcRegisterForm] = useState(initialCrcOperatorForm);
   const [crcRegisterLoading, setCrcRegisterLoading] = useState(false);
+  const [maintenanceNotice, setMaintenanceNotice] = useState({ open: false, message: 'Sistema em Manutenção' });
 
   const selectedModule = useMemo(
     () => experienceModules.find((item) => item.id === activeModule) || experienceModules[0],
@@ -75,6 +76,36 @@ function Login() {
   const updateRecoveryField = (field, value) => {
     setRecoveryForm((prev) => ({ ...prev, [field]: value }));
   };
+
+  useEffect(() => {
+    let active = true;
+
+    api.get('/system/maintenance-status')
+      .then((response) => {
+        if (!active) return;
+        if (response.data?.maintenanceMode || response.data?.enabled) {
+          setMaintenanceNotice({
+            open: true,
+            message: response.data?.message || 'Sistema em Manutenção'
+          });
+        }
+      })
+      .catch(() => {});
+
+    const handleMaintenanceMode = (event) => {
+      setMaintenanceNotice({
+        open: true,
+        message: event.detail?.message || 'Sistema em Manutenção'
+      });
+    };
+
+    window.addEventListener('nps:maintenance-mode', handleMaintenanceMode);
+
+    return () => {
+      active = false;
+      window.removeEventListener('nps:maintenance-mode', handleMaintenanceMode);
+    };
+  }, []);
 
   const openRecovery = () => {
     setRecoveryOpen(true);
@@ -131,6 +162,12 @@ function Login() {
 
       setError('Login inválido.');
     } catch (err) {
+      if (err.response?.data?.code === 'SYSTEM_MAINTENANCE' || err.response?.data?.maintenanceMode) {
+        setMaintenanceNotice({
+          open: true,
+          message: err.response?.data?.error || 'Sistema em Manutenção'
+        });
+      }
       setError(getApiErrorMessage(err, 'Nao foi possivel conectar com a API de autenticacao.'));
     } finally {
       setLoading(false);
@@ -336,6 +373,26 @@ function Login() {
           </button>
         </form>
       </section>
+
+      {maintenanceNotice.open && (
+        <div className="modal-backdrop maintenance-modal-backdrop" role="dialog" aria-modal="true">
+          <section className="modal-panel maintenance-modal-panel" onClick={(event) => event.stopPropagation()}>
+            <span className="system-chip maintenance-chip">Manutencao programada</span>
+            <h2>{maintenanceNotice.message || 'Sistema em Manutenção'}</h2>
+            <p>
+              O acesso operacional esta temporariamente bloqueado para manutencao.
+              Apenas o Administrador Master pode acessar o sistema neste periodo.
+            </p>
+            <button
+              type="button"
+              className="primary-action full-width"
+              onClick={() => setMaintenanceNotice((current) => ({ ...current, open: false }))}
+            >
+              Entendi
+            </button>
+          </section>
+        </div>
+      )}
 
       {recoveryOpen && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={closeRecovery}>

@@ -59,6 +59,7 @@ export function ProtectedRoute() {
     });
     window.addEventListener('storage', handleStorage);
     window.addEventListener('nps:auth-expired', handleStorage);
+    window.addEventListener('nps:maintenance-mode', handleStorage);
 
     touchSessionActivity();
     setRemainingMs(SESSION_IDLE_LIMIT_MS);
@@ -70,6 +71,7 @@ export function ProtectedRoute() {
       });
       window.removeEventListener('storage', handleStorage);
       window.removeEventListener('nps:auth-expired', handleStorage);
+      window.removeEventListener('nps:maintenance-mode', handleStorage);
       window.clearInterval(intervalId);
     };
   }, [sessionActive]);
