@@ -5,11 +5,13 @@ import { isMasterAdmin, readUser } from './constants';
 
 const statusLabels = {
   online: 'Online',
-  attention: 'Atenção',
+  attention: 'Atencao',
   error: 'Falha',
   not_configured: 'Configurar',
   unknown: 'Verificando'
 };
+
+const LOGS_PAGE_SIZE = 10;
 
 function formatNumber(value) {
   return new Intl.NumberFormat('pt-BR').format(Number(value || 0));
@@ -50,10 +52,7 @@ function formatDateTime(value) {
 function formatActorRole(value) {
   const role = String(value || '').trim();
   if (!role) return '';
-
-  return role
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+  return role.replace(/_/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function buildActorLine(item) {
@@ -64,14 +63,14 @@ function buildActorLine(item) {
   if (name) {
     return {
       primary: name,
-      secondary: [role, email].filter(Boolean).join(' · ') || 'Usuário identificado'
+      secondary: [role, email].filter(Boolean).join(' | ') || 'Usuario identificado'
     };
   }
 
   if (email) {
     return {
       primary: email,
-      secondary: role || 'Destinatário identificado'
+      secondary: role || 'Destinatario identificado'
     };
   }
 
@@ -84,7 +83,7 @@ function buildActorLine(item) {
 
   return {
     primary: 'Sistema',
-    secondary: 'Execução automática'
+    secondary: 'Execucao automatica'
   };
 }
 
@@ -94,8 +93,8 @@ function buildOriginLine(item) {
   const context = String(item?.context || '').trim();
 
   return {
-    primary: sourceDetail || item?.source || 'Origem não informada',
-    secondary: [origin, context].filter(Boolean).join(' · ') || 'Sem detalhe complementar'
+    primary: sourceDetail || item?.source || 'Origem nao informada',
+    secondary: [origin, context].filter(Boolean).join(' | ') || 'Sem detalhe complementar'
   };
 }
 
@@ -109,8 +108,6 @@ function sourceToneClass(source) {
   if (normalized === 'e-mail') return 'email';
   return 'neutral';
 }
-
-const LOGS_PAGE_SIZE = 10;
 
 function clampPercent(value, fallback = 0) {
   const number = Number(value);
@@ -180,6 +177,19 @@ function ProviderCard({ provider }) {
   );
 }
 
+function SectionHeading({ eyebrow, title, description, meta }) {
+  return (
+    <div className="monitor-section-heading">
+      <div>
+        <p className="eyebrow">{eyebrow}</p>
+        <h2>{title}</h2>
+        {description && <p className="base-subtitle">{description}</p>}
+      </div>
+      {meta && <span>{meta}</span>}
+    </div>
+  );
+}
+
 function MasterMonitoring() {
   const navigate = useNavigate();
   const currentUser = useMemo(() => readUser(), []);
@@ -198,7 +208,7 @@ function MasterMonitoring() {
       const response = await api.get('/admin/master-monitoring');
       setData(response.data);
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível carregar a monitoria master.');
+      setFeedback(error.response?.data?.error || 'Nao foi possivel carregar a monitoria master.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -257,6 +267,9 @@ function MasterMonitoring() {
   const communicationHealth = communicationTotal24h
     ? ((communicationTotal24h - communicationFailures24h) / communicationTotal24h) * 100
     : 100;
+  const healthScore = Number(overview.healthScore || 0);
+  const healthTone = healthScore >= 85 ? 'success' : healthScore >= 65 ? 'warning' : 'danger';
+
   const usefulProviders = useMemo(() => {
     const legacyWhatsAppHasUse = Boolean(whatsapp?.configured)
       || Number(whatsapp?.metrics?.total || 0) > 0
@@ -271,6 +284,7 @@ function MasterMonitoring() {
       legacyWhatsAppHasUse ? whatsapp : null
     ].filter(Boolean);
   }, [providers.railway, providers.resend, providers.vercel, whatsapp, whatsappService]);
+
   const actionItems = useMemo(() => {
     const items = [];
 
@@ -296,7 +310,7 @@ function MasterMonitoring() {
       items.push({
         tone: 'warning',
         title: 'Fila WhatsApp com lock ativo',
-        detail: 'Monitorar se os itens destravam no próximo ciclo automático.',
+        detail: 'Monitorar se os itens destravam no proximo ciclo automatico.',
         value: formatNumber(dispatchLocked)
       });
     }
@@ -304,8 +318,8 @@ function MasterMonitoring() {
     if (dispatchFailed24h > 0 || whatsappErrors24h > 0) {
       items.push({
         tone: 'danger',
-        title: 'Falhas WhatsApp nas últimas 24h',
-        detail: 'Acompanhar logs recentes e reprocessar apenas quando necessário.',
+        title: 'Falhas WhatsApp nas ultimas 24h',
+        detail: 'Acompanhar logs recentes e reprocessar apenas quando necessario.',
         value: formatNumber(whatsappErrors24h)
       });
     }
@@ -314,7 +328,7 @@ function MasterMonitoring() {
       items.push({
         tone: 'warning',
         title: 'Falhas de e-mail',
-        detail: 'Verificar destinatários, provedor e eventos de entrega.',
+        detail: 'Verificar destinatarios, provedor e eventos de entrega.',
         value: formatNumber(emailFailed24h)
       });
     }
@@ -331,8 +345,8 @@ function MasterMonitoring() {
     if (!items.length) {
       items.push({
         tone: 'success',
-        title: 'Operação sem alerta crítico',
-        detail: 'Monitoria não encontrou vencimentos ou falhas relevantes agora.',
+        title: 'Operacao sem alerta critico',
+        detail: 'Monitoria nao encontrou vencimentos ou falhas relevantes agora.',
         value: 'OK'
       });
     }
@@ -349,6 +363,9 @@ function MasterMonitoring() {
     overdueComplaints,
     whatsappErrors24h
   ]);
+
+  const criticalAlerts = actionItems.filter((item) => item.tone === 'danger').length;
+  const warningAlerts = actionItems.filter((item) => item.tone === 'warning').length;
   const recentActivity = useMemo(() => (
     Array.isArray(activity.recent) ? activity.recent.slice(0, 40) : []
   ), [activity.recent]);
@@ -384,10 +401,11 @@ function MasterMonitoring() {
 
   return (
     <main className="app-page master-monitoring-page">
-      <header className="topbar monitoring-topbar">
+      <header className="page-heading monitoring-topbar">
         <div>
           <p className="eyebrow">Administrador Master</p>
           <h1>Monitoria do sistema</h1>
+          <p>Central executiva para acompanhar saude operacional, SLA, banco, canais e auditoria em tempo real.</p>
         </div>
         <div className="heading-actions">
           <button type="button" className="ghost-action" onClick={() => navigate('/home')}>Home</button>
@@ -406,71 +424,94 @@ function MasterMonitoring() {
         </section>
       ) : (
         <>
-          <section className="monitor-hero-panel">
-            <div>
-              <p className="eyebrow">Monitoria online</p>
-              <h2>Central executiva de saúde do sistema</h2>
-              <p>Leitura em tempo real da operação, infraestrutura, banco de dados e canais de comunicação.</p>
-            </div>
-            <div className="monitor-hero-meta" aria-label="Estado da atualização">
-              <span>Atualiza a cada {Math.round((data?.refreshMs || 15000) / 1000)}s</span>
-              <strong>{formatDateTime(data?.generatedAt)}</strong>
-              <small>última leitura consolidada</small>
-            </div>
-          </section>
-
-          <section className="monitor-kpi-grid" aria-label="Indicadores principais">
-            <GaugeCard label="Saúde geral" percent={overview.healthScore} value={formatPercent(overview.healthScore)} detail={`${formatNumber(overview.activities24h)} movimentações em 24h`} tone="gold" />
-            <GaugeCard label="SLA de reclamações" percent={complaintSlaPercent} value={formatPercent(complaintSlaPercent)} detail={`${formatNumber(overdueComplaints)} vencidas de ${formatNumber(openComplaints)} abertas`} tone={overdueComplaints ? 'danger' : 'success'} />
-            <GaugeCard label="Prazos internos" percent={internalSlaPercent} value={formatPercent(internalSlaPercent)} detail={`${formatNumber(internalOpenTotal)} em tratativa interna · ${formatNumber(internalOverdueTotal)} vencidas`} tone={internalOverdueTotal ? 'danger' : 'success'} />
-            <GaugeCard label="Fila WhatsApp" percent={dispatchPending ? Math.max(15, 100 - dispatchPending) : 100} value={formatNumber(dispatchPending)} detail={`${formatNumber(campaignPending)} campanhas pendentes · ${formatNumber(dispatchLocked)} locks`} tone={dispatchFailed24h || dispatchLocked ? 'danger' : 'neutral'} />
-            <GaugeCard label="Comunicação 24h" percent={communicationHealth} value={formatPercent(communicationHealth)} detail={`${formatNumber(communicationTotal24h)} eventos · ${formatNumber(communicationFailures24h)} falhas`} tone={communicationFailures24h ? 'danger' : 'success'} />
-            <GaugeCard label="API e banco" percent={mysqlLatencyHealth} value={`${formatNumber(database.latencyMs)} ms`} detail={`CPU ${formatPercent(runtime.processCpuPercent)} · ${formatPercent(memoryUsagePercent)} memória`} tone={database.latencyMs > 250 || httpErrors24h ? 'danger' : 'neutral'} />
-          </section>
-
-          <section className="monitor-action-grid">
-            <article className="management-panel monitor-panel monitor-priority-panel">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Ações necessárias</p>
-                  <h2>Fila de atenção da monitoria</h2>
-                  <p className="base-subtitle">Mostra somente o que exige acompanhamento real, sem cards decorativos.</p>
+          <section className="monitor-command-center">
+            <article className={`monitor-hero-panel ${healthTone}`}>
+              <div className="monitor-hero-copy">
+                <p className="eyebrow">Monitoria online</p>
+                <h2>Saude geral do ambiente</h2>
+                <p>Leitura consolidada da operacao, infraestrutura, banco de dados, WhatsApp, e-mail e auditoria.</p>
+                <div className="monitor-hero-pills">
+                  <span>{formatNumber(criticalAlerts)} critico(s)</span>
+                  <span>{formatNumber(warningAlerts)} atencao</span>
+                  <span>{formatNumber(overview.activities24h)} movimentos 24h</span>
                 </div>
               </div>
+              <div className="monitor-hero-score" aria-label="Saude geral">
+                <span>Health score</span>
+                <strong>{formatPercent(overview.healthScore)}</strong>
+                <small>Atualizado em {formatDateTime(data?.generatedAt)}</small>
+                <em>refresh {Math.round((data?.refreshMs || 15000) / 1000)}s</em>
+              </div>
+            </article>
+
+            <article className="management-panel monitor-panel monitor-priority-panel">
+              <SectionHeading
+                eyebrow="Agora"
+                title="Fila de atencao"
+                description="Somente ocorrencias que exigem acompanhamento real."
+                meta={`${actionItems.length} item(ns)`}
+              />
               <div className="monitor-action-list">
                 {actionItems.map((item) => (
                   <ActionItem key={`${item.title}-${item.value}`} {...item} />
                 ))}
               </div>
             </article>
+          </section>
 
+          <section className="monitor-section-block">
+            <SectionHeading
+              eyebrow="Indicadores"
+              title="Painel executivo"
+              description="KPIs principais em ordem de impacto operacional."
+            />
+            <div className="monitor-kpi-grid" aria-label="Indicadores principais">
+              <GaugeCard label="Saude geral" percent={overview.healthScore} value={formatPercent(overview.healthScore)} detail={`${formatNumber(overview.activities24h)} movimentacoes em 24h`} tone="gold" />
+              <GaugeCard label="SLA de reclamacoes" percent={complaintSlaPercent} value={formatPercent(complaintSlaPercent)} detail={`${formatNumber(overdueComplaints)} vencidas de ${formatNumber(openComplaints)} abertas`} tone={overdueComplaints ? 'danger' : 'success'} />
+              <GaugeCard label="Prazos internos" percent={internalSlaPercent} value={formatPercent(internalSlaPercent)} detail={`${formatNumber(internalOpenTotal)} em tratativa interna | ${formatNumber(internalOverdueTotal)} vencidas`} tone={internalOverdueTotal ? 'danger' : 'success'} />
+              <GaugeCard label="Fila WhatsApp" percent={dispatchPending ? Math.max(15, 100 - dispatchPending) : 100} value={formatNumber(dispatchPending)} detail={`${formatNumber(campaignPending)} campanhas pendentes | ${formatNumber(dispatchLocked)} locks`} tone={dispatchFailed24h || dispatchLocked ? 'danger' : 'neutral'} />
+              <GaugeCard label="Comunicacao 24h" percent={communicationHealth} value={formatPercent(communicationHealth)} detail={`${formatNumber(communicationTotal24h)} eventos | ${formatNumber(communicationFailures24h)} falhas`} tone={communicationFailures24h ? 'danger' : 'success'} />
+              <GaugeCard label="API e banco" percent={mysqlLatencyHealth} value={`${formatNumber(database.latencyMs)} ms`} detail={`CPU ${formatPercent(runtime.processCpuPercent)} | ${formatPercent(memoryUsagePercent)} memoria`} tone={database.latencyMs > 250 || httpErrors24h ? 'danger' : 'neutral'} />
+            </div>
+          </section>
+
+          <section className="monitor-operations-grid">
             <article className="management-panel monitor-panel">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Reclamações</p>
-                  <h2>SLA interno e auditoria SAC</h2>
-                </div>
-              </div>
+              <SectionHeading
+                eyebrow="Reclamacoes"
+                title="SLA interno e auditoria SAC"
+                description="Escalonamento por coordenador, gerente, SAC e administracao."
+              />
               <dl className="monitor-detail-grid compact">
                 <div><dt>Coordenador</dt><dd>{formatNumber(internalSla.coordinatorWaiting)}</dd><small>{formatNumber(coordinatorOverdue)} vencidas</small></div>
                 <div><dt>Gerente</dt><dd>{formatNumber(internalSla.managerWaiting)}</dd><small>{formatNumber(managerOverdue)} vencidas</small></div>
-                <div><dt>Auditoria SAC</dt><dd>{formatNumber(internalSla.sacAuditWaiting)}</dd><small>aguardando validação</small></div>
-                <div><dt>Administração</dt><dd>{formatNumber(internalSla.adminEscalated)}</dd><small>escaladas</small></div>
-                <div><dt>Próximas 48h</dt><dd>{formatNumber(internalSla.due48h)}</dd><small>SLA inicial a vencer</small></div>
+                <div><dt>Auditoria SAC</dt><dd>{formatNumber(internalSla.sacAuditWaiting)}</dd><small>aguardando validacao</small></div>
+                <div><dt>Administracao</dt><dd>{formatNumber(internalSla.adminEscalated)}</dd><small>escaladas</small></div>
+                <div><dt>Proximas 48h</dt><dd>{formatNumber(internalSla.due48h)}</dd><small>SLA inicial a vencer</small></div>
                 <div><dt>Abertas</dt><dd>{formatNumber(openComplaints)}</dd><small>{formatNumber(overdueComplaints)} fora do prazo</small></div>
+              </dl>
+            </article>
+
+            <article className="management-panel monitor-panel">
+              <SectionHeading
+                eyebrow="Comunicacao"
+                title="Filas e entregas"
+                description="Resumo objetivo dos canais que afetam atendimento e automacoes."
+              />
+              <dl className="monitor-detail-grid compact">
+                <div><dt>E-mails 24h</dt><dd>{formatNumber(emailTotal24h)}</dd><small>{formatNumber(emailFailed24h)} falhas</small></div>
+                <div><dt>WhatsApp 24h</dt><dd>{formatNumber(overview.communications?.whatsapp24h)}</dd><small>{formatNumber(whatsappErrors24h)} falhas</small></div>
+                <div><dt>Fila WhatsApp</dt><dd>{formatNumber(dispatchPending)}</dd><small>{formatNumber(dispatchLocked)} locks ativos</small></div>
+                <div><dt>Campanhas</dt><dd>{formatNumber(campaignPending)}</dd><small>pendentes de processamento</small></div>
+                <div><dt>Health canal</dt><dd>{formatPercent(communicationHealth)}</dd><small>{formatNumber(communicationFailures24h)} falhas totais</small></div>
+                <div><dt>Eventos</dt><dd>{formatNumber(communicationTotal24h)}</dd><small>volume total em 24h</small></div>
               </dl>
             </article>
           </section>
 
-          <section className="monitor-grid">
+          <section className="monitor-infra-layout">
             <article className="management-panel monitor-panel">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">API Node</p>
-                  <h2>Capacidade da API</h2>
-                </div>
-                <span className={statusClass(runtime.status)}>{statusLabels[runtime.status] || 'Online'}</span>
-              </div>
+              <SectionHeading eyebrow="API Node" title="Capacidade da API" meta={statusLabels[runtime.status] || 'Online'} />
               <dl className="monitor-detail-grid">
                 <div><dt>Uptime</dt><dd>{formatDuration(runtime.uptimeSeconds)}</dd></div>
                 <div><dt>Heap usado</dt><dd>{formatBytes(runtime.memory?.heapUsedBytes)}</dd></div>
@@ -480,36 +521,36 @@ function MasterMonitoring() {
             </article>
 
             <article className="management-panel monitor-panel">
-              <div className="panel-heading">
-                <div>
-                  <p className="eyebrow">Railway MySQL</p>
-                  <h2>Capacidade do banco</h2>
-                </div>
-                <span className={statusClass(database.status)}>{statusLabels[database.status] || 'Online'}</span>
-              </div>
+              <SectionHeading eyebrow="Railway MySQL" title="Capacidade do banco" meta={`${formatNumber(database.latencyMs)} ms`} />
               <dl className="monitor-detail-grid">
                 <div><dt>Storage</dt><dd>{formatBytes(database.capacity?.totalBytes)}</dd></div>
                 <div><dt>Tabelas</dt><dd>{formatNumber(database.capacity?.tableCount)}</dd></div>
-                <div><dt>Conexões</dt><dd>{formatNumber(database.connections?.current)} / {formatNumber(database.connections?.max)}</dd></div>
+                <div><dt>Conexoes</dt><dd>{formatNumber(database.connections?.current)} / {formatNumber(database.connections?.max)}</dd></div>
                 <div><dt>Queries lentas</dt><dd>{formatNumber(database.traffic?.slowQueries)}</dd></div>
               </dl>
             </article>
           </section>
 
-          <section className="monitor-provider-grid" aria-label="Serviços monitorados">
-            {usefulProviders.map((provider) => (
-              <ProviderCard key={provider?.label || provider?.metrics?.baseUrl || provider?.status} provider={provider} />
-            ))}
+          <section className="monitor-section-block">
+            <SectionHeading
+              eyebrow="Servicos"
+              title="Provedores monitorados"
+              description="Somente integracoes com utilidade operacional ou configuracao ativa."
+            />
+            <div className="monitor-provider-grid" aria-label="Servicos monitorados">
+              {usefulProviders.map((provider) => (
+                <ProviderCard key={provider?.label || provider?.metrics?.baseUrl || provider?.status} provider={provider} />
+              ))}
+            </div>
           </section>
 
-          <section className="management-panel monitor-panel">
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">Movimentações</p>
-                <h2>Linha do tempo operacional</h2>
-                <p className="base-subtitle">Cada evento mostra a origem detalhada, o usuário vinculado e o resumo operacional consolidado.</p>
-              </div>
-            </div>
+          <section className="management-panel monitor-panel monitor-activity-panel">
+            <SectionHeading
+              eyebrow="Auditoria"
+              title="Linha do tempo operacional"
+              description="Eventos recentes com origem, usuario vinculado e resumo consolidado."
+              meta={`${filteredActivity.length} registro(s)`}
+            />
             <div className="monitor-source-strip">
               {(activity.bySource24h || []).map((item) => (
                 <span key={item.source}>{item.source}: <strong>{formatNumber(item.total)}</strong></span>
@@ -547,7 +588,7 @@ function MasterMonitoring() {
 
                         <div className="monitor-timeline-badges">
                           <span className="monitor-source-badge">{item.source || 'Sistema'}</span>
-                          <span className="monitor-action-badge">{item.action || 'Movimentação'}</span>
+                          <span className="monitor-action-badge">{item.action || 'Movimentacao'}</span>
                         </div>
                       </div>
 
@@ -559,7 +600,7 @@ function MasterMonitoring() {
                         </section>
 
                         <section className="monitor-timeline-block">
-                          <span className="monitor-block-label">Usuário</span>
+                          <span className="monitor-block-label">Usuario</span>
                           <strong>{actor.primary}</strong>
                           <small>{actor.secondary}</small>
                         </section>
@@ -568,7 +609,7 @@ function MasterMonitoring() {
                           <span className="monitor-block-label">Detalhes</span>
                           <strong>{item.summary || 'Sem detalhe adicional'}</strong>
                           <small>
-                            {[item.context, item.status_code ? `Status HTTP ${item.status_code}` : ''].filter(Boolean).join(' · ') || 'Sem contexto adicional'}
+                            {[item.context, item.status_code ? `Status HTTP ${item.status_code}` : ''].filter(Boolean).join(' | ') || 'Sem contexto adicional'}
                           </small>
                         </section>
                       </div>
@@ -590,26 +631,25 @@ function MasterMonitoring() {
                 >
                   Anterior
                 </button>
-                <strong>Página {activityPage} de {activityTotalPages}</strong>
+                <strong>Pagina {activityPage} de {activityTotalPages}</strong>
                 <button
                   type="button"
                   className="ghost-action"
                   onClick={() => setActivityPage((page) => Math.min(activityTotalPages, page + 1))}
                   disabled={activityPage >= activityTotalPages}
                 >
-                  Próxima
+                  Proxima
                 </button>
               </div>
             </div>
           </section>
 
-          <section className="management-panel monitor-panel">
-            <div className="panel-heading">
-              <div>
-                <p className="eyebrow">Capacidade</p>
-                <h2>Distribuição de storage MySQL</h2>
-              </div>
-            </div>
+          <section className="management-panel monitor-panel monitor-storage-panel">
+            <SectionHeading
+              eyebrow="Capacidade"
+              title="Distribuicao de storage MySQL"
+              description="Maiores tabelas para orientar limpeza, indice e retencao."
+            />
             <div className="monitor-table-grid">
               {(database.largestTables || []).map((table) => (
                 <article key={table.tableName} className="monitor-table-card">
@@ -618,6 +658,9 @@ function MasterMonitoring() {
                   <small>{formatNumber(table.estimatedRows)} linhas estimadas</small>
                 </article>
               ))}
+              {!(database.largestTables || []).length && (
+                <p className="empty-state">Nenhuma tabela retornada pela monitoria.</p>
+              )}
             </div>
           </section>
         </>

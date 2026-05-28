@@ -7834,7 +7834,184 @@ a {
   margin-right: auto;
 }
 
+.master-monitoring-page .monitoring-topbar,
+.master-monitoring-page .form-feedback,
+.monitor-command-center,
+.monitor-section-block,
+.monitor-operations-grid,
+.monitor-infra-layout,
+.monitor-activity-panel,
+.monitor-storage-panel {
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.monitoring-topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 16px;
+  border-left: 6px solid var(--gold);
+}
+
+.monitoring-topbar p:not(.eyebrow) {
+  max-width: 780px;
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.monitor-command-center {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(340px, 0.8fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.monitor-command-center .monitor-hero-panel {
+  width: 100%;
+  margin: 0;
+}
+
+.monitor-hero-copy {
+  min-width: 0;
+}
+
+.monitor-hero-panel.success {
+  border-color: rgba(39, 129, 94, 0.24);
+}
+
+.monitor-hero-panel.warning {
+  border-color: rgba(212, 167, 100, 0.36);
+}
+
+.monitor-hero-panel.danger {
+  border-color: rgba(196, 69, 54, 0.34);
+}
+
+.monitor-hero-score {
+  min-height: 150px;
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  padding: 20px;
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 95% 5%, rgba(212, 167, 100, 0.32), transparent 34%),
+    linear-gradient(155deg, #151a21, #2d2d31 66%, #72542f);
+  color: #fff;
+}
+
+.monitor-hero-score span,
+.monitor-hero-score small,
+.monitor-hero-score em {
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.monitor-hero-score strong {
+  color: #fff;
+  font-size: clamp(42px, 5vw, 64px);
+  line-height: 0.95;
+}
+
+.monitor-hero-score small,
+.monitor-hero-score em {
+  text-transform: none;
+}
+
+.monitor-hero-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.monitor-hero-pills span {
+  padding: 8px 10px;
+  border: 1px solid rgba(200, 154, 87, 0.24);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.64);
+  color: var(--brand-strong);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.monitor-section-block {
+  display: grid;
+  gap: 12px;
+}
+
+.monitor-section-block .monitor-kpi-grid,
+.monitor-section-block .monitor-provider-grid {
+  width: 100%;
+  margin: 0;
+}
+
+.monitor-section-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+}
+
+.monitor-section-heading h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: clamp(20px, 2vw, 26px);
+}
+
+.monitor-section-heading .base-subtitle {
+  margin: 4px 0 0;
+}
+
+.monitor-section-heading > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 32px;
+  padding: 6px 11px;
+  border: 1px solid rgba(200, 154, 87, 0.24);
+  border-radius: 999px;
+  background: rgba(200, 154, 87, 0.12);
+  color: var(--brand-strong);
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.monitor-operations-grid,
+.monitor-infra-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: stretch;
+}
+
+.monitor-activity-panel,
+.monitor-storage-panel {
+  margin-top: 0;
+}
+
+.monitor-activity-panel .monitor-timeline-card {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(249, 244, 237, 0.9));
+}
+
+.monitor-storage-panel .monitor-table-grid {
+  width: 100%;
+}
+
 @media (max-width: 1180px) {
+  .monitor-command-center,
+  .monitor-operations-grid,
+  .monitor-infra-layout {
+    grid-template-columns: 1fr;
+  }
+
   .monitor-kpi-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -7849,6 +8026,10 @@ a {
 }
 
 @media (max-width: 820px) {
+  .monitoring-topbar {
+    grid-template-columns: 1fr;
+  }
+
   .monitor-hero-panel,
   .monitor-action-grid,
   .monitor-grid,
@@ -7876,6 +8057,10 @@ a {
   .monitor-detail-grid,
   .monitor-provider-metrics {
     grid-template-columns: 1fr;
+  }
+
+  .monitor-section-heading {
+    display: grid;
   }
 
   .monitor-timeline-item {
