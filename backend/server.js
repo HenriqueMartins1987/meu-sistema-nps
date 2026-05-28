@@ -91,6 +91,12 @@ let io = null;
 // ============================================
 const PORT = process.env.PORT || 3001;
 const SECRET = process.env.JWT_SECRET || crypto.randomBytes(32).toString('hex');
+const jwtExpiresIn = process.env.JWT_EXPIRES_IN || '8h';
+const jwtIssuer = process.env.JWT_ISSUER || 'meu-sistema-nps';
+const defaultCompanyName = process.env.DEFAULT_COMPANY_NAME || 'Grupo Sorria';
+if (!process.env.JWT_SECRET && process.env.NODE_ENV === 'production') {
+  console.warn('[security] JWT_SECRET não configurado. Configure uma chave fixa no ambiente para evitar expiração involuntária das sessões em cada deploy.');
+}
 const defaultPublicBaseUrl = process.env.RENDER_EXTERNAL_URL
   || (process.env.NODE_ENV === 'production'
     ? 'https://meu-sistema-nps-backend.onrender.com'
@@ -171,6 +177,11 @@ const configuredAllowedOrigins = Array.from(new Set([
 fs.mkdirSync(uploadDir, { recursive: true });
 fs.mkdirSync(reportsDir, { recursive: true });
 
+function getEnvPositiveNumber(name, fallback) {
+  const value = Number(process.env[name] || fallback);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 function isAllowedOrigin(origin) {
   if (!origin) return true;
   if (configuredAllowedOrigins.includes(origin)) return true;
@@ -248,6 +259,50 @@ const storage = multer.diskStorage({
   },
   filename: (req, file, cb) => {
     cb(null, `${Date.now()}${getSafeUploadExtension(file)}`);
+  }
+});
+
+const loginLimiter = rateLimit({
+  windowMs: getEnvPositiveNumber('LOGIN_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
+  max: getEnvPositiveNumber('LOGIN_RATE_LIMIT_MAX', 8),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Muitas tentativas de login. Aguarde alguns minutos e tente novamente.',
+    code: 'AUTH_LOGIN_RATE_LIMIT'
+  },
+  handler: (req, res, next, options) => {
+    insertSecurityAuditLog({
+      req,
+      module: 'auth',
+      action: 'login_rate_limited',
+      outcome: 'denied',
+      metadata: { login: sanitizeActivityValue(req.body?.email || req.body?.username || '', 'email') },
+      origin: 'api'
+    });
+    return res.status(options.statusCode).json(options.message);
+  }
+});
+
+const webhookLimiter = rateLimit({
+  windowMs: getEnvPositiveNumber('WEBHOOK_RATE_LIMIT_WINDOW_MS', 60 * 1000),
+  max: getEnvPositiveNumber('WEBHOOK_RATE_LIMIT_MAX', 600),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Muitas requisições de webhook em pouco tempo.',
+    code: 'WEBHOOK_RATE_LIMIT'
+  }
+});
+
+const exportLimiter = rateLimit({
+  windowMs: getEnvPositiveNumber('EXPORT_RATE_LIMIT_WINDOW_MS', 15 * 60 * 1000),
+  max: getEnvPositiveNumber('EXPORT_RATE_LIMIT_MAX', 30),
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    error: 'Muitas exportações solicitadas em pouco tempo.',
+    code: 'EXPORT_RATE_LIMIT'
   }
 });
 
@@ -1551,15 +1606,39 @@ function isCompleteBrazilPhone(value) {
 
 const sensitiveActivityKeys = new Set([
   'password',
+  'senha',
+  'currentpassword',
   'current_password',
+  'newpassword',
   'new_password',
   'token',
+  'access_token',
+  'refresh_token',
   'authorization',
   'jwt',
   'secret',
+  'apikey',
+  'api_key',
+  'apiKey',
+  'cookie',
+  'set-cookie',
   'smtp_pass',
-  'db_password'
+  'db_password',
+  'dbpassword',
+  'connection_string',
+  'database_url'
 ]);
+
+const maskedAuditKeyPatterns = [
+  /cpf/i,
+  /documento/i,
+  /phone/i,
+  /telefone/i,
+  /whatsapp/i,
+  /recipient_phone/i,
+  /patient_phone/i,
+  /email/i
+];
 
 function getUserEmailTarget(user) {
   return String(user?.email || '').trim().toLowerCase();
@@ -1597,8 +1676,9 @@ function formatMessageDateTime(value) {
 
 function sanitizeActivityValue(value, key = '') {
   if (value === null || value === undefined) return value;
-  if (sensitiveActivityKeys.has(String(key || '').toLowerCase())) return '[redacted]';
-  if (Array.isArray(value)) return value.slice(0, 15).map((item) => sanitizeActivityValue(item));
+  const normalizedKey = String(key || '').replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  if (sensitiveActivityKeys.has(String(key || '').toLowerCase()) || sensitiveActivityKeys.has(normalizedKey)) return '[redacted]';
+  if (Array.isArray(value)) return value.slice(0, 15).map((item) => sanitizeActivityValue(item, key));
   if (typeof value === 'object') {
     return Object.entries(value).reduce((acc, [entryKey, entryValue]) => {
       acc[entryKey] = sanitizeActivityValue(entryValue, entryKey);
@@ -1607,6 +1687,19 @@ function sanitizeActivityValue(value, key = '') {
   }
 
   const text = String(value);
+  if (maskedAuditKeyPatterns.some((pattern) => pattern.test(String(key || '')))) {
+    const digits = text.replace(/\D/g, '');
+
+    if (String(key || '').toLowerCase().includes('email') && text.includes('@')) {
+      const [name, domain] = text.split('@');
+      return `${name.slice(0, 2)}***@${domain || 'dominio'}`;
+    }
+
+    if (digits.length >= 8) {
+      return `${digits.slice(0, 2)}***${digits.slice(-4)}`;
+    }
+  }
+
   return text.length > 300 ? `${text.slice(0, 297)}...` : text;
 }
 
@@ -1674,6 +1767,71 @@ function compactPayload(value) {
   const sanitized = sanitizeActivityValue(value || {});
   const text = JSON.stringify(sanitized);
   return text && text.length > 4000 ? `${text.slice(0, 3997)}...` : text;
+}
+
+async function insertSecurityAuditLog({
+  req = null,
+  user = null,
+  module = 'sistema',
+  action = 'evento',
+  outcome = 'success',
+  recordType = null,
+  recordId = null,
+  previousValue = null,
+  newValue = null,
+  metadata = null,
+  origin = 'manual'
+} = {}) {
+  try {
+    const actor = user || req?.user || null;
+    await pool.query(
+      `INSERT INTO security_audit_logs
+       (company_id, actor_user_id, actor_name, actor_email, actor_role, module, action, outcome, record_type, record_id, previous_value, new_value, metadata, ip_address, user_agent, origin)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        Number(actor?.company_id || actor?.companyId || 1) || 1,
+        actor?.id || null,
+        actor?.name || null,
+        actor?.email || null,
+        actor?.role || null,
+        String(module || 'sistema').slice(0, 80),
+        String(action || 'evento').slice(0, 120),
+        String(outcome || 'success').slice(0, 40),
+        recordType ? String(recordType).slice(0, 80) : null,
+        recordId ? String(recordId).slice(0, 120) : null,
+        previousValue === null || previousValue === undefined ? null : compactPayload(previousValue),
+        newValue === null || newValue === undefined ? null : compactPayload(newValue),
+        metadata === null || metadata === undefined ? null : compactPayload(metadata),
+        req ? getRequestIp(req) : null,
+        req ? String(req.headers['user-agent'] || '').slice(0, 500) || null : null,
+        String(origin || 'manual').slice(0, 40)
+      ]
+    );
+  } catch (error) {
+    if (process.env.NODE_ENV !== 'test') {
+      console.warn('[security_audit] Falha ao gravar evento:', error.message);
+    }
+  }
+}
+
+function sendAuthorizationError(req, res, statusCode, code, message, auditMetadata = {}) {
+  insertSecurityAuditLog({
+    req,
+    module: 'auth',
+    action: code || 'access_denied',
+    outcome: 'denied',
+    metadata: {
+      route: req.originalUrl || req.path,
+      method: req.method,
+      ...auditMetadata
+    },
+    origin: 'api'
+  });
+
+  return res.status(statusCode).json({
+    error: message,
+    code
+  });
 }
 
 async function insertSystemActivityLog(req, res, responseBody, durationMs) {
@@ -2522,6 +2680,100 @@ async function ensureIndex(table, indexName, definition) {
   }
 }
 
+async function ensureTenantColumn(table) {
+  const indexName = `idx_${table}_company_id`.slice(0, 64);
+  await ensureColumn(table, 'company_id', 'INT NULL DEFAULT 1');
+  await ensureIndex(table, indexName, `INDEX \`${indexName}\` (company_id)`);
+  await pool.query(`UPDATE \`${table}\` SET company_id = 1 WHERE company_id IS NULL`);
+}
+
+async function ensureTenantPreparationSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS companies (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      name VARCHAR(180) NOT NULL,
+      trade_name VARCHAR(180) NULL,
+      document_number VARCHAR(40) NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'active',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_companies_name (name)
+    )
+  `);
+
+  await pool.query(
+    `INSERT INTO companies (id, name, trade_name, status)
+     VALUES (1, ?, ?, 'active')
+     ON DUPLICATE KEY UPDATE
+       name = VALUES(name),
+       trade_name = COALESCE(trade_name, VALUES(trade_name)),
+       status = COALESCE(status, VALUES(status))`,
+    [defaultCompanyName, defaultCompanyName]
+  );
+}
+
+async function ensureOperationalTenantColumns() {
+  const tenantTables = [
+    'clinics',
+    'users',
+    'user_clinics',
+    'dental_card_leads',
+    'dental_card_attempts',
+    'dental_card_attachments',
+    'dental_card_notification_settings',
+    'dental_card_notification_logs',
+    'dental_card_message_templates',
+    'dental_card_audit_logs',
+    'crc_collaborators',
+    'financial_intelligence',
+    'crc_collaborator_monthly_costs',
+    'crc_monthly_operational_costs',
+    'system_settings',
+    'whatsapp_service_sessions',
+    'whatsapp_service_message_history',
+    'whatsapp_instances',
+    'whatsapp_templates',
+    'whatsapp_conversations',
+    'whatsapp_messages',
+    'whatsapp_chatbot_flows',
+    'whatsapp_chatbot_sessions',
+    'whatsapp_campaign_recipients',
+    'whatsapp_absent_patients',
+    'whatsapp_nps_invites',
+    'whatsapp_attendance_queue',
+    'whatsapp_dispatch_queue',
+    'whatsapp_send_idempotency',
+    'whatsapp_evolution_logs',
+    'partner_video_contacts',
+    'partner_video_daily_controls',
+    'partner_video_logs',
+    'whatsapp_operator_status',
+    'notification_events',
+    'notification_logs',
+    'system_activity_logs',
+    'security_audit_logs',
+    'api_clients',
+    'ai_analysis_jobs',
+    'email_delivery_logs',
+    'password_reset_requests',
+    'notification_hidden',
+    'patient_interactions',
+    'patient_interaction_logs',
+    'registration_requests',
+    'nps_responses',
+    'nps_treatment_logs',
+    'complaints',
+    'complaint_evidences',
+    'complaint_logs',
+    'whatsapp_message_logs',
+    'uploaded_files'
+  ];
+
+  for (const table of tenantTables) {
+    await ensureTenantColumn(table);
+  }
+}
+
 function getDefaultWhatsAppSessionSector(sessionId) {
   if (sessionId === WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME) return 'Confirmação e Agendamento';
   if (sessionId === WHATSAPP_NOTIFICATION_INSTANCE_NAME) return 'Reclamações';
@@ -2715,6 +2967,7 @@ async function syncDefaultWhatsAppSessionsWithClinics() {
 
 async function ensureDatabaseSchema() {
   await ensureUploadedFilesTable();
+  await ensureTenantPreparationSchema();
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS clinics (
@@ -3761,6 +4014,70 @@ async function ensureDatabaseSchema() {
   `);
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS security_audit_logs (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      company_id INT NULL DEFAULT 1,
+      actor_user_id INT NULL,
+      actor_name VARCHAR(160) NULL,
+      actor_email VARCHAR(180) NULL,
+      actor_role VARCHAR(80) NULL,
+      module VARCHAR(80) NOT NULL,
+      action VARCHAR(120) NOT NULL,
+      outcome VARCHAR(40) NOT NULL DEFAULT 'success',
+      record_type VARCHAR(80) NULL,
+      record_id VARCHAR(120) NULL,
+      previous_value LONGTEXT NULL,
+      new_value LONGTEXT NULL,
+      metadata LONGTEXT NULL,
+      ip_address VARCHAR(120) NULL,
+      user_agent VARCHAR(500) NULL,
+      origin VARCHAR(40) NOT NULL DEFAULT 'manual',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_security_audit_company_created (company_id, created_at),
+      INDEX idx_security_audit_actor (actor_user_id),
+      INDEX idx_security_audit_module_action (module, action),
+      INDEX idx_security_audit_record (record_type, record_id),
+      INDEX idx_security_audit_outcome (outcome)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS api_clients (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      company_id INT NULL DEFAULT 1,
+      name VARCHAR(160) NOT NULL,
+      client_key_hash VARCHAR(255) NULL,
+      scopes LONGTEXT NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'inactive',
+      created_by VARCHAR(180) NULL,
+      revoked_at DATETIME NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_api_clients_company_status (company_id, status)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ai_analysis_jobs (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      company_id INT NULL DEFAULT 1,
+      module VARCHAR(80) NOT NULL,
+      source_record_type VARCHAR(80) NULL,
+      source_record_id VARCHAR(120) NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'disabled',
+      requested_by_user_id INT NULL,
+      input_hash VARCHAR(120) NULL,
+      result_payload LONGTEXT NULL,
+      error_message TEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      processed_at DATETIME NULL,
+      INDEX idx_ai_jobs_company_module (company_id, module),
+      INDEX idx_ai_jobs_status (status),
+      INDEX idx_ai_jobs_source (source_record_type, source_record_id)
+    )
+  `);
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS email_delivery_logs (
       id INT AUTO_INCREMENT PRIMARY KEY,
       provider VARCHAR(60) NULL,
@@ -4136,6 +4453,8 @@ async function ensureDatabaseSchema() {
   await ensureColumn('complaint_logs', 'new_status', 'VARCHAR(80) NULL');
   await ensureColumn('complaint_logs', 'reason', 'TEXT NULL');
   await ensureColumn('complaint_logs', 'stage_duration_hours', 'DECIMAL(12,2) NULL');
+
+  await ensureOperationalTenantColumns();
 
   await pool.query(
     "UPDATE clinics SET state = 'GO', region = 'Centro-Oeste' WHERE LOWER(city) = 'trindade' OR LOWER(name) LIKE '%trindade%'"
@@ -7041,6 +7360,7 @@ async function buildAuthenticatedUser(user) {
 
   return {
     ...safeUser,
+    company_id: Number(safeUser.company_id || 1),
     role,
     permissions,
     actionPermissions,
@@ -7059,9 +7379,13 @@ function signUserToken(user) {
     permissions: user.permissions,
     actionPermissions: user.actionPermissions,
     clinicIds: user.clinicIds,
+    company_id: Number(user.company_id || user.companyId || 1),
     mustChangePassword: Boolean(user.mustChangePassword),
     tokenVersion: Number(user.tokenVersion || user.token_version || 1)
-  }, SECRET);
+  }, SECRET, {
+    expiresIn: jwtExpiresIn,
+    issuer: jwtIssuer
+  });
 }
 
 async function createWhatsAppLog({
@@ -11280,7 +11604,7 @@ async function authenticate(req, res, next) {
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
 
   if (!token) {
-    return res.status(401).json({ error: 'Token não informado' });
+    return sendAuthorizationError(req, res, 401, 'AUTH_TOKEN_MISSING', 'Token não informado');
   }
 
   try {
@@ -11288,21 +11612,22 @@ async function authenticate(req, res, next) {
 
     if (req.user?.id) {
       const [rows] = await pool.query(
-        'SELECT must_change_password, token_version, active, role, permissions, action_permissions FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+        'SELECT must_change_password, token_version, active, company_id, role, permissions, action_permissions FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
         [req.user.id]
       );
 
       if (!rows.length || !rows[0]?.active) {
-        return res.status(401).json({ error: 'Sessão inválida. Faça login novamente.' });
+        return sendAuthorizationError(req, res, 401, 'AUTH_SESSION_INVALID', 'Sessão inválida. Faça login novamente.');
       }
 
       const tokenVersion = Number(rows[0]?.token_version || 1);
 
       if (Number(req.user?.tokenVersion || 1) !== tokenVersion) {
-        return res.status(401).json({ error: 'Sessão expirada por atualização de segurança. Faça login novamente.' });
+        return sendAuthorizationError(req, res, 401, 'AUTH_TOKEN_VERSION_EXPIRED', 'Sessão expirada por atualização de segurança. Faça login novamente.');
       }
 
       const mustChangePassword = Boolean(rows[0]?.must_change_password);
+      req.user.company_id = Number(rows[0]?.company_id || req.user.company_id || 1);
       req.user.role = rows[0]?.role || req.user.role;
       req.user.permissions = parsePermissionsFromUser({ role: req.user.role, permissions: rows[0]?.permissions });
       req.user.actionPermissions = getUserActionPermissions({ role: req.user.role, action_permissions: rows[0]?.action_permissions });
@@ -11318,8 +11643,17 @@ async function authenticate(req, res, next) {
       req.user.mustChangePassword = mustChangePassword;
 
       if (mustChangePassword && !isPasswordChangeRouteAllowed(req)) {
+        insertSecurityAuditLog({
+          req,
+          module: 'auth',
+          action: 'password_change_required_block',
+          outcome: 'denied',
+          metadata: { route: req.originalUrl || req.path },
+          origin: 'api'
+        });
         return res.status(403).json({
           error: 'Troca obrigatória de senha no primeiro acesso.',
+          code: 'PASSWORD_CHANGE_REQUIRED',
           mustChangePassword: true
         });
       }
@@ -11328,7 +11662,11 @@ async function authenticate(req, res, next) {
     return next();
 
   } catch (error) {
-    return res.status(401).json({ error: 'Token inválido' });
+    const code = error?.name === 'TokenExpiredError' ? 'AUTH_TOKEN_EXPIRED' : 'AUTH_TOKEN_INVALID';
+    const message = error?.name === 'TokenExpiredError'
+      ? 'Sessão expirada. Faça login novamente.'
+      : 'Sessão inválida. Faça login novamente.';
+    return sendAuthorizationError(req, res, 401, code, message);
   }
 }
 
@@ -11348,19 +11686,20 @@ function optionalAuthenticate(req, res, next) {
     }
 
     return pool.query(
-      'SELECT role, permissions, action_permissions, token_version, active FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+      'SELECT company_id, role, permissions, action_permissions, token_version, active FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
       [req.user.id]
     ).then(([rows]) => {
       if (!rows.length || !rows[0]?.active) {
-        return res.status(401).json({ error: 'Sessão inválida. Faça login novamente.' });
+        return sendAuthorizationError(req, res, 401, 'AUTH_SESSION_INVALID', 'Sessão inválida. Faça login novamente.');
       }
 
       const tokenVersion = Number(rows[0]?.token_version || 1);
 
       if (Number(req.user?.tokenVersion || 1) !== tokenVersion) {
-        return res.status(401).json({ error: 'Sessão expirada por atualização de segurança. Faça login novamente.' });
+        return sendAuthorizationError(req, res, 401, 'AUTH_TOKEN_VERSION_EXPIRED', 'Sessão expirada por atualização de segurança. Faça login novamente.');
       }
 
+      req.user.company_id = Number(rows[0]?.company_id || req.user.company_id || 1);
       req.user.role = rows[0]?.role || req.user.role;
       req.user.permissions = parsePermissionsFromUser({ role: req.user.role, permissions: rows[0]?.permissions });
       req.user.actionPermissions = getUserActionPermissions({ role: req.user.role, action_permissions: rows[0]?.action_permissions });
@@ -11371,7 +11710,7 @@ function optionalAuthenticate(req, res, next) {
       return res.status(500).json({ error: 'Não foi possível validar a sessão.' });
     });
   } catch (error) {
-    return res.status(401).json({ error: 'Sessão inválida. Faça login novamente.' });
+    return sendAuthorizationError(req, res, 401, 'AUTH_TOKEN_INVALID', 'Sessão inválida. Faça login novamente.');
   }
 }
 
@@ -11380,7 +11719,7 @@ function requireAdmin(req, res, next) {
     return next();
   }
 
-  return res.status(403).json({ error: 'Acesso restrito ao administrador' });
+  return sendAuthorizationError(req, res, 403, 'AUTH_FORBIDDEN_ADMIN', 'Acesso restrito ao administrador');
 }
 
 function requireMasterAdmin(req, res, next) {
@@ -11388,7 +11727,7 @@ function requireMasterAdmin(req, res, next) {
     return next();
   }
 
-  return res.status(403).json({ error: 'Acesso restrito ao Administrador Master' });
+  return sendAuthorizationError(req, res, 403, 'AUTH_FORBIDDEN_MASTER', 'Acesso restrito ao Administrador Master');
 }
 
 function requireFinancialView(req, res, next) {
@@ -11396,7 +11735,7 @@ function requireFinancialView(req, res, next) {
     return next();
   }
 
-  return res.status(403).json({ error: 'Acesso restrito à Inteligência Financeira do CRC.' });
+  return sendAuthorizationError(req, res, 403, 'AUTH_FORBIDDEN_FINANCIAL', 'Acesso restrito à Inteligência Financeira do CRC.');
 }
 
 function requireWhatsAppView(req, res, next) {
@@ -11404,7 +11743,7 @@ function requireWhatsAppView(req, res, next) {
     return next();
   }
 
-  return res.status(403).json({ error: 'Acesso restrito à Gestão WhatsApp CRC.' });
+  return sendAuthorizationError(req, res, 403, 'AUTH_FORBIDDEN_WHATSAPP', 'Acesso restrito à Gestão WhatsApp CRC.');
 }
 
 async function authenticateSocketUser(socket) {
@@ -11422,7 +11761,7 @@ async function authenticateSocketUser(socket) {
   }
 
   const [rows] = await pool.query(
-    'SELECT must_change_password, token_version, active, role, permissions, action_permissions FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+    'SELECT company_id, must_change_password, token_version, active, role, permissions, action_permissions FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
     [decoded.id]
   );
 
@@ -11437,6 +11776,7 @@ async function authenticateSocketUser(socket) {
 
   const user = {
     ...decoded,
+    company_id: Number(rows[0]?.company_id || decoded.company_id || 1),
     role: rows[0]?.role || decoded.role,
     permissions: parsePermissionsFromUser({ role: rows[0]?.role || decoded.role, permissions: rows[0]?.permissions }),
     actionPermissions: getUserActionPermissions({ role: rows[0]?.role || decoded.role, action_permissions: rows[0]?.action_permissions }),
@@ -20265,8 +20605,8 @@ async function markPartnerVideoNotification(req, res, field, status, eventType) 
 app.post('/api/partners-video/:id/notify-leader', authenticate, requireWhatsAppView, (req, res) => markPartnerVideoNotification(req, res, 'leader_notified_at', 'acionado líder', 'leader_notified'));
 app.post('/api/partners-video/:id/notify-coordinator', authenticate, requireWhatsAppView, (req, res) => markPartnerVideoNotification(req, res, 'coordinator_notified_at', 'acionado coordenador', 'coordinator_notified'));
 app.post('/api/partners-video/:id/notify-manager', authenticate, requireWhatsAppView, (req, res) => markPartnerVideoNotification(req, res, 'manager_notified_at', 'acionado gerente', 'manager_notified'));
-app.post('/api/whatsapp/events', handleWhatsAppServiceEvents);
-app.post('/api/whatsapp/evolution-webhook', handleEvolutionWebhook);
+app.post('/api/whatsapp/events', webhookLimiter, handleWhatsAppServiceEvents);
+app.post('/api/whatsapp/evolution-webhook', webhookLimiter, handleEvolutionWebhook);
 
 app.post('/api/test-email', authenticate, requireMasterAdmin, async (req, res) => {
   try {
@@ -20686,7 +21026,7 @@ app.get('/webhook/whatsapp', (req, res) => {
   });
 });
 
-app.post('/webhook/whatsapp', async (req, res) => {
+app.post('/webhook/whatsapp', webhookLimiter, async (req, res) => {
   return res.status(410).json({
     success: false,
     provider: 'twilio',
@@ -21370,7 +21710,7 @@ function buildAdminUsersPdfBuffer(rows = []) {
   });
 }
 
-app.get(['/admin/users/export/excel', '/api/admin/users/export/excel'], authenticate, requireMasterAdmin, async (req, res) => {
+app.get(['/admin/users/export/excel', '/api/admin/users/export/excel'], exportLimiter, authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const rows = await getAdminUsersExportRows();
     const buffer = buildAdminUsersExcelBuffer(rows);
@@ -21383,7 +21723,7 @@ app.get(['/admin/users/export/excel', '/api/admin/users/export/excel'], authenti
   }
 });
 
-app.get(['/admin/users/export/pdf', '/api/admin/users/export/pdf'], authenticate, requireMasterAdmin, async (req, res) => {
+app.get(['/admin/users/export/pdf', '/api/admin/users/export/pdf'], exportLimiter, authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const rows = await getAdminUsersExportRows();
     const buffer = await buildAdminUsersPdfBuffer(rows);
@@ -22178,12 +22518,20 @@ app.post('/auth/crc-operator/register', async (req, res) => {
 // ============================================
 // LOGIN
 // ============================================
-app.post('/login', async (req, res) => {
+app.post('/login', loginLimiter, async (req, res) => {
   try {
     const { email, username, password } = req.body;
     const login = String(email || username || '').trim().toLowerCase();
 
     if (!login || !password) {
+      await insertSecurityAuditLog({
+        req,
+        module: 'auth',
+        action: 'login_failed',
+        outcome: 'denied',
+        metadata: { reason: 'missing_credentials', login: sanitizeActivityValue(login, 'email') },
+        origin: 'api'
+      });
       return res.status(400).json({ message: 'Informe e-mail/usuário e senha' });
     }
 
@@ -22193,6 +22541,14 @@ app.post('/login', async (req, res) => {
     );
 
     if (rows.length === 0) {
+      await insertSecurityAuditLog({
+        req,
+        module: 'auth',
+        action: 'login_failed',
+        outcome: 'denied',
+        metadata: { reason: 'user_not_found', login: sanitizeActivityValue(login, 'email') },
+        origin: 'api'
+      });
       return res.status(401).json({ message: 'Usuário não encontrado' });
     }
 
@@ -22201,9 +22557,27 @@ app.post('/login', async (req, res) => {
     if (!user.active || user.deleted_at) {
       const authorizationStatus = String(user.authorization_status || '').toLowerCase();
       if (!user.deleted_at && normalizeAccessRole(user.role) === 'crc_operator' && authorizationStatus !== 'bloqueado') {
+        await insertSecurityAuditLog({
+          req,
+          user,
+          module: 'auth',
+          action: 'login_blocked',
+          outcome: 'denied',
+          metadata: { reason: 'pending_authorization' },
+          origin: 'api'
+        });
         return res.status(403).json({ message: 'Cadastro de Operador CRC aguardando autorização do Administrador Master.' });
       }
 
+      await insertSecurityAuditLog({
+        req,
+        user,
+        module: 'auth',
+        action: 'login_blocked',
+        outcome: 'denied',
+        metadata: { reason: user.deleted_at ? 'deleted_user' : 'inactive_user' },
+        origin: 'api'
+      });
       return res.status(403).json({ message: 'Usuário desabilitado. Procure o administrador.' });
     }
 
@@ -22219,11 +22593,29 @@ app.post('/login', async (req, res) => {
     }
 
     if (!validPassword) {
+      await insertSecurityAuditLog({
+        req,
+        user,
+        module: 'auth',
+        action: 'login_failed',
+        outcome: 'denied',
+        metadata: { reason: 'invalid_password' },
+        origin: 'api'
+      });
       return res.status(401).json({ message: 'Senha inválida' });
     }
 
     const authenticatedUser = await buildAuthenticatedUser(user);
     const token = signUserToken(authenticatedUser);
+    await insertSecurityAuditLog({
+      req,
+      user: authenticatedUser,
+      module: 'auth',
+      action: 'login_success',
+      outcome: 'success',
+      metadata: { role: authenticatedUser.role, mustChangePassword: Boolean(authenticatedUser.mustChangePassword) },
+      origin: 'api'
+    });
 
     res.json({
       message: 'Login ok',
@@ -22236,6 +22628,22 @@ app.post('/login', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro no login' });
+  }
+});
+
+app.post('/logout', authenticate, async (req, res) => {
+  try {
+    await insertSecurityAuditLog({
+      req,
+      module: 'auth',
+      action: 'logout',
+      outcome: 'success',
+      origin: 'api'
+    });
+    return res.json({ success: true, message: 'Logout registrado.' });
+  } catch (error) {
+    console.error('[auth:logout_error]', { error: error.message });
+    return res.status(500).json({ error: 'Nao foi possivel registrar o logout.' });
   }
 });
 
@@ -26970,10 +27378,10 @@ app.delete(['/dental-card/leads/:id', '/api/dental-card/leads/:id'], authenticat
 app.post(['/dental-card/leads/:id/attempts', '/api/dental-card/leads/:id/attempts'], authenticate, requireDentalCardView, handleCreateDentalCardAttempt);
 app.post(['/dental-card/leads/:id/status', '/api/dental-card/leads/:id/status'], authenticate, requireDentalCardView, handleUpdateDentalCardStatus);
 app.post(['/dental-card/import', '/api/dental-card/import'], authenticate, requireDentalCardView, upload.single('file'), handleImportDentalCard);
-app.get(['/dental-card/export', '/api/dental-card/export'], authenticate, requireDentalCardView, handleExportDentalCard);
-app.get(['/dental-card/export/excel', '/api/dental-card/export/excel'], authenticate, requireDentalCardView, handleExportDentalCardExcel);
-app.get(['/dental-card/export/pdf', '/api/dental-card/export/pdf'], authenticate, requireDentalCardView, handleExportDentalCardPdf);
-app.get(['/dental-card/report/:id/pdf', '/api/dental-card/report/:id/pdf'], authenticate, requireDentalCardView, handleExportDentalCardLeadPdf);
+app.get(['/dental-card/export', '/api/dental-card/export'], exportLimiter, authenticate, requireDentalCardView, handleExportDentalCard);
+app.get(['/dental-card/export/excel', '/api/dental-card/export/excel'], exportLimiter, authenticate, requireDentalCardView, handleExportDentalCardExcel);
+app.get(['/dental-card/export/pdf', '/api/dental-card/export/pdf'], exportLimiter, authenticate, requireDentalCardView, handleExportDentalCardPdf);
+app.get(['/dental-card/report/:id/pdf', '/api/dental-card/report/:id/pdf'], exportLimiter, authenticate, requireDentalCardView, handleExportDentalCardLeadPdf);
 app.get(['/dental-card/attachments/:id', '/api/dental-card/attachments/:id'], authenticate, requireDentalCardView, handleGetDentalCardAttachment);
 app.get(['/dental-card/import-template', '/api/dental-card/import-template'], authenticate, requireDentalCardView, handleDownloadDentalCardImportTemplate);
 app.get(['/dental-card/notification-settings', '/api/dental-card/notification-settings'], authenticate, requireDentalCardView, handleGetDentalCardNotificationSettings);

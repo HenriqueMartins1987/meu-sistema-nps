@@ -3,6 +3,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { hasPermission, isMasterAdmin, normalizeRoleValue, readUser } from './constants';
 import { clearSession } from './session';
 import grcLogo from './assets/logo3.png';
+import api from './api';
 import './AuthenticatedLayout.css';
 
 function Icon({ name }) {
@@ -139,9 +140,15 @@ export default function AuthenticatedLayout({ remainingMsLabel, remainingWarning
     setExpanded(false);
   }, [location.pathname, location.search]);
 
-  const handleLogout = () => {
-    clearSession();
-    navigate('/', { replace: true });
+  const handleLogout = async () => {
+    try {
+      await api.post('/logout');
+    } catch (error) {
+      // O logout local deve continuar funcionando mesmo se a sessao ja expirou no servidor.
+    } finally {
+      clearSession();
+      navigate('/', { replace: true });
+    }
   };
 
   const handleAction = (item) => {

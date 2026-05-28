@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import logo from './assets/logo3.png';
-import api from './api';
+import api, { getApiErrorMessage } from './api';
 import { saveSession } from './session';
 
 const experienceModules = [
@@ -131,12 +131,7 @@ function Login() {
 
       setError('Login inválido.');
     } catch (err) {
-      const message = err.response?.data?.message
-        || err.response?.data?.error
-        || (err.code === 'ECONNABORTED'
-          ? 'A conexão com a API expirou. Verifique se o backend está publicado e ativo.'
-          : 'Não foi possível conectar com a API de autenticação.');
-      setError(message);
+      setError(getApiErrorMessage(err, 'Nao foi possivel conectar com a API de autenticacao.'));
     } finally {
       setLoading(false);
     }

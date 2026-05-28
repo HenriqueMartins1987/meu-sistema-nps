@@ -12,6 +12,34 @@ const api = axios.create({
   timeout: 60000
 });
 
+export function getApiErrorMessage(error, fallback = 'Não foi possível concluir a operação.') {
+  if (error?.code === 'ECONNABORTED') {
+    return 'A API demorou para responder. Tente novamente em alguns instantes.';
+  }
+
+  if (!error?.response) {
+    return 'Não foi possível conectar à API. Verifique se o backend está ativo.';
+  }
+
+  if (error.response.status === 401) {
+    return error.response.data?.error || 'Sua sessão expirou. Faça login novamente.';
+  }
+
+  if (error.response.status === 403) {
+    return error.response.data?.error || 'Seu perfil não tem permissão para acessar esta rotina.';
+  }
+
+  if (error.response.status === 422 || error.response.status === 400) {
+    return error.response.data?.error || error.response.data?.message || 'Revise os dados informados.';
+  }
+
+  if (error.response.status >= 500) {
+    return error.response.data?.error || 'O servidor encontrou uma falha ao processar a solicitação.';
+  }
+
+  return error.response.data?.error || error.response.data?.message || fallback;
+}
+
 api.interceptors.request.use((config) => {
   const token = readToken();
 
@@ -27,7 +55,17 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       clearSession();
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('nps:auth-expired', {
+          detail: {
+            code: error.response?.data?.code || 'AUTH_UNAUTHORIZED',
+            message: getApiErrorMessage(error)
+          }
+        }));
+      }
     }
+
+    error.userMessage = getApiErrorMessage(error);
 
     return Promise.reject(error);
   }
