@@ -109,9 +109,11 @@ export default function AgendaPage() {
   const [activeStatus, setActiveStatus] = useState('');
   const [selectedItem, setSelectedItem] = useState(null);
   const [draft, setDraft] = useState(emptyDraft);
+  const [editorOpen, setEditorOpen] = useState(false);
   const [reminderItem, setReminderItem] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
   const notifiedReminderIds = useRef(new Set());
+  const titleInputRef = useRef(null);
 
   const loadItems = async () => {
     setLoading(true);
@@ -166,6 +168,12 @@ export default function AgendaPage() {
     return () => window.clearInterval(timer);
   }, [items]);
 
+  useEffect(() => {
+    if (!editorOpen) return undefined;
+    const timer = window.setTimeout(() => titleInputRef.current?.focus(), 120);
+    return () => window.clearTimeout(timer);
+  }, [editorOpen]);
+
   const filteredItems = useMemo(() => items, [items]);
   const stats = useMemo(() => {
     const open = filteredItems.filter((item) => item.status !== 'done').length;
@@ -185,14 +193,17 @@ export default function AgendaPage() {
   const openCreate = (status = 'todo') => {
     setSelectedItem(null);
     setDraft({ ...emptyDraft, status });
+    setEditorOpen(true);
   };
 
   const openEdit = (item) => {
     setSelectedItem(item);
     setDraft(normalizeDraftFromItem(item));
+    setEditorOpen(true);
   };
 
   const closeEditor = () => {
+    setEditorOpen(false);
     setSelectedItem(null);
     setDraft(emptyDraft);
   };
@@ -289,7 +300,7 @@ export default function AgendaPage() {
       <PageHeader
         eyebrow="Workspace"
         title="Agenda"
-        description="Quadro interativo para organizar tarefas, compromissos, follow-ups e lembretes operacionais no estilo ClickUp."
+        description="Quadro executivo para organizar tarefas, compromissos, follow-ups e lembretes operacionais com fluxo visual no estilo ClickUp."
         actions={(
           <>
             <button type="button" className="outline-action" onClick={requestNotifications}>Ativar lembretes</button>
@@ -322,6 +333,10 @@ export default function AgendaPage() {
 
       <SectionContainer className="agenda-control-panel">
         <div className="agenda-toolbar">
+          <div className="agenda-toolbar-copy">
+            <strong>Controle operacional</strong>
+            <span>Filtre, acompanhe e mova as tarefas entre etapas.</span>
+          </div>
           <input
             className="field"
             value={search}
@@ -336,7 +351,7 @@ export default function AgendaPage() {
         </div>
       </SectionContainer>
 
-      {feedback ? <p className="form-feedback">{feedback}</p> : null}
+      {feedback && !editorOpen ? <p className="form-feedback">{feedback}</p> : null}
 
       <section className="agenda-workspace">
         <div className="agenda-board">
@@ -372,57 +387,99 @@ export default function AgendaPage() {
           ))}
         </div>
 
-        <aside className="agenda-editor">
-          <Card>
-            <div className="agenda-editor-head">
-              <div>
-                <p className="eyebrow">{selectedItem?.id ? 'Editar item' : 'Novo item'}</p>
-                <h2>{selectedItem?.id ? selectedItem.title : 'Criar na agenda'}</h2>
-              </div>
-              {selectedItem?.id ? <button type="button" className="outline-action compact-action" onClick={closeEditor}>Limpar</button> : null}
-            </div>
-            <label>
-              Titulo
-              <input className="field" value={draft.title} onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))} />
-            </label>
-            <label>
-              Descricao
-              <textarea className="field agenda-textarea" value={draft.description} onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))} />
-            </label>
-            <div className="agenda-editor-grid">
-              <label>
-                Status
-                <select className="field" value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value }))}>
-                  {agendaColumns.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
-                </select>
-              </label>
-              <label>
-                Prioridade
-                <select className="field" value={draft.priority} onChange={(event) => setDraft((current) => ({ ...current, priority: event.target.value }))}>
-                  {priorityOptions.map((priority) => <option key={priority.value} value={priority.value}>{priority.label}</option>)}
-                </select>
-              </label>
-            </div>
-            <label>
-              Prazo
-              <input className="field" type="datetime-local" value={draft.due_at} onChange={(event) => setDraft((current) => ({ ...current, due_at: event.target.value }))} />
-            </label>
-            <label>
-              Lembrete
-              <input className="field" type="datetime-local" value={draft.reminder_at} onChange={(event) => setDraft((current) => ({ ...current, reminder_at: event.target.value }))} />
-            </label>
-            <label>
-              Tags
-              <input className="field" value={draft.tags} onChange={(event) => setDraft((current) => ({ ...current, tags: event.target.value }))} placeholder="Ex.: CRC, urgente, retorno" />
-            </label>
-            <div className="agenda-editor-actions">
-              {selectedItem?.id ? <button type="button" className="outline-action" onClick={deleteItem} disabled={saving}>Excluir</button> : null}
-              <button type="button" className="secondary-action" onClick={closeEditor} disabled={saving}>Cancelar</button>
-              <button type="button" className="primary-action" onClick={saveItem} disabled={saving}>{saving ? 'Salvando...' : 'Salvar'}</button>
-            </div>
-          </Card>
-        </aside>
       </section>
+
+      {editorOpen ? (
+        <section className="agenda-editor-shell" role="dialog" aria-modal="true" aria-label={selectedItem?.id ? 'Editar item da agenda' : 'Criar item da agenda'}>
+          <button type="button" className="agenda-editor-backdrop" aria-label="Fechar agenda" onClick={closeEditor} />
+          <aside className="agenda-editor-panel">
+            <header className="agenda-editor-hero">
+              <div>
+                <p className="eyebrow">{selectedItem?.id ? 'Detalhe da tarefa' : 'Novo item'}</p>
+                <h2>{selectedItem?.id ? selectedItem.title : 'Criar item na agenda'}</h2>
+                <span>Cadastre a tarefa com prazo, prioridade, lembrete e contexto operacional.</span>
+              </div>
+              <button type="button" className="agenda-editor-close" onClick={closeEditor} aria-label="Fechar">×</button>
+            </header>
+
+            {feedback ? <p className="form-feedback agenda-editor-feedback">{feedback}</p> : null}
+
+            <div className="agenda-editor-body">
+              <div className="agenda-editor-main">
+                <label>
+                  Titulo da tarefa
+                  <input
+                    ref={titleInputRef}
+                    className="field agenda-title-field"
+                    value={draft.title}
+                    onChange={(event) => setDraft((current) => ({ ...current, title: event.target.value }))}
+                    placeholder="Ex.: Retornar paciente, revisar protocolo, cobrar evidência"
+                  />
+                </label>
+                <label>
+                  Descricao
+                  <textarea
+                    className="field agenda-textarea"
+                    value={draft.description}
+                    onChange={(event) => setDraft((current) => ({ ...current, description: event.target.value }))}
+                    placeholder="Descreva o objetivo, contexto, combinados e qualquer detalhe importante."
+                  />
+                </label>
+                <label>
+                  Tags
+                  <input
+                    className="field"
+                    value={draft.tags}
+                    onChange={(event) => setDraft((current) => ({ ...current, tags: event.target.value }))}
+                    placeholder="Ex.: CRC, urgente, retorno"
+                  />
+                </label>
+              </div>
+
+              <Card className="agenda-editor-side">
+                <div className="agenda-editor-side-head">
+                  <strong>Propriedades</strong>
+                  <span>{selectedItem?.id ? `ID ${selectedItem.id}` : 'Novo'}</span>
+                </div>
+                <label>
+                  Status
+                  <select className="field" value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value }))}>
+                    {agendaColumns.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Prioridade
+                  <select className="field" value={draft.priority} onChange={(event) => setDraft((current) => ({ ...current, priority: event.target.value }))}>
+                    {priorityOptions.map((priority) => <option key={priority.value} value={priority.value}>{priority.label}</option>)}
+                  </select>
+                </label>
+                <label>
+                  Prazo
+                  <input className="field" type="datetime-local" value={draft.due_at} onChange={(event) => setDraft((current) => ({ ...current, due_at: event.target.value }))} />
+                </label>
+                <label>
+                  Lembrete
+                  <input className="field" type="datetime-local" value={draft.reminder_at} onChange={(event) => setDraft((current) => ({ ...current, reminder_at: event.target.value }))} />
+                </label>
+                <div className="agenda-editor-guide">
+                  <strong>Fluxo recomendado</strong>
+                  <small>Cadastre, defina prioridade, programe lembrete e mova o card conforme a execução.</small>
+                </div>
+              </Card>
+            </div>
+
+            <footer className="agenda-editor-footer">
+              <div>
+                {selectedItem?.id ? <button type="button" className="outline-action" onClick={deleteItem} disabled={saving}>Excluir item</button> : null}
+              </div>
+              <ActionButtons>
+                <button type="button" className="secondary-action" onClick={closeEditor} disabled={saving}>Cancelar</button>
+                <button type="button" className="primary-action" onClick={saveItem} disabled={saving}>{saving ? 'Salvando...' : 'Salvar na agenda'}</button>
+              </ActionButtons>
+            </footer>
+          </aside>
+        </section>
+      ) : null}
     </main>
   );
 }
