@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api, { getApiErrorMessage } from '../api';
 import { ActionButtons, Card, DashboardGrid, KPICard, PageHeader, SectionContainer } from '../components/DesignSystem';
+import { getUserDisplayName, isMasterAdmin, readUser } from '../constants';
 
 const agendaColumns = [
   { key: 'todo', label: 'A fazer', helper: 'Ideias, pendencias e proximas acoes' },
@@ -23,6 +24,7 @@ const emptyDraft = {
   priority: 'normal',
   due_at: '',
   reminder_at: '',
+  assigned_user_id: '',
   tags: ''
 };
 
@@ -60,8 +62,19 @@ function normalizeDraftFromItem(item = {}) {
     priority: item.priority || 'normal',
     due_at: toDatetimeLocal(item.due_at),
     reminder_at: toDatetimeLocal(item.reminder_at),
+    assigned_user_id: item.assigned_user_id ? String(item.assigned_user_id) : '',
     tags: Array.isArray(item.tags) ? item.tags.join(', ') : ''
   };
+}
+
+function formatAgendaAssignee(item = {}) {
+  return item.assigned_user_name || item.assignedUser?.name || item.owner_name || 'Sem responsavel';
+}
+
+function formatAgendaUserOption(user = {}) {
+  const name = user.name || user.email || `Usuario ${user.id}`;
+  const detail = user.position || user.role || user.department || user.email;
+  return detail ? `${name} - ${detail}` : name;
 }
 
 function AgendaCard({ item, onOpen, onStatus, onDragStart }) {
@@ -77,6 +90,10 @@ function AgendaCard({ item, onOpen, onStatus, onDragStart }) {
         <strong>{item.title}</strong>
         {item.description ? <p>{item.description}</p> : null}
       </button>
+      <div className="agenda-assignee">
+        <span>Responsavel</span>
+        <strong>{formatAgendaAssignee(item)}</strong>
+      </div>
       <div className="agenda-task-meta">
         <span>{formatDateTime(item.due_at)}</span>
         {item.reminder_at ? <span>Lembrete {formatDateTime(item.reminder_at)}</span> : null}
@@ -101,7 +118,11 @@ function AgendaCard({ item, onOpen, onStatus, onDragStart }) {
 }
 
 export default function AgendaPage() {
+  const currentUser = useMemo(() => readUser(), []);
+  const currentUserId = String(currentUser?.id || '');
+  const canDeleteAgendaItem = isMasterAdmin(currentUser);
   const [items, setItems] = useState([]);
+  const [assignableUsers, setAssignableUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -133,10 +154,30 @@ export default function AgendaPage() {
     }
   };
 
+  const loadAssignableUsers = async () => {
+    try {
+      const response = await api.get('/api/agenda/users');
+      setAssignableUsers(Array.isArray(response.data) ? response.data : []);
+    } catch (error) {
+      setAssignableUsers(currentUser?.id ? [{
+        id: currentUser.id,
+        name: getUserDisplayName(currentUser),
+        email: currentUser.email || null,
+        role: currentUser.role || null
+      }] : []);
+      setFeedback(getApiErrorMessage(error, 'Nao foi possivel carregar usuarios para atribuicao.'));
+    }
+  };
+
   useEffect(() => {
     loadItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeStatus]);
+
+  useEffect(() => {
+    loadAssignableUsers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     const timer = window.setTimeout(loadItems, 350);
@@ -190,9 +231,27 @@ export default function AgendaPage() {
     }, {})
   ), [filteredItems]);
 
+  const assigneeOptions = useMemo(() => {
+    const byId = new Map();
+    if (currentUser?.id) {
+      byId.set(String(currentUser.id), {
+        id: currentUser.id,
+        name: getUserDisplayName(currentUser),
+        email: currentUser.email || null,
+        role: currentUser.role || null,
+        position: currentUser.position || null,
+        department: currentUser.department || null
+      });
+    }
+    assignableUsers.forEach((user) => {
+      if (user?.id) byId.set(String(user.id), user);
+    });
+    return Array.from(byId.values());
+  }, [assignableUsers, currentUser]);
+
   const openCreate = (status = 'todo') => {
     setSelectedItem(null);
-    setDraft({ ...emptyDraft, status });
+    setDraft({ ...emptyDraft, status, assigned_user_id: currentUserId });
     setEditorOpen(true);
   };
 
@@ -224,6 +283,7 @@ export default function AgendaPage() {
       priority: draft.priority,
       due_at: draft.due_at || null,
       reminder_at: draft.reminder_at || null,
+      assigned_user_id: draft.assigned_user_id || null,
       tags: draft.tags
     };
 
@@ -442,6 +502,19 @@ export default function AgendaPage() {
                   <span>{selectedItem?.id ? `ID ${selectedItem.id}` : 'Novo'}</span>
                 </div>
                 <label>
+                  Responsavel
+                  <select
+                    className="field"
+                    value={draft.assigned_user_id}
+                    onChange={(event) => setDraft((current) => ({ ...current, assigned_user_id: event.target.value }))}
+                  >
+                    <option value="">Sem responsavel definido</option>
+                    {assigneeOptions.map((user) => (
+                      <option key={user.id} value={String(user.id)}>{formatAgendaUserOption(user)}</option>
+                    ))}
+                  </select>
+                </label>
+                <label>
                   Status
                   <select className="field" value={draft.status} onChange={(event) => setDraft((current) => ({ ...current, status: event.target.value }))}>
                     {agendaColumns.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
@@ -470,7 +543,7 @@ export default function AgendaPage() {
 
             <footer className="agenda-editor-footer">
               <div>
-                {selectedItem?.id ? <button type="button" className="outline-action" onClick={deleteItem} disabled={saving}>Excluir item</button> : null}
+                {canDeleteAgendaItem && selectedItem?.id ? <button type="button" className="outline-action" onClick={deleteItem} disabled={saving}>Excluir item</button> : null}
               </div>
               <ActionButtons>
                 <button type="button" className="secondary-action" onClick={closeEditor} disabled={saving}>Cancelar</button>

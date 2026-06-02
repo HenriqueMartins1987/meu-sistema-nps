@@ -4579,6 +4579,9 @@ async function ensureDatabaseSchema() {
       id INT AUTO_INCREMENT PRIMARY KEY,
       owner_user_id INT NULL,
       owner_name VARCHAR(180) NULL,
+      assigned_user_id INT NULL,
+      assigned_user_name VARCHAR(180) NULL,
+      assigned_user_email VARCHAR(180) NULL,
       title VARCHAR(180) NOT NULL,
       description TEXT NULL,
       status VARCHAR(40) NOT NULL DEFAULT 'todo',
@@ -4593,10 +4596,15 @@ async function ensureDatabaseSchema() {
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
       INDEX idx_agenda_owner_status (owner_user_id, status),
+      INDEX idx_agenda_assigned_status (assigned_user_id, status),
       INDEX idx_agenda_reminder (owner_user_id, reminder_at, reminder_acknowledged_at),
       INDEX idx_agenda_due (owner_user_id, due_at)
     )
   `);
+  await ensureColumn('agenda_items', 'assigned_user_id', 'INT NULL');
+  await ensureColumn('agenda_items', 'assigned_user_name', 'VARCHAR(180) NULL');
+  await ensureColumn('agenda_items', 'assigned_user_email', 'VARCHAR(180) NULL');
+  await ensureIndex('agenda_items', 'idx_agenda_assigned_status', 'INDEX idx_agenda_assigned_status (assigned_user_id, status)');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS complaint_logs (
@@ -21298,6 +21306,11 @@ function parseAgendaJsonArray(value) {
 function serializeAgendaItem(row = {}) {
   return {
     ...row,
+    assignedUser: row.assigned_user_id ? {
+      id: row.assigned_user_id,
+      name: row.assigned_user_name || null,
+      email: row.assigned_user_email || null
+    } : null,
     tags: parseAgendaJsonArray(row.tags_json),
     checklist: parseAgendaJsonArray(row.checklist_json)
   };
@@ -21307,11 +21320,118 @@ function getAgendaOwnerId(user = {}) {
   return Number(user?.id || 0) || 0;
 }
 
+function normalizeAgendaUserId(value) {
+  const numeric = Number(value || 0);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function buildAgendaVisibilityWhere(user, itemAlias = '') {
+  const prefix = itemAlias ? `${itemAlias}.` : '';
+  const ownerUserId = getAgendaOwnerId(user);
+  if (isMasterAdminUser(user)) {
+    return { sql: '1 = 1', params: [] };
+  }
+  return {
+    sql: `(${prefix}owner_user_id = ? OR ${prefix}assigned_user_id = ?)`,
+    params: [ownerUserId, ownerUserId]
+  };
+}
+
+function buildAgendaCompanyWhere(user, alias = '') {
+  const prefix = alias ? `${alias}.` : '';
+  if (isMasterAdminUser(user)) {
+    return { sql: '1 = 1', params: [] };
+  }
+
+  const companyId = Number(user?.company_id || user?.companyId || 1) || 1;
+  return {
+    sql: `(${prefix}company_id IS NULL OR ${prefix}company_id = ?)`,
+    params: [companyId]
+  };
+}
+
+function serializeAgendaAssignableUser(user = {}) {
+  return {
+    id: user.id,
+    name: user.name || user.email || `Usuario ${user.id}`,
+    email: user.email || null,
+    role: user.role || null,
+    position: user.position || null,
+    department: user.department || null
+  };
+}
+
+async function getAgendaAssignableUser(userId, actor) {
+  const assigneeId = normalizeAgendaUserId(userId);
+  if (!assigneeId) return null;
+
+  const companyScope = buildAgendaCompanyWhere(actor, 'u');
+  const [users] = await pool.query(
+    `SELECT u.id, u.name, u.email, u.role, u.position, u.department
+       FROM users u
+      WHERE u.id = ?
+        AND u.deleted_at IS NULL
+        AND u.active = 1
+        AND ${companyScope.sql}
+      LIMIT 1`,
+    [assigneeId, ...companyScope.params]
+  );
+
+  if (!users[0]) {
+    const error = new Error('Responsavel da tarefa nao encontrado ou indisponivel.');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  return serializeAgendaAssignableUser(users[0]);
+}
+
+async function notifyAgendaAssignment(itemId, title, assignee, actor) {
+  if (!assignee?.id || Number(assignee.id) === Number(actor?.id || 0)) return;
+  try {
+    await createNotification(
+      assignee.id,
+      'agenda_assigned',
+      'Nova tarefa atribuida',
+      `${getActorName(actor)} atribuiu a tarefa "${title}" para voce.`,
+      '/agenda',
+      { agendaItemId: itemId, assignedBy: getActorName(actor) }
+    );
+  } catch (error) {
+    console.warn('[Agenda:assignment_notification_error]', {
+      itemId,
+      assigneeId: assignee.id,
+      error: error.message
+    });
+  }
+}
+
+app.get('/api/agenda/users', authenticate, async (req, res) => {
+  try {
+    const companyScope = buildAgendaCompanyWhere(req.user, 'u');
+    const [users] = await pool.query(
+      `SELECT u.id, u.name, u.email, u.role, u.position, u.department
+         FROM users u
+        WHERE u.deleted_at IS NULL
+          AND u.active = 1
+          AND ${companyScope.sql}
+        ORDER BY u.name ASC, u.email ASC
+        LIMIT 500`,
+      companyScope.params
+    );
+
+    return res.json(users.map(serializeAgendaAssignableUser));
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar usuarios da agenda.' });
+  }
+});
+
 app.get('/api/agenda/items', authenticate, async (req, res) => {
   try {
-    const ownerUserId = getAgendaOwnerId(req.user);
-    const where = ['owner_user_id = ?', 'deleted_at IS NULL'];
-    const params = [ownerUserId];
+    const visibility = buildAgendaVisibilityWhere(req.user);
+    const where = ['deleted_at IS NULL', visibility.sql];
+    const params = [...visibility.params];
 
     if (req.query.status) {
       where.push('status = ?');
@@ -21319,9 +21439,9 @@ app.get('/api/agenda/items', authenticate, async (req, res) => {
     }
 
     if (req.query.search) {
-      where.push('(title LIKE ? OR description LIKE ?)');
+      where.push('(title LIKE ? OR description LIKE ? OR assigned_user_name LIKE ?)');
       const search = `%${String(req.query.search || '').trim()}%`;
-      params.push(search, search);
+      params.push(search, search, search);
     }
 
     const [rows] = await pool.query(
@@ -21352,15 +21472,24 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
     }
 
     const ownerUserId = getAgendaOwnerId(req.user);
+    const hasAssignedUser = Object.prototype.hasOwnProperty.call(req.body || {}, 'assigned_user_id')
+      || Object.prototype.hasOwnProperty.call(req.body || {}, 'assignedUserId');
+    const assignee = await getAgendaAssignableUser(
+      hasAssignedUser ? (req.body?.assigned_user_id || req.body?.assignedUserId) : ownerUserId,
+      req.user
+    );
     const tags = normalizeAgendaTags(req.body?.tags);
     const checklist = Array.isArray(req.body?.checklist) ? req.body.checklist.slice(0, 20) : [];
     const [result] = await pool.query(
       `INSERT INTO agenda_items
-       (owner_user_id, owner_name, title, description, status, priority, due_at, reminder_at, tags_json, checklist_json, board_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (owner_user_id, owner_name, assigned_user_id, assigned_user_name, assigned_user_email, title, description, status, priority, due_at, reminder_at, tags_json, checklist_json, board_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         ownerUserId,
         getActorName(req.user),
+        assignee?.id || null,
+        assignee?.name || null,
+        assignee?.email || null,
         title,
         sanitizeFinancialString(req.body?.description, 4000) || null,
         normalizeAgendaStatus(req.body?.status),
@@ -21374,10 +21503,11 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
     );
 
     const [rows] = await pool.query('SELECT * FROM agenda_items WHERE id = ? LIMIT 1', [result.insertId]);
+    await notifyAgendaAssignment(result.insertId, title, assignee, req.user);
     return res.status(201).json(serializeAgendaItem(rows[0]));
   } catch (error) {
     console.error(error);
-    return res.status(400).json({ error: error.message || 'Erro ao criar item da agenda.' });
+    return res.status(error.statusCode || 400).json({ error: error.message || 'Erro ao criar item da agenda.' });
   }
 });
 
@@ -21385,9 +21515,10 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
   try {
     const ownerUserId = getAgendaOwnerId(req.user);
     const itemId = Number(req.params.id || 0);
+    const visibility = buildAgendaVisibilityWhere(req.user);
     const [currentRows] = await pool.query(
-      'SELECT * FROM agenda_items WHERE id = ? AND owner_user_id = ? AND deleted_at IS NULL LIMIT 1',
-      [itemId, ownerUserId]
+      `SELECT * FROM agenda_items WHERE id = ? AND deleted_at IS NULL AND ${visibility.sql} LIMIT 1`,
+      [itemId, ...visibility.params]
     );
 
     if (!currentRows[0]) {
@@ -21432,6 +21563,12 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(req.body, 'board_order') || Object.prototype.hasOwnProperty.call(req.body, 'boardOrder')) {
       assign('board_order', Number(req.body.board_order || req.body.boardOrder || 0) || 0);
     }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'assigned_user_id') || Object.prototype.hasOwnProperty.call(req.body, 'assignedUserId')) {
+      const assignee = await getAgendaAssignableUser(req.body.assigned_user_id || req.body.assignedUserId, req.user);
+      assign('assigned_user_id', assignee?.id || null);
+      assign('assigned_user_name', assignee?.name || null);
+      assign('assigned_user_email', assignee?.email || null);
+    }
     if (!hasReminderDateUpdate && (req.body?.ackReminder === true || req.body?.reminder_acknowledged === true)) {
       assign('reminder_acknowledged_at', toMysqlDateTime(new Date()));
     }
@@ -21440,36 +21577,42 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Nenhuma alteracao informada para a agenda.' });
     }
 
-    params.push(itemId, ownerUserId);
+    params.push(itemId, ...visibility.params);
     await pool.query(
       `UPDATE agenda_items
           SET ${updates.join(', ')},
               updated_at = NOW()
         WHERE id = ?
-          AND owner_user_id = ?
-          AND deleted_at IS NULL`,
+          AND deleted_at IS NULL
+          AND ${visibility.sql}`,
       params
     );
 
     const [rows] = await pool.query('SELECT * FROM agenda_items WHERE id = ? LIMIT 1', [itemId]);
-    return res.json(serializeAgendaItem(rows[0]));
+    const updated = serializeAgendaItem(rows[0]);
+    if (updated.assigned_user_id && Number(updated.assigned_user_id) !== Number(currentRows[0].assigned_user_id || 0)) {
+      await notifyAgendaAssignment(itemId, updated.title, updated.assignedUser, req.user);
+    }
+    return res.json(updated);
   } catch (error) {
     console.error(error);
-    return res.status(400).json({ error: error.message || 'Erro ao atualizar item da agenda.' });
+    return res.status(error.statusCode || 400).json({ error: error.message || 'Erro ao atualizar item da agenda.' });
   }
 });
 
 app.delete('/api/agenda/items/:id', authenticate, async (req, res) => {
   try {
-    const ownerUserId = getAgendaOwnerId(req.user);
+    if (!isMasterAdminUser(req.user)) {
+      return res.status(403).json({ error: 'Apenas o Administrador Master pode excluir itens da agenda.' });
+    }
+
     const [result] = await pool.query(
       `UPDATE agenda_items
           SET deleted_at = NOW(),
               updated_at = NOW()
         WHERE id = ?
-          AND owner_user_id = ?
           AND deleted_at IS NULL`,
-      [req.params.id, ownerUserId]
+      [req.params.id]
     );
 
     if (!result?.affectedRows) {

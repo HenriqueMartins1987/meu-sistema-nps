@@ -15032,6 +15032,29 @@ a {
   line-height: 1.45;
 }
 
+.agenda-assignee {
+  display: grid;
+  gap: 3px;
+  padding: 10px 11px;
+  border: 1px solid rgba(221, 207, 188, 0.62);
+  border-radius: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 250, 243, 0.9), rgba(255, 255, 255, 0.78));
+}
+
+.agenda-assignee span {
+  color: rgba(53, 42, 31, 0.52);
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.agenda-assignee strong {
+  color: #142235;
+  font-size: 0.86rem;
+}
+
 .agenda-task-meta,
 .agenda-tag-row,
 .agenda-card-actions {
