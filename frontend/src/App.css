@@ -14886,6 +14886,59 @@ a {
   min-width: 0;
 }
 
+.agenda-user-groups {
+  display: grid;
+  gap: 24px;
+}
+
+.agenda-user-section {
+  display: grid;
+  gap: 14px;
+}
+
+.agenda-user-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  border: 1px solid rgba(221, 207, 188, 0.82);
+  border-radius: 22px;
+  background:
+    linear-gradient(135deg, rgba(255, 252, 247, 0.98), rgba(248, 242, 233, 0.9)),
+    radial-gradient(circle at top right, rgba(176, 122, 53, 0.12), transparent 38%);
+  box-shadow: 0 12px 30px rgba(12, 12, 16, 0.05);
+}
+
+.agenda-user-header div {
+  display: grid;
+  gap: 3px;
+}
+
+.agenda-user-header strong {
+  color: #142235;
+  font-family: Georgia, 'Times New Roman', serif;
+  font-size: 1.16rem;
+}
+
+.agenda-user-header small {
+  color: rgba(53, 42, 31, 0.62);
+  font-size: 0.82rem;
+}
+
+.agenda-user-header > span {
+  display: inline-flex;
+  min-width: 88px;
+  justify-content: center;
+  padding: 9px 14px;
+  border-radius: 999px;
+  background: rgba(20, 34, 53, 0.08);
+  color: #142235;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+}
+
 .agenda-board {
   display: grid;
   grid-template-columns: repeat(4, minmax(230px, 1fr));
@@ -15279,6 +15332,11 @@ a {
 @media (max-width: 1020px) {
   .agenda-toolbar {
     grid-template-columns: 1fr;
+  }
+
+  .agenda-user-header {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .agenda-editor-shell {

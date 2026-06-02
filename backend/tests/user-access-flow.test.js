@@ -977,6 +977,75 @@ test('coordinator can open complaint assigned through coordinator scope', async 
   assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes('gerente_unidade')));
 });
 
+test('coordinator keeps clinic scope from token when user_clinics is empty', async () => {
+  let complaintQuerySql = '';
+  let complaintQueryParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1, role: 'coordinator' }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes('WHERE c.id = ?'),
+      reply: async (sql, params) => {
+        complaintQuerySql = sql;
+        complaintQueryParams = params;
+
+        return [[{
+          id: 188,
+          protocol: 'GRC-2026-000188',
+          clinic_id: 5,
+          patient_name: 'Paciente Escopo Token',
+          patient_phone: '+5562999999999',
+          status: 'em_andamento',
+          forwarded_to_role: 'coordinator',
+          forwarded_to_label: 'Coordenador Token',
+          assigned_coordinator_user_id: 17,
+          assigned_coordinator_name: 'Coordenador Token',
+          assigned_responsible_user_id: 17,
+          assigned_responsible_name: 'Coordenador Token',
+          assigned_responsible_role: 'coordinator',
+          attachment_url: null,
+          deleted_at: null,
+          created_at: new Date(),
+          updated_at: new Date()
+        }]];
+      }
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_evidences') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_logs') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    }
+  ]);
+
+  const response = await request(app)
+    .get('/complaints/188')
+    .set('Authorization', `Bearer ${signToken({
+      id: 17,
+      email: 'coordenador.token@example.com',
+      role: 'coordinator',
+      name: 'Coordenador Token',
+      permissions: [],
+      clinicIds: [5],
+      mustChangePassword: false
+    })}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.id, 188);
+  assert.match(complaintQuerySql, /c\.clinic_id IN \(\?\)/);
+  assert.ok(Array.isArray(complaintQueryParams));
+  assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes(5)));
+});
+
 test('coordinator keeps visibility after complaint is returned to SAC', async () => {
   let complaintQuerySql = '';
   let complaintQueryParams = null;
@@ -1218,6 +1287,90 @@ test('manager keeps visibility of complaints inside selected clinics', async () 
   assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes('manager')));
   assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes('coordenador_unidade')));
   assert.ok(complaintQueryParams.some((param) => Array.isArray(param) && param.includes('gerente_unidade')));
+});
+
+test('supervisor crc can assign agenda item to crc operator', async () => {
+  let insertedAgendaParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1, role: 'supervisor_crc' }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM users u') && sql.includes('WHERE u.id = ?') && sql.includes('u.active = 1'),
+      reply: async () => [[{
+        id: 55,
+        name: 'Operador CRC',
+        email: 'crc.operator@example.com',
+        role: 'crc_operator',
+        position: 'Operador de CRC',
+        department: 'CRC'
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO agenda_items'),
+      reply: async (_sql, params) => {
+        insertedAgendaParams = params;
+        return [{ insertId: 91 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM agenda_items WHERE id = ? LIMIT 1'),
+      reply: async () => [[{
+        id: 91,
+        owner_user_id: 9,
+        owner_name: 'Supervisor CRC',
+        assigned_user_id: 55,
+        assigned_user_name: 'Operador CRC',
+        assigned_user_email: 'crc.operator@example.com',
+        title: 'Acompanhar agenda vencida',
+        description: 'Verificar protocolos com SLA em atraso',
+        status: 'today',
+        priority: 'alta',
+        due_at: null,
+        reminder_at: null,
+        reminder_acknowledged_at: null,
+        tags_json: '[]',
+        checklist_json: '[]',
+        board_order: 0
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO notification_events'),
+      reply: async () => [{ insertId: 1 }]
+    }
+  ]);
+
+  const response = await request(app)
+    .post('/api/agenda/items')
+    .set('Authorization', `Bearer ${signToken({
+      id: 9,
+      email: 'supervisor@example.com',
+      role: 'supervisor_crc',
+      name: 'Supervisor CRC',
+      permissions: ['home'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({
+      title: 'Acompanhar agenda vencida',
+      status: 'today',
+      priority: 'alta',
+      assigned_user_id: 55,
+      description: 'Verificar protocolos com SLA em atraso'
+    });
+
+  assert.equal(response.status, 201);
+  assert.ok(Array.isArray(insertedAgendaParams));
+  assert.equal(insertedAgendaParams[0], 9);
+  assert.equal(insertedAgendaParams[2], 55);
+  assert.equal(insertedAgendaParams[3], 'Operador CRC');
+  assert.equal(response.body.assigned_user_id, 55);
 });
 
 test('SAC operator can change complaint unit with audit trail', async () => {

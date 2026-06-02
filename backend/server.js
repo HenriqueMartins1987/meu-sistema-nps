@@ -633,6 +633,21 @@ const coordinatorManagerAccessRoleAliases = [
   ...coordinatorAccessRoleAliases,
   ...managerAccessRoleAliases
 ];
+const agendaDelegableRoleAliases = [
+  ...coordinatorManagerAccessRoleAliases,
+  'supervisor_crc',
+  'supervisor_de_crc',
+  'sac_operator',
+  'operador_sac',
+  'operador_de_sac',
+  'crc_operator',
+  'operador_crc',
+  'operador_de_crc',
+  'admin',
+  'administrador',
+  'master_admin',
+  'administrador_master'
+];
 
 function buildRoleAliasWhere(column, aliases) {
   return `(${column} IN (?) OR LOWER(REPLACE(REPLACE(TRIM(${column}), ' ', '_'), '-', '_')) IN (?))`;
@@ -5280,7 +5295,7 @@ async function getComplaintRows(query = {}, user = null) {
     const role = normalizedAccessRole;
     const userName = String(user?.name || '').trim();
     const clinicIds = ['coordinator', 'manager'].includes(role)
-      ? await getUserClinicIds(user.id)
+      ? await getUserClinicIds(user.id, user)
       : [];
     const accessClauses = [];
     const accessParams = [];
@@ -5316,10 +5331,20 @@ async function getComplaintRows(query = {}, user = null) {
         accessParams.push(
           clinicIds
         );
-        addNameFallback('manager', clinicIds);
-      } else {
-        accessClauses.push('1 = 0');
       }
+      accessClauses.push(`(
+        c.manager_id = ?
+        OR (
+          c.assigned_responsible_user_id = ?
+          AND ${buildRoleAliasWhere('COALESCE(c.assigned_responsible_role, c.forwarded_to_role)', managerAccessRoleAliases)}
+        )
+      )`);
+      accessParams.push(
+        user.id,
+        user.id,
+        ...getRoleAliasParams(managerAccessRoleAliases)
+      );
+      addNameFallback('manager', clinicIds);
     } else if (role === 'coordinator') {
       if (clinicIds.length) {
         accessClauses.push(`(
@@ -5343,10 +5368,20 @@ async function getComplaintRows(query = {}, user = null) {
           ...getRoleAliasParams(coordinatorAccessRoleAliases),
           user.id
         );
-        addNameFallback('coordinator', clinicIds);
-      } else {
-        accessClauses.push('1 = 0');
       }
+      accessClauses.push(`(
+        c.assigned_coordinator_user_id = ?
+        OR (
+          c.assigned_responsible_user_id = ?
+          AND ${buildRoleAliasWhere('COALESCE(c.assigned_responsible_role, c.forwarded_to_role)', coordinatorAccessRoleAliases)}
+        )
+      )`);
+      accessParams.push(
+        user.id,
+        user.id,
+        ...getRoleAliasParams(coordinatorAccessRoleAliases)
+      );
+      addNameFallback('coordinator', clinicIds);
     } else {
       accessClauses.push('c.assigned_responsible_user_id = ?');
       accessParams.push(user.id);
@@ -7527,7 +7562,7 @@ async function buildAuthenticatedUser(user) {
   const role = safeUser.role || 'viewer';
   const permissions = parsePermissionsFromUser(safeUser);
   const actionPermissions = parseActionPermissionsFromUser(safeUser);
-  const clinicIds = await getUserClinicIds(user.id);
+  const clinicIds = await getUserClinicIds(user.id, safeUser);
   const mustChangePassword = Boolean(user.must_change_password);
   const tokenVersion = Number(user.token_version || 1);
 
@@ -8923,23 +8958,130 @@ async function dispatchNoShowNotifications(record, actor) {
   await pool.query('UPDATE patient_interactions SET no_show_alert_sent_at = NOW() WHERE id = ?', [record.id]);
 }
 
-async function getUserClinicIds(userId) {
+function normalizeClinicIds(ids = []) {
+  return Array.from(new Set((Array.isArray(ids) ? ids : [])
+    .map((clinicId) => Number(clinicId))
+    .filter((clinicId) => Number.isInteger(clinicId) && clinicId > 0)));
+}
+
+async function getUserClinicIds(userId, options = {}) {
   if (!userId) return [];
 
   const [rows] = await pool.query(
     'SELECT clinic_id FROM user_clinics WHERE user_id = ?',
     [userId]
   );
+  const linkedClinicIds = normalizeClinicIds(rows.map((row) => row.clinic_id));
 
-  return rows
-    .map((row) => Number(row.clinic_id))
-    .filter((value) => Number.isInteger(value) && value > 0);
-}
+  if (linkedClinicIds.length) {
+    return linkedClinicIds;
+  }
 
-function normalizeClinicIds(ids = []) {
-  return Array.from(new Set((Array.isArray(ids) ? ids : [])
-    .map((clinicId) => Number(clinicId))
-    .filter((clinicId) => Number.isInteger(clinicId) && clinicId > 0)));
+  const fallbackUser = {
+    id: userId,
+    role: options.role || null,
+    name: options.name || null,
+    clinicIds: Array.isArray(options.clinicIds) ? options.clinicIds : []
+  };
+
+  if (!fallbackUser.role || !fallbackUser.name) {
+    const [userRows] = await pool.query(
+      'SELECT role, name FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+      [userId]
+    );
+    if (userRows[0]) {
+      fallbackUser.role = fallbackUser.role || userRows[0].role;
+      fallbackUser.name = fallbackUser.name || userRows[0].name;
+    }
+  }
+
+  const normalizedRole = normalizeAccessRole(fallbackUser.role);
+  const fallbackClinicIds = clinicIdsFromUser(fallbackUser);
+
+  if (fallbackClinicIds.length) {
+    return fallbackClinicIds;
+  }
+
+  if (!['coordinator', 'manager'].includes(normalizedRole)) {
+    return fallbackClinicIds;
+  }
+
+  const trimmedName = String(fallbackUser.name || '').trim();
+  const complaintScopeClauses = [];
+  const complaintScopeParams = [];
+  const clinicScopeClauses = [];
+  const clinicScopeParams = [];
+
+  if (normalizedRole === 'coordinator') {
+    complaintScopeClauses.push('c.assigned_coordinator_user_id = ?');
+    complaintScopeParams.push(userId);
+    complaintScopeClauses.push('c.assigned_responsible_user_id = ?');
+    complaintScopeParams.push(userId);
+
+    if (trimmedName) {
+      complaintScopeClauses.push(`(
+        ${buildRoleAliasWhere('c.assigned_responsible_role', coordinatorAccessRoleAliases)}
+        AND LOWER(TRIM(COALESCE(c.assigned_responsible_name, ''))) = LOWER(TRIM(?))
+      )`);
+      complaintScopeParams.push(...getRoleAliasParams(coordinatorAccessRoleAliases), trimmedName);
+      complaintScopeClauses.push(`(
+        ${buildRoleAliasWhere('c.forwarded_to_role', coordinatorAccessRoleAliases)}
+        AND LOWER(TRIM(COALESCE(c.forwarded_to_label, ''))) = LOWER(TRIM(?))
+      )`);
+      complaintScopeParams.push(...getRoleAliasParams(coordinatorAccessRoleAliases), trimmedName);
+      clinicScopeClauses.push("LOWER(TRIM(COALESCE(coordinator_name, ''))) = LOWER(TRIM(?))");
+      clinicScopeParams.push(trimmedName);
+    }
+  }
+
+  if (normalizedRole === 'manager') {
+    complaintScopeClauses.push('c.manager_id = ?');
+    complaintScopeParams.push(userId);
+    complaintScopeClauses.push('c.assigned_responsible_user_id = ?');
+    complaintScopeParams.push(userId);
+
+    if (trimmedName) {
+      complaintScopeClauses.push(`(
+        ${buildRoleAliasWhere('c.assigned_responsible_role', managerAccessRoleAliases)}
+        AND LOWER(TRIM(COALESCE(c.assigned_responsible_name, ''))) = LOWER(TRIM(?))
+      )`);
+      complaintScopeParams.push(...getRoleAliasParams(managerAccessRoleAliases), trimmedName);
+      complaintScopeClauses.push(`(
+        ${buildRoleAliasWhere('c.forwarded_to_role', managerAccessRoleAliases)}
+        AND LOWER(TRIM(COALESCE(c.forwarded_to_label, ''))) = LOWER(TRIM(?))
+      )`);
+      complaintScopeParams.push(...getRoleAliasParams(managerAccessRoleAliases), trimmedName);
+      complaintScopeClauses.push("LOWER(TRIM(COALESCE(c.manager_name, ''))) = LOWER(TRIM(?))");
+      complaintScopeParams.push(trimmedName);
+      clinicScopeClauses.push("LOWER(TRIM(COALESCE(manager, ''))) = LOWER(TRIM(?))");
+      clinicScopeParams.push(trimmedName);
+    }
+  }
+
+  if (complaintScopeClauses.length) {
+    const [complaintRows] = await pool.query(
+      `SELECT DISTINCT c.clinic_id
+         FROM complaints c
+        WHERE c.deleted_at IS NULL
+          AND c.clinic_id IS NOT NULL
+          AND (${complaintScopeClauses.join(' OR ')})`,
+      complaintScopeParams
+    );
+    fallbackClinicIds.push(...complaintRows.map((row) => row.clinic_id));
+  }
+
+  if (clinicScopeClauses.length) {
+    const [clinicRows] = await pool.query(
+      `SELECT id
+         FROM clinics
+        WHERE active = 1
+          AND (${clinicScopeClauses.join(' OR ')})`,
+      clinicScopeParams
+    );
+    fallbackClinicIds.push(...clinicRows.map((row) => row.id));
+  }
+
+  return normalizeClinicIds(fallbackClinicIds);
 }
 
 async function syncClinicLeadershipForUser({
@@ -11805,12 +11947,12 @@ async function authenticate(req, res, next) {
       req.user.permissions = parsePermissionsFromUser({ role: req.user.role, permissions: rows[0]?.permissions });
       req.user.actionPermissions = getUserActionPermissions({ role: req.user.role, action_permissions: rows[0]?.action_permissions });
       try {
-        req.user.clinicIds = await getUserClinicIds(req.user.id);
+        req.user.clinicIds = await getUserClinicIds(req.user.id, req.user);
       } catch (clinicScopeError) {
         if (process.env.NODE_ENV !== 'test') {
           console.warn('Não foi possível carregar clínicas vinculadas ao usuário autenticado.', clinicScopeError?.message || clinicScopeError);
         }
-        req.user.clinicIds = Array.isArray(req.user.clinicIds) ? req.user.clinicIds : [];
+        req.user.clinicIds = clinicIdsFromUser(req.user);
       }
       req.user.tokenVersion = tokenVersion;
       req.user.mustChangePassword = mustChangePassword;
@@ -21320,6 +21462,10 @@ function getAgendaOwnerId(user = {}) {
   return Number(user?.id || 0) || 0;
 }
 
+function canManageAgendaAssignments(user) {
+  return isAdminUser(user) || normalizeAccessRole(user?.role) === 'supervisor_crc';
+}
+
 function normalizeAgendaUserId(value) {
   const numeric = Number(value || 0);
   return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
@@ -21350,6 +21496,28 @@ function buildAgendaCompanyWhere(user, alias = '') {
   };
 }
 
+function buildAgendaAssignableUserWhere(user, alias = 'u') {
+  const prefix = alias ? `${alias}.` : '';
+  const companyScope = buildAgendaCompanyWhere(user, alias);
+  const actorId = getAgendaOwnerId(user);
+
+  if (!actorId) {
+    return { sql: '1 = 0', params: [] };
+  }
+
+  if (!canManageAgendaAssignments(user)) {
+    return {
+      sql: `(${companyScope.sql}) AND ${prefix}id = ?`,
+      params: [...companyScope.params, actorId]
+    };
+  }
+
+  return {
+    sql: `(${companyScope.sql}) AND (${prefix}id = ? OR ${buildRoleAliasWhere(`${prefix}role`, agendaDelegableRoleAliases)})`,
+    params: [...companyScope.params, actorId, ...getRoleAliasParams(agendaDelegableRoleAliases)]
+  };
+}
+
 function serializeAgendaAssignableUser(user = {}) {
   return {
     id: user.id,
@@ -21365,16 +21533,16 @@ async function getAgendaAssignableUser(userId, actor) {
   const assigneeId = normalizeAgendaUserId(userId);
   if (!assigneeId) return null;
 
-  const companyScope = buildAgendaCompanyWhere(actor, 'u');
+  const assignableScope = buildAgendaAssignableUserWhere(actor, 'u');
   const [users] = await pool.query(
     `SELECT u.id, u.name, u.email, u.role, u.position, u.department
        FROM users u
       WHERE u.id = ?
         AND u.deleted_at IS NULL
         AND u.active = 1
-        AND ${companyScope.sql}
+        AND ${assignableScope.sql}
       LIMIT 1`,
-    [assigneeId, ...companyScope.params]
+    [assigneeId, ...assignableScope.params]
   );
 
   if (!users[0]) {
@@ -21408,16 +21576,17 @@ async function notifyAgendaAssignment(itemId, title, assignee, actor) {
 
 app.get('/api/agenda/users', authenticate, async (req, res) => {
   try {
-    const companyScope = buildAgendaCompanyWhere(req.user, 'u');
+    const assignableScope = buildAgendaAssignableUserWhere(req.user, 'u');
+    const actorId = getAgendaOwnerId(req.user);
     const [users] = await pool.query(
       `SELECT u.id, u.name, u.email, u.role, u.position, u.department
          FROM users u
         WHERE u.deleted_at IS NULL
           AND u.active = 1
-          AND ${companyScope.sql}
-        ORDER BY u.name ASC, u.email ASC
+          AND ${assignableScope.sql}
+        ORDER BY CASE WHEN u.id = ? THEN 0 ELSE 1 END, u.name ASC, u.email ASC
         LIMIT 500`,
-      companyScope.params
+      [...assignableScope.params, actorId]
     );
 
     return res.json(users.map(serializeAgendaAssignableUser));

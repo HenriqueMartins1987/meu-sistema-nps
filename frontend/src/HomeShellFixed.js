@@ -131,16 +131,53 @@ function formatDateTime(value) {
   }).format(new Date(value));
 }
 
-function complaintAgendaTone(item) {
+function buildComplaintAgendaAlert(item) {
   const dueAt = item?.due_at ? new Date(item.due_at) : null;
 
-  if (!dueAt || Number.isNaN(dueAt.getTime())) return 'neutral';
+  if (!dueAt || Number.isNaN(dueAt.getTime())) {
+    return {
+      tone: 'neutral',
+      urgent: false,
+      detail: 'Prazo nao informado',
+      severity: 99
+    };
+  }
 
   const diffMs = dueAt.getTime() - Date.now();
 
-  if (diffMs < 0) return 'danger';
-  if (diffMs <= 24 * 60 * 60 * 1000) return 'warning';
-  return 'brand';
+  if (diffMs < 0) {
+    return {
+      tone: 'danger',
+      urgent: true,
+      detail: `Prazo vencido desde ${formatDateTime(item.due_at)}`,
+      severity: 0
+    };
+  }
+
+  if (diffMs <= 24 * 60 * 60 * 1000) {
+    return {
+      tone: 'warning',
+      urgent: true,
+      detail: `Vence em ate 24h: ${formatDateTime(item.due_at)}`,
+      severity: 1
+    };
+  }
+
+  if (diffMs <= 48 * 60 * 60 * 1000) {
+    return {
+      tone: 'brand',
+      urgent: true,
+      detail: `Vence em ate 48h: ${formatDateTime(item.due_at)}`,
+      severity: 2
+    };
+  }
+
+  return {
+    tone: 'brand',
+    urgent: false,
+    detail: `Prazo em ${formatDateTime(item.due_at)}`,
+    severity: 3
+  };
 }
 
 function canAccessWeeklyComplaintReport(user) {
@@ -407,21 +444,18 @@ function HomeShellFixed() {
 
           if (Number.isNaN(dueAt.getTime())) return null;
 
-          const tone = complaintAgendaTone(item);
+          const agendaAlert = buildComplaintAgendaAlert(item);
 
           return {
             key: `complaint-${item.id}`,
             type: 'Reclamação',
             title: item.protocol || `GRC-${item.id}`,
             description: `${item.patient_name || 'Paciente'} · ${item.clinic_name || 'Unidade não informada'}`,
-            detail: tone === 'danger'
-              ? `Prazo vencido desde ${formatDateTime(item.due_at)}`
-              : tone === 'warning'
-                ? `Prazo próximo: ${formatDateTime(item.due_at)}`
-                : `Prazo em ${formatDateTime(item.due_at)}`,
+            detail: agendaAlert.detail,
             when: dueAt.getTime(),
-            tone,
-            urgent: tone === 'danger' || tone === 'warning',
+            tone: agendaAlert.tone,
+            urgent: agendaAlert.urgent,
+            severity: agendaAlert.severity,
             link: `/gestao/${item.id}`
           };
         })
@@ -479,7 +513,13 @@ function HomeShellFixed() {
         })
         .slice(0, 8);
 
-      const nextAlerts = complaintAgenda.filter((item) => item.urgent).slice(0, 4);
+      const nextAlerts = complaintAgenda
+        .filter((item) => item.urgent)
+        .sort((a, b) => {
+          if ((a.severity ?? 99) !== (b.severity ?? 99)) return (a.severity ?? 99) - (b.severity ?? 99);
+          return a.when - b.when;
+        })
+        .slice(0, 4);
 
       setAgendaItems(nextAgenda);
       setComplaintTreatmentItems(complaintTreatmentAgenda);
@@ -1206,7 +1246,7 @@ function HomeShellFixed() {
         <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setAgendaAlertOpen(false)}>
           <section className="modal-panel agenda-alert-modal" onClick={(event) => event.stopPropagation()}>
             <p className="eyebrow">Alertas do dia</p>
-            <h2>Existem protocolos com prazo vencido ou próximo do vencimento.</h2>
+            <h2>Existem protocolos vencidos ou com prazo em até 48 horas.</h2>
 
             <div className="home-agenda-list compact">
               {agendaAlerts.map((item) => (
