@@ -432,7 +432,8 @@ function ComplaintDetail() {
   const user = readUser();
   const [complaint, setComplaint] = useState(null);
   const [comment, setComment] = useState('');
-  const [evidenceFile, setEvidenceFile] = useState(null);
+  const [evidenceFiles, setEvidenceFiles] = useState([]);
+  const [evidenceInputKey, setEvidenceInputKey] = useState(0);
   const [evidenceDescription, setEvidenceDescription] = useState('');
   const [feedback, setFeedback] = useState('');
   const [loading, setLoading] = useState(true);
@@ -854,14 +855,30 @@ function ComplaintDetail() {
     }
   };
 
+  const handleEvidenceFileSelection = (fileList) => {
+    const selectedFiles = Array.from(fileList || []);
+    if (selectedFiles.length > 10) {
+      setEvidenceFiles(selectedFiles.slice(0, 10));
+      setFeedback('Foram selecionados os 10 primeiros arquivos. O limite por envio é de 10 evidências.');
+      return;
+    }
+    setEvidenceFiles(selectedFiles);
+  };
+
   const handleEvidenceUpload = async () => {
-    if (!evidenceFile) {
-      setFeedback('Selecione um arquivo para anexar.');
+    if (!evidenceFiles.length) {
+      setFeedback('Selecione pelo menos um arquivo para anexar.');
       return;
     }
 
-    if (evidenceFile.size > maxUploadSizeBytes) {
-      setFeedback('A evidência deve ter no máximo 10 MB.');
+    if (evidenceFiles.length > 10) {
+      setFeedback('Envie no maximo 10 arquivos de evidencia por vez.');
+      return;
+    }
+
+    const oversizedFile = evidenceFiles.find((file) => file.size > maxUploadSizeBytes);
+    if (oversizedFile) {
+      setFeedback(`Cada evidencia deve ter no maximo 10 MB. Revise: ${oversizedFile.name}`);
       return;
     }
 
@@ -870,12 +887,13 @@ function ComplaintDetail() {
 
     try {
       const formData = new FormData();
-      formData.append('file', evidenceFile);
+      evidenceFiles.forEach((file) => formData.append('files', file));
       formData.append('description', evidenceDescription);
       await api.post(`/complaints/${id}/evidences`, formData);
-      setEvidenceFile(null);
+      setEvidenceFiles([]);
+      setEvidenceInputKey((current) => current + 1);
       setEvidenceDescription('');
-      setFeedback('Evidência anexada com sucesso.');
+      setFeedback(evidenceFiles.length === 1 ? 'Evidencia anexada com sucesso.' : `${evidenceFiles.length} evidencias anexadas com sucesso.`);
       await loadComplaint();
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Erro ao anexar evidência.');
@@ -1664,7 +1682,7 @@ function ComplaintDetail() {
               <p className="eyebrow">Evidências</p>
               <h2>Documentos da tratativa</h2>
             </div>
-            <span className="mini-badge">Max. 10 MB</span>
+            <span className="mini-badge">Max. 10 arquivos / 10 MB cada</span>
           </div>
           <p className="permission-note">Exclusões ficam registradas no histórico do protocolo.</p>
 
@@ -1682,13 +1700,26 @@ function ComplaintDetail() {
               <label>
                 Arquivo
                 <input
+                  key={evidenceInputKey}
                   className="field"
                   type="file"
-                  onChange={(event) => setEvidenceFile(event.target.files[0] || null)}
+                  multiple
+                  onChange={(event) => handleEvidenceFileSelection(event.target.files)}
                 />
               </label>
+              {evidenceFiles.length ? (
+                <div className="evidence-file-list" aria-live="polite">
+                  <strong>{evidenceFiles.length} arquivo(s) selecionado(s)</strong>
+                  {evidenceFiles.map((file) => (
+                    <span key={`${file.name}-${file.size}`}>
+                      {file.name}
+                      <small>{Math.max(1, Math.round(file.size / 1024))} KB</small>
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               <button className="secondary-action" onClick={handleEvidenceUpload} disabled={uploading}>
-                {uploading ? 'Anexando...' : 'Anexar evidência'}
+                {uploading ? 'Anexando...' : evidenceFiles.length > 1 ? `Anexar ${evidenceFiles.length} evidencias` : 'Anexar evidencia'}
               </button>
             </div>
           ) : (

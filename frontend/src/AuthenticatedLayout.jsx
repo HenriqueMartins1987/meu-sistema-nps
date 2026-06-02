@@ -10,6 +10,7 @@ function Icon({ name }) {
   const common = { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: '1.8', strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true };
 
   if (name === 'home') return <svg {...common}><path d="M4 11.5 12 5l8 6.5" /><path d="M6 10.5V20h12v-9.5" /><path d="M10 20v-5h4v5" /></svg>;
+  if (name === 'agenda') return <svg {...common}><path d="M7 3v4M17 3v4" /><path d="M4 8h16" /><path d="M5 5h14a2 2 0 0 1 2 2v14H3V7a2 2 0 0 1 2-2Z" /><path d="m8 15 2 2 5-5" /></svg>;
   if (name === 'dashboard') return <svg {...common}><path d="M4 4h7v7H4zM13 4h7v4h-7zM13 10h7v10h-7zM4 13h7v7H4z" /></svg>;
   if (name === 'finance') return <svg {...common}><path d="M4 18 9 13l4 3 7-9" /><path d="M16 7h4v4" /></svg>;
   if (name === 'complaints') return <svg {...common}><path d="M6 4h9l5 5v11H6z" /><path d="M15 4v5h5" /><path d="M9 13h6M9 17h4" /></svg>;
@@ -46,6 +47,13 @@ function buildMenuSections(user) {
     || whatsappVisible;
 
   const sections = [
+    {
+      key: 'agenda',
+      label: 'Agenda',
+      items: [
+        { key: 'agenda', label: 'Agenda', icon: 'agenda', path: '/agenda', exact: true, visible: hasPermission(user, 'home') }
+      ]
+    },
     {
       key: 'dashboard',
       label: 'Dashboard',

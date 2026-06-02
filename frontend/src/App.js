@@ -30,6 +30,7 @@ import PublicDentalCardForm from './pages/PublicDentalCardForm';
 import WhatsAppManagement from './pages/WhatsAppManagement';
 import WhatsAppServiceSettings from './pages/WhatsAppServiceSettings';
 import ReportsHub from './pages/ReportsHub';
+import AgendaPage from './pages/AgendaPage';
 import { PermissionRoute, ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
 import './App.css';
 
@@ -95,6 +96,7 @@ function App() {
       <Route path="/public/dental-card/:unidadeSlug" element={<PublicDentalCardForm />} />
       <Route element={<ProtectedRoute />}>
         <Route element={<PermissionRoute permission="home" />}>
+          <Route path="/agenda" element={<AgendaPage />} />
           <Route path="/home" element={<Home />} />
           <Route path="/home/relatorios" element={<ReportsHub />} />
           <Route path="/perfil" element={<Profile />} />

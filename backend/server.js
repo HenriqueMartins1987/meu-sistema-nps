@@ -2905,6 +2905,7 @@ async function ensureOperationalTenantColumns() {
     'complaints',
     'complaint_evidences',
     'complaint_logs',
+    'agenda_items',
     'whatsapp_message_logs',
     'uploaded_files'
   ];
@@ -4572,6 +4573,30 @@ async function ensureDatabaseSchema() {
   await ensureColumn('complaint_evidences', 'deleted_by_name', 'VARCHAR(160) NULL');
   await ensureColumn('complaint_evidences', 'deleted_by_role', 'VARCHAR(80) NULL');
   await ensureColumn('complaint_evidences', 'deletion_reason', 'TEXT NULL');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agenda_items (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      owner_user_id INT NULL,
+      owner_name VARCHAR(180) NULL,
+      title VARCHAR(180) NOT NULL,
+      description TEXT NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'todo',
+      priority VARCHAR(30) NOT NULL DEFAULT 'normal',
+      due_at DATETIME NULL,
+      reminder_at DATETIME NULL,
+      reminder_acknowledged_at DATETIME NULL,
+      tags_json LONGTEXT NULL,
+      checklist_json LONGTEXT NULL,
+      board_order INT NOT NULL DEFAULT 0,
+      deleted_at TIMESTAMP NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_agenda_owner_status (owner_user_id, status),
+      INDEX idx_agenda_reminder (owner_user_id, reminder_at, reminder_acknowledged_at),
+      INDEX idx_agenda_due (owner_user_id, due_at)
+    )
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS complaint_logs (
@@ -21222,6 +21247,243 @@ app.post('/webhook/whatsapp', webhookLimiter, async (req, res) => {
 });
 
 // ============================================
+// AGENDA
+// ============================================
+const agendaStatuses = new Set(['todo', 'today', 'doing', 'done']);
+const agendaPriorities = new Set(['baixa', 'normal', 'alta', 'urgente']);
+
+function normalizeAgendaStatus(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  const aliases = {
+    aberto: 'todo',
+    pendente: 'todo',
+    hoje: 'today',
+    andamento: 'doing',
+    em_andamento: 'doing',
+    concluido: 'done',
+    concluida: 'done',
+    finalizado: 'done'
+  };
+  const resolved = aliases[normalized] || normalized;
+  return agendaStatuses.has(resolved) ? resolved : 'todo';
+}
+
+function normalizeAgendaPriority(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  return agendaPriorities.has(normalized) ? normalized : 'normal';
+}
+
+function normalizeAgendaTags(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeFinancialString(item, 40)).filter(Boolean).slice(0, 8);
+  }
+  return String(value || '')
+    .split(/[;,]/)
+    .map((item) => sanitizeFinancialString(item, 40))
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function parseAgendaJsonArray(value) {
+  if (!value) return [];
+  if (Array.isArray(value)) return value;
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function serializeAgendaItem(row = {}) {
+  return {
+    ...row,
+    tags: parseAgendaJsonArray(row.tags_json),
+    checklist: parseAgendaJsonArray(row.checklist_json)
+  };
+}
+
+function getAgendaOwnerId(user = {}) {
+  return Number(user?.id || 0) || 0;
+}
+
+app.get('/api/agenda/items', authenticate, async (req, res) => {
+  try {
+    const ownerUserId = getAgendaOwnerId(req.user);
+    const where = ['owner_user_id = ?', 'deleted_at IS NULL'];
+    const params = [ownerUserId];
+
+    if (req.query.status) {
+      where.push('status = ?');
+      params.push(normalizeAgendaStatus(req.query.status));
+    }
+
+    if (req.query.search) {
+      where.push('(title LIKE ? OR description LIKE ?)');
+      const search = `%${String(req.query.search || '').trim()}%`;
+      params.push(search, search);
+    }
+
+    const [rows] = await pool.query(
+      `SELECT *
+         FROM agenda_items
+        WHERE ${where.join(' AND ')}
+        ORDER BY
+          CASE status WHEN 'today' THEN 0 WHEN 'doing' THEN 1 WHEN 'todo' THEN 2 WHEN 'done' THEN 3 ELSE 4 END,
+          COALESCE(due_at, '9999-12-31 23:59:59') ASC,
+          board_order ASC,
+          updated_at DESC
+        LIMIT 500`,
+      params
+    );
+
+    return res.json(rows.map(serializeAgendaItem));
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar agenda.' });
+  }
+});
+
+app.post('/api/agenda/items', authenticate, async (req, res) => {
+  try {
+    const title = sanitizeFinancialString(req.body?.title, 180);
+    if (!title) {
+      return res.status(400).json({ error: 'Informe um titulo para o item da agenda.' });
+    }
+
+    const ownerUserId = getAgendaOwnerId(req.user);
+    const tags = normalizeAgendaTags(req.body?.tags);
+    const checklist = Array.isArray(req.body?.checklist) ? req.body.checklist.slice(0, 20) : [];
+    const [result] = await pool.query(
+      `INSERT INTO agenda_items
+       (owner_user_id, owner_name, title, description, status, priority, due_at, reminder_at, tags_json, checklist_json, board_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        ownerUserId,
+        getActorName(req.user),
+        title,
+        sanitizeFinancialString(req.body?.description, 4000) || null,
+        normalizeAgendaStatus(req.body?.status),
+        normalizeAgendaPriority(req.body?.priority),
+        normalizeNullableMysqlDateTime(req.body?.due_at || req.body?.dueAt),
+        normalizeNullableMysqlDateTime(req.body?.reminder_at || req.body?.reminderAt),
+        JSON.stringify(tags),
+        JSON.stringify(checklist),
+        Number(req.body?.board_order || req.body?.boardOrder || 0) || 0
+      ]
+    );
+
+    const [rows] = await pool.query('SELECT * FROM agenda_items WHERE id = ? LIMIT 1', [result.insertId]);
+    return res.status(201).json(serializeAgendaItem(rows[0]));
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao criar item da agenda.' });
+  }
+});
+
+app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
+  try {
+    const ownerUserId = getAgendaOwnerId(req.user);
+    const itemId = Number(req.params.id || 0);
+    const [currentRows] = await pool.query(
+      'SELECT * FROM agenda_items WHERE id = ? AND owner_user_id = ? AND deleted_at IS NULL LIMIT 1',
+      [itemId, ownerUserId]
+    );
+
+    if (!currentRows[0]) {
+      return res.status(404).json({ error: 'Item da agenda nao encontrado.' });
+    }
+
+    const updates = [];
+    const params = [];
+    const assign = (field, value) => {
+      updates.push(`${field} = ?`);
+      params.push(value);
+    };
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'title')) {
+      const title = sanitizeFinancialString(req.body.title, 180);
+      if (!title) return res.status(400).json({ error: 'Informe um titulo para o item da agenda.' });
+      assign('title', title);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'description')) {
+      assign('description', sanitizeFinancialString(req.body.description, 4000) || null);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'status')) {
+      assign('status', normalizeAgendaStatus(req.body.status));
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'priority')) {
+      assign('priority', normalizeAgendaPriority(req.body.priority));
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'due_at') || Object.prototype.hasOwnProperty.call(req.body, 'dueAt')) {
+      assign('due_at', normalizeNullableMysqlDateTime(req.body.due_at || req.body.dueAt));
+    }
+    const hasReminderDateUpdate = Object.prototype.hasOwnProperty.call(req.body, 'reminder_at') || Object.prototype.hasOwnProperty.call(req.body, 'reminderAt');
+    if (hasReminderDateUpdate) {
+      assign('reminder_at', normalizeNullableMysqlDateTime(req.body.reminder_at || req.body.reminderAt));
+      assign('reminder_acknowledged_at', null);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'tags')) {
+      assign('tags_json', JSON.stringify(normalizeAgendaTags(req.body.tags)));
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'checklist')) {
+      assign('checklist_json', JSON.stringify(Array.isArray(req.body.checklist) ? req.body.checklist.slice(0, 20) : []));
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'board_order') || Object.prototype.hasOwnProperty.call(req.body, 'boardOrder')) {
+      assign('board_order', Number(req.body.board_order || req.body.boardOrder || 0) || 0);
+    }
+    if (!hasReminderDateUpdate && (req.body?.ackReminder === true || req.body?.reminder_acknowledged === true)) {
+      assign('reminder_acknowledged_at', toMysqlDateTime(new Date()));
+    }
+
+    if (!updates.length) {
+      return res.status(400).json({ error: 'Nenhuma alteracao informada para a agenda.' });
+    }
+
+    params.push(itemId, ownerUserId);
+    await pool.query(
+      `UPDATE agenda_items
+          SET ${updates.join(', ')},
+              updated_at = NOW()
+        WHERE id = ?
+          AND owner_user_id = ?
+          AND deleted_at IS NULL`,
+      params
+    );
+
+    const [rows] = await pool.query('SELECT * FROM agenda_items WHERE id = ? LIMIT 1', [itemId]);
+    return res.json(serializeAgendaItem(rows[0]));
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao atualizar item da agenda.' });
+  }
+});
+
+app.delete('/api/agenda/items/:id', authenticate, async (req, res) => {
+  try {
+    const ownerUserId = getAgendaOwnerId(req.user);
+    const [result] = await pool.query(
+      `UPDATE agenda_items
+          SET deleted_at = NOW(),
+              updated_at = NOW()
+        WHERE id = ?
+          AND owner_user_id = ?
+          AND deleted_at IS NULL`,
+      [req.params.id, ownerUserId]
+    );
+
+    if (!result?.affectedRows) {
+      return res.status(404).json({ error: 'Item da agenda nao encontrado.' });
+    }
+
+    return res.json({ success: true });
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: 'Erro ao excluir item da agenda.' });
+  }
+});
+
+// ============================================
 // CLINICS
 // ============================================
 app.get('/clinics', authenticate, async (req, res) => {
@@ -24278,54 +24540,100 @@ app.delete('/complaints/:id', authenticate, async (req, res) => {
   }
 });
 
+async function cleanupTemporaryUploadFiles(files = []) {
+  await Promise.all((files || []).map(async (file) => {
+    if (!file?.path) return;
+    try {
+      await fs.promises.unlink(file.path);
+    } catch (_error) {
+      // O arquivo temporario pode ja ter sido removido pelo fluxo normal.
+    }
+  }));
+}
+
+function getEvidenceUploadFiles(req) {
+  if (Array.isArray(req.files)) return req.files;
+  return [
+    ...(Array.isArray(req.files?.files) ? req.files.files : []),
+    ...(Array.isArray(req.files?.file) ? req.files.file : [])
+  ].filter(Boolean);
+}
+
 // ============================================
 // ATUALIZAR RECLAMAÇÃO
 // ============================================
-app.post('/complaints/:id/evidences', authenticate, upload.single('file'), async (req, res) => {
+app.post('/complaints/:id/evidences', authenticate, upload.fields([
+  { name: 'files', maxCount: 10 },
+  { name: 'file', maxCount: 10 }
+]), async (req, res) => {
   try {
     const { id } = req.params;
     const { description } = req.body;
+    const files = getEvidenceUploadFiles(req);
 
     if (!canAttachEvidence(req.user)) {
+      await cleanupTemporaryUploadFiles(files);
       return res.status(403).json({ error: 'Seu perfil não pode anexar evidências nesta reclamação.' });
     }
 
-    if (!req.file) {
+    if (!files.length) {
       return res.status(400).json({ error: 'Selecione um arquivo de evidência.' });
+    }
+
+    if (files.length > 10) {
+      await cleanupTemporaryUploadFiles(files);
+      return res.status(400).json({ error: 'Envie no máximo 10 arquivos de evidência por vez.' });
+    }
+
+    const oversizedFile = files.find((file) => Number(file.size || 0) > maxUploadSizeBytes);
+    if (oversizedFile) {
+      await cleanupTemporaryUploadFiles(files);
+      return res.status(400).json({ error: 'Cada evidência deve ter no máximo 10 MB.' });
     }
 
     const complaints = await getComplaintRows({ id }, req.user);
 
     if (!complaints.length) {
+      await cleanupTemporaryUploadFiles(files);
       return res.status(404).json({ error: 'Reclamação não encontrada' });
     }
 
-    const fileUrl = `/uploads/${req.file.filename}`;
-    const originalName = normalizeUploadedOriginalName(req.file);
-    await persistUploadedFile(req.file);
+    const inserted = [];
+    for (const file of files) {
+      const fileUrl = `/uploads/${file.filename}`;
+      const originalName = normalizeUploadedOriginalName(file);
+      await persistUploadedFile(file);
 
-    await pool.query(
-      `INSERT INTO complaint_evidences
-       (complaint_id, file_url, original_name, description, uploaded_by_name, uploaded_by_role)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        fileUrl,
-        originalName || null,
-        description || null,
-        getActorName(req.user),
-        req.user.role || null
-      ]
-    );
+      await pool.query(
+        `INSERT INTO complaint_evidences
+         (complaint_id, file_url, original_name, description, uploaded_by_name, uploaded_by_role)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          fileUrl,
+          originalName || null,
+          description || null,
+          getActorName(req.user),
+          req.user.role || null
+        ]
+      );
+
+      inserted.push(originalName || file.filename);
+    }
 
     await insertComplaintLog(
       id,
       'evidence_added',
-      description || originalName || 'Evidência anexada ao protocolo.',
+      files.length === 1
+        ? (description || inserted[0] || 'Evidência anexada ao protocolo.')
+        : `${files.length} evidências anexadas ao protocolo.${description ? ` Descrição: ${description}` : ''}`,
       req.user
     );
 
-    res.status(201).json({ message: 'Evidência anexada com sucesso' });
+    res.status(201).json({
+      message: files.length === 1 ? 'Evidência anexada com sucesso' : `${files.length} evidências anexadas com sucesso`,
+      count: files.length
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao anexar evidência' });
