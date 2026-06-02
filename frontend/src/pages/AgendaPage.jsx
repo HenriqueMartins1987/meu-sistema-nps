@@ -4,10 +4,10 @@ import { ActionButtons, Card, DashboardGrid, KPICard, PageHeader, SectionContain
 import { getUserDisplayName, isMasterAdmin, readUser } from '../constants';
 
 const agendaColumns = [
-  { key: 'todo', label: 'A fazer', helper: 'Ideias, pendencias e proximas acoes' },
-  { key: 'today', label: 'Hoje', helper: 'Prioridade do dia' },
-  { key: 'doing', label: 'Em andamento', helper: 'Itens em execucao' },
-  { key: 'done', label: 'Concluido', helper: 'Finalizados' }
+  { key: 'todo', label: 'A fazer', helper: 'Ideias, pendencias e proximas acoes', eyebrow: 'Backlog' },
+  { key: 'today', label: 'Hoje', helper: 'Prioridade do dia', eyebrow: 'Focus' },
+  { key: 'doing', label: 'Em andamento', helper: 'Itens em execucao', eyebrow: 'Running' },
+  { key: 'done', label: 'Concluido', helper: 'Finalizados', eyebrow: 'Closed' }
 ];
 
 const priorityOptions = [
@@ -77,6 +77,43 @@ function formatAgendaUserOption(user = {}) {
   return detail ? `${name} - ${detail}` : name;
 }
 
+function getPriorityLabel(priority = 'normal') {
+  if (priority === 'urgente') return 'Urgente';
+  if (priority === 'alta') return 'Alta';
+  if (priority === 'baixa') return 'Baixa';
+  return 'Normal';
+}
+
+function getAgendaDeadlineState(item = {}) {
+  if (item.status === 'done') {
+    return { label: 'Concluido', tone: 'done' };
+  }
+
+  if (!item?.due_at) {
+    return { label: 'Sem prazo', tone: 'neutral' };
+  }
+
+  const dueAt = new Date(item.due_at);
+  if (Number.isNaN(dueAt.getTime())) {
+    return { label: 'Prazo invalido', tone: 'neutral' };
+  }
+
+  const diffMs = dueAt.getTime() - Date.now();
+  if (diffMs < 0) {
+    return { label: 'Atrasado', tone: 'late' };
+  }
+
+  if (diffMs <= 24 * 60 * 60 * 1000) {
+    return { label: 'Vence hoje', tone: 'today' };
+  }
+
+  if (diffMs <= 48 * 60 * 60 * 1000) {
+    return { label: 'Em 48h', tone: 'warning' };
+  }
+
+  return { label: 'No prazo', tone: 'ok' };
+}
+
 function buildAgendaGroupIdentity(item = {}) {
   const assignedUserId = item.assigned_user_id || item.assignedUser?.id || null;
   const ownerUserId = item.owner_user_id || null;
@@ -85,6 +122,8 @@ function buildAgendaGroupIdentity(item = {}) {
     return {
       key: `assigned-${assignedUserId}`,
       label: formatAgendaAssignee(item),
+      userId: Number(assignedUserId) || null,
+      mode: 'assigned',
       helper: ownerUserId && Number(ownerUserId) !== Number(assignedUserId)
         ? `Acompanhamento mantido por ${item.owner_name || 'quem atribuiu'}`
         : 'Demandas atuais do responsavel'
@@ -95,6 +134,8 @@ function buildAgendaGroupIdentity(item = {}) {
     return {
       key: `owner-${ownerUserId}`,
       label: item.owner_name || 'Sem responsavel definido',
+      userId: Number(ownerUserId) || null,
+      mode: 'owner',
       helper: 'Criado sem atribuicao formal'
     };
   }
@@ -102,29 +143,41 @@ function buildAgendaGroupIdentity(item = {}) {
   return {
     key: 'unassigned',
     label: 'Sem responsavel definido',
+    userId: null,
+    mode: 'unassigned',
     helper: 'Item sem proprietario operacional'
   };
 }
 
 function AgendaCard({ item, onOpen, onStatus, onDragStart }) {
   const tags = Array.isArray(item.tags) ? item.tags : [];
+  const deadline = getAgendaDeadlineState(item);
+  const ownerFollowUp = item.owner_name && item.owner_user_id && item.assigned_user_id && Number(item.owner_user_id) !== Number(item.assigned_user_id)
+    ? `Acompanhamento mantido por ${item.owner_name}`
+    : '';
   return (
     <article
       className={`agenda-task-card priority-${item.priority || 'normal'} ${isOverdue(item.due_at) && item.status !== 'done' ? 'overdue' : ''}`}
       draggable
       onDragStart={() => onDragStart(item.id)}
     >
+      <div className="agenda-card-topline">
+        <span className={`agenda-priority priority-${item.priority || 'normal'}`}>{getPriorityLabel(item.priority)}</span>
+        <span className={`agenda-deadline-pill ${deadline.tone}`}>{deadline.label}</span>
+      </div>
       <button type="button" className="agenda-task-main" onClick={() => onOpen(item)}>
-        <span className="agenda-priority">{item.priority || 'normal'}</span>
         <strong>{item.title}</strong>
         {item.description ? <p>{item.description}</p> : null}
       </button>
       <div className="agenda-assignee">
-        <span>Responsavel</span>
-        <strong>{formatAgendaAssignee(item)}</strong>
+        <div>
+          <span>Responsavel principal</span>
+          <strong>{formatAgendaAssignee(item)}</strong>
+        </div>
+        {ownerFollowUp ? <small>{ownerFollowUp}</small> : null}
       </div>
       <div className="agenda-task-meta">
-        <span>{formatDateTime(item.due_at)}</span>
+        <span>{item.due_at ? `Prazo ${formatDateTime(item.due_at)}` : 'Sem prazo definido'}</span>
         {item.reminder_at ? <span>Lembrete {formatDateTime(item.reminder_at)}</span> : null}
       </div>
       {tags.length ? (
@@ -293,6 +346,9 @@ export default function AgendaPage() {
       .map((group) => ({
         ...group,
         total: group.items.length,
+        open: group.items.filter((item) => item.status !== 'done').length,
+        overdue: group.items.filter((item) => item.status !== 'done' && isOverdue(item.due_at)).length,
+        done: group.items.filter((item) => item.status === 'done').length,
         columns: agendaColumns.reduce((acc, column) => {
           acc[column.key] = group.items.filter((item) => item.status === column.key);
           return acc;
@@ -302,6 +358,7 @@ export default function AgendaPage() {
         const aIsCurrent = a.key === `assigned-${currentUserId}` || a.key === `owner-${currentUserId}`;
         const bIsCurrent = b.key === `assigned-${currentUserId}` || b.key === `owner-${currentUserId}`;
         if (aIsCurrent !== bIsCurrent) return aIsCurrent ? -1 : 1;
+        if (a.open !== b.open) return b.open - a.open;
         return a.label.localeCompare(b.label, 'pt-BR');
       });
   }, [currentUserId, filteredItems]);
@@ -324,9 +381,9 @@ export default function AgendaPage() {
     return Array.from(byId.values());
   }, [assignableUsers, currentUser]);
 
-  const openCreate = (status = 'todo') => {
+  const openCreate = (status = 'todo', assignedUserId = currentUserId || '') => {
     setSelectedItem(null);
-    setDraft({ ...emptyDraft, status, assigned_user_id: currentUserId });
+    setDraft({ ...emptyDraft, status, assigned_user_id: assignedUserId });
     setEditorOpen(true);
   };
 
@@ -472,23 +529,25 @@ export default function AgendaPage() {
             <strong>Controle operacional</strong>
             <span>Filtre, acompanhe e mova as tarefas entre etapas.</span>
           </div>
-          <input
-            className="field"
-            value={search}
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar item, descricao ou tag"
-          />
-          <select className="field" value={activeStatus} onChange={(event) => setActiveStatus(event.target.value)}>
-            <option value="">Todos os status</option>
-            {agendaColumns.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
-          </select>
-          <select className="field" value={activeAssignee} onChange={(event) => setActiveAssignee(event.target.value)}>
-            <option value="">Todos os usuarios</option>
-            {availableAssignees.map((assignee) => (
-              <option key={assignee.key} value={assignee.key}>{assignee.label}</option>
-            ))}
-          </select>
-          <button type="button" className="outline-action" onClick={loadItems}>Atualizar</button>
+          <div className="agenda-toolbar-filters">
+            <input
+              className="field"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Buscar item, descricao ou tag"
+            />
+            <select className="field" value={activeStatus} onChange={(event) => setActiveStatus(event.target.value)}>
+              <option value="">Todos os status</option>
+              {agendaColumns.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
+            </select>
+            <select className="field" value={activeAssignee} onChange={(event) => setActiveAssignee(event.target.value)}>
+              <option value="">Todos os usuarios</option>
+              {availableAssignees.map((assignee) => (
+                <option key={assignee.key} value={assignee.key}>{assignee.label}</option>
+              ))}
+            </select>
+            <button type="button" className="outline-action" onClick={loadItems}>Atualizar</button>
+          </div>
         </div>
       </SectionContainer>
 
@@ -499,44 +558,71 @@ export default function AgendaPage() {
           {agendaGroups.map((group) => (
             <section key={group.key} className="agenda-user-section">
               <header className="agenda-user-header">
-                <div>
+                <div className="agenda-user-copy">
+                  <span className="agenda-user-kicker">Responsavel</span>
                   <strong>{group.label}</strong>
                   <small>{group.helper}</small>
                 </div>
-                <span>{group.total} item(ns)</span>
+                <div className="agenda-user-stats">
+                  <article>
+                    <span>Total</span>
+                    <strong>{group.total}</strong>
+                  </article>
+                  <article>
+                    <span>Abertos</span>
+                    <strong>{group.open}</strong>
+                  </article>
+                  <article>
+                    <span>Atrasados</span>
+                    <strong>{group.overdue}</strong>
+                  </article>
+                  <article>
+                    <span>Concluidos</span>
+                    <strong>{group.done}</strong>
+                  </article>
+                </div>
               </header>
 
-              <div className="agenda-board">
-                {agendaColumns.map((column) => (
-                  <section
-                    key={`${group.key}-${column.key}`}
-                    className="agenda-column"
-                    onDragOver={(event) => event.preventDefault()}
-                    onDrop={() => handleDrop(column.key)}
-                  >
-                    <header>
-                      <div>
-                        <strong>{column.label}</strong>
-                        <small>{column.helper}</small>
+              <div className="agenda-board-scroller">
+                <div className="agenda-board">
+                  {agendaColumns.map((column) => (
+                    <section
+                      key={`${group.key}-${column.key}`}
+                      className={`agenda-column agenda-column-${column.key}`}
+                      onDragOver={(event) => event.preventDefault()}
+                      onDrop={() => handleDrop(column.key)}
+                    >
+                      <header>
+                        <div>
+                          <p className="agenda-column-kicker">{column.eyebrow}</p>
+                          <strong>{column.label}</strong>
+                          <small>{column.helper}</small>
+                        </div>
+                        <span>{group.columns[column.key]?.length || 0}</span>
+                      </header>
+                      <button
+                        type="button"
+                        className="agenda-add-card"
+                        onClick={() => openCreate(column.key, group.userId ? String(group.userId) : '')}
+                      >
+                        + adicionar
+                      </button>
+                      <div className="agenda-card-list">
+                        {loading ? <p className="empty-mini">Carregando agenda...</p> : null}
+                        {!loading && group.columns[column.key]?.length ? group.columns[column.key].map((item) => (
+                          <AgendaCard
+                            key={item.id}
+                            item={item}
+                            onOpen={openEdit}
+                            onStatus={updateStatus}
+                            onDragStart={setDraggingId}
+                          />
+                        )) : null}
+                        {!loading && !group.columns[column.key]?.length ? <p className="empty-mini">Sem itens nesta etapa.</p> : null}
                       </div>
-                      <span>{group.columns[column.key]?.length || 0}</span>
-                    </header>
-                    <button type="button" className="agenda-add-card" onClick={() => openCreate(column.key)}>+ adicionar</button>
-                    <div className="agenda-card-list">
-                      {loading ? <p className="empty-mini">Carregando agenda...</p> : null}
-                      {!loading && group.columns[column.key]?.length ? group.columns[column.key].map((item) => (
-                        <AgendaCard
-                          key={item.id}
-                          item={item}
-                          onOpen={openEdit}
-                          onStatus={updateStatus}
-                          onDragStart={setDraggingId}
-                        />
-                      )) : null}
-                      {!loading && !group.columns[column.key]?.length ? <p className="empty-mini">Sem itens nesta etapa.</p> : null}
-                    </div>
-                  </section>
-                ))}
+                    </section>
+                  ))}
+                </div>
               </div>
             </section>
           ))}
