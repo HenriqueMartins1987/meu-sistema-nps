@@ -4601,9 +4601,16 @@ async function ensureDatabaseSchema() {
       description TEXT NULL,
       status VARCHAR(40) NOT NULL DEFAULT 'todo',
       priority VARCHAR(30) NOT NULL DEFAULT 'normal',
+      is_daily_recurring TINYINT(1) NOT NULL DEFAULT 0,
+      requires_completion TINYINT(1) NOT NULL DEFAULT 1,
+      recurrence_base_status VARCHAR(40) NULL,
+      recurrence_cycle_date DATE NULL,
       due_at DATETIME NULL,
       reminder_at DATETIME NULL,
       reminder_acknowledged_at DATETIME NULL,
+      completed_at DATETIME NULL,
+      completed_by_user_id INT NULL,
+      completed_by_name VARCHAR(180) NULL,
       tags_json LONGTEXT NULL,
       checklist_json LONGTEXT NULL,
       board_order INT NOT NULL DEFAULT 0,
@@ -4619,7 +4626,34 @@ async function ensureDatabaseSchema() {
   await ensureColumn('agenda_items', 'assigned_user_id', 'INT NULL');
   await ensureColumn('agenda_items', 'assigned_user_name', 'VARCHAR(180) NULL');
   await ensureColumn('agenda_items', 'assigned_user_email', 'VARCHAR(180) NULL');
+  await ensureColumn('agenda_items', 'is_daily_recurring', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn('agenda_items', 'requires_completion', 'TINYINT(1) NOT NULL DEFAULT 1');
+  await ensureColumn('agenda_items', 'recurrence_base_status', 'VARCHAR(40) NULL');
+  await ensureColumn('agenda_items', 'recurrence_cycle_date', 'DATE NULL');
+  await ensureColumn('agenda_items', 'completed_at', 'DATETIME NULL');
+  await ensureColumn('agenda_items', 'completed_by_user_id', 'INT NULL');
+  await ensureColumn('agenda_items', 'completed_by_name', 'VARCHAR(180) NULL');
   await ensureIndex('agenda_items', 'idx_agenda_assigned_status', 'INDEX idx_agenda_assigned_status (assigned_user_id, status)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agenda_item_completion_logs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      agenda_item_id INT NOT NULL,
+      cycle_date DATE NOT NULL,
+      scheduled_for DATETIME NULL,
+      completed_at DATETIME NULL,
+      completed_by_user_id INT NULL,
+      completed_by_name VARCHAR(180) NULL,
+      responsible_user_id INT NULL,
+      responsible_user_name VARCHAR(180) NULL,
+      requires_completion TINYINT(1) NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_agenda_item_completion_cycle (agenda_item_id, cycle_date),
+      INDEX idx_agenda_item_completion_responsible (responsible_user_id, cycle_date),
+      INDEX idx_agenda_item_completion_completed_at (completed_at)
+    )
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS complaint_logs (
@@ -13786,6 +13820,22 @@ function getSaoPauloParts(date = new Date()) {
 
 function getSaoPauloDateKey(value) {
   if (!value) return '';
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    const dateOnlyMatch = trimmed.match(/^(\d{4}-\d{2}-\d{2})$/);
+    if (dateOnlyMatch) return dateOnlyMatch[1];
+    const utcMidnightMatch = trimmed.match(/^(\d{4}-\d{2}-\d{2})[T ]00:00:00(?:\.000)?Z?$/);
+    if (utcMidnightMatch) return utcMidnightMatch[1];
+  }
+  if (
+    value instanceof Date
+    && value.getUTCHours() === 0
+    && value.getUTCMinutes() === 0
+    && value.getUTCSeconds() === 0
+    && value.getUTCMilliseconds() === 0
+  ) {
+    return `${value.getUTCFullYear()}-${String(value.getUTCMonth() + 1).padStart(2, '0')}-${String(value.getUTCDate()).padStart(2, '0')}`;
+  }
   const date = value instanceof Date ? value : new Date(value);
   if (!Number.isNaN(date.getTime())) return getSaoPauloParts(date).dateKey;
   return String(value || '').slice(0, 10);
@@ -21423,6 +21473,18 @@ function normalizeAgendaPriority(value) {
   return agendaPriorities.has(normalized) ? normalized : 'normal';
 }
 
+function normalizeAgendaBoolean(value, fallback = false) {
+  if (typeof value === 'boolean') return value;
+  if (value === null || typeof value === 'undefined' || value === '') return fallback;
+  if (typeof value === 'number') return value > 0;
+
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return fallback;
+  if (['1', 'true', 'sim', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'nao', 'não', 'no', 'off'].includes(normalized)) return false;
+  return fallback;
+}
+
 function normalizeAgendaTags(value) {
   if (Array.isArray(value)) {
     return value.map((item) => sanitizeFinancialString(item, 40)).filter(Boolean).slice(0, 8);
@@ -21445,9 +21507,182 @@ function parseAgendaJsonArray(value) {
   }
 }
 
+function agendaDateKeyToUtcMs(dateKey) {
+  const [year, month, day] = String(dateKey || '').split('-').map(Number);
+  if (!year || !month || !day) return null;
+  return Date.UTC(year, month - 1, day);
+}
+
+function diffAgendaDateKeys(fromDateKey, toDateKey) {
+  const fromUtc = agendaDateKeyToUtcMs(fromDateKey);
+  const toUtc = agendaDateKeyToUtcMs(toDateKey);
+  if (fromUtc === null || toUtc === null) return 0;
+  return Math.round((toUtc - fromUtc) / 86400000);
+}
+
+function addDaysToAgendaDateKey(dateKey, daysToAdd) {
+  const utc = agendaDateKeyToUtcMs(dateKey);
+  if (utc === null) return '';
+  return getSaoPauloDateKey(new Date(utc + (Math.max(0, Number(daysToAdd) || 0) * 86400000)));
+}
+
+function shiftAgendaDateTimeByDays(value, daysToShift) {
+  if (!value) return null;
+  const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const normalizedDays = Number(daysToShift || 0);
+  if (!normalizedDays) return toMysqlDateTime(date);
+  date.setUTCDate(date.getUTCDate() + normalizedDays);
+  return toMysqlDateTime(date);
+}
+
+function getAgendaCycleDateKey(row = {}) {
+  return getSaoPauloDateKey(
+    row.recurrence_cycle_date
+      || row.completed_at
+      || row.updated_at
+      || row.created_at
+      || new Date()
+  ) || getSaoPauloParts().dateKey;
+}
+
+function getAgendaResponsibleSnapshot(row = {}) {
+  return {
+    id: normalizeAgendaUserId(row.assigned_user_id || row.owner_user_id),
+    name: row.assigned_user_name || row.owner_name || null
+  };
+}
+
+function getAgendaRecurrenceBaseStatus(row = {}) {
+  const explicitRawStatus = String(row.recurrence_base_status || row.recurrenceBaseStatus || '').trim();
+  if (explicitRawStatus) {
+    const explicitStatus = normalizeAgendaStatus(explicitRawStatus);
+    if (explicitStatus !== 'done') return explicitStatus;
+  }
+  const currentStatus = normalizeAgendaStatus(row.status);
+  return currentStatus === 'done' ? 'today' : currentStatus;
+}
+
+function canFinalizeAgendaItem(user = {}, row = {}) {
+  if (isMasterAdminUser(user)) return true;
+  const responsibleUserId = normalizeAgendaUserId(row.assigned_user_id || row.owner_user_id);
+  if (!responsibleUserId) {
+    return Number(user?.id || 0) === Number(row.owner_user_id || 0);
+  }
+  return Number(user?.id || 0) === Number(responsibleUserId);
+}
+
+async function upsertAgendaCompletionLog(row = {}, overrides = {}) {
+  const agendaItemId = Number(overrides.agendaItemId || row.id || 0);
+  const cycleDate = String(overrides.cycleDate || '').slice(0, 10);
+  if (!agendaItemId || !cycleDate) return;
+
+  const responsible = getAgendaResponsibleSnapshot(row);
+  await pool.query(
+    `INSERT INTO agenda_item_completion_logs
+       (agenda_item_id, cycle_date, scheduled_for, completed_at, completed_by_user_id, completed_by_name, responsible_user_id, responsible_user_name, requires_completion)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       scheduled_for = VALUES(scheduled_for),
+       completed_at = VALUES(completed_at),
+       completed_by_user_id = VALUES(completed_by_user_id),
+       completed_by_name = VALUES(completed_by_name),
+       responsible_user_id = VALUES(responsible_user_id),
+       responsible_user_name = VALUES(responsible_user_name),
+       requires_completion = VALUES(requires_completion)`,
+    [
+      agendaItemId,
+      cycleDate,
+      overrides.scheduledFor || row.due_at || null,
+      overrides.completedAt || null,
+      overrides.completedByUserId || null,
+      overrides.completedByName || null,
+      responsible.id || null,
+      responsible.name || null,
+      normalizeAgendaBoolean(overrides.requiresCompletion ?? row.requires_completion, true) ? 1 : 0
+    ]
+  );
+}
+
+async function syncAgendaRecurringItemIfNeeded(row = {}) {
+  if (!normalizeAgendaBoolean(row.is_daily_recurring, false)) return;
+
+  const todayKey = getSaoPauloParts().dateKey;
+  const cycleDateKey = getAgendaCycleDateKey(row);
+  const cycleDiff = diffAgendaDateKeys(cycleDateKey, todayKey);
+
+  if (cycleDiff <= 0) return;
+
+  await upsertAgendaCompletionLog(row, {
+    cycleDate: cycleDateKey,
+    scheduledFor: row.due_at || null,
+    completedAt: row.completed_at || null,
+    completedByUserId: row.completed_by_user_id || null,
+    completedByName: row.completed_by_name || null
+  });
+
+  for (let offset = 1; offset < cycleDiff; offset += 1) {
+    await upsertAgendaCompletionLog(row, {
+      cycleDate: addDaysToAgendaDateKey(cycleDateKey, offset),
+      scheduledFor: shiftAgendaDateTimeByDays(row.due_at, offset),
+      completedAt: null,
+      completedByUserId: null,
+      completedByName: null
+    });
+  }
+
+  await pool.query(
+    `UPDATE agenda_items
+        SET status = ?,
+            recurrence_cycle_date = ?,
+            due_at = ?,
+            reminder_at = ?,
+            reminder_acknowledged_at = NULL,
+            completed_at = NULL,
+            completed_by_user_id = NULL,
+            completed_by_name = NULL,
+            updated_at = NOW()
+      WHERE id = ?
+        AND deleted_at IS NULL`,
+    [
+      getAgendaRecurrenceBaseStatus(row),
+      todayKey,
+      shiftAgendaDateTimeByDays(row.due_at, cycleDiff),
+      shiftAgendaDateTimeByDays(row.reminder_at, cycleDiff),
+      row.id
+    ]
+  );
+}
+
+async function syncAgendaRecurringItemsForUser(user) {
+  const visibility = buildAgendaVisibilityWhere(user, 'a');
+  const [rows] = await pool.query(
+    `SELECT a.*
+       FROM agenda_items a
+      WHERE a.deleted_at IS NULL
+        AND a.is_daily_recurring = 1
+        AND ${visibility.sql}`,
+    visibility.params
+  );
+
+  for (const row of rows) {
+    // Serially sync to avoid duplicate cycle updates while the same user loads the board.
+    // The dataset is intentionally small and scoped by user visibility.
+    // eslint-disable-next-line no-await-in-loop
+    await syncAgendaRecurringItemIfNeeded(row);
+  }
+}
+
 function serializeAgendaItem(row = {}) {
   return {
     ...row,
+    is_daily_recurring: normalizeAgendaBoolean(row.is_daily_recurring, false),
+    requires_completion: normalizeAgendaBoolean(row.requires_completion, true),
+    recurrence_cycle_date: row.recurrence_cycle_date ? getSaoPauloDateKey(row.recurrence_cycle_date) : null,
+    recurrence_base_status: row.recurrence_base_status || null,
+    completed_at: row.completed_at || null,
+    completed_by_user_id: row.completed_by_user_id || null,
+    completed_by_name: row.completed_by_name || null,
     assignedUser: row.assigned_user_id ? {
       id: row.assigned_user_id,
       name: row.assigned_user_name || null,
@@ -21598,6 +21833,8 @@ app.get('/api/agenda/users', authenticate, async (req, res) => {
 
 app.get('/api/agenda/items', authenticate, async (req, res) => {
   try {
+    await syncAgendaRecurringItemsForUser(req.user);
+
     const visibility = buildAgendaVisibilityWhere(req.user);
     const where = ['deleted_at IS NULL', visibility.sql];
     const params = [...visibility.params];
@@ -21649,10 +21886,25 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
     );
     const tags = normalizeAgendaTags(req.body?.tags);
     const checklist = Array.isArray(req.body?.checklist) ? req.body.checklist.slice(0, 20) : [];
+    const normalizedStatus = normalizeAgendaStatus(req.body?.status);
+    const isDailyRecurring = normalizeAgendaBoolean(req.body?.is_daily_recurring ?? req.body?.isDailyRecurring, false);
+    const requiresCompletion = isDailyRecurring
+      ? true
+      : normalizeAgendaBoolean(req.body?.requires_completion ?? req.body?.requiresCompletion, true);
+    const recurrenceBaseStatus = isDailyRecurring
+      ? getAgendaRecurrenceBaseStatus({
+        recurrence_base_status: req.body?.recurrence_base_status || req.body?.recurrenceBaseStatus || null,
+        status: normalizedStatus || 'today'
+      })
+      : null;
+    const cycleDate = isDailyRecurring ? getSaoPauloParts().dateKey : null;
+    const persistedStatus = isDailyRecurring && normalizedStatus === 'done'
+      ? recurrenceBaseStatus
+      : normalizedStatus;
     const [result] = await pool.query(
       `INSERT INTO agenda_items
-       (owner_user_id, owner_name, assigned_user_id, assigned_user_name, assigned_user_email, title, description, status, priority, due_at, reminder_at, tags_json, checklist_json, board_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (owner_user_id, owner_name, assigned_user_id, assigned_user_name, assigned_user_email, title, description, status, priority, is_daily_recurring, requires_completion, recurrence_base_status, recurrence_cycle_date, due_at, reminder_at, tags_json, checklist_json, board_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         ownerUserId,
         getActorName(req.user),
@@ -21661,8 +21913,12 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
         assignee?.email || null,
         title,
         sanitizeFinancialString(req.body?.description, 4000) || null,
-        normalizeAgendaStatus(req.body?.status),
+        persistedStatus,
         normalizeAgendaPriority(req.body?.priority),
+        isDailyRecurring ? 1 : 0,
+        requiresCompletion ? 1 : 0,
+        recurrenceBaseStatus,
+        cycleDate,
         normalizeNullableMysqlDateTime(req.body?.due_at || req.body?.dueAt),
         normalizeNullableMysqlDateTime(req.body?.reminder_at || req.body?.reminderAt),
         JSON.stringify(tags),
@@ -21682,8 +21938,9 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
 
 app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
   try {
-    const ownerUserId = getAgendaOwnerId(req.user);
     const itemId = Number(req.params.id || 0);
+    await syncAgendaRecurringItemsForUser(req.user);
+
     const visibility = buildAgendaVisibilityWhere(req.user);
     const [currentRows] = await pool.query(
       `SELECT * FROM agenda_items WHERE id = ? AND deleted_at IS NULL AND ${visibility.sql} LIMIT 1`,
@@ -21694,12 +21951,46 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
       return res.status(404).json({ error: 'Item da agenda nao encontrado.' });
     }
 
+    const currentItem = currentRows[0];
     const updates = [];
     const params = [];
     const assign = (field, value) => {
       updates.push(`${field} = ?`);
       params.push(value);
     };
+    let nextStatus = currentItem.status;
+    let nextDailyRecurring = normalizeAgendaBoolean(currentItem.is_daily_recurring, false);
+    let nextRequiresCompletion = normalizeAgendaBoolean(currentItem.requires_completion, true);
+    let nextRecurrenceBaseStatus = nextDailyRecurring ? getAgendaRecurrenceBaseStatus(currentItem) : null;
+    let nextAssigneeId = currentItem.assigned_user_id || null;
+    let nextAssigneeName = currentItem.assigned_user_name || null;
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'is_daily_recurring') || Object.prototype.hasOwnProperty.call(req.body, 'isDailyRecurring')) {
+      nextDailyRecurring = normalizeAgendaBoolean(req.body.is_daily_recurring ?? req.body.isDailyRecurring, nextDailyRecurring);
+      assign('is_daily_recurring', nextDailyRecurring ? 1 : 0);
+      if (!nextDailyRecurring) {
+        nextRecurrenceBaseStatus = null;
+        assign('recurrence_base_status', null);
+        assign('recurrence_cycle_date', null);
+      } else {
+        const cycleDate = currentItem.recurrence_cycle_date ? getSaoPauloDateKey(currentItem.recurrence_cycle_date) : getSaoPauloParts().dateKey;
+        assign('recurrence_cycle_date', cycleDate);
+      }
+    }
+
+    if (Object.prototype.hasOwnProperty.call(req.body, 'requires_completion') || Object.prototype.hasOwnProperty.call(req.body, 'requiresCompletion')) {
+      nextRequiresCompletion = normalizeAgendaBoolean(req.body.requires_completion ?? req.body.requiresCompletion, nextRequiresCompletion);
+    }
+    if (nextDailyRecurring) {
+      nextRequiresCompletion = true;
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(req.body, 'requires_completion')
+      || Object.prototype.hasOwnProperty.call(req.body, 'requiresCompletion')
+      || nextDailyRecurring !== normalizeAgendaBoolean(currentItem.is_daily_recurring, false)
+    ) {
+      assign('requires_completion', nextRequiresCompletion ? 1 : 0);
+    }
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'title')) {
       const title = sanitizeFinancialString(req.body.title, 180);
@@ -21709,8 +22000,34 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(req.body, 'description')) {
       assign('description', sanitizeFinancialString(req.body.description, 4000) || null);
     }
-    if (Object.prototype.hasOwnProperty.call(req.body, 'status')) {
-      assign('status', normalizeAgendaStatus(req.body.status));
+    if (Object.prototype.hasOwnProperty.call(req.body, 'status') || req.body?.markExecuted === true || req.body?.executed === true) {
+      const requestedStatus = req.body?.markExecuted === true || req.body?.executed === true
+        ? 'done'
+        : normalizeAgendaStatus(req.body.status);
+
+      if (requestedStatus === 'done') {
+        if (!canFinalizeAgendaItem(req.user, {
+          ...currentItem,
+          assigned_user_id: nextAssigneeId,
+          assigned_user_name: nextAssigneeName
+        })) {
+          return res.status(403).json({ error: 'Somente o responsavel pela demanda pode registrar a execucao desta tarefa.' });
+        }
+        nextStatus = 'done';
+        assign('status', 'done');
+        assign('completed_at', toMysqlDateTime(new Date()));
+        assign('completed_by_user_id', Number(req.user?.id || 0) || null);
+        assign('completed_by_name', getActorName(req.user));
+      } else {
+        nextStatus = requestedStatus;
+        assign('status', requestedStatus);
+        assign('completed_at', null);
+        assign('completed_by_user_id', null);
+        assign('completed_by_name', null);
+        if (nextDailyRecurring) {
+          nextRecurrenceBaseStatus = requestedStatus;
+        }
+      }
     }
     if (Object.prototype.hasOwnProperty.call(req.body, 'priority')) {
       assign('priority', normalizeAgendaPriority(req.body.priority));
@@ -21734,12 +22051,31 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
     }
     if (Object.prototype.hasOwnProperty.call(req.body, 'assigned_user_id') || Object.prototype.hasOwnProperty.call(req.body, 'assignedUserId')) {
       const assignee = await getAgendaAssignableUser(req.body.assigned_user_id || req.body.assignedUserId, req.user);
-      assign('assigned_user_id', assignee?.id || null);
-      assign('assigned_user_name', assignee?.name || null);
+      nextAssigneeId = assignee?.id || null;
+      nextAssigneeName = assignee?.name || null;
+      assign('assigned_user_id', nextAssigneeId);
+      assign('assigned_user_name', nextAssigneeName);
       assign('assigned_user_email', assignee?.email || null);
     }
     if (!hasReminderDateUpdate && (req.body?.ackReminder === true || req.body?.reminder_acknowledged === true)) {
       assign('reminder_acknowledged_at', toMysqlDateTime(new Date()));
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'recurrence_base_status') || Object.prototype.hasOwnProperty.call(req.body, 'recurrenceBaseStatus')) {
+      nextRecurrenceBaseStatus = nextDailyRecurring
+        ? getAgendaRecurrenceBaseStatus({
+          recurrence_base_status: req.body.recurrence_base_status || req.body.recurrenceBaseStatus || null,
+          status: nextStatus || 'today'
+        })
+        : null;
+    }
+    if (nextDailyRecurring && nextStatus !== 'done' && (
+      Object.prototype.hasOwnProperty.call(req.body, 'status')
+      || req.body?.markExecuted === true
+      || req.body?.executed === true
+      || Object.prototype.hasOwnProperty.call(req.body, 'recurrence_base_status')
+      || Object.prototype.hasOwnProperty.call(req.body, 'recurrenceBaseStatus')
+    )) {
+      assign('recurrence_base_status', nextRecurrenceBaseStatus || getAgendaRecurrenceBaseStatus({ status: nextStatus || 'today' }));
     }
 
     if (!updates.length) {
@@ -21759,6 +22095,15 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
 
     const [rows] = await pool.query('SELECT * FROM agenda_items WHERE id = ? LIMIT 1', [itemId]);
     const updated = serializeAgendaItem(rows[0]);
+    if (updated.is_daily_recurring) {
+      await upsertAgendaCompletionLog(rows[0], {
+        cycleDate: updated.recurrence_cycle_date || getAgendaCycleDateKey(rows[0]),
+        scheduledFor: rows[0].due_at || null,
+        completedAt: rows[0].completed_at || null,
+        completedByUserId: rows[0].completed_by_user_id || null,
+        completedByName: rows[0].completed_by_name || null
+      });
+    }
     if (updated.assigned_user_id && Number(updated.assigned_user_id) !== Number(currentRows[0].assigned_user_id || 0)) {
       await notifyAgendaAssignment(itemId, updated.title, updated.assignedUser, req.user);
     }

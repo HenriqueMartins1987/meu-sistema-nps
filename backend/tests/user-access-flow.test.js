@@ -1373,6 +1373,220 @@ test('supervisor crc can assign agenda item to crc operator', async () => {
   assert.equal(response.body.assigned_user_id, 55);
 });
 
+test('daily recurring agenda item is created with mandatory completion', async () => {
+  let insertedAgendaParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1, role: 'manager' }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM users u') && sql.includes('WHERE u.id = ?') && sql.includes('u.active = 1'),
+      reply: async () => [[{
+        id: 14,
+        name: 'Gerente Agenda',
+        email: 'gerente.agenda@example.com',
+        role: 'manager',
+        position: 'Gerente Operacional',
+        department: 'Operacoes'
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO agenda_items'),
+      reply: async (_sql, params) => {
+        insertedAgendaParams = params;
+        return [{ insertId: 144 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM agenda_items WHERE id = ? LIMIT 1'),
+      reply: async () => [[{
+        id: 144,
+        owner_user_id: 14,
+        owner_name: 'Gerente Agenda',
+        assigned_user_id: 14,
+        assigned_user_name: 'Gerente Agenda',
+        assigned_user_email: 'gerente.agenda@example.com',
+        title: 'Fechamento diario de pendencias',
+        description: 'Validar agenda e registrar entregas da equipe',
+        status: 'today',
+        priority: 'alta',
+        is_daily_recurring: 1,
+        requires_completion: 1,
+        recurrence_base_status: 'doing',
+        recurrence_cycle_date: '2026-06-03',
+        due_at: null,
+        reminder_at: null,
+        reminder_acknowledged_at: null,
+        completed_at: null,
+        completed_by_user_id: null,
+        completed_by_name: null,
+        tags_json: '[]',
+        checklist_json: '[]',
+        board_order: 0
+      }]]
+    }
+  ]);
+
+  const response = await request(app)
+    .post('/api/agenda/items')
+    .set('Authorization', `Bearer ${signToken({
+      id: 14,
+      email: 'gerente.agenda@example.com',
+      role: 'manager',
+      name: 'Gerente Agenda',
+      permissions: ['home'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({
+      title: 'Fechamento diario de pendencias',
+      status: 'today',
+      priority: 'alta',
+      description: 'Validar agenda e registrar entregas da equipe',
+      is_daily_recurring: true,
+      requires_completion: false,
+      recurrence_base_status: 'doing'
+    });
+
+  assert.equal(response.status, 201);
+  assert.ok(Array.isArray(insertedAgendaParams));
+  assert.equal(insertedAgendaParams[9], 1);
+  assert.equal(insertedAgendaParams[10], 1);
+  assert.equal(insertedAgendaParams[11], 'doing');
+  assert.match(String(insertedAgendaParams[12] || ''), /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(response.body.is_daily_recurring, true);
+  assert.equal(response.body.requires_completion, true);
+  assert.equal(response.body.recurrence_base_status, 'doing');
+  assert.match(String(response.body.recurrence_cycle_date || ''), /^\d{4}-\d{2}-\d{2}$/);
+});
+
+test('responsible user execution stores completion timestamp for recurring agenda item', async () => {
+  let updateAgendaParams = null;
+  let completionLogParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1, role: 'crc_operator' }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM agenda_items a') && sql.includes('a.is_daily_recurring = 1'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM agenda_items WHERE id = ? AND deleted_at IS NULL'),
+      reply: async () => [[{
+        id: 91,
+        owner_user_id: 9,
+        owner_name: 'Supervisor CRC',
+        assigned_user_id: 55,
+        assigned_user_name: 'Operador CRC',
+        assigned_user_email: 'crc.operator@example.com',
+        title: 'Contato diario com clinicas criticas',
+        description: 'Executar a rodada diaria e registrar evidencia',
+        status: 'doing',
+        priority: 'alta',
+        is_daily_recurring: 1,
+        requires_completion: 1,
+        recurrence_base_status: 'today',
+        recurrence_cycle_date: '2026-06-03',
+        due_at: '2026-06-03 11:00:00',
+        reminder_at: null,
+        reminder_acknowledged_at: null,
+        completed_at: null,
+        completed_by_user_id: null,
+        completed_by_name: null,
+        tags_json: '[]',
+        checklist_json: '[]',
+        board_order: 0
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE agenda_items') && sql.includes('WHERE id = ?'),
+      reply: async (_sql, params) => {
+        updateAgendaParams = params;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM agenda_items WHERE id = ? LIMIT 1'),
+      reply: async () => [[{
+        id: 91,
+        owner_user_id: 9,
+        owner_name: 'Supervisor CRC',
+        assigned_user_id: 55,
+        assigned_user_name: 'Operador CRC',
+        assigned_user_email: 'crc.operator@example.com',
+        title: 'Contato diario com clinicas criticas',
+        description: 'Executar a rodada diaria e registrar evidencia',
+        status: 'done',
+        priority: 'alta',
+        is_daily_recurring: 1,
+        requires_completion: 1,
+        recurrence_base_status: 'today',
+        recurrence_cycle_date: '2026-06-03',
+        due_at: '2026-06-03 11:00:00',
+        reminder_at: null,
+        reminder_acknowledged_at: null,
+        completed_at: '2026-06-03 12:45:00',
+        completed_by_user_id: 55,
+        completed_by_name: 'Operador CRC',
+        tags_json: '[]',
+        checklist_json: '[]',
+        board_order: 0
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO agenda_item_completion_logs'),
+      reply: async (_sql, params) => {
+        completionLogParams = params;
+        return [{ insertId: 1 }];
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/api/agenda/items/91')
+    .set('Authorization', `Bearer ${signToken({
+      id: 55,
+      email: 'crc.operator@example.com',
+      role: 'crc_operator',
+      name: 'Operador CRC',
+      permissions: ['home'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({
+      markExecuted: true
+    });
+
+  assert.equal(response.status, 200);
+  assert.ok(Array.isArray(updateAgendaParams));
+  assert.equal(response.body.status, 'done');
+  assert.equal(response.body.completed_by_user_id, 55);
+  assert.equal(response.body.completed_by_name, 'Operador CRC');
+  assert.equal(response.body.completed_at, '2026-06-03 12:45:00');
+  assert.ok(Array.isArray(completionLogParams));
+  assert.equal(completionLogParams[0], 91);
+  assert.equal(completionLogParams[1], '2026-06-03');
+  assert.equal(completionLogParams[3], '2026-06-03 12:45:00');
+  assert.equal(completionLogParams[4], 55);
+  assert.equal(completionLogParams[5], 'Operador CRC');
+  assert.equal(completionLogParams[6], 55);
+  assert.equal(completionLogParams[7], 'Operador CRC');
+  assert.equal(completionLogParams[8], 1);
+});
+
 test('SAC operator can change complaint unit with audit trail', async () => {
   let updateComplaintSql = null;
   let updateComplaintParams = null;

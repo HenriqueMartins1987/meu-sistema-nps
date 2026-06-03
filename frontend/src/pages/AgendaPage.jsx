@@ -25,7 +25,10 @@ const emptyDraft = {
   due_at: '',
   reminder_at: '',
   assigned_user_id: '',
-  tags: ''
+  tags: '',
+  is_daily_recurring: false,
+  requires_completion: true,
+  recurrence_base_status: 'today'
 };
 
 function toDatetimeLocal(value) {
@@ -63,7 +66,10 @@ function normalizeDraftFromItem(item = {}) {
     due_at: toDatetimeLocal(item.due_at),
     reminder_at: toDatetimeLocal(item.reminder_at),
     assigned_user_id: item.assigned_user_id ? String(item.assigned_user_id) : '',
-    tags: Array.isArray(item.tags) ? item.tags.join(', ') : ''
+    tags: Array.isArray(item.tags) ? item.tags.join(', ') : '',
+    is_daily_recurring: Boolean(item.is_daily_recurring),
+    requires_completion: item.requires_completion !== false,
+    recurrence_base_status: item.recurrence_base_status || item.status || 'today'
   };
 }
 
@@ -75,6 +81,17 @@ function formatAgendaUserOption(user = {}) {
   const name = user.name || user.email || `Usuario ${user.id}`;
   const detail = user.position || user.role || user.department || user.email;
   return detail ? `${name} - ${detail}` : name;
+}
+
+function formatExecutionStamp(item = {}) {
+  if (!item?.completed_at) return '';
+  const actor = item.completed_by_name ? ` por ${item.completed_by_name}` : '';
+  return `Executado em ${formatDateTime(item.completed_at)}${actor}`;
+}
+
+function canExecuteAgendaItem(currentUserId, item = {}) {
+  const responsibleId = String(item.assigned_user_id || item.owner_user_id || '');
+  return responsibleId && String(currentUserId || '') === responsibleId;
 }
 
 function getPriorityLabel(priority = 'normal') {
@@ -149,12 +166,14 @@ function buildAgendaGroupIdentity(item = {}) {
   };
 }
 
-function AgendaCard({ item, onOpen, onStatus, onDragStart }) {
+function AgendaCard({ item, currentUserId, onOpen, onStatus, onDragStart }) {
   const tags = Array.isArray(item.tags) ? item.tags : [];
   const deadline = getAgendaDeadlineState(item);
   const ownerFollowUp = item.owner_name && item.owner_user_id && item.assigned_user_id && Number(item.owner_user_id) !== Number(item.assigned_user_id)
     ? `Acompanhamento mantido por ${item.owner_name}`
     : '';
+  const executionStamp = formatExecutionStamp(item);
+  const canExecute = canExecuteAgendaItem(currentUserId, item);
   return (
     <article
       className={`agenda-task-card priority-${item.priority || 'normal'} ${isOverdue(item.due_at) && item.status !== 'done' ? 'overdue' : ''}`}
@@ -169,6 +188,10 @@ function AgendaCard({ item, onOpen, onStatus, onDragStart }) {
         <strong>{item.title}</strong>
         {item.description ? <p>{item.description}</p> : null}
       </button>
+      <div className="agenda-card-secondary-meta">
+        {item.is_daily_recurring ? <small>Loop diário ativo</small> : null}
+        {item.requires_completion ? <small>Execução obrigatória</small> : null}
+      </div>
       <div className="agenda-assignee">
         <div>
           <span>Responsavel principal</span>
@@ -179,6 +202,7 @@ function AgendaCard({ item, onOpen, onStatus, onDragStart }) {
       <div className="agenda-task-meta">
         <span>{item.due_at ? `Prazo ${formatDateTime(item.due_at)}` : 'Sem prazo definido'}</span>
         {item.reminder_at ? <span>Lembrete {formatDateTime(item.reminder_at)}</span> : null}
+        {executionStamp ? <span>{executionStamp}</span> : null}
       </div>
       {tags.length ? (
         <div className="agenda-tag-row">
@@ -190,9 +214,13 @@ function AgendaCard({ item, onOpen, onStatus, onDragStart }) {
           <button type="button" onClick={() => onStatus(item, 'doing')}>Iniciar</button>
         ) : null}
         {item.status !== 'done' ? (
-          <button type="button" onClick={() => onStatus(item, 'done')}>Concluir</button>
+          <button type="button" onClick={() => onStatus(item, 'done', { markExecuted: true })} disabled={!canExecute}>
+            {canExecute ? 'Registrar execução' : 'Aguardando responsável'}
+          </button>
         ) : (
-          <button type="button" onClick={() => onStatus(item, 'todo')}>Reabrir</button>
+          <button type="button" onClick={() => onStatus(item, item.is_daily_recurring ? (item.recurrence_base_status || 'today') : 'todo')}>
+            {item.is_daily_recurring ? 'Reabrir hoje' : 'Reabrir'}
+          </button>
         )}
       </div>
     </article>
@@ -383,7 +411,12 @@ export default function AgendaPage() {
 
   const openCreate = (status = 'todo', assignedUserId = currentUserId || '') => {
     setSelectedItem(null);
-    setDraft({ ...emptyDraft, status, assigned_user_id: assignedUserId });
+    setDraft({
+      ...emptyDraft,
+      status,
+      assigned_user_id: assignedUserId,
+      recurrence_base_status: status === 'done' ? 'today' : status
+    });
     setEditorOpen(true);
   };
 
@@ -416,7 +449,10 @@ export default function AgendaPage() {
       due_at: draft.due_at || null,
       reminder_at: draft.reminder_at || null,
       assigned_user_id: draft.assigned_user_id || null,
-      tags: draft.tags
+      tags: draft.tags,
+      is_daily_recurring: Boolean(draft.is_daily_recurring),
+      requires_completion: Boolean(draft.is_daily_recurring || draft.requires_completion),
+      recurrence_base_status: draft.is_daily_recurring ? (draft.recurrence_base_status || draft.status || 'today') : null
     };
 
     try {
@@ -451,10 +487,11 @@ export default function AgendaPage() {
     }
   };
 
-  const updateStatus = async (item, status) => {
+  const updateStatus = async (item, status, extraPayload = {}) => {
     try {
-      await api.patch(`/api/agenda/items/${item.id}`, { status });
-      setItems((current) => current.map((row) => row.id === item.id ? { ...row, status } : row));
+      const response = await api.patch(`/api/agenda/items/${item.id}`, { status, ...extraPayload });
+      const updatedItem = response.data;
+      setItems((current) => current.map((row) => row.id === item.id ? updatedItem : row));
     } catch (error) {
       setFeedback(getApiErrorMessage(error, 'Nao foi possivel mover o item.'));
     }
@@ -613,6 +650,7 @@ export default function AgendaPage() {
                           <AgendaCard
                             key={item.id}
                             item={item}
+                            currentUserId={currentUserId}
                             onOpen={openEdit}
                             onStatus={updateStatus}
                             onDragStart={setDraggingId}
@@ -715,6 +753,56 @@ export default function AgendaPage() {
                   Lembrete
                   <input className="field" type="datetime-local" value={draft.reminder_at} onChange={(event) => setDraft((current) => ({ ...current, reminder_at: event.target.value }))} />
                 </label>
+                <div className="agenda-property-grid">
+                  <label className="agenda-toggle-card">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(draft.is_daily_recurring)}
+                      onChange={(event) => setDraft((current) => ({
+                        ...current,
+                        is_daily_recurring: event.target.checked,
+                        requires_completion: event.target.checked ? true : current.requires_completion,
+                        recurrence_base_status: event.target.checked ? (current.recurrence_base_status || current.status || 'today') : current.recurrence_base_status
+                      }))}
+                    />
+                    <div>
+                      <strong>Repetição diária</strong>
+                      <small>Gera um novo ciclo todos os dias para o mesmo responsável.</small>
+                    </div>
+                  </label>
+                  <label className="agenda-toggle-card">
+                    <input
+                      type="checkbox"
+                      checked={Boolean(draft.is_daily_recurring || draft.requires_completion)}
+                      disabled={Boolean(draft.is_daily_recurring)}
+                      onChange={(event) => setDraft((current) => ({ ...current, requires_completion: event.target.checked }))}
+                    />
+                    <div>
+                      <strong>Execução obrigatória</strong>
+                      <small>O trabalho só conta quando o responsável registrar que executou.</small>
+                    </div>
+                  </label>
+                </div>
+                {draft.is_daily_recurring ? (
+                  <label>
+                    Status inicial de cada dia
+                    <select
+                      className="field"
+                      value={draft.recurrence_base_status}
+                      onChange={(event) => setDraft((current) => ({ ...current, recurrence_base_status: event.target.value }))}
+                    >
+                      {agendaColumns.filter((column) => column.key !== 'done').map((column) => (
+                        <option key={column.key} value={column.key}>{column.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+                {selectedItem?.completed_at ? (
+                  <div className="agenda-completion-note">
+                    <strong>Última execução registrada</strong>
+                    <small>{formatExecutionStamp(selectedItem)}</small>
+                  </div>
+                ) : null}
                 <div className="agenda-editor-guide">
                   <strong>Fluxo recomendado</strong>
                   <small>Cadastre, defina prioridade, programe lembrete e mova o card conforme a execução.</small>
