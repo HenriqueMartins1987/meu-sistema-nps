@@ -2584,6 +2584,72 @@ function normalizeUsername(value) {
     .replace(/[^a-z0-9._-]/g, '');
 }
 
+function buildUsernameBaseCandidate({ username = '', email = '', name = '' } = {}) {
+  const explicitUsername = normalizeUsername(username);
+  if (explicitUsername) return explicitUsername;
+
+  const emailBase = normalizeUsername(String(email || '').split('@')[0]);
+  if (emailBase) return emailBase;
+
+  const nameBase = normalizeUsername(
+    String(name || '')
+      .trim()
+      .replace(/\s+/g, '.')
+  );
+  if (nameBase) return nameBase;
+
+  return `usuario.${Date.now()}`;
+}
+
+async function resolveUniqueUsername(candidate, excludeUserId = null) {
+  const base = normalizeUsername(candidate) || `usuario.${Date.now()}`;
+  let suffix = 0;
+
+  while (suffix < 1000) {
+    const nextCandidate = suffix === 0 ? base : `${base}.${suffix + 1}`;
+    const params = [nextCandidate];
+    let sql = 'SELECT id FROM users WHERE LOWER(username) = ?';
+    if (excludeUserId) {
+      sql += ' AND id <> ?';
+      params.push(excludeUserId);
+    }
+    sql += ' LIMIT 1';
+    // eslint-disable-next-line no-await-in-loop
+    const [rows] = await pool.query(sql, params);
+    if (!rows.length) {
+      return nextCandidate;
+    }
+    suffix += 1;
+  }
+
+  return `${base}.${crypto.randomInt(1000, 9999)}`;
+}
+
+async function resolveUserUsername(userLike = {}, excludeUserId = null) {
+  const base = buildUsernameBaseCandidate(userLike);
+  return resolveUniqueUsername(base, excludeUserId);
+}
+
+async function backfillMissingUsernames() {
+  const [rows] = await pool.query(
+    `SELECT id, name, email, username
+       FROM users
+      WHERE deleted_at IS NULL
+        AND (username IS NULL OR TRIM(username) = '')`
+  );
+
+  let updated = 0;
+  for (const row of rows) {
+    // eslint-disable-next-line no-await-in-loop
+    const username = await resolveUserUsername(row, row.id);
+    // eslint-disable-next-line no-await-in-loop
+    await pool.query('UPDATE users SET username = ? WHERE id = ?', [username, row.id]);
+    updated += 1;
+  }
+
+  return updated;
+}
+
 const adminUserCreateSchema = z.object({
   name: z.string().trim().min(1, 'Preencha o nome completo.').max(160),
   email: z.string().trim().email('Informe um e-mail válido.').max(180),
@@ -4592,11 +4658,18 @@ async function ensureDatabaseSchema() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS agenda_items (
       id INT AUTO_INCREMENT PRIMARY KEY,
+      company_id INT NULL,
       owner_user_id INT NULL,
       owner_name VARCHAR(180) NULL,
       assigned_user_id INT NULL,
       assigned_user_name VARCHAR(180) NULL,
       assigned_user_email VARCHAR(180) NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      patient_name VARCHAR(180) NULL,
+      patient_phone VARCHAR(40) NULL,
+      source_label VARCHAR(120) NULL,
+      source_batch_id VARCHAR(120) NULL,
       title VARCHAR(180) NOT NULL,
       description TEXT NULL,
       status VARCHAR(40) NOT NULL DEFAULT 'todo',
@@ -4605,6 +4678,7 @@ async function ensureDatabaseSchema() {
       requires_completion TINYINT(1) NOT NULL DEFAULT 1,
       recurrence_base_status VARCHAR(40) NULL,
       recurrence_cycle_date DATE NULL,
+      recurrence_weekdays_json LONGTEXT NULL,
       due_at DATETIME NULL,
       reminder_at DATETIME NULL,
       reminder_acknowledged_at DATETIME NULL,
@@ -4617,22 +4691,32 @@ async function ensureDatabaseSchema() {
       deleted_at TIMESTAMP NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
       updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_agenda_company_status (company_id, status),
       INDEX idx_agenda_owner_status (owner_user_id, status),
       INDEX idx_agenda_assigned_status (assigned_user_id, status),
       INDEX idx_agenda_reminder (owner_user_id, reminder_at, reminder_acknowledged_at),
       INDEX idx_agenda_due (owner_user_id, due_at)
     )
   `);
+  await ensureColumn('agenda_items', 'company_id', 'INT NULL');
   await ensureColumn('agenda_items', 'assigned_user_id', 'INT NULL');
   await ensureColumn('agenda_items', 'assigned_user_name', 'VARCHAR(180) NULL');
   await ensureColumn('agenda_items', 'assigned_user_email', 'VARCHAR(180) NULL');
+  await ensureColumn('agenda_items', 'clinic_id', 'INT NULL');
+  await ensureColumn('agenda_items', 'clinic_name', 'VARCHAR(180) NULL');
+  await ensureColumn('agenda_items', 'patient_name', 'VARCHAR(180) NULL');
+  await ensureColumn('agenda_items', 'patient_phone', 'VARCHAR(40) NULL');
+  await ensureColumn('agenda_items', 'source_label', 'VARCHAR(120) NULL');
+  await ensureColumn('agenda_items', 'source_batch_id', 'VARCHAR(120) NULL');
   await ensureColumn('agenda_items', 'is_daily_recurring', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn('agenda_items', 'requires_completion', 'TINYINT(1) NOT NULL DEFAULT 1');
   await ensureColumn('agenda_items', 'recurrence_base_status', 'VARCHAR(40) NULL');
   await ensureColumn('agenda_items', 'recurrence_cycle_date', 'DATE NULL');
+  await ensureColumn('agenda_items', 'recurrence_weekdays_json', 'LONGTEXT NULL');
   await ensureColumn('agenda_items', 'completed_at', 'DATETIME NULL');
   await ensureColumn('agenda_items', 'completed_by_user_id', 'INT NULL');
   await ensureColumn('agenda_items', 'completed_by_name', 'VARCHAR(180) NULL');
+  await ensureIndex('agenda_items', 'idx_agenda_company_status', 'INDEX idx_agenda_company_status (company_id, status)');
   await ensureIndex('agenda_items', 'idx_agenda_assigned_status', 'INDEX idx_agenda_assigned_status (assigned_user_id, status)');
 
   await pool.query(`
@@ -21451,6 +21535,34 @@ app.post('/webhook/whatsapp', webhookLimiter, async (req, res) => {
 // ============================================
 const agendaStatuses = new Set(['todo', 'today', 'doing', 'done']);
 const agendaPriorities = new Set(['baixa', 'normal', 'alta', 'urgente']);
+const agendaWeekdayTokenMap = {
+  dom: 0,
+  domingo: 0,
+  seg: 1,
+  segunda: 1,
+  segunda_feira: 1,
+  'segunda-feira': 1,
+  ter: 2,
+  terca: 2,
+  terça: 2,
+  terca_feira: 2,
+  'terça-feira': 2,
+  qua: 3,
+  quarta: 3,
+  quarta_feira: 3,
+  'quarta-feira': 3,
+  qui: 4,
+  quinta: 4,
+  quinta_feira: 4,
+  'quinta-feira': 4,
+  sex: 5,
+  sexta: 5,
+  sexta_feira: 5,
+  'sexta-feira': 5,
+  sab: 6,
+  sabado: 6,
+  sábado: 6
+};
 
 function normalizeAgendaStatus(value) {
   const normalized = String(value || '').trim().toLowerCase();
@@ -21483,6 +21595,54 @@ function normalizeAgendaBoolean(value, fallback = false) {
   if (['1', 'true', 'sim', 'yes', 'on'].includes(normalized)) return true;
   if (['0', 'false', 'nao', 'não', 'no', 'off'].includes(normalized)) return false;
   return fallback;
+}
+
+function normalizeAgendaWeekdayToken(value) {
+  if (value === null || typeof value === 'undefined') return null;
+  if (typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 6) {
+    return value;
+  }
+
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  if (!normalized) return null;
+  if (/^[0-6]$/.test(normalized)) return Number(normalized);
+  if (['todos_os_dias', 'todo_dia', 'diario', 'diaria', 'daily'].includes(normalized)) return 'all';
+  return Object.prototype.hasOwnProperty.call(agendaWeekdayTokenMap, normalized)
+    ? agendaWeekdayTokenMap[normalized]
+    : null;
+}
+
+function normalizeAgendaRecurrenceWeekdays(value) {
+  let raw = [];
+  if (Array.isArray(value)) {
+    raw = value;
+  } else if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.startsWith('[')) {
+      raw = parseAgendaJsonArray(trimmed);
+    } else {
+      raw = trimmed.split(/[;,|/]+/).map((item) => item.trim()).filter(Boolean);
+    }
+  } else {
+    raw = parseAgendaJsonArray(value);
+  }
+
+  if (raw.some((item) => normalizeAgendaWeekdayToken(item) === 'all')) {
+    return [];
+  }
+
+  return Array.from(new Set(
+    raw
+      .map((item) => normalizeAgendaWeekdayToken(item))
+      .filter((item) => Number.isInteger(item) && item >= 0 && item <= 6)
+  )).sort((left, right) => left - right);
 }
 
 function normalizeAgendaTags(value) {
@@ -21524,6 +21684,41 @@ function addDaysToAgendaDateKey(dateKey, daysToAdd) {
   const utc = agendaDateKeyToUtcMs(dateKey);
   if (utc === null) return '';
   return getSaoPauloDateKey(new Date(utc + (Math.max(0, Number(daysToAdd) || 0) * 86400000)));
+}
+
+function getAgendaWeekdayFromDateKey(dateKey) {
+  const utc = agendaDateKeyToUtcMs(dateKey);
+  if (utc === null) return null;
+  return new Date(utc).getUTCDay();
+}
+
+function getAgendaRecurrenceWeekdays(row = {}) {
+  return normalizeAgendaRecurrenceWeekdays(
+    row.recurrence_weekdays
+      ?? row.recurrence_weekdays_json
+      ?? row.recurrenceWeekdays
+  );
+}
+
+function isAgendaScheduledForDate(dateKey, recurrenceWeekdays = []) {
+  const normalizedWeekdays = normalizeAgendaRecurrenceWeekdays(recurrenceWeekdays);
+  if (!normalizedWeekdays.length) return true;
+  const weekday = getAgendaWeekdayFromDateKey(dateKey);
+  return weekday !== null && normalizedWeekdays.includes(weekday);
+}
+
+function listAgendaScheduledDatesBetween(fromDateKey, toDateKey, recurrenceWeekdays = []) {
+  const diff = diffAgendaDateKeys(fromDateKey, toDateKey);
+  if (diff <= 0) return [];
+
+  const scheduledDates = [];
+  for (let offset = 1; offset <= diff; offset += 1) {
+    const candidateDateKey = addDaysToAgendaDateKey(fromDateKey, offset);
+    if (candidateDateKey && isAgendaScheduledForDate(candidateDateKey, recurrenceWeekdays)) {
+      scheduledDates.push(candidateDateKey);
+    }
+  }
+  return scheduledDates;
 }
 
 function shiftAgendaDateTimeByDays(value, daysToShift) {
@@ -21572,6 +21767,24 @@ function canFinalizeAgendaItem(user = {}, row = {}) {
   return Number(user?.id || 0) === Number(responsibleUserId);
 }
 
+function canAccessAgendaCompanyBoard(user) {
+  if (isMasterAdminUser(user)) return true;
+  return ['admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'manager'].includes(normalizeAccessRole(user?.role));
+}
+
+function canAccessAgendaDashboard(user) {
+  return canAccessAgendaCompanyBoard(user);
+}
+
+function canAccessAgendaHomeDigest(user) {
+  if (isMasterAdminUser(user)) return true;
+  return ['admin', 'supervisor_crc', 'crc_leader'].includes(normalizeAccessRole(user?.role));
+}
+
+function canImportAgendaWorkbook(user) {
+  return canAccessAgendaCompanyBoard(user);
+}
+
 async function upsertAgendaCompletionLog(row = {}, overrides = {}) {
   const agendaItemId = Number(overrides.agendaItemId || row.id || 0);
   const cycleDate = String(overrides.cycleDate || '').slice(0, 10);
@@ -21609,9 +21822,10 @@ async function syncAgendaRecurringItemIfNeeded(row = {}) {
 
   const todayKey = getSaoPauloParts().dateKey;
   const cycleDateKey = getAgendaCycleDateKey(row);
-  const cycleDiff = diffAgendaDateKeys(cycleDateKey, todayKey);
+  const recurrenceWeekdays = getAgendaRecurrenceWeekdays(row);
+  const scheduledCycleDates = listAgendaScheduledDatesBetween(cycleDateKey, todayKey, recurrenceWeekdays);
 
-  if (cycleDiff <= 0) return;
+  if (!scheduledCycleDates.length) return;
 
   await upsertAgendaCompletionLog(row, {
     cycleDate: cycleDateKey,
@@ -21621,10 +21835,13 @@ async function syncAgendaRecurringItemIfNeeded(row = {}) {
     completedByName: row.completed_by_name || null
   });
 
-  for (let offset = 1; offset < cycleDiff; offset += 1) {
+  const nextCycleDateKey = scheduledCycleDates[scheduledCycleDates.length - 1];
+  const cycleShift = diffAgendaDateKeys(cycleDateKey, nextCycleDateKey);
+
+  for (const scheduledDateKey of scheduledCycleDates.slice(0, -1)) {
     await upsertAgendaCompletionLog(row, {
-      cycleDate: addDaysToAgendaDateKey(cycleDateKey, offset),
-      scheduledFor: shiftAgendaDateTimeByDays(row.due_at, offset),
+      cycleDate: scheduledDateKey,
+      scheduledFor: shiftAgendaDateTimeByDays(row.due_at, diffAgendaDateKeys(cycleDateKey, scheduledDateKey)),
       completedAt: null,
       completedByUserId: null,
       completedByName: null
@@ -21646,9 +21863,9 @@ async function syncAgendaRecurringItemIfNeeded(row = {}) {
         AND deleted_at IS NULL`,
     [
       getAgendaRecurrenceBaseStatus(row),
-      todayKey,
-      shiftAgendaDateTimeByDays(row.due_at, cycleDiff),
-      shiftAgendaDateTimeByDays(row.reminder_at, cycleDiff),
+      nextCycleDateKey,
+      shiftAgendaDateTimeByDays(row.due_at, cycleShift),
+      shiftAgendaDateTimeByDays(row.reminder_at, cycleShift),
       row.id
     ]
   );
@@ -21676,13 +21893,21 @@ async function syncAgendaRecurringItemsForUser(user) {
 function serializeAgendaItem(row = {}) {
   return {
     ...row,
+    company_id: Number(row.company_id || 1) || 1,
     is_daily_recurring: normalizeAgendaBoolean(row.is_daily_recurring, false),
     requires_completion: normalizeAgendaBoolean(row.requires_completion, true),
     recurrence_cycle_date: row.recurrence_cycle_date ? getSaoPauloDateKey(row.recurrence_cycle_date) : null,
     recurrence_base_status: row.recurrence_base_status || null,
+    recurrence_weekdays: getAgendaRecurrenceWeekdays(row),
     completed_at: row.completed_at || null,
     completed_by_user_id: row.completed_by_user_id || null,
     completed_by_name: row.completed_by_name || null,
+    clinic_id: row.clinic_id ? Number(row.clinic_id) : null,
+    clinic_name: row.clinic_name || null,
+    patient_name: row.patient_name || null,
+    patient_phone: row.patient_phone || null,
+    source_label: row.source_label || null,
+    source_batch_id: row.source_batch_id || null,
     assignedUser: row.assigned_user_id ? {
       id: row.assigned_user_id,
       name: row.assigned_user_name || null,
@@ -21698,7 +21923,7 @@ function getAgendaOwnerId(user = {}) {
 }
 
 function canManageAgendaAssignments(user) {
-  return isAdminUser(user) || normalizeAccessRole(user?.role) === 'supervisor_crc';
+  return canAccessAgendaCompanyBoard(user);
 }
 
 function normalizeAgendaUserId(value) {
@@ -21708,13 +21933,17 @@ function normalizeAgendaUserId(value) {
 
 function buildAgendaVisibilityWhere(user, itemAlias = '') {
   const prefix = itemAlias ? `${itemAlias}.` : '';
+  const companyScope = buildAgendaCompanyWhere(user, itemAlias);
   const ownerUserId = getAgendaOwnerId(user);
-  if (isMasterAdminUser(user)) {
-    return { sql: '1 = 1', params: [] };
+  if (isMasterAdminUser(user) || canAccessAgendaCompanyBoard(user)) {
+    return companyScope;
+  }
+  if (!ownerUserId) {
+    return { sql: '1 = 0', params: [] };
   }
   return {
-    sql: `(${prefix}owner_user_id = ? OR ${prefix}assigned_user_id = ?)`,
-    params: [ownerUserId, ownerUserId]
+    sql: `(${companyScope.sql}) AND (${prefix}owner_user_id = ? OR ${prefix}assigned_user_id = ?)`,
+    params: [...companyScope.params, ownerUserId, ownerUserId]
   };
 }
 
@@ -21757,6 +21986,7 @@ function serializeAgendaAssignableUser(user = {}) {
   return {
     id: user.id,
     name: user.name || user.email || `Usuario ${user.id}`,
+    username: user.username || null,
     email: user.email || null,
     role: user.role || null,
     position: user.position || null,
@@ -21770,7 +22000,7 @@ async function getAgendaAssignableUser(userId, actor) {
 
   const assignableScope = buildAgendaAssignableUserWhere(actor, 'u');
   const [users] = await pool.query(
-    `SELECT u.id, u.name, u.email, u.role, u.position, u.department
+    `SELECT u.id, u.name, u.username, u.email, u.role, u.position, u.department
        FROM users u
       WHERE u.id = ?
         AND u.deleted_at IS NULL
@@ -21809,12 +22039,742 @@ async function notifyAgendaAssignment(itemId, title, assignee, actor) {
   }
 }
 
+function normalizeAgendaDashboardDays(value, fallback = 30) {
+  const numeric = Number(value || fallback);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(7, Math.min(90, Math.round(numeric)));
+}
+
+function getAgendaHoursUntil(dateValue) {
+  if (!dateValue) return null;
+  const date = new Date(dateValue);
+  if (Number.isNaN(date.getTime())) return null;
+  return (date.getTime() - Date.now()) / 3600000;
+}
+
+function buildAgendaDashboardIdentity(row = {}) {
+  const userId = normalizeAgendaUserId(row.assigned_user_id || row.owner_user_id);
+  const name = row.assigned_user_name || row.owner_name || 'Sem responsável';
+  return {
+    key: userId ? `user-${userId}` : `name-${normalizeComparableText(name) || 'sem-responsavel'}`,
+    user_id: userId,
+    name,
+    role: row.assigned_user_role || row.assigned_user_position || null
+  };
+}
+
+function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = {}) {
+  const now = new Date();
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const sevenDaysStart = now.getTime() - (7 * 86400000);
+  const periodDays = normalizeAgendaDashboardDays(options.days, 30);
+  const periodStart = now.getTime() - (periodDays * 86400000);
+  const collaboratorMap = new Map();
+  const summary = {
+    total: 0,
+    open: 0,
+    overdue: 0,
+    due_24h: 0,
+    due_48h: 0,
+    done: 0,
+    recurring: 0,
+    mandatory_open: 0,
+    completed_today: 0,
+    completed_7d: 0,
+    completed_period: 0
+  };
+  const urgentItems = [];
+  const recentCompletions = [];
+
+  const ensureCollaborator = (identity = {}) => {
+    if (!collaboratorMap.has(identity.key)) {
+      collaboratorMap.set(identity.key, {
+        key: identity.key,
+        user_id: identity.user_id || null,
+        name: identity.name || 'Sem responsável',
+        role: identity.role || null,
+        total: 0,
+        open: 0,
+        overdue: 0,
+        due_24h: 0,
+        due_48h: 0,
+        done: 0,
+        recurring: 0,
+        mandatory_open: 0,
+        todo: 0,
+        today: 0,
+        doing: 0,
+        completed_today: 0,
+        completed_7d: 0,
+        completed_period: 0,
+        last_completed_at: null
+      });
+    }
+    return collaboratorMap.get(identity.key);
+  };
+
+  rows.forEach((rawRow) => {
+    const item = serializeAgendaItem(rawRow);
+    const identity = buildAgendaDashboardIdentity(rawRow);
+    const collaborator = ensureCollaborator(identity);
+    const dueHours = getAgendaHoursUntil(item.due_at);
+    const isOpen = item.status !== 'done';
+
+    collaborator.total += 1;
+    summary.total += 1;
+
+    if (item.is_daily_recurring) {
+      collaborator.recurring += 1;
+      summary.recurring += 1;
+    }
+
+    if (item.status === 'done') {
+      collaborator.done += 1;
+      summary.done += 1;
+    } else {
+      collaborator.open += 1;
+      collaborator[item.status] = Number(collaborator[item.status] || 0) + 1;
+      summary.open += 1;
+      if (item.requires_completion) {
+        collaborator.mandatory_open += 1;
+        summary.mandatory_open += 1;
+      }
+      if (dueHours !== null && dueHours < 0) {
+        collaborator.overdue += 1;
+        summary.overdue += 1;
+      }
+      if (dueHours !== null && dueHours >= 0 && dueHours <= 24) {
+        collaborator.due_24h += 1;
+        summary.due_24h += 1;
+      }
+      if (dueHours !== null && dueHours >= 0 && dueHours <= 48) {
+        collaborator.due_48h += 1;
+        summary.due_48h += 1;
+      }
+      if (dueHours !== null && dueHours <= 48) {
+        urgentItems.push({
+          id: item.id,
+          title: item.title,
+          assigned_user_name: item.assigned_user_name || item.owner_name || 'Sem responsável',
+          clinic_name: item.clinic_name || null,
+          patient_name: item.patient_name || null,
+          patient_phone: item.patient_phone || null,
+          status: item.status,
+          priority: item.priority,
+          due_at: item.due_at || null,
+          recurrence_weekdays: item.recurrence_weekdays || []
+        });
+      }
+    }
+
+    if (!item.is_daily_recurring && item.completed_at) {
+      recentCompletions.push({
+        title: item.title,
+        collaborator_name: item.completed_by_name || identity.name,
+        completed_at: item.completed_at,
+        clinic_name: item.clinic_name || null,
+        patient_name: item.patient_name || null
+      });
+    }
+  });
+
+  completionRows.forEach((row) => {
+    const completedAt = row.completed_at ? new Date(row.completed_at) : null;
+    if (!completedAt || Number.isNaN(completedAt.getTime())) return;
+
+    const identity = {
+      key: row.completed_by_user_id
+        ? `user-${row.completed_by_user_id}`
+        : `name-${normalizeComparableText(row.completed_by_name || row.responsible_user_name) || 'sem-responsavel'}`,
+      user_id: normalizeAgendaUserId(row.completed_by_user_id || row.responsible_user_id),
+      name: row.completed_by_name || row.responsible_user_name || 'Sem responsável',
+      role: null
+    };
+    const collaborator = ensureCollaborator(identity);
+    const completedAtMs = completedAt.getTime();
+
+    if (completedAtMs >= periodStart) {
+      collaborator.completed_period += 1;
+      summary.completed_period += 1;
+    }
+    if (completedAtMs >= sevenDaysStart) {
+      collaborator.completed_7d += 1;
+      summary.completed_7d += 1;
+    }
+    if (completedAtMs >= todayStart) {
+      collaborator.completed_today += 1;
+      summary.completed_today += 1;
+    }
+    if (!collaborator.last_completed_at || new Date(collaborator.last_completed_at).getTime() < completedAtMs) {
+      collaborator.last_completed_at = row.completed_at;
+    }
+
+    recentCompletions.push({
+      title: row.title || `Tarefa ${row.agenda_item_id}`,
+      collaborator_name: row.completed_by_name || row.responsible_user_name || 'Sem responsável',
+      completed_at: row.completed_at,
+      clinic_name: row.clinic_name || null,
+      patient_name: row.patient_name || null
+    });
+  });
+
+  const collaborators = Array.from(collaboratorMap.values())
+    .map((item) => ({
+      ...item,
+      productivity_index: Math.max(
+        0,
+        Math.round(((item.completed_7d * 100) / Math.max(1, item.open + item.completed_7d)) * 10) / 10
+      )
+    }))
+    .sort((left, right) => {
+      if (left.overdue !== right.overdue) return right.overdue - left.overdue;
+      if (left.completed_7d !== right.completed_7d) return right.completed_7d - left.completed_7d;
+      if (left.open !== right.open) return right.open - left.open;
+      return left.name.localeCompare(right.name, 'pt-BR');
+    });
+
+  urgentItems.sort((left, right) => {
+    const leftHours = getAgendaHoursUntil(left.due_at);
+    const rightHours = getAgendaHoursUntil(right.due_at);
+    return (leftHours ?? 999999) - (rightHours ?? 999999);
+  });
+  recentCompletions.sort((left, right) => new Date(right.completed_at).getTime() - new Date(left.completed_at).getTime());
+
+  return {
+    generated_at: now.toISOString(),
+    window_days: periodDays,
+    summary,
+    collaborators,
+    top_performers: [...collaborators]
+      .sort((left, right) => {
+        if (left.completed_7d !== right.completed_7d) return right.completed_7d - left.completed_7d;
+        if (left.overdue !== right.overdue) return left.overdue - right.overdue;
+        return right.productivity_index - left.productivity_index;
+      })
+      .slice(0, 5),
+    attention_required: collaborators.filter((item) => item.overdue || item.due_24h).slice(0, 5),
+    urgent_items: urgentItems.slice(0, 20),
+    recent_completions: recentCompletions.slice(0, 20)
+  };
+}
+
+async function loadAgendaDashboardReport(user, options = {}) {
+  const periodDays = normalizeAgendaDashboardDays(options.days, 30);
+  const visibility = buildAgendaVisibilityWhere(user, 'a');
+  const baseWhere = ['a.deleted_at IS NULL', visibility.sql];
+  const baseParams = [...visibility.params];
+
+  const [rows] = await pool.query(
+    `SELECT
+       a.*,
+       u.role AS assigned_user_role,
+       u.position AS assigned_user_position
+     FROM agenda_items a
+     LEFT JOIN users u ON u.id = a.assigned_user_id
+     WHERE ${baseWhere.join(' AND ')}
+     ORDER BY COALESCE(a.due_at, '9999-12-31 23:59:59') ASC, a.updated_at DESC
+     LIMIT 4000`,
+    baseParams
+  );
+
+  const completionSince = toMysqlDateTime(new Date(Date.now() - (Math.max(periodDays, 30) * 86400000)));
+  const [completionRows] = await pool.query(
+    `SELECT
+       l.*,
+       a.title,
+       a.clinic_name,
+       a.patient_name,
+       a.patient_phone
+     FROM agenda_item_completion_logs l
+     INNER JOIN agenda_items a ON a.id = l.agenda_item_id
+     WHERE a.deleted_at IS NULL
+       AND ${visibility.sql}
+       AND l.completed_at IS NOT NULL
+       AND l.completed_at >= ?
+     ORDER BY l.completed_at DESC
+     LIMIT 5000`,
+    [...visibility.params, completionSince]
+  );
+
+  return {
+    ...buildAgendaDashboardSnapshot(rows, completionRows, { days: periodDays }),
+    items: rows.map(serializeAgendaItem)
+  };
+}
+
+function buildAgendaDashboardExcelBuffer(report = {}) {
+  const workbook = XLSX.utils.book_new();
+  const summarySheet = XLSX.utils.json_to_sheet([
+    { indicador: 'Itens totais', valor: Number(report.summary?.total || 0) },
+    { indicador: 'Demandas abertas', valor: Number(report.summary?.open || 0) },
+    { indicador: 'Atrasadas', valor: Number(report.summary?.overdue || 0) },
+    { indicador: 'Vencendo em 24h', valor: Number(report.summary?.due_24h || 0) },
+    { indicador: 'Vencendo em 48h', valor: Number(report.summary?.due_48h || 0) },
+    { indicador: 'Concluídas hoje', valor: Number(report.summary?.completed_today || 0) },
+    { indicador: 'Concluídas em 7 dias', valor: Number(report.summary?.completed_7d || 0) },
+    { indicador: `Concluídas em ${report.window_days || 30} dias`, valor: Number(report.summary?.completed_period || 0) }
+  ]);
+  summarySheet['!cols'] = [{ wch: 28 }, { wch: 18 }];
+  XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumo');
+
+  const collaboratorsSheet = XLSX.utils.json_to_sheet((report.collaborators || []).map((item) => ({
+    colaborador: item.name,
+    perfil: item.role || '-',
+    total: item.total,
+    abertas: item.open,
+    atrasadas: item.overdue,
+    vence_24h: item.due_24h,
+    vence_48h: item.due_48h,
+    recorrentes: item.recurring,
+    obrigatorias_abertas: item.mandatory_open,
+    concluidas_hoje: item.completed_today,
+    concluidas_7_dias: item.completed_7d,
+    concluidas_periodo: item.completed_period,
+    indice_produtividade: item.productivity_index,
+    ultima_execucao: item.last_completed_at ? formatMessageDateTime(item.last_completed_at) : '-'
+  })));
+  collaboratorsSheet['!cols'] = [
+    { wch: 28 }, { wch: 18 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
+    { wch: 12 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 18 }, { wch: 16 }, { wch: 22 }
+  ];
+  XLSX.utils.book_append_sheet(workbook, collaboratorsSheet, 'Colaboradores');
+
+  const itemsSheet = XLSX.utils.json_to_sheet((report.items || []).map((item) => ({
+    id: item.id,
+    titulo: item.title,
+    status: item.status,
+    prioridade: item.priority,
+    responsavel: item.assigned_user_name || item.owner_name || '-',
+    unidade: item.clinic_name || '-',
+    paciente: item.patient_name || '-',
+    telefone: item.patient_phone || '-',
+    prazo: item.due_at ? formatMessageDateTime(item.due_at) : '-',
+    lembrete: item.reminder_at ? formatMessageDateTime(item.reminder_at) : '-',
+    recorrente: item.is_daily_recurring ? 'Sim' : 'Não',
+    dias_semana: getAgendaRecurrenceWeekdays(item).join(', '),
+    execucao_obrigatoria: item.requires_completion ? 'Sim' : 'Não',
+    concluido_em: item.completed_at ? formatMessageDateTime(item.completed_at) : '-',
+    origem: item.source_label || '-'
+  })));
+  itemsSheet['!cols'] = [
+    { wch: 8 }, { wch: 32 }, { wch: 12 }, { wch: 12 }, { wch: 24 }, { wch: 22 }, { wch: 22 },
+    { wch: 18 }, { wch: 22 }, { wch: 22 }, { wch: 12 }, { wch: 14 }, { wch: 18 }, { wch: 22 }, { wch: 18 }
+  ];
+  XLSX.utils.book_append_sheet(workbook, itemsSheet, 'Demandas');
+
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+}
+
+function buildAgendaDashboardPdfBuffer(report = {}) {
+  return new Promise((resolve, reject) => {
+    const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 28, bufferPages: true });
+    const chunks = [];
+    const ink = '#1f2937';
+    const muted = '#6b7280';
+    const gold = '#b07a35';
+    const line = '#d6dce7';
+    const pageWidth = doc.page.width - 56;
+    let y = 88;
+
+    doc.on('data', (chunk) => chunks.push(chunk));
+    doc.on('error', reject);
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+
+    const drawHeader = () => {
+      doc.rect(0, 0, doc.page.width, 70).fill('#fff8ef');
+      doc.fillColor(gold).font('Helvetica-Bold').fontSize(9).text('AGENDA CRC', 28, 22);
+      doc.fillColor(ink).fontSize(20).text('Relatório executivo de produtividade', 28, 34);
+      doc.fillColor(muted).font('Helvetica').fontSize(9)
+        .text(`Emitido em ${formatMessageDateTime(report.generated_at || new Date())} · janela de ${report.window_days || 30} dias`, 28, 58);
+      y = 86;
+    };
+
+    const drawMetricRow = () => {
+      const metrics = [
+        ['Totais', report.summary?.total || 0],
+        ['Abertas', report.summary?.open || 0],
+        ['Atrasadas', report.summary?.overdue || 0],
+        ['24h', report.summary?.due_24h || 0],
+        ['48h', report.summary?.due_48h || 0],
+        ['Concluídas 7d', report.summary?.completed_7d || 0]
+      ];
+      const width = (pageWidth - 20) / metrics.length;
+      let x = 28;
+      metrics.forEach(([label, value]) => {
+        doc.roundedRect(x, y, width, 56, 10).fillAndStroke('#ffffff', line);
+        doc.fillColor(muted).font('Helvetica-Bold').fontSize(8).text(label.toUpperCase(), x + 10, y + 10, { width: width - 20 });
+        doc.fillColor(ink).fontSize(20).text(String(value), x + 10, y + 24, { width: width - 20 });
+        x += width + 4;
+      });
+      y += 74;
+    };
+
+    const drawCollaboratorTable = () => {
+      doc.fillColor(ink).font('Helvetica-Bold').fontSize(12).text('Métricas por colaborador', 28, y);
+      y += 18;
+      const columns = [
+        ['Colaborador', 170],
+        ['Perfil', 90],
+        ['Abertas', 52],
+        ['Atrasadas', 56],
+        ['24h', 40],
+        ['48h', 40],
+        ['Concl. 7d', 56],
+        ['Índice', 52],
+        ['Última execução', 120]
+      ];
+      let x = 28;
+      doc.rect(28, y, pageWidth, 20).fill('#f5ead9');
+      doc.fillColor('#5e4321').fontSize(7);
+      columns.forEach(([label, width]) => {
+        doc.text(label.toUpperCase(), x + 4, y + 6, { width: width - 8 });
+        x += width;
+      });
+      y += 22;
+      doc.font('Helvetica').fontSize(7);
+
+      (report.collaborators || []).slice(0, 18).forEach((item, index) => {
+        if (y > doc.page.height - 120) {
+          doc.addPage();
+          drawHeader();
+          drawMetricRow();
+          y += 6;
+        }
+        const rowHeight = 34;
+        doc.rect(28, y, pageWidth, rowHeight).fill(index % 2 === 0 ? '#ffffff' : '#fffaf4');
+        doc.strokeColor(line).lineWidth(0.3).moveTo(28, y + rowHeight).lineTo(28 + pageWidth, y + rowHeight).stroke();
+        x = 28;
+        [
+          item.name,
+          item.role || '-',
+          item.open,
+          item.overdue,
+          item.due_24h,
+          item.due_48h,
+          item.completed_7d,
+          item.productivity_index,
+          item.last_completed_at ? formatMessageDateTime(item.last_completed_at) : '-'
+        ].forEach((value, valueIndex) => {
+          const width = columns[valueIndex][1];
+          doc.fillColor(ink).text(String(value ?? '-'), x + 4, y + 8, { width: width - 8, height: rowHeight - 10 });
+          x += width;
+        });
+        y += rowHeight;
+      });
+    };
+
+    const drawUrgentItems = () => {
+      y += 18;
+      doc.fillColor(ink).font('Helvetica-Bold').fontSize(12).text('Demandas críticas', 28, y);
+      y += 18;
+      (report.urgent_items || []).slice(0, 8).forEach((item) => {
+        if (y > doc.page.height - 70) {
+          doc.addPage();
+          drawHeader();
+          y += 8;
+        }
+        const detail = [
+          item.assigned_user_name || 'Sem responsável',
+          item.clinic_name || null,
+          item.patient_name || null,
+          item.due_at ? `Prazo ${formatMessageDateTime(item.due_at)}` : null
+        ].filter(Boolean).join(' · ');
+        doc.fillColor(ink).font('Helvetica-Bold').fontSize(9).text(item.title || 'Demanda', 28, y, { width: pageWidth - 16 });
+        y += 12;
+        doc.fillColor(muted).font('Helvetica').fontSize(8).text(detail || 'Sem detalhes adicionais.', 28, y, { width: pageWidth - 16 });
+        y += 16;
+      });
+    };
+
+    drawHeader();
+    drawMetricRow();
+    drawCollaboratorTable();
+    drawUrgentItems();
+    doc.end();
+  });
+}
+
+function normalizeAgendaImportLookup(value) {
+  return normalizeComparableText(value).replace(/_/g, '.');
+}
+
+async function loadAgendaImportUsers(actor) {
+  const scope = buildAgendaAssignableUserWhere(actor, 'u');
+  const [users] = await pool.query(
+    `SELECT u.id, u.name, u.username, u.email, u.role, u.position, u.department
+       FROM users u
+      WHERE u.deleted_at IS NULL
+        AND u.active = 1
+        AND ${scope.sql}
+      ORDER BY u.name ASC, u.email ASC
+      LIMIT 1000`,
+    scope.params
+  );
+
+  const byId = new Map();
+  const byEmail = new Map();
+  const byUsername = new Map();
+  const byName = new Map();
+  users.forEach((user) => {
+    const serialized = serializeAgendaAssignableUser(user);
+    byId.set(String(serialized.id), serialized);
+    if (serialized.email) byEmail.set(String(serialized.email).trim().toLowerCase(), serialized);
+    if (serialized.username) byUsername.set(normalizeAgendaImportLookup(serialized.username), serialized);
+    if (serialized.name) byName.set(normalizeAgendaImportLookup(serialized.name), serialized);
+  });
+
+  return { users: users.map(serializeAgendaAssignableUser), byId, byEmail, byUsername, byName };
+}
+
+function getAgendaImportRowValue(row = {}, aliases = []) {
+  return getWorksheetRowValue(row, aliases);
+}
+
+function normalizeAgendaImportDateTime(dateValue, timeValue, fallbackTime = '09:00') {
+  const normalizedDate = normalizeMassCampaignDateValue(dateValue);
+  if (!normalizedDate) return null;
+  const normalizedTime = normalizeMassCampaignTimeValue(timeValue) || fallbackTime;
+
+  let year = 0;
+  let month = 0;
+  let day = 0;
+
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(normalizedDate)) {
+    const parts = normalizedDate.split('/').map(Number);
+    [day, month, year] = parts;
+  } else if (/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
+    const parts = normalizedDate.split('-').map(Number);
+    [year, month, day] = parts;
+  }
+
+  if (!year || !month || !day) return null;
+  const [hour, minute] = String(normalizedTime || fallbackTime).split(':').map(Number);
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')} ${String(hour || 0).padStart(2, '0')}:${String(minute || 0).padStart(2, '0')}:00`;
+}
+
+function buildAgendaImportTaskTitle(row = {}) {
+  const explicitTitle = sanitizeFinancialString(
+    row.title
+      || row.titulo_tarefa
+      || row.demanda
+      || row.tarefa,
+    180
+  );
+  if (explicitTitle) return explicitTitle;
+
+  const patientName = sanitizeFinancialString(row.patient_name || row.nome_paciente, 120) || 'Paciente';
+  const clinicName = sanitizeFinancialString(row.clinic_name || row.clinica, 80) || '';
+  return clinicName ? `Confirmar atendimento - ${patientName} (${clinicName})` : `Confirmar atendimento - ${patientName}`;
+}
+
+function buildAgendaImportDescription(row = {}) {
+  const explicitDescription = sanitizeFinancialString(
+    row.description
+      || row.descricao
+      || row.observacao
+      || row.observações
+      || row.observacoes,
+    3000
+  );
+  const extraBits = [
+    row.clinic_name ? `Unidade: ${row.clinic_name}` : null,
+    row.patient_name ? `Paciente: ${row.patient_name}` : null,
+    row.patient_phone ? `Telefone: ${row.patient_phone}` : null,
+    row.data_consulta ? `Consulta: ${row.data_consulta}${row.hora_consulta ? ` às ${row.hora_consulta}` : ''}` : null
+  ].filter(Boolean);
+
+  return [explicitDescription, ...extraBits].filter(Boolean).join('\n');
+}
+
+function parseAgendaImportWhatsappPreference(value) {
+  if (value === null || typeof value === 'undefined' || value === '') return null;
+  return normalizeAgendaBoolean(value, false);
+}
+
+function parseAgendaImportRowsFromWorksheetRows(rows = []) {
+  return rows.map((row, index) => {
+    const patientName = normalizeWhatsAppPatientName(
+      getAgendaImportRowValue(row, ['nome_paciente', 'nome do paciente', 'paciente', 'patient_name', 'patient'])
+    );
+    const patientPhone = normalizeWhatsAppPhone(
+      getAgendaImportRowValue(row, ['telefone', 'whatsapp', 'celular', 'numero', 'número', 'patient_phone'])
+    );
+    const clinicName = sanitizeFinancialString(
+      getAgendaImportRowValue(row, ['clinica', 'clínica', 'unidade', 'clinic', 'clinic_name']),
+      180
+    ) || '';
+    const dueDateSource = getAgendaImportRowValue(row, ['prazo', 'data_prazo', 'due_date', 'due_at']) || getAgendaImportRowValue(row, ['data_consulta', 'data da consulta', 'appointment_date']);
+    const dueTimeSource = getAgendaImportRowValue(row, ['hora_prazo', 'due_time']) || getAgendaImportRowValue(row, ['hora_consulta', 'hora da consulta', 'appointment_time']);
+    const reminderDateSource = getAgendaImportRowValue(row, ['lembrete_data', 'data_lembrete', 'reminder_date']);
+    const reminderTimeSource = getAgendaImportRowValue(row, ['lembrete_hora', 'hora_lembrete', 'reminder_time']);
+    const recurring = normalizeAgendaBoolean(
+      getAgendaImportRowValue(row, ['recorrente_diario', 'rotina_diaria', 'recorrente', 'is_daily_recurring']),
+      false
+    );
+    const weekdays = recurring
+      ? normalizeAgendaRecurrenceWeekdays(getAgendaImportRowValue(row, ['dias_semana', 'dias da semana', 'weekdays', 'recurrence_weekdays']))
+      : [];
+
+    const normalizedRow = {
+      line: index + 2,
+      assignee_id: Number(getAgendaImportRowValue(row, ['assigned_user_id', 'responsavel_id', 'colaborador_id']) || 0) || null,
+      assignee_name: sanitizeFinancialString(
+        getAgendaImportRowValue(row, ['colaborador', 'responsavel', 'responsável', 'usuario', 'usuário', 'operador', 'assigned_to']),
+        180
+      ) || '',
+      assignee_email: String(getAgendaImportRowValue(row, ['email_responsavel', 'email responsável', 'responsavel_email', 'assignee_email']) || '').trim().toLowerCase(),
+      assignee_username: normalizeUsername(
+        getAgendaImportRowValue(row, ['username_responsavel', 'usuario_responsavel', 'login_responsavel', 'assignee_username'])
+      ),
+      title: buildAgendaImportTaskTitle({
+        title: getAgendaImportRowValue(row, ['titulo_tarefa', 'título tarefa', 'titulo', 'título', 'demanda', 'tarefa']),
+        patient_name: patientName,
+        clinic_name: clinicName
+      }),
+      description: buildAgendaImportDescription({
+        description: getAgendaImportRowValue(row, ['descricao', 'descrição', 'detalhes', 'observacao', 'observação']),
+        clinic_name: clinicName,
+        patient_name: patientName,
+        patient_phone: patientPhone,
+        data_consulta: normalizeMassCampaignDateValue(getAgendaImportRowValue(row, ['data_consulta', 'data da consulta', 'appointment_date'])),
+        hora_consulta: normalizeMassCampaignTimeValue(getAgendaImportRowValue(row, ['hora_consulta', 'hora da consulta', 'appointment_time']))
+      }),
+      priority: normalizeAgendaPriority(getAgendaImportRowValue(row, ['prioridade', 'priority'])),
+      status: normalizeAgendaStatus(getAgendaImportRowValue(row, ['status_inicial', 'status', 'etapa'])),
+      due_at: normalizeAgendaImportDateTime(dueDateSource, dueTimeSource, '09:00'),
+      reminder_at: normalizeAgendaImportDateTime(reminderDateSource, reminderTimeSource, '08:00'),
+      is_daily_recurring: recurring,
+      recurrence_weekdays: weekdays,
+      tags: normalizeAgendaTags(getAgendaImportRowValue(row, ['tags', 'etiquetas', 'labels'])),
+      clinic_name: clinicName,
+      patient_name: patientName,
+      patient_phone: patientPhone,
+      data_consulta: normalizeMassCampaignDateValue(getAgendaImportRowValue(row, ['data_consulta', 'data da consulta', 'appointment_date'])),
+      hora_consulta: normalizeMassCampaignTimeValue(getAgendaImportRowValue(row, ['hora_consulta', 'hora da consulta', 'appointment_time'])),
+      whatsapp_preference: parseAgendaImportWhatsappPreference(
+        getAgendaImportRowValue(row, ['enviar_confirmacao_whatsapp', 'enviar_whatsapp', 'confirmacao_whatsapp', 'dispatch_whatsapp'])
+      ),
+      raw: row
+    };
+
+    return normalizedRow;
+  });
+}
+
+function parseAgendaImportRowsFromUpload(filePath, originalName = '') {
+  const extension = String(path.extname(originalName || filePath || '')).trim().toLowerCase();
+  if (['.xlsx', '.xls'].includes(extension)) {
+    const workbook = XLSX.readFile(filePath);
+    const firstSheetName = workbook.SheetNames[0];
+    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName] || {}, { defval: '' });
+    return parseAgendaImportRowsFromWorksheetRows(rows);
+  }
+
+  const parsed = parseMassWhatsAppRecipients(decodeUploadedText(fs.readFileSync(filePath)));
+  return (parsed.recipients || []).map((recipient, index) => ({
+    line: index + 1,
+    assignee_id: null,
+    assignee_name: '',
+    assignee_email: '',
+    assignee_username: '',
+    title: buildAgendaImportTaskTitle(recipient),
+    description: buildAgendaImportDescription(recipient),
+    priority: 'normal',
+    status: 'todo',
+    due_at: normalizeAgendaImportDateTime(recipient.data_consulta, recipient.hora_consulta, '09:00'),
+    reminder_at: null,
+    is_daily_recurring: false,
+    recurrence_weekdays: [],
+    tags: normalizeAgendaTags(recipient.clinic_name || ''),
+    clinic_name: recipient.clinic_name || '',
+    patient_name: recipient.patient_name || '',
+    patient_phone: recipient.patient_phone || '',
+    data_consulta: recipient.data_consulta || '',
+    hora_consulta: recipient.hora_consulta || '',
+    whatsapp_preference: null,
+    raw: recipient
+  }));
+}
+
+function applyAgendaImportSelectedClinic(rows = [], selectedClinic = null) {
+  if (!selectedClinic) return rows;
+  return rows.map((row) => ({
+    ...row,
+    clinic_id: selectedClinic.clinic_id,
+    clinic_name: selectedClinic.clinic_name
+  }));
+}
+
+function resolveAgendaImportAssignee(directory, row = {}, defaultAssignee = null) {
+  if (row.assignee_id && directory.byId.has(String(row.assignee_id))) {
+    return directory.byId.get(String(row.assignee_id));
+  }
+  if (row.assignee_email && directory.byEmail.has(String(row.assignee_email).trim().toLowerCase())) {
+    return directory.byEmail.get(String(row.assignee_email).trim().toLowerCase());
+  }
+  if (row.assignee_username && directory.byUsername.has(normalizeAgendaImportLookup(row.assignee_username))) {
+    return directory.byUsername.get(normalizeAgendaImportLookup(row.assignee_username));
+  }
+  if (row.assignee_name && directory.byName.has(normalizeAgendaImportLookup(row.assignee_name))) {
+    return directory.byName.get(normalizeAgendaImportLookup(row.assignee_name));
+  }
+  if (defaultAssignee?.id && directory.byId.has(String(defaultAssignee.id))) {
+    return directory.byId.get(String(defaultAssignee.id));
+  }
+  return null;
+}
+
+function buildAgendaImportTemplateBuffer() {
+  const workbook = XLSX.utils.book_new();
+  const headers = [
+    'colaborador',
+    'email_responsavel',
+    'titulo_tarefa',
+    'descricao',
+    'prioridade',
+    'status_inicial',
+    'prazo',
+    'hora_prazo',
+    'lembrete_data',
+    'lembrete_hora',
+    'recorrente_diario',
+    'dias_semana',
+    'nome_paciente',
+    'telefone',
+    'clinica',
+    'data_consulta',
+    'hora_consulta',
+    'enviar_confirmacao_whatsapp',
+    'tags'
+  ];
+  const sheet = XLSX.utils.aoa_to_sheet([
+    headers,
+    ['Ana CRC', 'ana.crc@empresa.com.br', 'Confirmar atendimento - Maria Silva', 'Contato de confirmação e follow-up do dia.', 'alta', 'todo', '12/06/2026', '09:30', '12/06/2026', '08:30', 'sim', 'seg,ter,qua,qui,sex', 'Maria Silva', '5562999999999', 'Garavelo', '12/06/2026', '10:00', 'sim', 'CRC,confirmacao']
+  ]);
+  sheet['!cols'] = headers.map((header) => ({ wch: Math.max(16, header.length + 4) }));
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Demandas');
+
+  const instructions = XLSX.utils.aoa_to_sheet([
+    ['Como usar'],
+    ['1. Preencha a aba Demandas mantendo os cabeçalhos exatamente iguais.'],
+    ['2. colaborador, email_responsavel ou username_responsavel podem identificar o responsável.'],
+    ['3. prazo e lembrete_data aceitam DD/MM/AAAA; hora_prazo e lembrete_hora aceitam HH:MM.'],
+    ['4. Se recorrente_diario = sim, use dias_semana com valores como seg, qua, sex ou 1,3,5.'],
+    ['5. Para envio em massa no WhatsApp, selecione a unidade no sistema e marque enviar_confirmacao_whatsapp = sim quando quiser controlar linha a linha.'],
+    ['6. Quando titulo_tarefa estiver vazio, o sistema gera automaticamente uma tarefa de confirmação usando paciente e unidade.']
+  ]);
+  instructions['!cols'] = [{ wch: 110 }];
+  XLSX.utils.book_append_sheet(workbook, instructions, 'Instrucoes');
+
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+}
+
 app.get('/api/agenda/users', authenticate, async (req, res) => {
   try {
     const assignableScope = buildAgendaAssignableUserWhere(req.user, 'u');
     const actorId = getAgendaOwnerId(req.user);
     const [users] = await pool.query(
-      `SELECT u.id, u.name, u.email, u.role, u.position, u.department
+      `SELECT u.id, u.name, u.username, u.email, u.role, u.position, u.department
          FROM users u
         WHERE u.deleted_at IS NULL
           AND u.active = 1
@@ -21828,6 +22788,310 @@ app.get('/api/agenda/users', authenticate, async (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao carregar usuarios da agenda.' });
+  }
+});
+
+app.get('/api/agenda/dashboard', authenticate, async (req, res) => {
+  try {
+    if (!canAccessAgendaDashboard(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não possui acesso ao dashboard da agenda.' });
+    }
+
+    const report = await loadAgendaDashboardReport(req.user, {
+      days: req.query?.days
+    });
+    return res.json(report);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar o dashboard da agenda.' });
+  }
+});
+
+app.get('/api/agenda/report/excel', exportLimiter, authenticate, async (req, res) => {
+  try {
+    if (!canAccessAgendaDashboard(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não possui acesso ao relatório da agenda.' });
+    }
+
+    const report = await loadAgendaDashboardReport(req.user, {
+      days: req.query?.days
+    });
+    const buffer = buildAgendaDashboardExcelBuffer(report);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="agenda-dashboard.xlsx"');
+    return res.send(buffer);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao exportar a agenda em Excel.' });
+  }
+});
+
+app.get('/api/agenda/report/pdf', exportLimiter, authenticate, async (req, res) => {
+  try {
+    if (!canAccessAgendaDashboard(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não possui acesso ao relatório da agenda.' });
+    }
+
+    const report = await loadAgendaDashboardReport(req.user, {
+      days: req.query?.days
+    });
+    const buffer = await buildAgendaDashboardPdfBuffer(report);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="agenda-dashboard.pdf"');
+    return res.send(buffer);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao exportar a agenda em PDF.' });
+  }
+});
+
+app.get('/api/agenda/import-template', authenticate, async (req, res) => {
+  try {
+    if (!canImportAgendaWorkbook(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode importar demandas em lote.' });
+    }
+
+    const buffer = buildAgendaImportTemplateBuffer();
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="template-importacao-agenda.xlsx"');
+    return res.send(buffer);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao gerar o template da agenda.' });
+  }
+});
+
+app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, res) => {
+  try {
+    if (!canImportAgendaWorkbook(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode importar demandas em lote.' });
+    }
+
+    if (!req.file?.path) {
+      return res.status(400).json({ error: 'Envie uma planilha .xlsx, .xls ou .csv para importar a agenda.' });
+    }
+
+    const createTasks = normalizeAgendaBoolean(req.body?.create_tasks ?? req.body?.createTasks, true);
+    const dispatchWhatsapp = normalizeAgendaBoolean(req.body?.dispatch_whatsapp ?? req.body?.dispatchWhatsapp, false);
+    if (!createTasks && !dispatchWhatsapp) {
+      return res.status(400).json({ error: 'Selecione ao menos uma ação: cadastrar demandas ou enviar confirmação no WhatsApp.' });
+    }
+
+    const selectedClinic = await resolveMassCampaignSelectedClinic(req, req.user);
+    const importedRows = applyAgendaImportSelectedClinic(
+      parseAgendaImportRowsFromUpload(req.file.path, req.file.originalname),
+      selectedClinic
+    );
+
+    if (!importedRows.length) {
+      return res.status(400).json({ error: 'Nenhuma linha válida foi encontrada na planilha enviada.' });
+    }
+
+    const defaultAssigneeId = req.body?.default_assigned_user_id || req.body?.defaultAssignedUserId || null;
+    const defaultAssignee = createTasks && defaultAssigneeId
+      ? await getAgendaAssignableUser(defaultAssigneeId, req.user)
+      : null;
+    const directory = createTasks ? await loadAgendaImportUsers(req.user) : null;
+    const batchId = `agenda-import-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
+    const companyId = Number(req.user?.company_id || req.user?.companyId || 1) || 1;
+    const antiBan = dispatchWhatsapp ? getWhatsAppAntiBanConfig() : null;
+    const confirmationFlow = dispatchWhatsapp
+      ? await getWhatsAppChatbotFlowByTriggerType({ triggerType: 'confirmacao de consulta' })
+      : null;
+    const routingCache = new Map();
+    const messageText = String(req.body?.message_text || req.body?.messageText || '').trim() || getDefaultMassWhatsAppCampaignMessage('confirmacao');
+    const invalidRows = [];
+    const unresolvedAssignees = [];
+    let created = 0;
+    let whatsappQueued = 0;
+    let whatsappBlocked = 0;
+
+    for (const [index, row] of importedRows.entries()) {
+      const rowTags = normalizeAgendaTags([...(Array.isArray(row.tags) ? row.tags : []), row.clinic_name].filter(Boolean));
+      const assignee = createTasks ? resolveAgendaImportAssignee(directory, row, defaultAssignee) : null;
+
+      if (createTasks && !assignee) {
+        const reason = `Linha ${row.line}: responsável não encontrado para a demanda.`;
+        unresolvedAssignees.push({
+          line: row.line,
+          assignee: row.assignee_email || row.assignee_username || row.assignee_name || 'não informado',
+          reason
+        });
+        invalidRows.push({ line: row.line, reason });
+      }
+
+      if (createTasks && assignee) {
+        const normalizedStatus = normalizeAgendaStatus(row.status);
+        const recurrenceBaseStatus = row.is_daily_recurring
+          ? getAgendaRecurrenceBaseStatus({ status: normalizedStatus })
+          : null;
+        const persistedStatus = row.is_daily_recurring && normalizedStatus === 'done'
+          ? recurrenceBaseStatus
+          : normalizedStatus;
+        // Importações em lote preservam origem, paciente e unidade para auditoria dos relatórios.
+        // O board continua usando a mesma estrutura da agenda já existente.
+        await pool.query(
+          `INSERT INTO agenda_items
+           (company_id, owner_user_id, owner_name, assigned_user_id, assigned_user_name, assigned_user_email, clinic_id, clinic_name, patient_name, patient_phone, source_label, source_batch_id, title, description, status, priority, is_daily_recurring, requires_completion, recurrence_base_status, recurrence_cycle_date, recurrence_weekdays_json, due_at, reminder_at, tags_json, checklist_json, board_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
+          [
+            companyId,
+            getAgendaOwnerId(req.user),
+            getActorName(req.user),
+            assignee.id,
+            assignee.name || null,
+            assignee.email || null,
+            row.clinic_id || null,
+            row.clinic_name || null,
+            row.patient_name || null,
+            row.patient_phone || null,
+            dispatchWhatsapp ? 'agenda_import_whatsapp' : 'agenda_import',
+            batchId,
+            buildAgendaImportTaskTitle(row),
+            buildAgendaImportDescription(row) || null,
+            persistedStatus,
+            normalizeAgendaPriority(row.priority),
+            row.is_daily_recurring ? 1 : 0,
+            row.is_daily_recurring ? 1 : 1,
+            recurrenceBaseStatus,
+            row.is_daily_recurring ? getSaoPauloParts().dateKey : null,
+            row.is_daily_recurring ? JSON.stringify(normalizeAgendaRecurrenceWeekdays(row.recurrence_weekdays)) : null,
+            row.due_at || null,
+            row.reminder_at || null,
+            JSON.stringify(rowTags),
+            JSON.stringify([]),
+            0
+          ]
+        );
+        created += 1;
+      }
+
+      const shouldDispatchRow = dispatchWhatsapp && row.whatsapp_preference !== false;
+      if (!shouldDispatchRow) {
+        continue;
+      }
+
+      if (!row.patient_name || !row.patient_phone) {
+        whatsappBlocked += 1;
+        invalidRows.push({
+          line: row.line,
+          reason: `Linha ${row.line}: paciente e telefone são obrigatórios para envio de confirmação no WhatsApp.`
+        });
+        continue;
+      }
+
+      const route = await resolveMassCampaignRecipientRoute({
+        patient_name: row.patient_name,
+        patient_phone: row.patient_phone,
+        clinic_name: row.clinic_name || selectedClinic?.clinic_name || '',
+        clinic_id: row.clinic_id || selectedClinic?.clinic_id || null,
+        data_consulta: row.data_consulta || '',
+        hora_consulta: row.hora_consulta || ''
+      }, 'confirmacao', req.user, '', { routingCache });
+
+      if (!route.resolved || !route.resolved_instance_name) {
+        const routingError = route.routing_error || 'Roteamento de clínica indisponível para este envio.';
+        await saveWhatsAppCampaignRecipientRecord({
+          batchId,
+          campaignType: 'confirmacao',
+          route,
+          status: 'bloqueado',
+          routingError,
+          source: 'agenda_import_confirmacao',
+          createdBy: getActorName(req.user)
+        });
+        whatsappBlocked += 1;
+        invalidRows.push({ line: row.line, reason: `Linha ${row.line}: ${routingError}` });
+        continue;
+      }
+
+      const renderedMessage = renderGenericWhatsAppTemplate(messageText, {
+        nome_paciente: route.patient_name,
+        telefone: route.patient_phone,
+        clinica: route.clinic_name || '',
+        data_consulta: route.data_consulta || '',
+        hora_consulta: route.hora_consulta || '',
+        link_nps: `${frontendUrl}/pesquisa-nps`
+      }).trim();
+
+      const queued = await queueManagedWhatsAppMessage({
+        actor: req.user,
+        conversationPayload: {
+          patient_name: route.patient_name,
+          patient_phone: route.patient_phone,
+          clinic_id: route.clinic_id || null,
+          clinic_name: route.clinic_name || null,
+          instance_name: route.resolved_instance_name,
+          campaign: 'confirmacao',
+          status: 'Em atendimento'
+        },
+        instanceName: route.resolved_instance_name,
+        patientPhone: route.patient_phone,
+        patientName: route.patient_name,
+        clinicName: route.clinic_name || null,
+        clinicId: route.clinic_id || null,
+        messageText: renderedMessage,
+        messageType: 'confirmacao_massa',
+        source: 'agenda_import_confirmacao',
+        scheduleDelaySeconds: buildProgressiveDispatchDelaySeconds(index, antiBan),
+        payload: {
+          batchId,
+          campaignType: 'confirmacao',
+          triggerChatbot: true,
+          agendaImport: true
+        }
+      });
+
+      await saveWhatsAppCampaignRecipientRecord({
+        batchId,
+        campaignType: 'confirmacao',
+        route,
+        status: queued?.duplicateSuppressed ? 'duplicado' : 'enfileirado',
+        source: 'agenda_import_confirmacao',
+        createdBy: getActorName(req.user),
+        conversationId: queued?.conversation?.id || null,
+        messageId: queued?.messageId || null,
+        dispatchQueueId: queued?.dispatch?.id || null
+      });
+
+      if (!queued?.duplicateSuppressed) {
+        whatsappQueued += 1;
+      }
+
+      if (confirmationFlow && queued?.conversation) {
+        await primeWhatsAppChatbotSessionForFlow({
+          flow: confirmationFlow,
+          conversation: queued.conversation,
+          collectedData: {
+            campaign_type: 'confirmacao',
+            data_consulta: route.data_consulta || '',
+            hora_consulta: route.hora_consulta || '',
+            clinic_name: route.clinic_name || '',
+            routed_instance_name: route.resolved_instance_name
+          }
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      message: `Importação concluída com ${created} demanda(s) criada(s) e ${whatsappQueued} confirmação(ões) enfileirada(s).`,
+      batchId,
+      selectedClinic,
+      created,
+      whatsappQueued,
+      whatsappBlocked,
+      invalid: invalidRows.length,
+      invalidRows: invalidRows.slice(0, 25),
+      unresolvedAssignees: unresolvedAssignees.slice(0, 25)
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao importar a planilha da agenda.' });
+  } finally {
+    if (req.file?.path) {
+      fs.unlink(req.file.path, () => {});
+    }
   }
 });
 
@@ -21845,9 +23109,9 @@ app.get('/api/agenda/items', authenticate, async (req, res) => {
     }
 
     if (req.query.search) {
-      where.push('(title LIKE ? OR description LIKE ? OR assigned_user_name LIKE ?)');
+      where.push('(title LIKE ? OR description LIKE ? OR assigned_user_name LIKE ? OR clinic_name LIKE ? OR patient_name LIKE ?)');
       const search = `%${String(req.query.search || '').trim()}%`;
-      params.push(search, search, search);
+      params.push(search, search, search, search, search);
     }
 
     const [rows] = await pool.query(
@@ -21877,6 +23141,7 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
       return res.status(400).json({ error: 'Informe um titulo para o item da agenda.' });
     }
 
+    const companyId = Number(req.user?.company_id || req.user?.companyId || 1) || 1;
     const ownerUserId = getAgendaOwnerId(req.user);
     const hasAssignedUser = Object.prototype.hasOwnProperty.call(req.body || {}, 'assigned_user_id')
       || Object.prototype.hasOwnProperty.call(req.body || {}, 'assignedUserId');
@@ -21891,6 +23156,9 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
     const requiresCompletion = isDailyRecurring
       ? true
       : normalizeAgendaBoolean(req.body?.requires_completion ?? req.body?.requiresCompletion, true);
+    const recurrenceWeekdays = isDailyRecurring
+      ? normalizeAgendaRecurrenceWeekdays(req.body?.recurrence_weekdays ?? req.body?.recurrenceWeekdays)
+      : [];
     const recurrenceBaseStatus = isDailyRecurring
       ? getAgendaRecurrenceBaseStatus({
         recurrence_base_status: req.body?.recurrence_base_status || req.body?.recurrenceBaseStatus || null,
@@ -21901,16 +23169,32 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
     const persistedStatus = isDailyRecurring && normalizedStatus === 'done'
       ? recurrenceBaseStatus
       : normalizedStatus;
+    const clinicId = Number(req.body?.clinic_id || req.body?.clinicId || 0) || null;
+    const clinicName = sanitizeFinancialString(req.body?.clinic_name || req.body?.clinicName, 180) || null;
+    const patientName = sanitizeFinancialString(req.body?.patient_name || req.body?.patientName, 180) || null;
+    const patientPhone = sanitizeFinancialString(
+      normalizeWhatsAppPhone(req.body?.patient_phone || req.body?.patientPhone || ''),
+      40
+    ) || null;
+    const sourceLabel = sanitizeFinancialString(req.body?.source_label || req.body?.sourceLabel, 120) || null;
+    const sourceBatchId = sanitizeFinancialString(req.body?.source_batch_id || req.body?.sourceBatchId, 120) || null;
     const [result] = await pool.query(
       `INSERT INTO agenda_items
-       (owner_user_id, owner_name, assigned_user_id, assigned_user_name, assigned_user_email, title, description, status, priority, is_daily_recurring, requires_completion, recurrence_base_status, recurrence_cycle_date, due_at, reminder_at, tags_json, checklist_json, board_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (company_id, owner_user_id, owner_name, assigned_user_id, assigned_user_name, assigned_user_email, clinic_id, clinic_name, patient_name, patient_phone, source_label, source_batch_id, title, description, status, priority, is_daily_recurring, requires_completion, recurrence_base_status, recurrence_cycle_date, recurrence_weekdays_json, due_at, reminder_at, tags_json, checklist_json, board_order)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
+        companyId,
         ownerUserId,
         getActorName(req.user),
         assignee?.id || null,
         assignee?.name || null,
         assignee?.email || null,
+        clinicId,
+        clinicName,
+        patientName,
+        patientPhone,
+        sourceLabel,
+        sourceBatchId,
         title,
         sanitizeFinancialString(req.body?.description, 4000) || null,
         persistedStatus,
@@ -21919,6 +23203,7 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
         requiresCompletion ? 1 : 0,
         recurrenceBaseStatus,
         cycleDate,
+        isDailyRecurring ? JSON.stringify(recurrenceWeekdays) : null,
         normalizeNullableMysqlDateTime(req.body?.due_at || req.body?.dueAt),
         normalizeNullableMysqlDateTime(req.body?.reminder_at || req.body?.reminderAt),
         JSON.stringify(tags),
@@ -21958,38 +23243,55 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
       updates.push(`${field} = ?`);
       params.push(value);
     };
+    const hasDailyRecurringUpdate = Object.prototype.hasOwnProperty.call(req.body, 'is_daily_recurring')
+      || Object.prototype.hasOwnProperty.call(req.body, 'isDailyRecurring');
+    const hasRequiresCompletionUpdate = Object.prototype.hasOwnProperty.call(req.body, 'requires_completion')
+      || Object.prototype.hasOwnProperty.call(req.body, 'requiresCompletion');
+    const hasRecurrenceWeekdaysUpdate = Object.prototype.hasOwnProperty.call(req.body, 'recurrence_weekdays')
+      || Object.prototype.hasOwnProperty.call(req.body, 'recurrenceWeekdays');
+
     let nextStatus = currentItem.status;
     let nextDailyRecurring = normalizeAgendaBoolean(currentItem.is_daily_recurring, false);
     let nextRequiresCompletion = normalizeAgendaBoolean(currentItem.requires_completion, true);
     let nextRecurrenceBaseStatus = nextDailyRecurring ? getAgendaRecurrenceBaseStatus(currentItem) : null;
+    let nextRecurrenceWeekdays = nextDailyRecurring ? getAgendaRecurrenceWeekdays(currentItem) : [];
     let nextAssigneeId = currentItem.assigned_user_id || null;
     let nextAssigneeName = currentItem.assigned_user_name || null;
 
-    if (Object.prototype.hasOwnProperty.call(req.body, 'is_daily_recurring') || Object.prototype.hasOwnProperty.call(req.body, 'isDailyRecurring')) {
+    if (hasDailyRecurringUpdate) {
       nextDailyRecurring = normalizeAgendaBoolean(req.body.is_daily_recurring ?? req.body.isDailyRecurring, nextDailyRecurring);
       assign('is_daily_recurring', nextDailyRecurring ? 1 : 0);
       if (!nextDailyRecurring) {
         nextRecurrenceBaseStatus = null;
+        nextRecurrenceWeekdays = [];
         assign('recurrence_base_status', null);
         assign('recurrence_cycle_date', null);
+        assign('recurrence_weekdays_json', null);
       } else {
         const cycleDate = currentItem.recurrence_cycle_date ? getSaoPauloDateKey(currentItem.recurrence_cycle_date) : getSaoPauloParts().dateKey;
         assign('recurrence_cycle_date', cycleDate);
+        if (hasRecurrenceWeekdaysUpdate) {
+          nextRecurrenceWeekdays = normalizeAgendaRecurrenceWeekdays(req.body.recurrence_weekdays ?? req.body.recurrenceWeekdays);
+        }
+        assign('recurrence_weekdays_json', JSON.stringify(nextRecurrenceWeekdays));
       }
     }
 
-    if (Object.prototype.hasOwnProperty.call(req.body, 'requires_completion') || Object.prototype.hasOwnProperty.call(req.body, 'requiresCompletion')) {
+    if (hasRequiresCompletionUpdate) {
       nextRequiresCompletion = normalizeAgendaBoolean(req.body.requires_completion ?? req.body.requiresCompletion, nextRequiresCompletion);
     }
     if (nextDailyRecurring) {
       nextRequiresCompletion = true;
     }
     if (
-      Object.prototype.hasOwnProperty.call(req.body, 'requires_completion')
-      || Object.prototype.hasOwnProperty.call(req.body, 'requiresCompletion')
+      hasRequiresCompletionUpdate
       || nextDailyRecurring !== normalizeAgendaBoolean(currentItem.is_daily_recurring, false)
     ) {
       assign('requires_completion', nextRequiresCompletion ? 1 : 0);
+    }
+    if (nextDailyRecurring && hasRecurrenceWeekdaysUpdate && !hasDailyRecurringUpdate) {
+      nextRecurrenceWeekdays = normalizeAgendaRecurrenceWeekdays(req.body.recurrence_weekdays ?? req.body.recurrenceWeekdays);
+      assign('recurrence_weekdays_json', JSON.stringify(nextRecurrenceWeekdays));
     }
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'title')) {
@@ -21999,6 +23301,27 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
     }
     if (Object.prototype.hasOwnProperty.call(req.body, 'description')) {
       assign('description', sanitizeFinancialString(req.body.description, 4000) || null);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'clinic_id') || Object.prototype.hasOwnProperty.call(req.body, 'clinicId')) {
+      assign('clinic_id', Number(req.body.clinic_id || req.body.clinicId || 0) || null);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'clinic_name') || Object.prototype.hasOwnProperty.call(req.body, 'clinicName')) {
+      assign('clinic_name', sanitizeFinancialString(req.body.clinic_name || req.body.clinicName, 180) || null);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'patient_name') || Object.prototype.hasOwnProperty.call(req.body, 'patientName')) {
+      assign('patient_name', sanitizeFinancialString(req.body.patient_name || req.body.patientName, 180) || null);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'patient_phone') || Object.prototype.hasOwnProperty.call(req.body, 'patientPhone')) {
+      assign(
+        'patient_phone',
+        sanitizeFinancialString(normalizeWhatsAppPhone(req.body.patient_phone || req.body.patientPhone || ''), 40) || null
+      );
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'source_label') || Object.prototype.hasOwnProperty.call(req.body, 'sourceLabel')) {
+      assign('source_label', sanitizeFinancialString(req.body.source_label || req.body.sourceLabel, 120) || null);
+    }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'source_batch_id') || Object.prototype.hasOwnProperty.call(req.body, 'sourceBatchId')) {
+      assign('source_batch_id', sanitizeFinancialString(req.body.source_batch_id || req.body.sourceBatchId, 120) || null);
     }
     if (Object.prototype.hasOwnProperty.call(req.body, 'status') || req.body?.markExecuted === true || req.body?.executed === true) {
       const requestedStatus = req.body?.markExecuted === true || req.body?.executed === true
@@ -22899,14 +24222,19 @@ app.post('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
         .map((clinicId) => Number(clinicId))
         .filter((clinicId) => Number.isFinite(clinicId) && clinicId > 0)
       : [];
+    const resolvedUsername = await resolveUserUsername({
+      name,
+      email: normalizedEmail
+    });
     const temporaryPassword = generateTemporaryPassword();
     const passwordHash = await bcrypt.hash(temporaryPassword, 10);
     const [result] = await pool.query(
       `INSERT INTO users
-       (name, email, password, role, position, phone, whatsapp, department, permissions, action_permissions, active, must_change_password)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+       (name, username, email, password, role, position, phone, whatsapp, department, permissions, action_permissions, active, must_change_password)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
       [
         String(name).trim(),
+        resolvedUsername,
         normalizedEmail,
         passwordHash,
         role,
@@ -23024,6 +24352,11 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
 
     const normalizedPhone = req.body.phone ? normalizeBrazilPhone(req.body.phone) : current.phone;
     const normalizedWhatsapp = req.body.whatsapp ? normalizeBrazilPhone(req.body.whatsapp) : current.whatsapp;
+    const resolvedUsername = await resolveUserUsername({
+      username: current.username,
+      email: requestedEmail,
+      name: req.body.name || current.name
+    }, current.id);
 
     if (!isCompleteBrazilPhone(normalizedPhone) || !isCompleteBrazilPhone(normalizedWhatsapp)) {
       return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.' });
@@ -23040,6 +24373,7 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
     await pool.query(
       `UPDATE users
           SET name = ?,
+              username = ?,
               email = ?,
               role = ?,
               position = ?,
@@ -23052,6 +24386,7 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
         WHERE id = ?`,
       [
         req.body.name || current.name,
+        resolvedUsername,
         requestedEmail,
         nextRole,
         req.body.position || current.position,
@@ -23199,25 +24534,38 @@ app.post('/admin/users/:id/reset-password', authenticate, requireMasterAdmin, as
       return res.status(403).json({ error: 'Apenas o Administrador Master pode reiniciar a senha deste usuário.' });
     }
 
-    const temporaryPassword = generateTemporaryPassword();
-    const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+    const requestedPassword = String(
+      req.body?.password
+      || req.body?.custom_password
+      || req.body?.customPassword
+      || ''
+    ).trim();
+    if (requestedPassword && requestedPassword.length < 8) {
+      return res.status(400).json({ error: 'A senha definida manualmente precisa ter no mínimo 8 caracteres.' });
+    }
+
+    const nextPassword = requestedPassword || generateTemporaryPassword();
+    const passwordHash = await bcrypt.hash(nextPassword, 10);
+    const mustChangePassword = requestedPassword ? 0 : (requirePasswordChangeOnFirstLogin ? 1 : 0);
     await pool.query(
       'UPDATE users SET password = ?, must_change_password = ?, token_version = COALESCE(token_version, 1) + 1 WHERE id = ?',
-      [passwordHash, requirePasswordChangeOnFirstLogin ? 1 : 0, user.id]
+      [passwordHash, mustChangePassword, user.id]
     );
     await createNotification(
       user.id,
       'password_reset',
       'Senha reiniciada',
-      'Sua senha foi reiniciada pelo administrador. Use a senha temporária recebida e altere no primeiro acesso.',
+      requestedPassword
+        ? 'Sua senha foi definida pelo administrador. Use a nova senha informada para acessar o sistema.'
+        : 'Sua senha foi reiniciada pelo administrador. Use a senha temporária recebida e altere no primeiro acesso.',
       '/perfil',
-      { temporaryPassword: true }
+      { temporaryPassword: !requestedPassword, manualPassword: Boolean(requestedPassword) }
     );
 
-    const notificationResult = await sendPasswordResetNotifications(user, temporaryPassword);
+    const notificationResult = await sendPasswordResetNotifications(user, nextPassword);
 
     res.json({
-      message: 'Senha reiniciada com sucesso.',
+      message: requestedPassword ? 'Senha definida com sucesso.' : 'Senha reiniciada com sucesso.',
       notifications: notificationResult
     });
   } catch (error) {
@@ -28663,13 +30011,14 @@ async function startServer() {
   const runStartupBackfills = async () => {
     try {
       await ensureDefaultClinics();
+      const repairedUsernames = await backfillMissingUsernames();
       await syncClinicCatalog();
       await syncClinicLeadershipNamesFromUserLinks();
       await syncDefaultWhatsAppSessionsWithClinics();
       const escalationBackfill = await backfillComplaintEscalationDeadlines();
 
       if (!startupDataBackfillsEnabled) {
-        console.log(`Backfills leves validados. Prazos hierarquicos revisados: C${escalationBackfill.coordinator}/G${escalationBackfill.manager}`);
+        console.log(`Backfills leves validados. Usernames reparados: ${repairedUsernames}. Prazos hierarquicos revisados: C${escalationBackfill.coordinator}/G${escalationBackfill.manager}`);
         return;
       }
 
@@ -28679,7 +30028,7 @@ async function startServer() {
       await backfillComplaintDeadlines();
       await backfillComplaintAssignments();
       const coordinatorRepair = await repairPendingCoordinatorAssignments();
-      console.log(`Backfills operacionais validados. Coordenadores revisados: ${coordinatorRepair.updated}/${coordinatorRepair.checked}. Prazos hierarquicos revisados: C${escalationBackfill.coordinator}/G${escalationBackfill.manager}`);
+      console.log(`Backfills operacionais validados. Usernames reparados: ${repairedUsernames}. Coordenadores revisados: ${coordinatorRepair.updated}/${coordinatorRepair.checked}. Prazos hierarquicos revisados: C${escalationBackfill.coordinator}/G${escalationBackfill.manager}`);
     } catch (error) {
       console.warn('Não foi possível executar os backfills:', error.message);
     }
@@ -28767,6 +30116,7 @@ module.exports = {
     buildComplaintStalledTreatmentReminderWindowKey,
     buildComplaintCreatorAudit,
     buildComplaintWhatsAppMessage,
+    listAgendaScheduledDatesBetween,
     buildDailyCoordinatorDemandReminderJobKey,
     buildDailyCoordinatorDemandReminderMessage,
     buildDailyCoordinatorDeliveryReportJobKey,
@@ -28800,6 +30150,7 @@ module.exports = {
     normalizeStoredUploadUrl,
     normalizeUploadedOriginalName,
     parseBodyWithSchema,
+    parseAgendaImportRowsFromWorksheetRows,
     persistUploadedFile,
     resolveStoredUploadFilePath,
     dispatchDailyCoordinatorDemandReminders,
@@ -28809,6 +30160,8 @@ module.exports = {
     buildMassCampaignBlockedMessage,
     parseMassWhatsAppRecipientsFromWorksheetRows,
     parseBulkNpsWorksheetRows,
+    buildAgendaDashboardSnapshot,
+    normalizeAgendaRecurrenceWeekdays,
     fillPartnerVideoTemplate,
     partnerVideoContactCoversClinic,
     normalizePartnerVideoMessageText,

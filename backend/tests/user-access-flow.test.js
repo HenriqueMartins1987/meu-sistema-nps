@@ -93,6 +93,10 @@ test('admin user creation keeps the user when welcome e-mail fails', async () =>
       reply: async () => [[]]
     },
     {
+      match: (sql) => sql.includes('SELECT id FROM users WHERE LOWER(username) = ?'),
+      reply: async () => [[]]
+    },
+    {
       match: (sql) => sql.includes('INSERT INTO users'),
       reply: async (_sql, params) => {
         insertedUserParams = params;
@@ -131,7 +135,8 @@ test('admin user creation keeps the user when welcome e-mail fails', async () =>
   assert.equal(response.body.notifications.emailSent, false);
   assert.match(response.body.warning, /falha no envio do e-mail/i);
   assert.ok(insertedUserParams);
-  assert.match(insertedUserParams[2], /^\$2[aby]\$/);
+  assert.equal(insertedUserParams[1], 'maria');
+  assert.match(insertedUserParams[3], /^\$2[aby]\$/);
   assert.equal(insertedUserParams[insertedUserParams.length - 1], 1);
 });
 
@@ -230,6 +235,10 @@ test('master admin can update a user e-mail from user management', async () => {
       reply: async () => [[]]
     },
     {
+      match: (sql) => sql.includes('SELECT id FROM users WHERE LOWER(username) = ? AND id <> ? LIMIT 1'),
+      reply: async () => [[]]
+    },
+    {
       match: (sql) => sql.includes('UPDATE users') && sql.includes('email = ?'),
       reply: async (sql, params) => {
         updateUserSql = sql;
@@ -265,7 +274,8 @@ test('master admin can update a user e-mail from user management', async () => {
   assert.equal(response.status, 200);
   assert.match(updateUserSql, /email = \?/);
   assert.equal(updateUserParams[0], 'Maria Silva');
-  assert.equal(updateUserParams[1], 'maria.novo@example.com');
+  assert.equal(updateUserParams[1], 'maria.novo');
+  assert.equal(updateUserParams[2], 'maria.novo@example.com');
   assert.equal(updateUserParams.at(-1), 44);
 });
 
@@ -1367,9 +1377,9 @@ test('supervisor crc can assign agenda item to crc operator', async () => {
 
   assert.equal(response.status, 201);
   assert.ok(Array.isArray(insertedAgendaParams));
-  assert.equal(insertedAgendaParams[0], 9);
-  assert.equal(insertedAgendaParams[2], 55);
-  assert.equal(insertedAgendaParams[3], 'Operador CRC');
+  assert.equal(insertedAgendaParams[1], 9);
+  assert.equal(insertedAgendaParams[3], 55);
+  assert.equal(insertedAgendaParams[4], 'Operador CRC');
   assert.equal(response.body.assigned_user_id, 55);
 });
 
@@ -1420,6 +1430,7 @@ test('daily recurring agenda item is created with mandatory completion', async (
         requires_completion: 1,
         recurrence_base_status: 'doing',
         recurrence_cycle_date: '2026-06-03',
+        recurrence_weekdays_json: '[1,3,5]',
         due_at: null,
         reminder_at: null,
         reminder_acknowledged_at: null,
@@ -1451,19 +1462,121 @@ test('daily recurring agenda item is created with mandatory completion', async (
       description: 'Validar agenda e registrar entregas da equipe',
       is_daily_recurring: true,
       requires_completion: false,
-      recurrence_base_status: 'doing'
+      recurrence_base_status: 'doing',
+      recurrence_weekdays: [1, 3, 5]
     });
 
   assert.equal(response.status, 201);
   assert.ok(Array.isArray(insertedAgendaParams));
-  assert.equal(insertedAgendaParams[9], 1);
-  assert.equal(insertedAgendaParams[10], 1);
-  assert.equal(insertedAgendaParams[11], 'doing');
-  assert.match(String(insertedAgendaParams[12] || ''), /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(insertedAgendaParams[16], 1);
+  assert.equal(insertedAgendaParams[17], 1);
+  assert.equal(insertedAgendaParams[18], 'doing');
+  assert.match(String(insertedAgendaParams[19] || ''), /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(insertedAgendaParams[20], '[1,3,5]');
   assert.equal(response.body.is_daily_recurring, true);
   assert.equal(response.body.requires_completion, true);
   assert.equal(response.body.recurrence_base_status, 'doing');
   assert.match(String(response.body.recurrence_cycle_date || ''), /^\d{4}-\d{2}-\d{2}$/);
+  assert.deepEqual(response.body.recurrence_weekdays, [1, 3, 5]);
+});
+
+test('agenda recurrence weekdays only generate return cycles on selected days', () => {
+  assert.deepEqual(
+    serverModule.__testables.normalizeAgendaRecurrenceWeekdays([1, '3', 5, 5, 'x', 9]),
+    [1, 3, 5]
+  );
+  assert.deepEqual(
+    serverModule.__testables.normalizeAgendaRecurrenceWeekdays('seg, qua, sexta-feira'),
+    [1, 3, 5]
+  );
+  assert.deepEqual(
+    serverModule.__testables.listAgendaScheduledDatesBetween('2026-06-02', '2026-06-08', [1, 4]),
+    ['2026-06-04', '2026-06-08']
+  );
+  assert.deepEqual(
+    serverModule.__testables.listAgendaScheduledDatesBetween('2026-06-04', '2026-06-05', []),
+    ['2026-06-05']
+  );
+});
+
+test('agenda dashboard snapshot groups collaborator productivity and urgent items', () => {
+  const snapshot = serverModule.__testables.buildAgendaDashboardSnapshot(
+    [
+      {
+        id: 1,
+        assigned_user_id: 10,
+        assigned_user_name: 'Ana CRC',
+        assigned_user_role: 'crc_operator',
+        title: 'Confirmar Maria',
+        status: 'today',
+        priority: 'alta',
+        due_at: new Date(Date.now() + (4 * 60 * 60 * 1000)).toISOString(),
+        requires_completion: 1,
+        is_daily_recurring: 1,
+        recurrence_weekdays_json: '[1,2,3,4,5]'
+      },
+      {
+        id: 2,
+        assigned_user_id: 11,
+        assigned_user_name: 'Bruna CRC',
+        assigned_user_role: 'crc_operator',
+        title: 'Retornar paciente',
+        status: 'doing',
+        priority: 'normal',
+        due_at: new Date(Date.now() - (2 * 60 * 60 * 1000)).toISOString(),
+        requires_completion: 1,
+        is_daily_recurring: 0
+      }
+    ],
+    [
+      {
+        agenda_item_id: 1,
+        title: 'Confirmar Maria',
+        completed_at: new Date().toISOString(),
+        completed_by_user_id: 10,
+        completed_by_name: 'Ana CRC',
+        responsible_user_id: 10,
+        responsible_user_name: 'Ana CRC'
+      }
+    ],
+    { days: 30 }
+  );
+
+  assert.equal(snapshot.summary.total, 2);
+  assert.equal(snapshot.summary.open, 2);
+  assert.equal(snapshot.summary.overdue, 1);
+  assert.equal(snapshot.summary.due_24h, 1);
+  assert.equal(snapshot.summary.completed_today, 1);
+  assert.equal(snapshot.collaborators.length, 2);
+  assert.equal(snapshot.urgent_items.length, 2);
+});
+
+test('agenda import worksheet parser normalizes collaborator, recurring days and whatsapp intent', () => {
+  const rows = serverModule.__testables.parseAgendaImportRowsFromWorksheetRows([
+    {
+      colaborador: 'Ana CRC',
+      email_responsavel: 'ana.crc@empresa.com.br',
+      titulo_tarefa: 'Confirmar atendimento',
+      descricao: 'Contato ativo',
+      prioridade: 'alta',
+      recorrente_diario: 'sim',
+      dias_semana: 'seg, qua, sex',
+      nome_paciente: 'Maria Silva',
+      telefone: '5562999999999',
+      clinica: 'Garavelo',
+      data_consulta: '12/06/2026',
+      hora_consulta: '10:00',
+      enviar_confirmacao_whatsapp: 'sim'
+    }
+  ]);
+
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].assignee_email, 'ana.crc@empresa.com.br');
+  assert.equal(rows[0].is_daily_recurring, true);
+  assert.deepEqual(rows[0].recurrence_weekdays, [1, 3, 5]);
+  assert.equal(rows[0].patient_name, 'MARIA SILVA');
+  assert.equal(rows[0].whatsapp_preference, true);
+  assert.equal(rows[0].due_at, '2026-06-12 10:00:00');
 });
 
 test('responsible user execution stores completion timestamp for recurring agenda item', async () => {
@@ -1500,6 +1613,7 @@ test('responsible user execution stores completion timestamp for recurring agend
         requires_completion: 1,
         recurrence_base_status: 'today',
         recurrence_cycle_date: '2026-06-03',
+        recurrence_weekdays_json: '[1,3,5]',
         due_at: '2026-06-03 11:00:00',
         reminder_at: null,
         reminder_acknowledged_at: null,
@@ -1535,6 +1649,7 @@ test('responsible user execution stores completion timestamp for recurring agend
         requires_completion: 1,
         recurrence_base_status: 'today',
         recurrence_cycle_date: '2026-06-03',
+        recurrence_weekdays_json: '[1,3,5]',
         due_at: '2026-06-03 11:00:00',
         reminder_at: null,
         reminder_acknowledged_at: null,

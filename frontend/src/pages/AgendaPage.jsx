@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import api, { getApiErrorMessage } from '../api';
 import { ActionButtons, Card, DashboardGrid, KPICard, PageHeader, SectionContainer } from '../components/DesignSystem';
-import { getUserDisplayName, isMasterAdmin, readUser } from '../constants';
+import { getUserDisplayName, isMasterAdmin, normalizeRoleValue, readUser } from '../constants';
 
 const agendaColumns = [
   { key: 'todo', label: 'A fazer', helper: 'Ideias, pendencias e proximas acoes', eyebrow: 'Backlog' },
@@ -17,6 +17,23 @@ const priorityOptions = [
   { value: 'urgente', label: 'Urgente' }
 ];
 
+const agendaDashboardWindowOptions = [
+  { value: '7', label: '7 dias' },
+  { value: '15', label: '15 dias' },
+  { value: '30', label: '30 dias' },
+  { value: '60', label: '60 dias' }
+];
+
+const recurrenceWeekdayOptions = [
+  { value: 1, shortLabel: 'Seg', fullLabel: 'Segunda' },
+  { value: 2, shortLabel: 'Ter', fullLabel: 'Terca' },
+  { value: 3, shortLabel: 'Qua', fullLabel: 'Quarta' },
+  { value: 4, shortLabel: 'Qui', fullLabel: 'Quinta' },
+  { value: 5, shortLabel: 'Sex', fullLabel: 'Sexta' },
+  { value: 6, shortLabel: 'Sab', fullLabel: 'Sabado' },
+  { value: 0, shortLabel: 'Dom', fullLabel: 'Domingo' }
+];
+
 const emptyDraft = {
   title: '',
   description: '',
@@ -28,7 +45,17 @@ const emptyDraft = {
   tags: '',
   is_daily_recurring: false,
   requires_completion: true,
-  recurrence_base_status: 'today'
+  recurrence_base_status: 'todo',
+  recurrence_weekdays: []
+};
+
+const emptyImportDraft = {
+  file: null,
+  clinic_id: '',
+  default_assigned_user_id: '',
+  create_tasks: true,
+  dispatch_whatsapp: false,
+  message_text: ''
 };
 
 function toDatetimeLocal(value) {
@@ -69,8 +96,18 @@ function normalizeDraftFromItem(item = {}) {
     tags: Array.isArray(item.tags) ? item.tags.join(', ') : '',
     is_daily_recurring: Boolean(item.is_daily_recurring),
     requires_completion: item.requires_completion !== false,
-    recurrence_base_status: item.recurrence_base_status || item.status || 'today'
+    recurrence_base_status: item.recurrence_base_status || 'todo',
+    recurrence_weekdays: normalizeAgendaRecurrenceWeekdays(item.recurrence_weekdays)
   };
+}
+
+function normalizeAgendaRecurrenceWeekdays(value = []) {
+  if (!Array.isArray(value)) return [];
+  return Array.from(new Set(
+    value
+      .map((item) => Number(item))
+      .filter((item) => Number.isInteger(item) && item >= 0 && item <= 6)
+  )).sort((left, right) => left - right);
 }
 
 function formatAgendaAssignee(item = {}) {
@@ -87,6 +124,47 @@ function formatExecutionStamp(item = {}) {
   if (!item?.completed_at) return '';
   const actor = item.completed_by_name ? ` por ${item.completed_by_name}` : '';
   return `Executado em ${formatDateTime(item.completed_at)}${actor}`;
+}
+
+function formatRecurrenceWeekdaySummary(weekdays = []) {
+  const normalizedWeekdays = normalizeAgendaRecurrenceWeekdays(weekdays);
+  if (!normalizedWeekdays.length) return 'Todos os dias';
+  return normalizedWeekdays
+    .map((weekday) => recurrenceWeekdayOptions.find((option) => option.value === weekday)?.shortLabel || '')
+    .filter(Boolean)
+    .join(', ');
+}
+
+function formatAgendaRecurrenceSummary(item = {}) {
+  if (!item?.is_daily_recurring) return '';
+  const recurrenceDaysLabel = formatRecurrenceWeekdaySummary(item.recurrence_weekdays);
+  return `Volta para A fazer: ${recurrenceDaysLabel}`;
+}
+
+function canAccessAgendaAnalytics(user) {
+  if (isMasterAdmin(user)) return true;
+  return ['admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'manager'].includes(normalizeRoleValue(user?.role));
+}
+
+function formatAgendaDashboardDate(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short'
+  }).format(date);
+}
+
+function downloadBlob(blob, filename) {
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
 }
 
 function canExecuteAgendaItem(currentUserId, item = {}) {
@@ -174,6 +252,7 @@ function AgendaCard({ item, currentUserId, onOpen, onStatus, onDragStart }) {
     : '';
   const executionStamp = formatExecutionStamp(item);
   const canExecute = canExecuteAgendaItem(currentUserId, item);
+  const recurrenceSummary = formatAgendaRecurrenceSummary(item);
   return (
     <article
       className={`agenda-task-card priority-${item.priority || 'normal'} ${isOverdue(item.due_at) && item.status !== 'done' ? 'overdue' : ''}`}
@@ -189,7 +268,7 @@ function AgendaCard({ item, currentUserId, onOpen, onStatus, onDragStart }) {
         {item.description ? <p>{item.description}</p> : null}
       </button>
       <div className="agenda-card-secondary-meta">
-        {item.is_daily_recurring ? <small>Loop diário ativo</small> : null}
+        {recurrenceSummary ? <small>{recurrenceSummary}</small> : null}
         {item.requires_completion ? <small>Execução obrigatória</small> : null}
       </div>
       <div className="agenda-assignee">
@@ -202,6 +281,8 @@ function AgendaCard({ item, currentUserId, onOpen, onStatus, onDragStart }) {
       <div className="agenda-task-meta">
         <span>{item.due_at ? `Prazo ${formatDateTime(item.due_at)}` : 'Sem prazo definido'}</span>
         {item.reminder_at ? <span>Lembrete {formatDateTime(item.reminder_at)}</span> : null}
+        {item.clinic_name ? <span>Unidade {item.clinic_name}</span> : null}
+        {item.patient_name ? <span>Paciente {item.patient_name}</span> : null}
         {executionStamp ? <span>{executionStamp}</span> : null}
       </div>
       {tags.length ? (
@@ -219,7 +300,7 @@ function AgendaCard({ item, currentUserId, onOpen, onStatus, onDragStart }) {
           </button>
         ) : (
           <button type="button" onClick={() => onStatus(item, item.is_daily_recurring ? (item.recurrence_base_status || 'today') : 'todo')}>
-            {item.is_daily_recurring ? 'Reabrir hoje' : 'Reabrir'}
+            {item.is_daily_recurring ? 'Reabrir ciclo' : 'Reabrir'}
           </button>
         )}
       </div>
@@ -231,8 +312,17 @@ export default function AgendaPage() {
   const currentUser = useMemo(() => readUser(), []);
   const currentUserId = String(currentUser?.id || '');
   const canDeleteAgendaItem = isMasterAdmin(currentUser);
+  const canUseAgendaAnalytics = canAccessAgendaAnalytics(currentUser);
   const [items, setItems] = useState([]);
   const [assignableUsers, setAssignableUsers] = useState([]);
+  const [clinicOptions, setClinicOptions] = useState([]);
+  const [dashboard, setDashboard] = useState(null);
+  const [dashboardDays, setDashboardDays] = useState('30');
+  const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [exportingReport, setExportingReport] = useState('');
+  const [importDraft, setImportDraft] = useState(emptyImportDraft);
+  const [importing, setImporting] = useState(false);
+  const [importSummary, setImportSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -280,6 +370,42 @@ export default function AgendaPage() {
     }
   };
 
+  const loadClinics = async () => {
+    if (!canUseAgendaAnalytics) {
+      setClinicOptions([]);
+      return;
+    }
+
+    try {
+      const response = await api.get('/clinics');
+      setClinicOptions(Array.isArray(response.data) ? response.data : []);
+    } catch (error) {
+      setClinicOptions([]);
+    }
+  };
+
+  const loadDashboard = async () => {
+    if (!canUseAgendaAnalytics) {
+      setDashboard(null);
+      return;
+    }
+
+    setDashboardLoading(true);
+    try {
+      const response = await api.get('/api/agenda/dashboard', {
+        params: {
+          days: dashboardDays
+        }
+      });
+      setDashboard(response.data || null);
+    } catch (error) {
+      setDashboard(null);
+      setFeedback(getApiErrorMessage(error, 'Nao foi possivel carregar o dashboard da agenda.'));
+    } finally {
+      setDashboardLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -289,6 +415,16 @@ export default function AgendaPage() {
     loadAssignableUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    loadClinics();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canUseAgendaAnalytics]);
+
+  useEffect(() => {
+    loadDashboard();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canUseAgendaAnalytics, dashboardDays]);
 
   useEffect(() => {
     const timer = window.setTimeout(loadItems, 350);
@@ -409,13 +545,22 @@ export default function AgendaPage() {
     return Array.from(byId.values());
   }, [assignableUsers, currentUser]);
 
+  const dashboardSummaryCards = useMemo(() => ([
+    { label: 'Demandas totais', value: dashboard?.summary?.total || 0, helper: 'base visível no período', tone: 'neutral' },
+    { label: 'Abertas', value: dashboard?.summary?.open || 0, helper: 'em acompanhamento', tone: 'progress' },
+    { label: 'Atrasadas', value: dashboard?.summary?.overdue || 0, helper: 'fora do prazo', tone: 'danger' },
+    { label: 'Vencendo em 24h', value: dashboard?.summary?.due_24h || 0, helper: 'ação imediata', tone: 'warning' },
+    { label: 'Concluídas em 7 dias', value: dashboard?.summary?.completed_7d || 0, helper: 'produtividade recente', tone: 'success' },
+    { label: 'Rotinas recorrentes', value: dashboard?.summary?.recurring || 0, helper: 'voltam automaticamente ao fluxo', tone: 'neutral' }
+  ]), [dashboard]);
+
   const openCreate = (status = 'todo', assignedUserId = currentUserId || '') => {
     setSelectedItem(null);
     setDraft({
       ...emptyDraft,
       status,
       assigned_user_id: assignedUserId,
-      recurrence_base_status: status === 'done' ? 'today' : status
+      recurrence_base_status: 'todo'
     });
     setEditorOpen(true);
   };
@@ -430,6 +575,19 @@ export default function AgendaPage() {
     setEditorOpen(false);
     setSelectedItem(null);
     setDraft(emptyDraft);
+  };
+
+  const toggleRecurrenceWeekday = (weekdayValue) => {
+    setDraft((current) => {
+      const currentWeekdays = normalizeAgendaRecurrenceWeekdays(current.recurrence_weekdays);
+      const hasWeekday = currentWeekdays.includes(weekdayValue);
+      return {
+        ...current,
+        recurrence_weekdays: hasWeekday
+          ? currentWeekdays.filter((weekday) => weekday !== weekdayValue)
+          : [...currentWeekdays, weekdayValue].sort((left, right) => left - right)
+      };
+    });
   };
 
   const saveItem = async () => {
@@ -452,7 +610,8 @@ export default function AgendaPage() {
       tags: draft.tags,
       is_daily_recurring: Boolean(draft.is_daily_recurring),
       requires_completion: Boolean(draft.is_daily_recurring || draft.requires_completion),
-      recurrence_base_status: draft.is_daily_recurring ? (draft.recurrence_base_status || draft.status || 'today') : null
+      recurrence_base_status: draft.is_daily_recurring ? (draft.recurrence_base_status || 'todo') : null,
+      recurrence_weekdays: draft.is_daily_recurring ? normalizeAgendaRecurrenceWeekdays(draft.recurrence_weekdays) : []
     };
 
     try {
@@ -462,7 +621,7 @@ export default function AgendaPage() {
         await api.post('/api/agenda/items', payload);
       }
       closeEditor();
-      await loadItems();
+      await Promise.all([loadItems(), loadDashboard()]);
       setFeedback('Agenda atualizada com sucesso.');
     } catch (error) {
       setFeedback(getApiErrorMessage(error, 'Nao foi possivel salvar o item da agenda.'));
@@ -479,7 +638,7 @@ export default function AgendaPage() {
     try {
       await api.delete(`/api/agenda/items/${selectedItem.id}`);
       closeEditor();
-      await loadItems();
+      await Promise.all([loadItems(), loadDashboard()]);
     } catch (error) {
       setFeedback(getApiErrorMessage(error, 'Nao foi possivel excluir o item.'));
     } finally {
@@ -492,6 +651,9 @@ export default function AgendaPage() {
       const response = await api.patch(`/api/agenda/items/${item.id}`, { status, ...extraPayload });
       const updatedItem = response.data;
       setItems((current) => current.map((row) => row.id === item.id ? updatedItem : row));
+      if (canUseAgendaAnalytics) {
+        loadDashboard();
+      }
     } catch (error) {
       setFeedback(getApiErrorMessage(error, 'Nao foi possivel mover o item.'));
     }
@@ -524,6 +686,86 @@ export default function AgendaPage() {
     setFeedback(permission === 'granted' ? 'Notificacoes da Agenda ativadas.' : 'Notificacoes nao foram autorizadas.');
   };
 
+  const updateImportDraft = (field, value) => {
+    setImportDraft((current) => ({ ...current, [field]: value }));
+  };
+
+  const downloadReport = async (format) => {
+    setExportingReport(format);
+    try {
+      const response = await api.get(`/api/agenda/report/${format}`, {
+        params: { days: dashboardDays },
+        responseType: 'blob'
+      });
+      downloadBlob(
+        response.data,
+        format === 'pdf'
+          ? `agenda-dashboard-${dashboardDays}d.pdf`
+          : `agenda-dashboard-${dashboardDays}d.xlsx`
+      );
+    } catch (error) {
+      setFeedback(getApiErrorMessage(error, `Nao foi possivel exportar o relatorio da agenda em ${format.toUpperCase()}.`));
+    } finally {
+      setExportingReport('');
+    }
+  };
+
+  const downloadImportTemplate = async () => {
+    setExportingReport('template');
+    try {
+      const response = await api.get('/api/agenda/import-template', {
+        responseType: 'blob'
+      });
+      downloadBlob(response.data, 'template-importacao-agenda.xlsx');
+    } catch (error) {
+      setFeedback(getApiErrorMessage(error, 'Nao foi possivel baixar o template da agenda.'));
+    } finally {
+      setExportingReport('');
+    }
+  };
+
+  const submitImport = async () => {
+    if (!importDraft.file) {
+      setFeedback('Selecione a planilha para importar a agenda.');
+      return;
+    }
+
+    setImporting(true);
+    setFeedback('');
+    setImportSummary(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', importDraft.file);
+      formData.append('create_tasks', importDraft.create_tasks ? 'true' : 'false');
+      formData.append('dispatch_whatsapp', importDraft.dispatch_whatsapp ? 'true' : 'false');
+      if (importDraft.clinic_id) {
+        formData.append('campaign_clinic_id', importDraft.clinic_id);
+      }
+      if (importDraft.default_assigned_user_id) {
+        formData.append('default_assigned_user_id', importDraft.default_assigned_user_id);
+      }
+      if (importDraft.message_text.trim()) {
+        formData.append('message_text', importDraft.message_text.trim());
+      }
+
+      const response = await api.post('/api/agenda/import', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+
+      setImportSummary(response.data || null);
+      setImportDraft(emptyImportDraft);
+      await Promise.all([loadItems(), loadDashboard()]);
+      setFeedback(response.data?.message || 'Importacao da agenda concluida.');
+    } catch (error) {
+      setFeedback(getApiErrorMessage(error, 'Nao foi possivel importar a planilha da agenda.'));
+    } finally {
+      setImporting(false);
+    }
+  };
+
   return (
     <main className="app-page agenda-page">
       <PageHeader
@@ -552,6 +794,240 @@ export default function AgendaPage() {
         </section>
       ) : null}
 
+      {canUseAgendaAnalytics ? (
+        <section className="agenda-intelligence-stack">
+          <SectionContainer className="agenda-intelligence-panel">
+            <div className="agenda-intelligence-head">
+              <div>
+                <span className="agenda-panel-kicker">Dashboard executivo</span>
+                <strong>Visibilidade operacional da equipe CRC</strong>
+                <small>Leitura rápida de produtividade, vencimentos e entregas por colaborador.</small>
+              </div>
+              <div className="agenda-intelligence-actions">
+                <select className="field" value={dashboardDays} onChange={(event) => setDashboardDays(event.target.value)}>
+                  {agendaDashboardWindowOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <button type="button" className="outline-action" onClick={loadDashboard}>Atualizar painel</button>
+                <button type="button" className="outline-action" onClick={() => downloadReport('excel')} disabled={exportingReport === 'excel'}>
+                  Excel
+                </button>
+                <button type="button" className="outline-action" onClick={() => downloadReport('pdf')} disabled={exportingReport === 'pdf'}>
+                  PDF
+                </button>
+              </div>
+            </div>
+
+            <DashboardGrid className="agenda-intelligence-kpis">
+              {dashboardSummaryCards.map((card) => (
+                <KPICard key={card.label} label={card.label} value={card.value} helper={card.helper} tone={card.tone} />
+              ))}
+            </DashboardGrid>
+
+            <div className="agenda-intelligence-grid">
+              <Card className="agenda-collaborator-panel">
+                <div className="agenda-panel-headline">
+                  <div>
+                    <strong>Métricas por colaborador</strong>
+                    <span>Produtividade individual, vencimentos e execução obrigatória.</span>
+                  </div>
+                  <small>{dashboardLoading ? 'Atualizando...' : `${dashboard?.collaborators?.length || 0} colaborador(es)`}</small>
+                </div>
+                <div className="agenda-collaborator-table-wrap">
+                  <table className="agenda-collaborator-table">
+                    <thead>
+                      <tr>
+                        <th>Colaborador</th>
+                        <th>Abertas</th>
+                        <th>Atrasadas</th>
+                        <th>24h</th>
+                        <th>48h</th>
+                        <th>Concl. 7d</th>
+                        <th>Índice</th>
+                        <th>Última execução</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(dashboard?.collaborators || []).map((item) => (
+                        <tr key={item.key}>
+                          <td>
+                            <strong>{item.name}</strong>
+                            <small>{item.role || 'Equipe CRC'}</small>
+                          </td>
+                          <td>{item.open}</td>
+                          <td className={item.overdue ? 'danger-cell' : ''}>{item.overdue}</td>
+                          <td>{item.due_24h}</td>
+                          <td>{item.due_48h}</td>
+                          <td>{item.completed_7d}</td>
+                          <td>{item.productivity_index}%</td>
+                          <td>{formatAgendaDashboardDate(item.last_completed_at)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {!dashboardLoading && !(dashboard?.collaborators || []).length ? <p className="empty-state">Nenhuma métrica de colaborador disponível.</p> : null}
+                </div>
+              </Card>
+
+              <div className="agenda-insight-column">
+                <Card className="agenda-ranking-panel">
+                  <div className="agenda-panel-headline">
+                    <div>
+                      <strong>Destaques de entrega</strong>
+                      <span>Quem mais executou no período selecionado.</span>
+                    </div>
+                  </div>
+                  <div className="agenda-ranking-list">
+                    {(dashboard?.top_performers || []).map((item, index) => (
+                      <article key={`${item.key}-top`}>
+                        <span>{String(index + 1).padStart(2, '0')}</span>
+                        <div>
+                          <strong>{item.name}</strong>
+                          <small>{item.completed_7d} entrega(s) nos últimos 7 dias</small>
+                        </div>
+                      </article>
+                    ))}
+                    {!dashboardLoading && !(dashboard?.top_performers || []).length ? <p className="empty-state">Sem destaques ainda.</p> : null}
+                  </div>
+                </Card>
+
+                <Card className="agenda-urgent-panel">
+                  <div className="agenda-panel-headline">
+                    <div>
+                      <strong>Demandas críticas</strong>
+                      <span>Itens vencidos ou prestes a vencer para acompanhamento imediato.</span>
+                    </div>
+                  </div>
+                  <div className="agenda-urgent-list">
+                    {(dashboard?.urgent_items || []).map((item) => (
+                      <article key={`urgent-${item.id}`} className={getAgendaDeadlineState(item).tone === 'late' ? 'late' : ''}>
+                        <strong>{item.title}</strong>
+                        <small>{item.assigned_user_name || 'Sem responsável'} · {item.clinic_name || 'Sem unidade'}</small>
+                        <span>{item.due_at ? `Prazo ${formatAgendaDashboardDate(item.due_at)}` : 'Sem prazo definido'}</span>
+                      </article>
+                    ))}
+                    {!dashboardLoading && !(dashboard?.urgent_items || []).length ? <p className="empty-state">Sem demandas críticas na janela atual.</p> : null}
+                  </div>
+                </Card>
+              </div>
+            </div>
+          </SectionContainer>
+
+          <SectionContainer className="agenda-import-panel">
+            <div className="agenda-intelligence-head">
+              <div>
+                <span className="agenda-panel-kicker">Importação profissional</span>
+                <strong>Planilha para demandas e confirmação via WhatsApp</strong>
+                <small>Use a mesma base para cadastrar tarefas por colaborador e disparar confirmações em massa com unidade selecionada.</small>
+              </div>
+              <div className="agenda-intelligence-actions">
+                <button type="button" className="outline-action" onClick={downloadImportTemplate} disabled={exportingReport === 'template'}>
+                  Baixar template
+                </button>
+              </div>
+            </div>
+
+            <div className="agenda-import-grid">
+              <label>
+                Planilha
+                <input
+                  className="field"
+                  type="file"
+                  accept=".xlsx,.xls,.csv"
+                  onChange={(event) => updateImportDraft('file', event.target.files?.[0] || null)}
+                />
+              </label>
+              <label>
+                Unidade da planilha
+                <select className="field" value={importDraft.clinic_id} onChange={(event) => updateImportDraft('clinic_id', event.target.value)}>
+                  <option value="">Selecione a unidade</option>
+                  {clinicOptions.map((clinic) => (
+                    <option key={clinic.id} value={clinic.id}>{clinic.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Responsável padrão
+                <select className="field" value={importDraft.default_assigned_user_id} onChange={(event) => updateImportDraft('default_assigned_user_id', event.target.value)}>
+                  <option value="">Usar colaborador da planilha</option>
+                  {assigneeOptions.map((user) => (
+                    <option key={user.id} value={user.id}>{formatAgendaUserOption(user)}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+
+            <div className="agenda-import-options">
+              <label className="agenda-toggle-card">
+                <input type="checkbox" checked={importDraft.create_tasks} onChange={(event) => updateImportDraft('create_tasks', event.target.checked)} />
+                <div>
+                  <strong>Cadastrar demandas</strong>
+                  <small>Cria as tarefas da agenda por colaborador, mantendo prazo, rotina diária e unidade.</small>
+                </div>
+              </label>
+              <label className="agenda-toggle-card">
+                <input type="checkbox" checked={importDraft.dispatch_whatsapp} onChange={(event) => updateImportDraft('dispatch_whatsapp', event.target.checked)} />
+                <div>
+                  <strong>Enviar confirmação via WhatsApp</strong>
+                  <small>Usa a mesma planilha para enfileirar as mensagens padrão de confirmação para os pacientes.</small>
+                </div>
+              </label>
+            </div>
+
+            {importDraft.dispatch_whatsapp ? (
+              <label>
+                Mensagem padrão de confirmação
+                <textarea
+                  className="field agenda-import-message"
+                  value={importDraft.message_text}
+                  onChange={(event) => updateImportDraft('message_text', event.target.value)}
+                  placeholder="Deixe em branco para usar a mensagem padrão profissional de confirmação."
+                />
+              </label>
+            ) : null}
+
+            <div className="agenda-import-actions">
+              <button type="button" className="primary-action" onClick={submitImport} disabled={importing}>
+                {importing ? 'Importando...' : 'Importar planilha'}
+              </button>
+            </div>
+
+            {importSummary ? (
+              <div className="agenda-import-summary">
+                <article>
+                  <span>Demandas criadas</span>
+                  <strong>{importSummary.created || 0}</strong>
+                </article>
+                <article>
+                  <span>WhatsApp enfileirado</span>
+                  <strong>{importSummary.whatsappQueued || 0}</strong>
+                </article>
+                <article>
+                  <span>Bloqueios</span>
+                  <strong>{importSummary.invalid || 0}</strong>
+                </article>
+                <article>
+                  <span>Lote</span>
+                  <strong>{importSummary.batchId || '-'}</strong>
+                </article>
+              </div>
+            ) : null}
+
+            {importSummary?.invalidRows?.length ? (
+              <div className="agenda-import-issues">
+                <strong>Linhas com pendência</strong>
+                <div className="agenda-import-issue-list">
+                  {importSummary.invalidRows.map((item, index) => (
+                    <p key={`${item.line || index}-${item.reason}`}>{item.reason}</p>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </SectionContainer>
+        </section>
+      ) : null}
+
       <DashboardGrid className="agenda-kpis">
         <KPICard label="Total" value={stats.total} helper="itens na agenda" tone="neutral" />
         <KPICard label="Abertos" value={stats.open} helper="em acompanhamento" tone="progress" />
@@ -571,7 +1047,7 @@ export default function AgendaPage() {
               className="field"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar item, descricao ou tag"
+              placeholder="Buscar item, paciente, unidade, descricao ou tag"
             />
             <select className="field" value={activeStatus} onChange={(event) => setActiveStatus(event.target.value)}>
               <option value="">Todos os status</option>
@@ -762,12 +1238,12 @@ export default function AgendaPage() {
                         ...current,
                         is_daily_recurring: event.target.checked,
                         requires_completion: event.target.checked ? true : current.requires_completion,
-                        recurrence_base_status: event.target.checked ? (current.recurrence_base_status || current.status || 'today') : current.recurrence_base_status
+                        recurrence_base_status: event.target.checked ? (current.recurrence_base_status || 'todo') : current.recurrence_base_status
                       }))}
                     />
                     <div>
-                      <strong>Repetição diária</strong>
-                      <small>Gera um novo ciclo todos os dias para o mesmo responsável.</small>
+                      <strong>Rotina recorrente</strong>
+                      <small>Reabre automaticamente a tarefa e preserva o histórico de entrega do responsável.</small>
                     </div>
                   </label>
                   <label className="agenda-toggle-card">
@@ -779,23 +1255,48 @@ export default function AgendaPage() {
                     />
                     <div>
                       <strong>Execução obrigatória</strong>
-                      <small>O trabalho só conta quando o responsável registrar que executou.</small>
+                      <small>O trabalho só entra na medição quando o responsável registrar a execução.</small>
                     </div>
                   </label>
                 </div>
                 {draft.is_daily_recurring ? (
-                  <label>
-                    Status inicial de cada dia
-                    <select
-                      className="field"
-                      value={draft.recurrence_base_status}
-                      onChange={(event) => setDraft((current) => ({ ...current, recurrence_base_status: event.target.value }))}
-                    >
-                      {agendaColumns.filter((column) => column.key !== 'done').map((column) => (
-                        <option key={column.key} value={column.key}>{column.label}</option>
-                      ))}
-                    </select>
-                  </label>
+                  <>
+                    <div className="agenda-weekday-picker">
+                      <div className="agenda-weekday-head">
+                        <strong>Dias para voltar ao A fazer</strong>
+                        <small>Se nenhum dia for marcado, a tarefa retorna todos os dias.</small>
+                      </div>
+                      <div className="agenda-weekday-chips">
+                        {recurrenceWeekdayOptions.map((weekday) => {
+                          const isActive = normalizeAgendaRecurrenceWeekdays(draft.recurrence_weekdays).includes(weekday.value);
+                          return (
+                            <button
+                              key={weekday.value}
+                              type="button"
+                              className={`agenda-weekday-chip ${isActive ? 'active' : ''}`}
+                              onClick={() => toggleRecurrenceWeekday(weekday.value)}
+                              aria-pressed={isActive}
+                              title={weekday.fullLabel}
+                            >
+                              {weekday.shortLabel}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <label>
+                      Coluna de retorno
+                      <select
+                        className="field"
+                        value={draft.recurrence_base_status}
+                        onChange={(event) => setDraft((current) => ({ ...current, recurrence_base_status: event.target.value }))}
+                      >
+                        {agendaColumns.filter((column) => column.key !== 'done').map((column) => (
+                          <option key={column.key} value={column.key}>{column.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
                 ) : null}
                 {selectedItem?.completed_at ? (
                   <div className="agenda-completion-note">
@@ -805,7 +1306,7 @@ export default function AgendaPage() {
                 ) : null}
                 <div className="agenda-editor-guide">
                   <strong>Fluxo recomendado</strong>
-                  <small>Cadastre, defina prioridade, programe lembrete e mova o card conforme a execução.</small>
+                  <small>Use os dias da semana para definir quando a tarefa volta para A fazer e manter a cobrança de execução do responsável.</small>
                 </div>
               </Card>
             </div>

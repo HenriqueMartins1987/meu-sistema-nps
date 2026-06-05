@@ -205,6 +205,11 @@ function canAccessWhatsAppManagement(user) {
   return hasPermission(user, 'whatsapp_management');
 }
 
+function canAccessAgendaHomePanel(user) {
+  if (isMasterAdmin(user)) return true;
+  return ['admin', 'supervisor_crc', 'crc_leader'].includes(normalizeRoleValue(user?.role));
+}
+
 function HomeShellFixed() {
   const navigate = useNavigate();
   const user = useMemo(() => readUser(), []);
@@ -223,6 +228,8 @@ function HomeShellFixed() {
   const [agendaItems, setAgendaItems] = useState([]);
   const [complaintTreatmentItems, setComplaintTreatmentItems] = useState([]);
   const [agendaAlerts, setAgendaAlerts] = useState([]);
+  const [agendaBoardDigest, setAgendaBoardDigest] = useState(null);
+  const [agendaBoardLoading, setAgendaBoardLoading] = useState(false);
   const [dentalPendingCount, setDentalPendingCount] = useState(0);
   const [agendaLoading, setAgendaLoading] = useState(false);
   const [agendaAlertOpen, setAgendaAlertOpen] = useState(false);
@@ -532,9 +539,32 @@ function HomeShellFixed() {
     }
   }, [canManageComplaints, canManagePatients]);
 
+  const loadAgendaBoardDigest = useCallback(async () => {
+    if (!canAccessAgendaHomePanel(user)) {
+      setAgendaBoardDigest(null);
+      return;
+    }
+
+    setAgendaBoardLoading(true);
+    try {
+      const response = await api.get('/api/agenda/dashboard', {
+        params: { days: 7 }
+      });
+      setAgendaBoardDigest(response.data || null);
+    } catch (error) {
+      setAgendaBoardDigest(null);
+    } finally {
+      setAgendaBoardLoading(false);
+    }
+  }, [user]);
+
   useEffect(() => {
     loadAgenda();
   }, [loadAgenda]);
+
+  useEffect(() => {
+    loadAgendaBoardDigest();
+  }, [loadAgendaBoardDigest]);
 
   useEffect(() => {
     if (!agendaAlerts.length) return;
@@ -1116,6 +1146,90 @@ function HomeShellFixed() {
           <button type="button" className="primary-action" onClick={openShareModal}>Compartilhar</button>
         </div>
       </section>
+
+      {canAccessAgendaHomePanel(user) && (
+        <section className="management-panel home-agenda-panel home-agenda-digest-panel" aria-label="Resumo da agenda CRC">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">Agenda CRC</p>
+              <h2>Radar rápido das demandas da equipe</h2>
+              <p className="base-subtitle">Resumo executivo com prioridades, execução recente e itens que pedem ação imediata.</p>
+            </div>
+            <div className="row-actions">
+              <button className="outline-action" type="button" onClick={loadAgendaBoardDigest}>
+                Atualizar painel
+              </button>
+              <button className="outline-action" type="button" onClick={() => navigate('/agenda')}>
+                Abrir agenda
+              </button>
+            </div>
+          </div>
+
+          {agendaBoardLoading ? (
+            <p className="empty-state">Carregando resumo da agenda...</p>
+          ) : !agendaBoardDigest ? (
+            <p className="empty-state">O resumo da agenda ainda não está disponível para este perfil.</p>
+          ) : (
+            <>
+              <div className="home-agenda-digest-kpis">
+                <article><span>Demandas abertas</span><strong>{agendaBoardDigest.summary?.open || 0}</strong></article>
+                <article><span>Atrasadas</span><strong>{agendaBoardDigest.summary?.overdue || 0}</strong></article>
+                <article><span>Vencendo em 24h</span><strong>{agendaBoardDigest.summary?.due_24h || 0}</strong></article>
+                <article><span>Concluídas 7d</span><strong>{agendaBoardDigest.summary?.completed_7d || 0}</strong></article>
+              </div>
+
+              <div className="home-agenda-digest-grid">
+                <div className="home-agenda-scrollbox">
+                  <div className="home-agenda-scrollbox-head">
+                    <strong>Demandas críticas</strong>
+                    <small>{agendaBoardDigest.urgent_items?.length || 0} item(ns)</small>
+                  </div>
+                  <div className="home-agenda-list compact">
+                    {(agendaBoardDigest.urgent_items || []).map((item) => (
+                      <button
+                        key={`digest-${item.id}`}
+                        type="button"
+                        className={`home-agenda-item ${(item.due_at && new Date(item.due_at).getTime() < Date.now()) ? 'danger' : 'warning'}`}
+                        onClick={() => navigate('/agenda')}
+                      >
+                        <div className="home-agenda-item-top">
+                          <span>{item.assigned_user_name || 'Responsável'}</span>
+                          <strong>{item.title}</strong>
+                        </div>
+                        <p>{item.clinic_name || 'Sem unidade'} {item.patient_name ? `· ${item.patient_name}` : ''}</p>
+                        <small>{item.due_at ? `Prazo ${formatDateTime(item.due_at)}` : 'Sem prazo definido'}</small>
+                      </button>
+                    ))}
+                    {!agendaBoardDigest.urgent_items?.length && <p className="empty-state">Nenhuma demanda crítica no radar imediato.</p>}
+                  </div>
+                </div>
+
+                <div className="home-agenda-scrollbox">
+                  <div className="home-agenda-scrollbox-head">
+                    <strong>Produtividade individual</strong>
+                    <small>{agendaBoardDigest.collaborators?.length || 0} colaborador(es)</small>
+                  </div>
+                  <div className="home-agenda-digest-ranking">
+                    {(agendaBoardDigest.collaborators || []).map((item) => (
+                      <article key={`${item.key}-home`}>
+                        <div>
+                          <strong>{item.name}</strong>
+                          <small>{item.role || 'Equipe CRC'}</small>
+                        </div>
+                        <div className="home-agenda-digest-metrics">
+                          <span>{item.completed_7d} concl.</span>
+                          <span className={item.overdue ? 'danger-text' : ''}>{item.overdue} atras.</span>
+                        </div>
+                      </article>
+                    ))}
+                    {!agendaBoardDigest.collaborators?.length && <p className="empty-state">Sem métricas individuais no momento.</p>}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
+        </section>
+      )}
 
       <section className="management-panel home-agenda-panel" aria-label="Agenda operacional">
         <div className="panel-heading">
