@@ -1,4 +1,15 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Bar,
+  CartesianGrid,
+  ComposedChart,
+  Legend,
+  Line,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from 'recharts';
 import api, { getApiErrorMessage } from '../api';
 import { ActionButtons, Card, DashboardGrid, KPICard, PageHeader, SectionContainer } from '../components/DesignSystem';
 import { getUserDisplayName, isMasterAdmin, normalizeRoleValue, readUser } from '../constants';
@@ -146,6 +157,122 @@ function canAccessAgendaAnalytics(user) {
   return ['admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'manager'].includes(normalizeRoleValue(user?.role));
 }
 
+function canUseAgendaOperatorTabs(user) {
+  if (isMasterAdmin(user)) return true;
+  return ['admin', 'supervisor_crc', 'crc_leader'].includes(normalizeRoleValue(user?.role));
+}
+
+function normalizeAgendaBoardUserId(value) {
+  const numeric = Number(value || 0);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
+}
+
+function buildAgendaBoardIdentity(item = {}, assigneeDirectory = new Map()) {
+  const assignedUserId = normalizeAgendaBoardUserId(item.assigned_user_id || item.assignedUser?.id);
+  const ownerUserId = normalizeAgendaBoardUserId(item.owner_user_id);
+  const responsibleUserId = assignedUserId || ownerUserId;
+
+  if (!responsibleUserId) {
+    return {
+      key: 'unassigned',
+      label: 'Sem responsavel definido',
+      userId: null,
+      roleLabel: '',
+      delegatedBy: null,
+      ownerOnly: false
+    };
+  }
+
+  const directoryUser = assigneeDirectory.get(String(responsibleUserId)) || null;
+  const label = directoryUser?.name || item.assigned_user_name || item.owner_name || directoryUser?.email || `Usuario ${responsibleUserId}`;
+  const roleLabel = directoryUser?.position || directoryUser?.department || directoryUser?.role || '';
+
+  return {
+    key: `user-${responsibleUserId}`,
+    label,
+    userId: responsibleUserId,
+    roleLabel,
+    delegatedBy: assignedUserId && ownerUserId && assignedUserId !== ownerUserId ? (item.owner_name || null) : null,
+    ownerOnly: !assignedUserId && Boolean(ownerUserId)
+  };
+}
+
+function buildAgendaBoardHelper(board = {}) {
+  if (!board.userId) {
+    return 'Itens sem responsavel operacional definido.';
+  }
+
+  const delegatedOwners = Array.isArray(board.delegatedOwners) ? board.delegatedOwners.filter(Boolean) : [];
+
+  if (delegatedOwners.length && board.hasOwnerOnlyItems) {
+    return 'Recebe demandas repassadas e tambem conduz rotinas proprias.';
+  }
+
+  if (delegatedOwners.length === 1) {
+    return `Demandas em execucao com acompanhamento de ${delegatedOwners[0]}.`;
+  }
+
+  if (delegatedOwners.length > 1) {
+    return `Demandas acompanhadas por ${delegatedOwners.length} solicitante(s).`;
+  }
+
+  if (board.hasOwnerOnlyItems) {
+    return 'Rotina propria sem repasse formal.';
+  }
+
+  return 'Carteira operacional consolidada deste colaborador.';
+}
+
+function buildAgendaBoards(items = [], assigneeDirectory = new Map(), currentUserId = '') {
+  const boards = new Map();
+
+  items.forEach((item) => {
+    const identity = buildAgendaBoardIdentity(item, assigneeDirectory);
+    if (!boards.has(identity.key)) {
+      boards.set(identity.key, {
+        ...identity,
+        items: [],
+        delegatedOwners: new Set(),
+        hasOwnerOnlyItems: false
+      });
+    }
+
+    const board = boards.get(identity.key);
+    board.items.push(item);
+    if (identity.delegatedBy) {
+      board.delegatedOwners.add(identity.delegatedBy);
+    }
+    if (identity.ownerOnly) {
+      board.hasOwnerOnlyItems = true;
+    }
+  });
+
+  return Array.from(boards.values())
+    .map((board) => {
+      const delegatedOwners = Array.from(board.delegatedOwners);
+      return {
+        ...board,
+        delegatedOwners,
+        helper: buildAgendaBoardHelper({ ...board, delegatedOwners }),
+        total: board.items.length,
+        open: board.items.filter((item) => item.status !== 'done').length,
+        overdue: board.items.filter((item) => item.status !== 'done' && isOverdue(item.due_at)).length,
+        done: board.items.filter((item) => item.status === 'done').length,
+        columns: agendaColumns.reduce((acc, column) => {
+          acc[column.key] = board.items.filter((item) => item.status === column.key);
+          return acc;
+        }, {})
+      };
+    })
+    .sort((a, b) => {
+      const aIsCurrent = a.userId && String(a.userId) === String(currentUserId || '');
+      const bIsCurrent = b.userId && String(b.userId) === String(currentUserId || '');
+      if (aIsCurrent !== bIsCurrent) return aIsCurrent ? -1 : 1;
+      if (a.open !== b.open) return b.open - a.open;
+      return a.label.localeCompare(b.label, 'pt-BR');
+    });
+}
+
 function formatAgendaDashboardDate(value) {
   if (!value) return '-';
   const date = new Date(value);
@@ -154,6 +281,36 @@ function formatAgendaDashboardDate(value) {
     dateStyle: 'short',
     timeStyle: 'short'
   }).format(date);
+}
+
+function formatAgendaPercent(value) {
+  const numeric = Number(value || 0);
+  return `${numeric.toFixed(numeric % 1 === 0 ? 0 : 1)}%`;
+}
+
+function getAgendaEvolutionToneClass(value) {
+  const numeric = Number(value || 0);
+  if (numeric >= 4) return 'strong';
+  if (numeric >= 2) return 'steady';
+  if (numeric >= 1) return 'light';
+  return 'idle';
+}
+
+function AgendaDashboardTooltip({ active, payload, label }) {
+  if (!active || !payload?.length) return null;
+
+  return (
+    <div className="agenda-chart-tooltip">
+      <strong>{label || payload[0]?.payload?.label || '-'}</strong>
+      <div>
+        {payload.map((entry) => (
+          <span key={`${entry.dataKey}-${entry.name}`} style={{ color: entry.color || '#10213b' }}>
+            {entry.name}: {entry.value}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 function downloadBlob(blob, filename) {
@@ -207,41 +364,6 @@ function getAgendaDeadlineState(item = {}) {
   }
 
   return { label: 'No prazo', tone: 'ok' };
-}
-
-function buildAgendaGroupIdentity(item = {}) {
-  const assignedUserId = item.assigned_user_id || item.assignedUser?.id || null;
-  const ownerUserId = item.owner_user_id || null;
-
-  if (assignedUserId) {
-    return {
-      key: `assigned-${assignedUserId}`,
-      label: formatAgendaAssignee(item),
-      userId: Number(assignedUserId) || null,
-      mode: 'assigned',
-      helper: ownerUserId && Number(ownerUserId) !== Number(assignedUserId)
-        ? `Acompanhamento mantido por ${item.owner_name || 'quem atribuiu'}`
-        : 'Demandas atuais do responsavel'
-    };
-  }
-
-  if (ownerUserId) {
-    return {
-      key: `owner-${ownerUserId}`,
-      label: item.owner_name || 'Sem responsavel definido',
-      userId: Number(ownerUserId) || null,
-      mode: 'owner',
-      helper: 'Criado sem atribuicao formal'
-    };
-  }
-
-  return {
-    key: 'unassigned',
-    label: 'Sem responsavel definido',
-    userId: null,
-    mode: 'unassigned',
-    helper: 'Item sem proprietario operacional'
-  };
 }
 
 function AgendaCard({ item, currentUserId, onOpen, onStatus, onDragStart }) {
@@ -313,11 +435,13 @@ export default function AgendaPage() {
   const currentUserId = String(currentUser?.id || '');
   const canDeleteAgendaItem = isMasterAdmin(currentUser);
   const canUseAgendaAnalytics = canAccessAgendaAnalytics(currentUser);
+  const canUseOperatorTabs = canUseAgendaOperatorTabs(currentUser);
   const [items, setItems] = useState([]);
   const [assignableUsers, setAssignableUsers] = useState([]);
   const [clinicOptions, setClinicOptions] = useState([]);
   const [dashboard, setDashboard] = useState(null);
   const [dashboardDays, setDashboardDays] = useState('30');
+  const [selectedEvolutionCollaboratorKey, setSelectedEvolutionCollaboratorKey] = useState('');
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [exportingReport, setExportingReport] = useState('');
   const [importDraft, setImportDraft] = useState(emptyImportDraft);
@@ -427,6 +551,24 @@ export default function AgendaPage() {
   }, [canUseAgendaAnalytics, dashboardDays]);
 
   useEffect(() => {
+    const collaboratorOptions = dashboard?.collaborators || [];
+    if (!collaboratorOptions.length) {
+      if (selectedEvolutionCollaboratorKey) {
+        setSelectedEvolutionCollaboratorKey('');
+      }
+      return;
+    }
+
+    if (collaboratorOptions.some((item) => item.key === selectedEvolutionCollaboratorKey)) {
+      return;
+    }
+
+    const preferredCollaborator = collaboratorOptions.find((item) => String(item.user_id || '') === currentUserId)
+      || collaboratorOptions[0];
+    setSelectedEvolutionCollaboratorKey(preferredCollaborator?.key || '');
+  }, [currentUserId, dashboard, selectedEvolutionCollaboratorKey]);
+
+  useEffect(() => {
     const timer = window.setTimeout(loadItems, 350);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -462,71 +604,6 @@ export default function AgendaPage() {
     return () => window.clearTimeout(timer);
   }, [editorOpen]);
 
-  const availableAssignees = useMemo(() => {
-    const byKey = new Map();
-    items.forEach((item) => {
-      const identity = buildAgendaGroupIdentity(item);
-      if (!byKey.has(identity.key)) {
-        byKey.set(identity.key, identity);
-      }
-    });
-    return Array.from(byKey.values());
-  }, [items]);
-
-  useEffect(() => {
-    if (!activeAssignee) return;
-    if (availableAssignees.some((item) => item.key === activeAssignee)) return;
-    setActiveAssignee('');
-  }, [activeAssignee, availableAssignees]);
-
-  const filteredItems = useMemo(() => (
-    activeAssignee
-      ? items.filter((item) => buildAgendaGroupIdentity(item).key === activeAssignee)
-      : items
-  ), [activeAssignee, items]);
-  const stats = useMemo(() => {
-    const open = filteredItems.filter((item) => item.status !== 'done').length;
-    const overdue = filteredItems.filter((item) => item.status !== 'done' && isOverdue(item.due_at)).length;
-    const reminders = filteredItems.filter((item) => item.status !== 'done' && item.reminder_at && !item.reminder_acknowledged_at).length;
-    const done = filteredItems.filter((item) => item.status === 'done').length;
-    return { total: filteredItems.length, open, overdue, reminders, done };
-  }, [filteredItems]);
-
-  const agendaGroups = useMemo(() => {
-    const groups = new Map();
-
-    filteredItems.forEach((item) => {
-      const identity = buildAgendaGroupIdentity(item);
-      if (!groups.has(identity.key)) {
-        groups.set(identity.key, {
-          ...identity,
-          items: []
-        });
-      }
-      groups.get(identity.key).items.push(item);
-    });
-
-    return Array.from(groups.values())
-      .map((group) => ({
-        ...group,
-        total: group.items.length,
-        open: group.items.filter((item) => item.status !== 'done').length,
-        overdue: group.items.filter((item) => item.status !== 'done' && isOverdue(item.due_at)).length,
-        done: group.items.filter((item) => item.status === 'done').length,
-        columns: agendaColumns.reduce((acc, column) => {
-          acc[column.key] = group.items.filter((item) => item.status === column.key);
-          return acc;
-        }, {})
-      }))
-      .sort((a, b) => {
-        const aIsCurrent = a.key === `assigned-${currentUserId}` || a.key === `owner-${currentUserId}`;
-        const bIsCurrent = b.key === `assigned-${currentUserId}` || b.key === `owner-${currentUserId}`;
-        if (aIsCurrent !== bIsCurrent) return aIsCurrent ? -1 : 1;
-        if (a.open !== b.open) return b.open - a.open;
-        return a.label.localeCompare(b.label, 'pt-BR');
-      });
-  }, [currentUserId, filteredItems]);
-
   const assigneeOptions = useMemo(() => {
     const byId = new Map();
     if (currentUser?.id) {
@@ -545,12 +622,102 @@ export default function AgendaPage() {
     return Array.from(byId.values());
   }, [assignableUsers, currentUser]);
 
+  const assigneeDirectory = useMemo(() => {
+    const byId = new Map();
+    assigneeOptions.forEach((user) => {
+      if (user?.id) {
+        byId.set(String(user.id), user);
+      }
+    });
+    return byId;
+  }, [assigneeOptions]);
+
+  const allAgendaBoards = useMemo(() => (
+    buildAgendaBoards(items, assigneeDirectory, currentUserId)
+  ), [assigneeDirectory, currentUserId, items]);
+
+  useEffect(() => {
+    if (!activeAssignee) return;
+    if (allAgendaBoards.some((item) => item.key === activeAssignee)) return;
+    setActiveAssignee('');
+  }, [activeAssignee, allAgendaBoards]);
+
+  const filteredItems = useMemo(() => (
+    activeAssignee
+      ? items.filter((item) => buildAgendaBoardIdentity(item, assigneeDirectory).key === activeAssignee)
+      : items
+  ), [activeAssignee, assigneeDirectory, items]);
+
+  const globalStats = useMemo(() => {
+    const open = items.filter((item) => item.status !== 'done').length;
+    const overdue = items.filter((item) => item.status !== 'done' && isOverdue(item.due_at)).length;
+    const reminders = items.filter((item) => item.status !== 'done' && item.reminder_at && !item.reminder_acknowledged_at).length;
+    const done = items.filter((item) => item.status === 'done').length;
+    return { total: items.length, open, overdue, reminders, done };
+  }, [items]);
+
+  const stats = useMemo(() => {
+    const open = filteredItems.filter((item) => item.status !== 'done').length;
+    const overdue = filteredItems.filter((item) => item.status !== 'done' && isOverdue(item.due_at)).length;
+    const reminders = filteredItems.filter((item) => item.status !== 'done' && item.reminder_at && !item.reminder_acknowledged_at).length;
+    const done = filteredItems.filter((item) => item.status === 'done').length;
+    return { total: filteredItems.length, open, overdue, reminders, done };
+  }, [filteredItems]);
+
+  const agendaBoards = useMemo(() => (
+    activeAssignee
+      ? allAgendaBoards.filter((board) => board.key === activeAssignee)
+      : allAgendaBoards
+  ), [activeAssignee, allAgendaBoards]);
+
+  const activeAgendaBoard = useMemo(() => (
+    allAgendaBoards.find((board) => board.key === activeAssignee) || null
+  ), [activeAssignee, allAgendaBoards]);
+
+  const operatorTabs = useMemo(() => {
+    const summaryTabs = [{
+      key: '',
+      label: 'Visao geral',
+      helper: 'Relatorio consolidado da equipe',
+      total: globalStats.total,
+      open: globalStats.open,
+      overdue: globalStats.overdue
+    }];
+
+    return summaryTabs.concat(allAgendaBoards.map((board) => ({
+      key: board.key,
+      label: board.label,
+      helper: board.roleLabel || board.helper,
+      total: board.total,
+      open: board.open,
+      overdue: board.overdue
+    })));
+  }, [allAgendaBoards, globalStats.open, globalStats.overdue, globalStats.total]);
+
+  const teamDailySeries = useMemo(() => (
+    Array.isArray(dashboard?.daily_series) ? dashboard.daily_series : []
+  ), [dashboard]);
+
+  const selectedEvolutionCollaborator = useMemo(() => (
+    (dashboard?.collaborators || []).find((item) => item.key === selectedEvolutionCollaboratorKey) || null
+  ), [dashboard, selectedEvolutionCollaboratorKey]);
+
+  const selectedEvolutionSeries = useMemo(() => (
+    Array.isArray(selectedEvolutionCollaborator?.daily_series) ? selectedEvolutionCollaborator.daily_series : []
+  ), [selectedEvolutionCollaborator]);
+
+  const dailyEvolutionMatrixDays = useMemo(() => (
+    teamDailySeries.slice(-7)
+  ), [teamDailySeries]);
+
   const dashboardSummaryCards = useMemo(() => ([
     { label: 'Demandas totais', value: dashboard?.summary?.total || 0, helper: 'base visível no período', tone: 'neutral' },
     { label: 'Abertas', value: dashboard?.summary?.open || 0, helper: 'em acompanhamento', tone: 'progress' },
     { label: 'Atrasadas', value: dashboard?.summary?.overdue || 0, helper: 'fora do prazo', tone: 'danger' },
     { label: 'Vencendo em 24h', value: dashboard?.summary?.due_24h || 0, helper: 'ação imediata', tone: 'warning' },
     { label: 'Concluídas em 7 dias', value: dashboard?.summary?.completed_7d || 0, helper: 'produtividade recente', tone: 'success' },
+    { label: 'Media diaria', value: dashboard?.summary?.daily_average_completed || 0, helper: 'entregas por dia', tone: 'success' },
+    { label: 'Taxa de execucao', value: formatAgendaPercent(dashboard?.summary?.completion_rate_period || 0), helper: 'concluidas sobre programadas', tone: 'progress' },
     { label: 'Rotinas recorrentes', value: dashboard?.summary?.recurring || 0, helper: 'voltam automaticamente ao fluxo', tone: 'neutral' }
   ]), [dashboard]);
 
@@ -775,7 +942,13 @@ export default function AgendaPage() {
         actions={(
           <>
             <button type="button" className="outline-action" onClick={requestNotifications}>Ativar lembretes</button>
-            <button type="button" className="primary-action" onClick={() => openCreate('today')}>Novo item</button>
+            <button
+              type="button"
+              className="primary-action"
+              onClick={() => openCreate('today', activeAgendaBoard?.userId ? String(activeAgendaBoard.userId) : (currentUserId || ''))}
+            >
+              Novo item
+            </button>
           </>
         )}
       />
@@ -824,6 +997,155 @@ export default function AgendaPage() {
                 <KPICard key={card.label} label={card.label} value={card.value} helper={card.helper} tone={card.tone} />
               ))}
             </DashboardGrid>
+
+            <div className="agenda-daily-dashboard-grid">
+              <Card className="agenda-daily-chart-panel agenda-daily-chart-panel-wide">
+                <div className="agenda-panel-headline">
+                  <div>
+                    <strong>Evolucao diaria da equipe</strong>
+                    <span>Comparativo profissional entre demandas criadas, programadas e concluidas na janela selecionada.</span>
+                  </div>
+                  <small>{teamDailySeries.length} dia(s) monitorados</small>
+                </div>
+                <div className="agenda-chart-shell">
+                  {teamDailySeries.length ? (
+                    <ResponsiveContainer>
+                      <ComposedChart data={teamDailySeries}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.22)" />
+                        <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 11 }} />
+                        <YAxis yAxisId="left" tick={{ fill: '#64748b', fontSize: 11 }} />
+                        <YAxis yAxisId="right" orientation="right" tick={{ fill: '#64748b', fontSize: 11 }} />
+                        <Tooltip content={<AgendaDashboardTooltip />} />
+                        <Legend />
+                        <Bar yAxisId="left" dataKey="created" name="Criadas" fill="#94a3b8" radius={[6, 6, 0, 0]} />
+                        <Bar yAxisId="left" dataKey="scheduled" name="Programadas" fill="#c89a57" radius={[6, 6, 0, 0]} />
+                        <Line yAxisId="left" type="monotone" dataKey="completed" name="Concluidas" stroke="#1d8f6a" strokeWidth={3} dot={false} />
+                        <Line yAxisId="right" type="monotone" dataKey="completion_rate" name="Taxa %" stroke="#4965ff" strokeWidth={2} dot={false} />
+                      </ComposedChart>
+                    </ResponsiveContainer>
+                  ) : (
+                    <p className="empty-state">Ainda nao ha historico diario suficiente para gerar a evolucao da equipe.</p>
+                  )}
+                </div>
+              </Card>
+
+              <Card className="agenda-daily-chart-panel">
+                <div className="agenda-panel-headline">
+                  <div>
+                    <strong>Evolucao individual</strong>
+                    <span>Foco diario do colaborador para acompanhar ritmo, consistencia e capacidade de entrega.</span>
+                  </div>
+                </div>
+                <label className="agenda-dashboard-inline-filter">
+                  Colaborador
+                  <select
+                    className="field"
+                    value={selectedEvolutionCollaboratorKey}
+                    onChange={(event) => setSelectedEvolutionCollaboratorKey(event.target.value)}
+                  >
+                    {(dashboard?.collaborators || []).map((item) => (
+                      <option key={item.key} value={item.key}>{item.name}</option>
+                    ))}
+                  </select>
+                </label>
+                {selectedEvolutionCollaborator ? (
+                  <>
+                    <div className="agenda-daily-focus-metrics">
+                      <article>
+                        <span>Media diaria</span>
+                        <strong>{selectedEvolutionCollaborator.daily_average_completed || 0}</strong>
+                        <small>conclusoes por dia</small>
+                      </article>
+                      <article>
+                        <span>Melhor dia</span>
+                        <strong>{selectedEvolutionCollaborator.best_day_completed || 0}</strong>
+                        <small>{selectedEvolutionCollaborator.best_day_date || 'Sem registro'}</small>
+                      </article>
+                      <article>
+                        <span>Ritmo 7d</span>
+                        <strong>{selectedEvolutionCollaborator.last_7d_completed || 0}</strong>
+                        <small>{selectedEvolutionCollaborator.momentum_delta >= 0 ? `+${selectedEvolutionCollaborator.momentum_delta}` : selectedEvolutionCollaborator.momentum_delta} vs 7d anteriores</small>
+                      </article>
+                      <article>
+                        <span>Taxa de execucao</span>
+                        <strong>{formatAgendaPercent(selectedEvolutionCollaborator.completion_rate_period || 0)}</strong>
+                        <small>{selectedEvolutionCollaborator.current_streak || 0} dia(s) seguidos com entrega</small>
+                      </article>
+                    </div>
+                    <div className="agenda-chart-shell agenda-chart-shell-compact">
+                      {selectedEvolutionSeries.length ? (
+                        <ResponsiveContainer>
+                          <ComposedChart data={selectedEvolutionSeries}>
+                            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.22)" />
+                            <XAxis dataKey="label" tick={{ fill: '#64748b', fontSize: 11 }} />
+                            <YAxis tick={{ fill: '#64748b', fontSize: 11 }} />
+                            <Tooltip content={<AgendaDashboardTooltip />} />
+                            <Legend />
+                            <Bar dataKey="created" name="Criadas" fill="#cbd5e1" radius={[6, 6, 0, 0]} />
+                            <Line type="monotone" dataKey="completed" name="Concluidas" stroke="#1d8f6a" strokeWidth={3} dot={false} />
+                            <Line type="monotone" dataKey="scheduled" name="Programadas" stroke="#c89a57" strokeWidth={2} dot={false} />
+                          </ComposedChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <p className="empty-state">Sem historico diario para este colaborador na janela selecionada.</p>
+                      )}
+                    </div>
+                  </>
+                ) : (
+                  <p className="empty-state">Selecione um colaborador para acompanhar a evolucao diaria.</p>
+                )}
+              </Card>
+            </div>
+
+            <Card className="agenda-daily-matrix-panel">
+              <div className="agenda-panel-headline">
+                <div>
+                  <strong>Painel diario por colaborador</strong>
+                  <span>Leitura comparativa das conclusoes diarias para verificar evolucao, consistencia e variacao operacional da equipe.</span>
+                </div>
+                <small>Ultimos {dailyEvolutionMatrixDays.length || 0} dias</small>
+              </div>
+              <div className="agenda-daily-matrix-wrap">
+                <table className="agenda-daily-matrix-table">
+                  <thead>
+                    <tr>
+                      <th>Colaborador</th>
+                      {dailyEvolutionMatrixDays.map((day) => (
+                        <th key={day.date_key}>{day.label}</th>
+                      ))}
+                      <th>Media</th>
+                      <th>Ritmo</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(dashboard?.collaborators || []).map((item) => (
+                      <tr key={`${item.key}-daily-row`}>
+                        <td>
+                          <strong>{item.name}</strong>
+                          <small>{item.role || 'Equipe CRC'}</small>
+                        </td>
+                        {dailyEvolutionMatrixDays.map((day) => {
+                          const point = (item.daily_series || []).find((entry) => entry.date_key === day.date_key);
+                          const completed = Number(point?.completed || 0);
+                          return (
+                            <td key={`${item.key}-${day.date_key}`}>
+                              <span className={`agenda-daily-metric-chip ${getAgendaEvolutionToneClass(completed)}`}>
+                                {completed}
+                              </span>
+                            </td>
+                          );
+                        })}
+                        <td>{item.daily_average_completed || 0}</td>
+                        <td className={item.momentum_delta < 0 ? 'danger-cell' : ''}>
+                          {item.momentum_delta >= 0 ? `+${item.momentum_delta}` : item.momentum_delta}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {!dashboardLoading && !(dashboard?.collaborators || []).length ? <p className="empty-state">Nenhuma serie diaria disponivel para os colaboradores.</p> : null}
+              </div>
+            </Card>
 
             <div className="agenda-intelligence-grid">
               <Card className="agenda-collaborator-panel">
@@ -1054,9 +1376,9 @@ export default function AgendaPage() {
               {agendaColumns.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
             </select>
             <select className="field" value={activeAssignee} onChange={(event) => setActiveAssignee(event.target.value)}>
-              <option value="">Todos os usuarios</option>
-              {availableAssignees.map((assignee) => (
-                <option key={assignee.key} value={assignee.key}>{assignee.label}</option>
+              <option value="">{canUseOperatorTabs ? 'Todas as agendas' : 'Todos os usuarios'}</option>
+              {allAgendaBoards.map((board) => (
+                <option key={board.key} value={board.key}>{board.label}</option>
               ))}
             </select>
             <button type="button" className="outline-action" onClick={loadItems}>Atualizar</button>
@@ -1064,17 +1386,47 @@ export default function AgendaPage() {
         </div>
       </SectionContainer>
 
+      {canUseOperatorTabs && operatorTabs.length > 2 ? (
+        <SectionContainer className="agenda-tabs-panel">
+          <div className="agenda-tabs-head">
+            <div>
+              <strong>Abas por operador</strong>
+              <span>Troque rapidamente entre as agendas individuais. O relatorio executivo continua sintetico e consolidado com todos os operadores em uso.</span>
+            </div>
+          </div>
+          <div className="agenda-tabs-strip" role="tablist" aria-label="Agendas por operador">
+            {operatorTabs.map((tab) => {
+              const isActive = activeAssignee === tab.key;
+              return (
+                <button
+                  key={tab.key || 'all'}
+                  type="button"
+                  className={`agenda-tab-button ${isActive ? 'active' : ''}`}
+                  onClick={() => setActiveAssignee(tab.key)}
+                  role="tab"
+                  aria-selected={isActive}
+                >
+                  <strong>{tab.label}</strong>
+                  <span>{tab.helper}</span>
+                  <small>{tab.open} aberta(s) · {tab.overdue} atrasada(s)</small>
+                </button>
+              );
+            })}
+          </div>
+        </SectionContainer>
+      ) : null}
+
       {feedback && !editorOpen ? <p className="form-feedback">{feedback}</p> : null}
 
       <section className="agenda-workspace">
         <div className="agenda-user-groups">
-          {agendaGroups.map((group) => (
+          {agendaBoards.map((group) => (
             <section key={group.key} className="agenda-user-section">
               <header className="agenda-user-header">
                 <div className="agenda-user-copy">
                   <span className="agenda-user-kicker">Responsavel</span>
                   <strong>{group.label}</strong>
-                  <small>{group.helper}</small>
+                  <small>{group.roleLabel ? `${group.roleLabel} · ${group.helper}` : group.helper}</small>
                 </div>
                 <div className="agenda-user-stats">
                   <article>
@@ -1140,7 +1492,7 @@ export default function AgendaPage() {
               </div>
             </section>
           ))}
-          {!loading && agendaGroups.length === 0 ? <p className="empty-state">Nenhum item encontrado para os filtros selecionados.</p> : null}
+          {!loading && agendaBoards.length === 0 ? <p className="empty-state">Nenhum item encontrado para os filtros selecionados.</p> : null}
         </div>
       </section>
 

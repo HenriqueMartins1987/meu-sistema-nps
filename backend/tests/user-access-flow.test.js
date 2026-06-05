@@ -1500,6 +1500,7 @@ test('agenda recurrence weekdays only generate return cycles on selected days', 
 });
 
 test('agenda dashboard snapshot groups collaborator productivity and urgent items', () => {
+  const now = new Date();
   const snapshot = serverModule.__testables.buildAgendaDashboardSnapshot(
     [
       {
@@ -1510,6 +1511,7 @@ test('agenda dashboard snapshot groups collaborator productivity and urgent item
         title: 'Confirmar Maria',
         status: 'today',
         priority: 'alta',
+        created_at: new Date(now.getTime() - (1 * 86400000)).toISOString(),
         due_at: new Date(Date.now() + (4 * 60 * 60 * 1000)).toISOString(),
         requires_completion: 1,
         is_daily_recurring: 1,
@@ -1523,6 +1525,7 @@ test('agenda dashboard snapshot groups collaborator productivity and urgent item
         title: 'Retornar paciente',
         status: 'doing',
         priority: 'normal',
+        created_at: now.toISOString(),
         due_at: new Date(Date.now() - (2 * 60 * 60 * 1000)).toISOString(),
         requires_completion: 1,
         is_daily_recurring: 0
@@ -1547,7 +1550,12 @@ test('agenda dashboard snapshot groups collaborator productivity and urgent item
   assert.equal(snapshot.summary.overdue, 1);
   assert.equal(snapshot.summary.due_24h, 1);
   assert.equal(snapshot.summary.completed_today, 1);
+  assert.equal(snapshot.summary.created_period, 2);
+  assert.ok(Array.isArray(snapshot.daily_series));
+  assert.equal(snapshot.daily_series.length, 30);
   assert.equal(snapshot.collaborators.length, 2);
+  assert.ok(Array.isArray(snapshot.collaborators[0].daily_series));
+  assert.equal(snapshot.collaborators[0].daily_series.length, 30);
   assert.equal(snapshot.urgent_items.length, 2);
 });
 

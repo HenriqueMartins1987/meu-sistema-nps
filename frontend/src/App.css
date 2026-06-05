@@ -14996,6 +14996,84 @@ a {
   align-items: center;
 }
 
+.agenda-tabs-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px 20px;
+  border: 1px solid rgba(211, 219, 232, 0.92);
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at top right, rgba(73, 101, 255, 0.08), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 249, 252, 0.98));
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.06);
+}
+
+.agenda-tabs-head strong {
+  display: block;
+  color: #10213b;
+  font-family: 'Plus Jakarta Sans', 'Aptos', 'Segoe UI', sans-serif;
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.agenda-tabs-head span {
+  display: block;
+  margin-top: 6px;
+  color: rgba(49, 65, 91, 0.74);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.agenda-tabs-strip {
+  display: flex;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.agenda-tab-button {
+  display: grid;
+  gap: 6px;
+  min-width: 220px;
+  padding: 14px 16px;
+  border: 1px solid rgba(206, 216, 231, 0.9);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #10213b;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.agenda-tab-button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(73, 101, 255, 0.28);
+  box-shadow: 0 12px 22px rgba(15, 23, 42, 0.08);
+}
+
+.agenda-tab-button.active {
+  border-color: rgba(73, 101, 255, 0.38);
+  background: linear-gradient(135deg, rgba(238, 243, 255, 0.98), rgba(255, 255, 255, 0.98));
+  box-shadow: 0 14px 28px rgba(73, 101, 255, 0.14);
+}
+
+.agenda-tab-button strong {
+  color: #10213b;
+  font-size: 0.92rem;
+}
+
+.agenda-tab-button span {
+  color: rgba(49, 65, 91, 0.72);
+  font-size: 0.77rem;
+  line-height: 1.4;
+}
+
+.agenda-tab-button small {
+  color: #38517c;
+  font-size: 0.75rem;
+  font-weight: 800;
+}
+
 .agenda-intelligence-stack {
   display: grid;
   gap: 22px;
@@ -15054,6 +15132,179 @@ a {
   display: grid;
   grid-template-columns: minmax(0, 1.2fr) minmax(300px, 0.8fr);
   gap: 18px;
+}
+
+.agenda-daily-dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
+  gap: 18px;
+}
+
+.agenda-daily-chart-panel,
+.agenda-daily-matrix-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.agenda-chart-shell {
+  width: 100%;
+  height: 320px;
+  min-height: 320px;
+}
+
+.agenda-chart-shell-compact {
+  height: 260px;
+  min-height: 260px;
+}
+
+.agenda-chart-tooltip {
+  display: grid;
+  gap: 8px;
+  min-width: 180px;
+  padding: 12px 14px;
+  border: 1px solid rgba(206, 216, 231, 0.94);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.98);
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.12);
+}
+
+.agenda-chart-tooltip strong {
+  color: #10213b;
+  font-size: 0.84rem;
+}
+
+.agenda-chart-tooltip div {
+  display: grid;
+  gap: 4px;
+}
+
+.agenda-chart-tooltip span {
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.agenda-dashboard-inline-filter {
+  display: grid;
+  gap: 6px;
+}
+
+.agenda-dashboard-inline-filter .field {
+  width: 100%;
+}
+
+.agenda-daily-focus-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.agenda-daily-focus-metrics article {
+  display: grid;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid rgba(211, 219, 232, 0.92);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.9);
+}
+
+.agenda-daily-focus-metrics span {
+  color: rgba(84, 100, 129, 0.9);
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agenda-daily-focus-metrics strong {
+  color: #10213b;
+  font-size: 1.06rem;
+}
+
+.agenda-daily-focus-metrics small {
+  color: rgba(49, 65, 91, 0.72);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.agenda-daily-matrix-wrap {
+  max-height: 420px;
+  overflow: auto;
+  min-height: 0;
+  padding-right: 6px;
+}
+
+.agenda-daily-matrix-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.agenda-daily-matrix-table th,
+.agenda-daily-matrix-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid rgba(222, 228, 238, 0.92);
+  text-align: center;
+  vertical-align: middle;
+  font-size: 0.8rem;
+}
+
+.agenda-daily-matrix-table th:first-child,
+.agenda-daily-matrix-table td:first-child {
+  text-align: left;
+}
+
+.agenda-daily-matrix-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f5f8fc;
+  color: #51627f;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agenda-daily-matrix-table td:first-child strong {
+  display: block;
+  color: #10213b;
+}
+
+.agenda-daily-matrix-table td:first-child small {
+  display: block;
+  margin-top: 4px;
+  color: rgba(49, 65, 91, 0.72);
+}
+
+.agenda-daily-metric-chip {
+  display: inline-flex;
+  min-width: 36px;
+  justify-content: center;
+  align-items: center;
+  padding: 6px 8px;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.agenda-daily-metric-chip.idle {
+  background: rgba(226, 232, 240, 0.9);
+  color: #475569;
+}
+
+.agenda-daily-metric-chip.light {
+  background: rgba(224, 242, 254, 0.96);
+  color: #0f4c81;
+}
+
+.agenda-daily-metric-chip.steady {
+  background: rgba(220, 252, 231, 0.96);
+  color: #166534;
+}
+
+.agenda-daily-metric-chip.strong {
+  background: rgba(237, 233, 254, 0.96);
+  color: #5b21b6;
 }
 
 .agenda-collaborator-panel,
@@ -16010,6 +16261,7 @@ a {
     grid-template-columns: minmax(220px, 1fr) repeat(2, minmax(170px, 200px)) auto;
   }
 
+  .agenda-daily-dashboard-grid,
   .agenda-intelligence-grid {
     grid-template-columns: 1fr;
   }
@@ -16027,6 +16279,10 @@ a {
     grid-template-columns: 1fr;
   }
 
+  .agenda-daily-focus-metrics {
+    grid-template-columns: 1fr 1fr;
+  }
+
   .agenda-intelligence-head {
     flex-direction: column;
     align-items: stretch;
@@ -16042,6 +16298,10 @@ a {
 
   .agenda-toolbar-filters {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .agenda-tab-button {
+    min-width: 200px;
   }
 
   .agenda-weekday-chips {
@@ -16073,6 +16333,10 @@ a {
     grid-template-columns: 1fr;
   }
 
+  .agenda-daily-focus-metrics {
+    grid-template-columns: 1fr;
+  }
+
   .agenda-reminder-toast,
   .agenda-editor-hero,
   .agenda-editor-footer {
@@ -16083,6 +16347,10 @@ a {
   .agenda-toolbar-filters,
   .agenda-editor-grid {
     grid-template-columns: 1fr;
+  }
+
+  .agenda-tab-button {
+    min-width: 170px;
   }
 
   .agenda-weekday-chips {

@@ -22063,13 +22063,54 @@ function buildAgendaDashboardIdentity(row = {}) {
   };
 }
 
+function formatAgendaDashboardDateLabel(dateKey = '') {
+  const [year, month, day] = String(dateKey || '').split('-').map(Number);
+  if (!year || !month || !day) return '';
+  return `${String(day).padStart(2, '0')}/${String(month).padStart(2, '0')}`;
+}
+
+function listAgendaDashboardDateKeys(days = 30, endDate = new Date()) {
+  const normalizedDays = normalizeAgendaDashboardDays(days, 30);
+  const endKey = getSaoPauloDateKey(endDate) || getSaoPauloParts().dateKey;
+  const endUtc = agendaDateKeyToUtcMs(endKey);
+  if (endUtc === null) return [];
+
+  return Array.from({ length: normalizedDays }, (_item, index) => (
+    getSaoPauloDateKey(new Date(endUtc - ((normalizedDays - index - 1) * 86400000)))
+  ));
+}
+
+function buildAgendaDailySeriesPoint(dateKey = '') {
+  return {
+    date_key: dateKey,
+    label: formatAgendaDashboardDateLabel(dateKey),
+    created: 0,
+    completed: 0,
+    scheduled: 0,
+    active_collaborators: 0,
+    net_flow: 0,
+    completion_rate: 0
+  };
+}
+
+function sumAgendaSeriesMetric(series = [], field = 'completed', startIndex = 0, endIndex = null) {
+  const safeStart = Math.max(0, Number(startIndex || 0));
+  const safeEnd = endIndex === null ? series.length : Math.min(series.length, Math.max(safeStart, Number(endIndex || 0)));
+  return series.slice(safeStart, safeEnd).reduce((total, item) => total + Number(item?.[field] || 0), 0);
+}
+
 function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = {}) {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   const sevenDaysStart = now.getTime() - (7 * 86400000);
   const periodDays = normalizeAgendaDashboardDays(options.days, 30);
   const periodStart = now.getTime() - (periodDays * 86400000);
+  const dateKeys = listAgendaDashboardDateKeys(periodDays, now);
+  const dateKeySet = new Set(dateKeys);
   const collaboratorMap = new Map();
+  const collaboratorSeriesMap = new Map();
+  const teamSeriesMap = new Map(dateKeys.map((dateKey) => [dateKey, buildAgendaDailySeriesPoint(dateKey)]));
+  const currentRecurringCycleKeys = new Set();
   const summary = {
     total: 0,
     open: 0,
@@ -22081,7 +22122,12 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
     mandatory_open: 0,
     completed_today: 0,
     completed_7d: 0,
-    completed_period: 0
+    completed_period: 0,
+    created_period: 0,
+    scheduled_period: 0,
+    daily_average_completed: 0,
+    daily_average_created: 0,
+    completion_rate_period: 0
   };
   const urgentItems = [];
   const recentCompletions = [];
@@ -22107,10 +22153,83 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
         completed_today: 0,
         completed_7d: 0,
         completed_period: 0,
-        last_completed_at: null
+        created_period: 0,
+        scheduled_period: 0,
+        daily_average_completed: 0,
+        daily_average_created: 0,
+        completion_rate_period: 0,
+        last_completed_at: null,
+        best_day_completed: 0,
+        best_day_date: null,
+        last_7d_completed: 0,
+        previous_7d_completed: 0,
+        momentum_delta: 0,
+        activity_days: 0,
+        current_streak: 0
       });
     }
     return collaboratorMap.get(identity.key);
+  };
+
+  const ensureCollaboratorSeries = (collaboratorKey) => {
+    if (!collaboratorSeriesMap.has(collaboratorKey)) {
+      collaboratorSeriesMap.set(
+        collaboratorKey,
+        new Map(dateKeys.map((dateKey) => [dateKey, buildAgendaDailySeriesPoint(dateKey)]))
+      );
+    }
+    return collaboratorSeriesMap.get(collaboratorKey);
+  };
+
+  const registerDailyMetric = (identity = {}, dateKey = '', metric = 'completed') => {
+    if (!dateKeySet.has(dateKey)) return;
+    const collaborator = ensureCollaborator(identity);
+    const collaboratorSeries = ensureCollaboratorSeries(collaborator.key);
+    const collaboratorPoint = collaboratorSeries.get(dateKey);
+    const teamPoint = teamSeriesMap.get(dateKey);
+    if (!collaboratorPoint || !teamPoint) return;
+
+    collaboratorPoint[metric] = Number(collaboratorPoint[metric] || 0) + 1;
+    teamPoint[metric] = Number(teamPoint[metric] || 0) + 1;
+
+    if (metric === 'created') {
+      collaborator.created_period += 1;
+      summary.created_period += 1;
+    }
+
+    if (metric === 'scheduled') {
+      collaborator.scheduled_period += 1;
+      summary.scheduled_period += 1;
+    }
+  };
+
+  const registerCompletionMetrics = (identity = {}, completedAtValue = null) => {
+    if (!completedAtValue) return;
+    const completedAt = new Date(completedAtValue);
+    if (Number.isNaN(completedAt.getTime())) return;
+
+    const collaborator = ensureCollaborator(identity);
+    const completedAtMs = completedAt.getTime();
+    const dateKey = getSaoPauloDateKey(completedAt);
+    if (dateKeySet.has(dateKey)) {
+      registerDailyMetric(identity, dateKey, 'completed');
+    }
+
+    if (completedAtMs >= periodStart) {
+      collaborator.completed_period += 1;
+      summary.completed_period += 1;
+    }
+    if (completedAtMs >= sevenDaysStart) {
+      collaborator.completed_7d += 1;
+      summary.completed_7d += 1;
+    }
+    if (completedAtMs >= todayStart) {
+      collaborator.completed_today += 1;
+      summary.completed_today += 1;
+    }
+    if (!collaborator.last_completed_at || new Date(collaborator.last_completed_at).getTime() < completedAtMs) {
+      collaborator.last_completed_at = completedAtValue;
+    }
   };
 
   rows.forEach((rawRow) => {
@@ -22118,10 +22237,22 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
     const identity = buildAgendaDashboardIdentity(rawRow);
     const collaborator = ensureCollaborator(identity);
     const dueHours = getAgendaHoursUntil(item.due_at);
-    const isOpen = item.status !== 'done';
+    const createdDateKey = getSaoPauloDateKey(rawRow.created_at || item.created_at);
+    const dueDateKey = getSaoPauloDateKey(item.due_at);
 
     collaborator.total += 1;
     summary.total += 1;
+
+    if (createdDateKey) {
+      registerDailyMetric(identity, createdDateKey, 'created');
+    }
+
+    if (dueDateKey) {
+      registerDailyMetric(identity, dueDateKey, 'scheduled');
+      if (item.is_daily_recurring && rawRow.id) {
+        currentRecurringCycleKeys.add(`${rawRow.id}:${dueDateKey}`);
+      }
+    }
 
     if (item.is_daily_recurring) {
       collaborator.recurring += 1;
@@ -22168,6 +22299,7 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
     }
 
     if (!item.is_daily_recurring && item.completed_at) {
+      registerCompletionMetrics(identity, item.completed_at);
       recentCompletions.push({
         title: item.title,
         collaborator_name: item.completed_by_name || identity.name,
@@ -22179,9 +22311,6 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
   });
 
   completionRows.forEach((row) => {
-    const completedAt = row.completed_at ? new Date(row.completed_at) : null;
-    if (!completedAt || Number.isNaN(completedAt.getTime())) return;
-
     const identity = {
       key: row.completed_by_user_id
         ? `user-${row.completed_by_user_id}`
@@ -22190,48 +22319,102 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
       name: row.completed_by_name || row.responsible_user_name || 'Sem responsável',
       role: null
     };
-    const collaborator = ensureCollaborator(identity);
-    const completedAtMs = completedAt.getTime();
 
-    if (completedAtMs >= periodStart) {
-      collaborator.completed_period += 1;
-      summary.completed_period += 1;
-    }
-    if (completedAtMs >= sevenDaysStart) {
-      collaborator.completed_7d += 1;
-      summary.completed_7d += 1;
-    }
-    if (completedAtMs >= todayStart) {
-      collaborator.completed_today += 1;
-      summary.completed_today += 1;
-    }
-    if (!collaborator.last_completed_at || new Date(collaborator.last_completed_at).getTime() < completedAtMs) {
-      collaborator.last_completed_at = row.completed_at;
+    const scheduledDateKey = getSaoPauloDateKey(row.scheduled_for);
+    if (
+      scheduledDateKey
+      && (!row.agenda_item_id || !currentRecurringCycleKeys.has(`${row.agenda_item_id}:${scheduledDateKey}`))
+    ) {
+      registerDailyMetric(identity, scheduledDateKey, 'scheduled');
     }
 
-    recentCompletions.push({
-      title: row.title || `Tarefa ${row.agenda_item_id}`,
-      collaborator_name: row.completed_by_name || row.responsible_user_name || 'Sem responsável',
-      completed_at: row.completed_at,
-      clinic_name: row.clinic_name || null,
-      patient_name: row.patient_name || null
-    });
+    if (row.completed_at) {
+      registerCompletionMetrics(identity, row.completed_at);
+      recentCompletions.push({
+        title: row.title || `Tarefa ${row.agenda_item_id}`,
+        collaborator_name: row.completed_by_name || row.responsible_user_name || 'Sem responsável',
+        completed_at: row.completed_at,
+        clinic_name: row.clinic_name || null,
+        patient_name: row.patient_name || null
+      });
+    }
   });
 
   const collaborators = Array.from(collaboratorMap.values())
-    .map((item) => ({
-      ...item,
-      productivity_index: Math.max(
-        0,
-        Math.round(((item.completed_7d * 100) / Math.max(1, item.open + item.completed_7d)) * 10) / 10
-      )
-    }))
+    .map((item) => {
+      const dailySeries = dateKeys.map((dateKey) => ({
+        ...((ensureCollaboratorSeries(item.key).get(dateKey)) || buildAgendaDailySeriesPoint(dateKey))
+      })).map((point) => ({
+        ...point,
+        net_flow: Number(point.completed || 0) - Number(point.created || 0),
+        completion_rate: Number(point.scheduled || 0)
+          ? Math.round(((Number(point.completed || 0) * 100) / Math.max(1, Number(point.scheduled || 0))) * 10) / 10
+          : (Number(point.completed || 0) > 0 ? 100 : 0)
+      }));
+
+      const bestDay = dailySeries.reduce((best, point) => {
+        if (Number(point.completed || 0) > Number(best.completed || 0)) return point;
+        return best;
+      }, { completed: 0, date_key: null });
+      const lastSevenStart = Math.max(0, dailySeries.length - 7);
+      const previousSevenStart = Math.max(0, dailySeries.length - 14);
+      const last7dCompleted = sumAgendaSeriesMetric(dailySeries, 'completed', lastSevenStart);
+      const previous7dCompleted = sumAgendaSeriesMetric(dailySeries, 'completed', previousSevenStart, lastSevenStart);
+      let currentStreak = 0;
+      for (let index = dailySeries.length - 1; index >= 0; index -= 1) {
+        if (Number(dailySeries[index]?.completed || 0) > 0) {
+          currentStreak += 1;
+        } else {
+          break;
+        }
+      }
+
+      return {
+        ...item,
+        daily_series: dailySeries,
+        activity_days: dailySeries.filter((point) => (point.created || point.completed || point.scheduled)).length,
+        daily_average_completed: Math.round(((item.completed_period / Math.max(1, periodDays)) * 10)) / 10,
+        daily_average_created: Math.round(((item.created_period / Math.max(1, periodDays)) * 10)) / 10,
+        completion_rate_period: item.scheduled_period
+          ? Math.round(((item.completed_period * 100) / Math.max(1, item.scheduled_period)) * 10) / 10
+          : (item.completed_period > 0 ? 100 : 0),
+        best_day_completed: Number(bestDay.completed || 0),
+        best_day_date: bestDay.date_key || null,
+        last_7d_completed: last7dCompleted,
+        previous_7d_completed: previous7dCompleted,
+        momentum_delta: last7dCompleted - previous7dCompleted,
+        current_streak: currentStreak,
+        productivity_index: Math.max(
+          0,
+          Math.round(((item.completed_7d * 100) / Math.max(1, item.open + item.completed_7d)) * 10) / 10
+        )
+      };
+    })
     .sort((left, right) => {
       if (left.overdue !== right.overdue) return right.overdue - left.overdue;
       if (left.completed_7d !== right.completed_7d) return right.completed_7d - left.completed_7d;
       if (left.open !== right.open) return right.open - left.open;
       return left.name.localeCompare(right.name, 'pt-BR');
     });
+
+  const dailySeries = dateKeys.map((dateKey) => ({
+    ...(teamSeriesMap.get(dateKey) || buildAgendaDailySeriesPoint(dateKey))
+  })).map((point) => ({
+    ...point,
+    active_collaborators: collaborators.reduce((total, collaborator) => (
+      total + ((collaborator.daily_series || []).some((entry) => entry.date_key === point.date_key && (entry.created || entry.completed || entry.scheduled)) ? 1 : 0)
+    ), 0),
+    net_flow: Number(point.completed || 0) - Number(point.created || 0),
+    completion_rate: Number(point.scheduled || 0)
+      ? Math.round(((Number(point.completed || 0) * 100) / Math.max(1, Number(point.scheduled || 0))) * 10) / 10
+      : (Number(point.completed || 0) > 0 ? 100 : 0)
+  }));
+
+  summary.daily_average_completed = Math.round(((summary.completed_period / Math.max(1, periodDays)) * 10)) / 10;
+  summary.daily_average_created = Math.round(((summary.created_period / Math.max(1, periodDays)) * 10)) / 10;
+  summary.completion_rate_period = summary.scheduled_period
+    ? Math.round(((summary.completed_period * 100) / Math.max(1, summary.scheduled_period)) * 10) / 10
+    : (summary.completed_period > 0 ? 100 : 0);
 
   urgentItems.sort((left, right) => {
     const leftHours = getAgendaHoursUntil(left.due_at);
@@ -22244,6 +22427,7 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
     generated_at: now.toISOString(),
     window_days: periodDays,
     summary,
+    daily_series: dailySeries,
     collaborators,
     top_performers: [...collaborators]
       .sort((left, right) => {
@@ -22289,11 +22473,13 @@ async function loadAgendaDashboardReport(user, options = {}) {
      INNER JOIN agenda_items a ON a.id = l.agenda_item_id
      WHERE a.deleted_at IS NULL
        AND ${visibility.sql}
-       AND l.completed_at IS NOT NULL
-       AND l.completed_at >= ?
-     ORDER BY l.completed_at DESC
-     LIMIT 5000`,
-    [...visibility.params, completionSince]
+       AND (
+         (l.completed_at IS NOT NULL AND l.completed_at >= ?)
+         OR (l.scheduled_for IS NOT NULL AND l.scheduled_for >= ?)
+       )
+     ORDER BY COALESCE(l.completed_at, l.scheduled_for) DESC
+     LIMIT 8000`,
+    [...visibility.params, completionSince, completionSince]
   );
 
   return {
@@ -22330,14 +22516,57 @@ function buildAgendaDashboardExcelBuffer(report = {}) {
     concluidas_hoje: item.completed_today,
     concluidas_7_dias: item.completed_7d,
     concluidas_periodo: item.completed_period,
+    media_diaria_conclusao: item.daily_average_completed,
+    media_diaria_criacao: item.daily_average_created,
+    taxa_execucao_periodo: item.completion_rate_period,
+    melhor_dia: item.best_day_date || '-',
+    melhor_dia_conclusoes: item.best_day_completed,
+    ritmo_7_dias: item.last_7d_completed,
+    delta_7_dias: item.momentum_delta,
     indice_produtividade: item.productivity_index,
     ultima_execucao: item.last_completed_at ? formatMessageDateTime(item.last_completed_at) : '-'
   })));
   collaboratorsSheet['!cols'] = [
     { wch: 28 }, { wch: 18 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 }, { wch: 10 },
-    { wch: 12 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 18 }, { wch: 16 }, { wch: 22 }
+    { wch: 12 }, { wch: 18 }, { wch: 16 }, { wch: 16 }, { wch: 18 }, { wch: 16 }, { wch: 16 },
+    { wch: 16 }, { wch: 18 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 16 }, { wch: 22 }
   ];
   XLSX.utils.book_append_sheet(workbook, collaboratorsSheet, 'Colaboradores');
+
+  const dailySummarySheet = XLSX.utils.json_to_sheet((report.daily_series || []).map((item) => ({
+    data: item.date_key,
+    rotulo: item.label,
+    criadas: item.created,
+    concluidas: item.completed,
+    programadas: item.scheduled,
+    colaboradores_ativos: item.active_collaborators,
+    saldo_operacional: item.net_flow,
+    taxa_execucao: item.completion_rate
+  })));
+  dailySummarySheet['!cols'] = [
+    { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 18 }, { wch: 16 }, { wch: 14 }
+  ];
+  XLSX.utils.book_append_sheet(workbook, dailySummarySheet, 'Evolucao diaria');
+
+  const dailyCollaboratorsSheet = XLSX.utils.json_to_sheet(
+    (report.collaborators || []).flatMap((item) => (
+      (item.daily_series || []).map((point) => ({
+        colaborador: item.name,
+        perfil: item.role || '-',
+        data: point.date_key,
+        rotulo: point.label,
+        criadas: point.created,
+        concluidas: point.completed,
+        programadas: point.scheduled,
+        saldo_operacional: point.net_flow,
+        taxa_execucao: point.completion_rate
+      }))
+    ))
+  );
+  dailyCollaboratorsSheet['!cols'] = [
+    { wch: 26 }, { wch: 18 }, { wch: 14 }, { wch: 10 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 16 }, { wch: 14 }
+  ];
+  XLSX.utils.book_append_sheet(workbook, dailyCollaboratorsSheet, 'Evolucao equipe');
 
   const itemsSheet = XLSX.utils.json_to_sheet((report.items || []).map((item) => ({
     id: item.id,
