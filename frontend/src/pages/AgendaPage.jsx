@@ -62,6 +62,17 @@ const agendaPatientQueueOptions = [
   { value: 'evasion', label: 'Evasao', helper: 'Pacientes que nao confirmaram para tratativa' }
 ];
 
+const agendaImportTypeOptions = [
+  { value: 'demands', label: 'Demandas' },
+  { value: 'patient_agenda', label: 'Agenda de Pacientes' }
+];
+
+const agendaDuplicateStrategyOptions = [
+  { value: 'ignore', label: 'Ignorar duplicados' },
+  { value: 'update', label: 'Atualizar duplicados' },
+  { value: 'import_anyway', label: 'Importar mesmo assim' }
+];
+
 const emptyDraft = {
   title: '',
   description: '',
@@ -86,6 +97,8 @@ const emptyDraft = {
 
 const emptyImportDraft = {
   file: null,
+  import_type: 'patient_agenda',
+  duplicate_strategy: 'ignore',
   clinic_id: '',
   default_assigned_user_id: '',
   create_tasks: true,
@@ -378,6 +391,12 @@ function getAgendaConfirmationStatusLabel(value = '') {
   return 'Pendente';
 }
 
+function getAgendaImportResultLabel(value = '') {
+  if (value === 'valid') return 'Valido';
+  if (value === 'duplicate') return 'Duplicado';
+  return 'Erro';
+}
+
 function matchesAgendaPatientQueue(item = {}, queue = 'all') {
   if (queue === 'all') return true;
   const isPatientDemand = (item.demand_type || 'general') === 'patient' || item.patient_name || item.patient_phone;
@@ -506,7 +525,9 @@ export default function AgendaPage() {
   const [exportingReport, setExportingReport] = useState('');
   const [importDraft, setImportDraft] = useState(emptyImportDraft);
   const [importing, setImporting] = useState(false);
+  const [validatingImport, setValidatingImport] = useState(false);
   const [importSummary, setImportSummary] = useState(null);
+  const [importValidation, setImportValidation] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -949,6 +970,7 @@ export default function AgendaPage() {
 
   const updateImportDraft = (field, value) => {
     setImportDraft((current) => ({ ...current, [field]: value }));
+    setImportValidation(null);
   };
 
   const downloadReport = async (format) => {
@@ -985,9 +1007,66 @@ export default function AgendaPage() {
     }
   };
 
+  const validateImport = async () => {
+    if (!importDraft.file) {
+      setFeedback('Selecione a planilha para validar a agenda.');
+      return null;
+    }
+    if (!importDraft.clinic_id) {
+      setFeedback('Selecione a unidade da planilha antes de validar.');
+      return null;
+    }
+
+    setValidatingImport(true);
+    setFeedback('');
+    setImportSummary(null);
+
+    try {
+      const formData = new FormData();
+      formData.append('file', importDraft.file);
+      formData.append('import_type', importDraft.import_type);
+      formData.append('campaign_clinic_id', importDraft.clinic_id);
+      if (importDraft.default_assigned_user_id) {
+        formData.append('default_assigned_user_id', importDraft.default_assigned_user_id);
+      }
+
+      const response = await api.post('/api/agenda/import/validate', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+
+      setImportValidation(response.data || null);
+      setFeedback(response.data?.summary?.total_error
+        ? 'Validacao concluida com pendencias. Corrija a planilha antes de importar.'
+        : 'Validacao concluida. A planilha esta pronta para importacao.'
+      );
+      return response.data || null;
+    } catch (error) {
+      setImportValidation(null);
+      setFeedback(getApiErrorMessage(error, 'Nao foi possivel validar a planilha da agenda.'));
+      return null;
+    } finally {
+      setValidatingImport(false);
+    }
+  };
+
   const submitImport = async () => {
     if (!importDraft.file) {
       setFeedback('Selecione a planilha para importar a agenda.');
+      return;
+    }
+    if (!importDraft.clinic_id) {
+      setFeedback('Selecione a unidade da planilha antes de importar.');
+      return;
+    }
+
+    const validation = importValidation || await validateImport();
+    if (!validation) {
+      return;
+    }
+    if (validation?.summary?.total_error) {
+      setFeedback('A importacao foi bloqueada porque ainda existem erros de validacao na planilha.');
       return;
     }
 
@@ -998,11 +1077,11 @@ export default function AgendaPage() {
     try {
       const formData = new FormData();
       formData.append('file', importDraft.file);
+      formData.append('import_type', importDraft.import_type);
+      formData.append('duplicate_strategy', importDraft.duplicate_strategy);
       formData.append('create_tasks', importDraft.create_tasks ? 'true' : 'false');
       formData.append('dispatch_whatsapp', importDraft.dispatch_whatsapp ? 'true' : 'false');
-      if (importDraft.clinic_id) {
-        formData.append('campaign_clinic_id', importDraft.clinic_id);
-      }
+      formData.append('campaign_clinic_id', importDraft.clinic_id);
       if (importDraft.default_assigned_user_id) {
         formData.append('default_assigned_user_id', importDraft.default_assigned_user_id);
       }
@@ -1018,6 +1097,7 @@ export default function AgendaPage() {
 
       setImportSummary(response.data || null);
       setImportDraft(emptyImportDraft);
+      setImportValidation(null);
       await Promise.all([loadItems(), loadDashboard()]);
       setFeedback(response.data?.message || 'Importacao da agenda concluida.');
     } catch (error) {
@@ -1378,6 +1458,14 @@ export default function AgendaPage() {
                 />
               </label>
               <label>
+                Tipo de importaÃ§Ã£o
+                <select className="field" value={importDraft.import_type} onChange={(event) => updateImportDraft('import_type', event.target.value)}>
+                  {agendaImportTypeOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
                 Unidade da planilha
                 <select className="field" value={importDraft.clinic_id} onChange={(event) => updateImportDraft('clinic_id', event.target.value)}>
                   <option value="">Selecione a unidade</option>
@@ -1392,6 +1480,14 @@ export default function AgendaPage() {
                   <option value="">Usar colaborador da planilha</option>
                   {assigneeOptions.map((user) => (
                     <option key={user.id} value={user.id}>{formatAgendaUserOption(user)}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Duplicidade
+                <select className="field" value={importDraft.duplicate_strategy} onChange={(event) => updateImportDraft('duplicate_strategy', event.target.value)}>
+                  {agendaDuplicateStrategyOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
                   ))}
                 </select>
               </label>
@@ -1427,10 +1523,69 @@ export default function AgendaPage() {
             ) : null}
 
             <div className="agenda-import-actions">
+              <button type="button" className="outline-action" onClick={validateImport} disabled={validatingImport || importing}>
+                {validatingImport ? 'Validando...' : 'Validar dados'}
+              </button>
               <button type="button" className="primary-action" onClick={submitImport} disabled={importing}>
                 {importing ? 'Importando...' : 'Importar planilha'}
               </button>
             </div>
+
+            {importValidation ? (
+              <>
+                <div className="agenda-import-summary">
+                  <article>
+                    <span>Total encontrado</span>
+                    <strong>{importValidation.summary?.total_found || 0}</strong>
+                  </article>
+                  <article>
+                    <span>Total valido</span>
+                    <strong>{importValidation.summary?.total_valid || 0}</strong>
+                  </article>
+                  <article>
+                    <span>Total duplicado</span>
+                    <strong>{importValidation.summary?.total_duplicate || 0}</strong>
+                  </article>
+                  <article>
+                    <span>Total com erro</span>
+                    <strong>{importValidation.summary?.total_error || 0}</strong>
+                  </article>
+                </div>
+                <div className="agenda-dashboard-table-wrapper">
+                  <table className="agenda-dashboard-table">
+                    <thead>
+                      <tr>
+                        <th>Paciente</th>
+                        <th>Telefone</th>
+                        <th>Data</th>
+                        <th>Hora</th>
+                        <th>Especialidade</th>
+                        <th>Dentista</th>
+                        <th>Status</th>
+                        <th>Resultado</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(importValidation.rows || []).slice(0, 25).map((row) => (
+                        <tr key={`agenda-import-validation-${row.line}`}>
+                          <td>
+                            <strong>{row.patient_name || `Linha ${row.line}`}</strong>
+                            {row.reasons?.length ? <small className="table-helper">{row.reasons.join(' | ')}</small> : null}
+                          </td>
+                          <td>{row.patient_phone || '-'}</td>
+                          <td>{row.data_consulta || '-'}</td>
+                          <td>{row.hora_consulta || '-'}</td>
+                          <td>{row.patient_specialty || '-'}</td>
+                          <td>{row.patient_dentist || '-'}</td>
+                          <td>{row.status || '-'}</td>
+                          <td>{getAgendaImportResultLabel(row.result)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            ) : null}
 
             {importSummary ? (
               <div className="agenda-import-summary">
@@ -1439,16 +1594,16 @@ export default function AgendaPage() {
                   <strong>{importSummary.created || 0}</strong>
                 </article>
                 <article>
+                  <span>Demandas atualizadas</span>
+                  <strong>{importSummary.updated || 0}</strong>
+                </article>
+                <article>
                   <span>WhatsApp enfileirado</span>
                   <strong>{importSummary.whatsappQueued || 0}</strong>
                 </article>
                 <article>
-                  <span>Bloqueios</span>
-                  <strong>{importSummary.invalid || 0}</strong>
-                </article>
-                <article>
-                  <span>Lote</span>
-                  <strong>{importSummary.batchId || '-'}</strong>
+                  <span>Duplicidades ignoradas</span>
+                  <strong>{importSummary.duplicateSkipped || 0}</strong>
                 </article>
               </div>
             ) : null}
