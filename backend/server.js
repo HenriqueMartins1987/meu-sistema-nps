@@ -22930,7 +22930,7 @@ function buildAgendaImportTaskTitle(row = {}) {
 
   const patientName = sanitizeFinancialString(row.patient_name || row.nome_paciente, 120) || 'Paciente';
   const clinicName = sanitizeFinancialString(row.clinic_name || row.clinica, 80) || '';
-  return clinicName ? `Confirmar atendimento - ${patientName} (${clinicName})` : `Confirmar atendimento - ${patientName}`;
+  return clinicName ? `Agendamento e confirmacao - ${patientName} (${clinicName})` : `Agendamento e confirmacao - ${patientName}`;
 }
 
 function buildAgendaImportDescription(row = {}) {
@@ -22946,7 +22946,11 @@ function buildAgendaImportDescription(row = {}) {
     row.clinic_name ? `Unidade: ${row.clinic_name}` : null,
     row.patient_name ? `Paciente: ${row.patient_name}` : null,
     row.patient_phone ? `Telefone: ${row.patient_phone}` : null,
-    row.data_consulta ? `Consulta: ${row.data_consulta}${row.hora_consulta ? ` às ${row.hora_consulta}` : ''}` : null
+    row.data_consulta ? `Consulta: ${row.data_consulta}${row.hora_consulta ? ` às ${row.hora_consulta}` : ''}` : null,
+    (row.especialidade || row.specialty) ? `Especialidade: ${row.especialidade || row.specialty}` : null,
+    (row.dentista || row.nome_dentista || row.doctor_name) ? `Dentista: ${row.dentista || row.nome_dentista || row.doctor_name}` : null,
+    row.canal ? `Canal: ${row.canal}` : null,
+    (row.id_externo || row.external_id) ? `ID externo: ${row.id_externo || row.external_id}` : null
   ].filter(Boolean);
 
   return [explicitDescription, ...extraBits].filter(Boolean).join('\n');
@@ -23003,7 +23007,11 @@ function parseAgendaImportRowsFromWorksheetRows(rows = []) {
         patient_name: patientName,
         patient_phone: patientPhone,
         data_consulta: normalizeMassCampaignDateValue(getAgendaImportRowValue(row, ['data_consulta', 'data da consulta', 'appointment_date'])),
-        hora_consulta: normalizeMassCampaignTimeValue(getAgendaImportRowValue(row, ['hora_consulta', 'hora da consulta', 'appointment_time']))
+        hora_consulta: normalizeMassCampaignTimeValue(getAgendaImportRowValue(row, ['hora_consulta', 'hora da consulta', 'appointment_time'])),
+        especialidade: getAgendaImportRowValue(row, ['especialidade', 'specialty']),
+        dentista: getAgendaImportRowValue(row, ['dentista', 'nome_dentista', 'doctor_name']),
+        canal: getAgendaImportRowValue(row, ['canal', 'channel']),
+        id_externo: getAgendaImportRowValue(row, ['id_externo', 'external_id'])
       }),
       priority: normalizeAgendaPriority(getAgendaImportRowValue(row, ['prioridade', 'priority'])),
       status: normalizeAgendaStatus(getAgendaImportRowValue(row, ['status_inicial', 'status', 'etapa'])),
@@ -23011,7 +23019,11 @@ function parseAgendaImportRowsFromWorksheetRows(rows = []) {
       reminder_at: normalizeAgendaImportDateTime(reminderDateSource, reminderTimeSource, '08:00'),
       is_daily_recurring: recurring,
       recurrence_weekdays: weekdays,
-      tags: normalizeAgendaTags(getAgendaImportRowValue(row, ['tags', 'etiquetas', 'labels'])),
+      tags: normalizeAgendaTags([
+        getAgendaImportRowValue(row, ['tags', 'etiquetas', 'labels']),
+        getAgendaImportRowValue(row, ['especialidade', 'specialty']),
+        getAgendaImportRowValue(row, ['canal', 'channel'])
+      ].filter(Boolean).join(',')),
       clinic_name: clinicName,
       demand_type: patientName || patientPhone ? 'patient' : 'general',
       patient_name: patientName,
@@ -23107,41 +23119,79 @@ function resolveAgendaImportAssignee(directory, row = {}, defaultAssignee = null
 function buildAgendaImportTemplateBuffer() {
   const workbook = XLSX.utils.book_new();
   const headers = [
+    'id_externo',
+    'nome_paciente',
+    'telefone',
+    'data_consulta',
+    'hora_consulta',
+    'especialidade',
+    'dentista',
+    'status',
+    'canal',
+    'observacao',
     'colaborador',
     'email_responsavel',
-    'titulo_tarefa',
-    'descricao',
+    'clinica',
+    'enviar_confirmacao_whatsapp',
     'prioridade',
     'status_inicial',
     'prazo',
     'hora_prazo',
     'lembrete_data',
     'lembrete_hora',
+    'titulo_tarefa',
+    'descricao',
     'recorrente_diario',
     'dias_semana',
-    'nome_paciente',
-    'telefone',
-    'clinica',
-    'data_consulta',
-    'hora_consulta',
-    'enviar_confirmacao_whatsapp',
     'tags'
   ];
-  const sheet = XLSX.utils.aoa_to_sheet([
-    headers,
-    ['Ana CRC', 'ana.crc@empresa.com.br', 'Confirmar atendimento - Maria Silva', 'Contato de confirmação e follow-up do dia.', 'alta', 'todo', '12/06/2026', '09:30', '12/06/2026', '08:30', 'sim', 'seg,ter,qua,qui,sex', 'Maria Silva', '5562999999999', 'Garavelo', '12/06/2026', '10:00', 'sim', 'CRC,confirmacao']
-  ]);
+  const sheet = XLSX.utils.aoa_to_sheet([headers]);
   sheet['!cols'] = headers.map((header) => ({ wch: Math.max(16, header.length + 4) }));
-  XLSX.utils.book_append_sheet(workbook, sheet, 'Demandas');
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Agenda de Pacientes');
+
+  const exampleSheet = XLSX.utils.aoa_to_sheet([
+    headers,
+    [
+      'CRC-0001',
+      'Maria Silva',
+      '5562999999999',
+      '12/06/2026',
+      '10:00',
+      'Avaliacao',
+      'Dr. Henrique',
+      'pendente',
+      'WhatsApp',
+      'Paciente pediu contato para confirmar presenca e concluir o agendamento.',
+      'Ana CRC',
+      'ana.crc@empresa.com.br',
+      'Garavelo',
+      'sim',
+      'alta',
+      'todo',
+      '12/06/2026',
+      '09:30',
+      '12/06/2026',
+      '08:30',
+      'Agendamento e confirmacao - Maria Silva',
+      'Priorizar retorno e registrar status final da confirmacao.',
+      'nao',
+      '',
+      'CRC,confirmacao,avaliacao'
+    ]
+  ]);
+  exampleSheet['!cols'] = sheet['!cols'];
+  XLSX.utils.book_append_sheet(workbook, exampleSheet, 'Exemplo');
 
   const instructions = XLSX.utils.aoa_to_sheet([
     ['Como usar'],
-    ['1. Preencha a aba Demandas mantendo os cabeçalhos exatamente iguais.'],
-    ['2. colaborador, email_responsavel ou username_responsavel podem identificar o responsável.'],
-    ['3. prazo e lembrete_data aceitam DD/MM/AAAA; hora_prazo e lembrete_hora aceitam HH:MM.'],
-    ['4. Se recorrente_diario = sim, use dias_semana com valores como seg, qua, sex ou 1,3,5.'],
-    ['5. Para envio em massa no WhatsApp, selecione a unidade no sistema e marque enviar_confirmacao_whatsapp = sim quando quiser controlar linha a linha.'],
-    ['6. Quando titulo_tarefa estiver vazio, o sistema gera automaticamente uma tarefa de confirmação usando paciente e unidade.']
+    ['1. Cole a agenda externa diretamente na aba "Agenda de Pacientes", a partir da linha 2, sem alterar os cabecalhos.'],
+    ['2. O operador CRC pode copiar e colar os dados de nome, telefone, data, hora, especialidade, dentista, status, canal e observacao sem montar nova planilha.'],
+    ['3. A unidade deve ser escolhida no sistema no campo "Unidade da planilha"; ela passa a valer para todos os pacientes importados.'],
+    ['4. Se colaborador e email_responsavel ficarem vazios, o sistema usa o responsavel padrao selecionado antes do upload.'],
+    ['5. data_consulta e prazo aceitam DD/MM/AAAA; hora_consulta, hora_prazo e lembrete_hora aceitam HH:MM.'],
+    ['6. enviar_confirmacao_whatsapp = sim enfileira a confirmacao do paciente no fluxo operacional ja existente.'],
+    ['7. Quando titulo_tarefa e descricao estiverem vazios, o sistema cria automaticamente uma demanda profissional de agendamento e confirmacao.'],
+    ['8. Use a aba "Exemplo" apenas como referencia visual do preenchimento esperado.']
   ]);
   instructions['!cols'] = [{ wch: 110 }];
   XLSX.utils.book_append_sheet(workbook, instructions, 'Instrucoes');
