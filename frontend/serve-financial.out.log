@@ -1,0 +1,5 @@
+ INFO  Accepting connections at http://localhost:4174
+ HTTP  13/05/2026 12:23:42 ::1 GET /home/financial-intelligence
+ HTTP  13/05/2026 12:23:42 ::1 Returned 200 in 47 ms
+ HTTP  13/05/2026 12:26:39 ::1 GET /home/financial-intelligence
+ HTTP  13/05/2026 12:26:39 ::1 Returned 200 in 28 ms

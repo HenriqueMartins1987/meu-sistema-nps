@@ -1,0 +1,48 @@
+Vercel CLI 54.9.1 (Node.js 24.14.1)
+Retrieving project…
+Deploying henriquemartins1987s-projects/frontend
+Uploading [--------------------] (0.0B/107B)
+Uploading [====================] (107.0B/107B)
+  Inspect     https://vercel.com/henriquemartins1987s-projects/frontend/3VuZYifFFJzQqatZEiFh7XAUEZDB
+▲ Production  https://frontend-fvi1r6c4u-henriquemartins1987s-projects.vercel.app
+Building…
+Building…
+Running build in Washington, D.C., USA (East) – iad1
+Build machine configuration: 2 cores, 8 GB
+Retrieving list of deployment files...
+Downloading 571 deployment files...
+Restored build cache from previous deployment (AymPDeKe33ewmhSJJngTD4ewKa3r)
+Running "vercel build"
+Vercel CLI 54.9.0
+Installing dependencies...
+up to date in 2s
+270 packages are looking for funding
+run `npm fund` for details
+npm notice
+npm notice New minor version of npm available! 11.12.1 -> 11.16.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.16.0
+npm notice To update run: npm install -g npm@11.16.0
+npm notice
+Running "npm run build"
+> frontend@0.1.0 build
+> react-scripts build
+(node:105) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Creating an optimized production build...
+Compiled successfully.
+File sizes after gzip:
+478.45 kB (+946 B)  build/static/js/main.e6a144d9.js
+45.97 kB            build/static/css/main.eb1a490f.css
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
+The build folder is ready to be deployed.
+You may serve it with a static server:
+npm install -g serve
+serve -s build
+Find out more about deployment here:
+https://cra.link/deployment
+Build Completed in /vercel/output [36s]
+Deploying outputs...
+[2K[1A[2K[G▲ Production  https://frontend-fvi1r6c4u-henriquemartins1987s-projects.vercel.app
+Completing…
+▲ Aliased     https://frontend-psi-snowy-ztgfl0dahf.vercel.app

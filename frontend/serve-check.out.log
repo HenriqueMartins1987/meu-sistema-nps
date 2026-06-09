@@ -1,0 +1,33 @@
+ INFO  Accepting connections at http://localhost:4173
+ HTTP  22/05/2026 11:42:16 ::1 GET /
+ HTTP  22/05/2026 11:42:16 ::1 Returned 200 in 223 ms
+ HTTP  22/05/2026 11:42:16 ::1 GET /static/js/main.4a15c3f3.js
+ HTTP  22/05/2026 11:42:16 ::1 GET /static/css/main.ed502abd.css
+ HTTP  22/05/2026 11:42:16 ::1 Returned 200 in 45 ms
+ HTTP  22/05/2026 11:42:16 ::1 Returned 200 in 87 ms
+ HTTP  22/05/2026 11:42:19 ::1 GET /static/media/logo3.204ee238fae2876c72fb.png
+ HTTP  22/05/2026 11:42:19 ::1 Returned 304 in 23 ms
+ HTTP  22/05/2026 11:46:43 ::1 GET /
+ HTTP  22/05/2026 11:46:43 ::1 Returned 200 in 134 ms
+ HTTP  22/05/2026 11:46:43 ::1 GET /static/css/main.2a1930a1.css
+ HTTP  22/05/2026 11:46:43 ::1 GET /static/js/main.4a15c3f3.js
+ HTTP  22/05/2026 11:46:43 ::1 Returned 200 in 22 ms
+ HTTP  22/05/2026 11:46:43 ::1 Returned 304 in 53 ms
+ HTTP  22/05/2026 11:46:44 ::1 GET /static/media/logo3.204ee238fae2876c72fb.png
+ HTTP  22/05/2026 11:46:44 ::1 Returned 304 in 6 ms
+ HTTP  22/05/2026 14:01:56 ::1 GET /home/whatsapp-management/confirmation
+ HTTP  22/05/2026 14:01:56 ::1 Returned 200 in 26 ms
+ HTTP  22/05/2026 14:01:56 ::1 GET /static/js/main.c0e77434.js
+ HTTP  22/05/2026 14:01:56 ::1 GET /static/css/main.49620828.css
+ HTTP  22/05/2026 14:01:56 ::1 Returned 200 in 9 ms
+ HTTP  22/05/2026 14:01:56 ::1 Returned 200 in 51 ms
+ HTTP  22/05/2026 14:01:57 ::1 GET /static/media/logo3.204ee238fae2876c72fb.png
+ HTTP  22/05/2026 14:01:57 ::1 Returned 304 in 8 ms
+ HTTP  22/05/2026 14:06:43 ::1 GET /
+ HTTP  22/05/2026 14:06:43 ::1 Returned 200 in 15 ms
+ HTTP  22/05/2026 14:06:43 ::1 GET /static/js/main.7dc01748.js
+ HTTP  22/05/2026 14:06:43 ::1 GET /static/css/main.49620828.css
+ HTTP  22/05/2026 14:06:43 ::1 Returned 304 in 4 ms
+ HTTP  22/05/2026 14:06:43 ::1 Returned 200 in 12 ms
+ HTTP  22/05/2026 14:06:44 ::1 GET /static/media/logo3.204ee238fae2876c72fb.png
+ HTTP  22/05/2026 14:06:44 ::1 Returned 304 in 2 ms

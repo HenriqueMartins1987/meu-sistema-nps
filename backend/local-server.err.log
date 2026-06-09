@@ -1,0 +1,6 @@
+(node:14760) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Error: A clínica selecionada para a campanha não foi encontrada ou está inativa.
+    at resolveMassCampaignSelectedClinic (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\server.js:18159:11)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+    at async C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\server.js:23492:28

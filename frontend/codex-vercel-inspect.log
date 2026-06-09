@@ -1,0 +1,26 @@
+Vercel CLI 54.10.3 (Node.js 24.14.1)
+Fetching deployment "frontend-3wh2ir8mq-henriquemartins1987s-projects.vercel.app" in henriquemartins1987s-projects
+> Fetched deployment "frontend-3wh2ir8mq-henriquemartins1987s-projects.vercel.app" in henriquemartins1987s-projects [433ms]
+
+  General
+
+    id		dpl_DjEbVhJGVr3iLgNE2RK25qDJPt72
+    name	frontend
+    target	production
+    status	● Ready
+    url		https://frontend-3wh2ir8mq-henriquemartins1987s-projects.vercel.app
+    created	Tue Jun 09 2026 14:46:44 GMT-0300 (Horário Padrão de Brasília) [2m ago]
+
+
+  Aliases
+
+    ╶ https://frontend-psi-snowy-ztgfl0dahf.vercel.app
+    ╶ https://frontend-henriquemartins1987s-projects.vercel.app
+    ╶ https://frontend-henriquemartins1987-henriquemartins1987s-projects.vercel.app
+    
+
+  Builds
+
+    ╶ .        [0ms]
+    
+

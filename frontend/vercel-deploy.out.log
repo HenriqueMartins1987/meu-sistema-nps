@@ -1,0 +1,22 @@
+{
+  "status": "ok",
+  "deployment": {
+    "id": "dpl_3VuZYifFFJzQqatZEiFh7XAUEZDB",
+    "url": "https://frontend-fvi1r6c4u-henriquemartins1987s-projects.vercel.app",
+    "inspectorUrl": "https://vercel.com/henriquemartins1987s-projects/frontend/3VuZYifFFJzQqatZEiFh7XAUEZDB",
+    "readyState": "READY",
+    "target": "production",
+    "deploymentApiUrl": "https://api.vercel.com/v13/deployments/dpl_3VuZYifFFJzQqatZEiFh7XAUEZDB"
+  },
+  "message": "Deployment frontend-fvi1r6c4u-henriquemartins1987s-projects.vercel.app ready.",
+  "next": [
+    {
+      "command": "vercel inspect frontend-fvi1r6c4u-henriquemartins1987s-projects.vercel.app --scope henriquemartins1987s-projects",
+      "when": "Inspect deployment"
+    },
+    {
+      "command": "vercel deploy --prod --scope henriquemartins1987s-projects",
+      "when": "Promote to production"
+    }
+  ]
+}

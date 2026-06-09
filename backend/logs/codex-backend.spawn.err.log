@@ -1,0 +1,60 @@
+(node:31256) [DEP0169] DeprecationWarning: `url.parse()` behavior is not standardized and prone to errors that have security implications. Use the WHATWG URL API instead. CVEs are not issued for `url.parse()` vulnerabilities.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[Evolution:send_message_error] error instance=reclamacoes error=Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.
+[Evolution:send_message_error] error instance=reclamacoes error=Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.
+[Evolution:send_message_error] error instance=reclamacoes error=Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.
+[Evolution:send_message_error] error instance=reclamacoes error=Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.
+Error: Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.
+    at assertConfigured (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:36:11)
+    at client (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:42:18)
+    at C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:118:42
+    at withRetry (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:59:20)
+    at Object.connectInstance (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:118:26)
+    at handleWhatsAppInstanceQrCode (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\server.js:11770:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+[Evolution:generate_qrcode] error instance=canaa error=Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.
+Error: Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.
+    at assertConfigured (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:36:11)
+    at client (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:42:18)
+    at C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:118:42
+    at withRetry (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:59:20)
+    at Object.connectInstance (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:118:26)
+    at handleWhatsAppInstanceQrCode (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\server.js:11770:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+[Evolution:generate_qrcode] error instance=canaa error=Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.
+Error: Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.
+    at assertConfigured (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:36:11)
+    at client (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:42:18)
+    at C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:118:42
+    at withRetry (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:59:20)
+    at Object.connectInstance (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:118:26)
+    at handleWhatsAppInstanceQrCode (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\server.js:11770:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+[Evolution:generate_qrcode] error instance=canaa error=Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.
+Error: Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.
+    at assertConfigured (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:36:11)
+    at client (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:42:18)
+    at C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:118:42
+    at withRetry (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:59:20)
+    at Object.connectInstance (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:118:26)
+    at handleWhatsAppInstanceQrCode (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\server.js:11770:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+[Evolution:generate_qrcode] error instance=castelo-branco error=Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.
+Error: Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.
+    at assertConfigured (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:36:11)
+    at client (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:42:18)
+    at C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:118:42
+    at withRetry (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:59:20)
+    at Object.connectInstance (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:118:26)
+    at handleWhatsAppInstanceQrCode (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\server.js:11770:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+[Evolution:generate_qrcode] error instance=castelo-branco error=Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.
+Error: Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.
+    at assertConfigured (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:36:11)
+    at client (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:42:18)
+    at C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:118:42
+    at withRetry (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:59:20)
+    at Object.connectInstance (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\services\evolutionService.js:118:26)
+    at handleWhatsAppInstanceQrCode (C:\Users\zyckh\OneDrive\Desktop\meu-sistema-nps\backend\server.js:11770:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)
+[Evolution:generate_qrcode] error instance=castelo-branco error=Configuracao Evolution API ausente: EVOLUTION_BASE_URL e EVOLUTION_API_KEY.

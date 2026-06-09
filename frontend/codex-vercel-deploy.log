@@ -1,0 +1,76 @@
+npm warn exec The following package was not found and will be installed: vercel@54.10.3
+Vercel CLI 54.10.3 (Node.js 24.14.1)
+Retrieving project…
+Deploying henriquemartins1987s-projects/frontend
+Uploading [--------------------] (0.0B/9MB)
+Uploading [=====---------------] (2.2MB/9MB)
+Uploading [==========----------] (4.5MB/9MB)
+Uploading [===============-----] (6.7MB/9MB)
+Uploading [====================] (9.0MB/9MB)
+  Inspect     https://vercel.com/henriquemartins1987s-projects/frontend/DjEbVhJGVr3iLgNE2RK25qDJPt72
+▲ Production  https://frontend-3wh2ir8mq-henriquemartins1987s-projects.vercel.app
+Building…
+Building…
+Running build in Washington, D.C., USA (East) – iad1
+Build machine configuration: 2 cores, 8 GB
+Retrieving list of deployment files...
+Downloading 573 deployment files...
+Restored build cache from previous deployment (FENyzM5WqgaojSJFZwtb2vh9Mrim)
+Running "vercel build"
+Vercel CLI 54.10.2
+Installing dependencies...
+up to date in 2s
+270 packages are looking for funding
+run `npm fund` for details
+npm notice
+npm notice New minor version of npm available! 11.12.1 -> 11.16.0
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v11.16.0
+npm notice To update run: npm install -g npm@11.16.0
+npm notice
+Running "npm run build"
+> frontend@0.1.0 build
+> react-scripts build
+(node:112) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Creating an optimized production build...
+Compiled successfully.
+File sizes after gzip:
+483.33 kB (+938 B)  build/static/js/main.9240d2c8.js
+46.57 kB            build/static/css/main.0b27890a.css
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
+The build folder is ready to be deployed.
+You may serve it with a static server:
+npm install -g serve
+serve -s build
+Find out more about deployment here:
+https://cra.link/deployment
+Build Completed in /vercel/output [37s]
+Deploying outputs...
+Deployment completed
+Creating build cache...
+[2K[1A[2K[G▲ Production  https://frontend-3wh2ir8mq-henriquemartins1987s-projects.vercel.app
+Completing…
+▲ Aliased     https://frontend-psi-snowy-ztgfl0dahf.vercel.app
+{
+  "status": "ok",
+  "deployment": {
+    "id": "dpl_DjEbVhJGVr3iLgNE2RK25qDJPt72",
+    "url": "https://frontend-3wh2ir8mq-henriquemartins1987s-projects.vercel.app",
+    "inspectorUrl": "https://vercel.com/henriquemartins1987s-projects/frontend/DjEbVhJGVr3iLgNE2RK25qDJPt72",
+    "readyState": "READY",
+    "target": "production",
+    "deploymentApiUrl": "https://api.vercel.com/v13/deployments/dpl_DjEbVhJGVr3iLgNE2RK25qDJPt72"
+  },
+  "message": "Deployment frontend-3wh2ir8mq-henriquemartins1987s-projects.vercel.app ready.",
+  "next": [
+    {
+      "command": "vercel inspect frontend-3wh2ir8mq-henriquemartins1987s-projects.vercel.app",
+      "when": "Inspect deployment"
+    },
+    {
+      "command": "vercel deploy --prod",
+      "when": "Promote to production"
+    }
+  ]
+}
