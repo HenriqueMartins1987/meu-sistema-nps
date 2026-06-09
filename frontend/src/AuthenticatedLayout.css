@@ -299,6 +299,15 @@
   line-height: 1.1;
 }
 
+.app-sidebar-session-user {
+  margin-top: 2px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(255, 250, 242, 0.92);
+}
+
 .auth-shell-content {
   position: relative;
   z-index: 1;

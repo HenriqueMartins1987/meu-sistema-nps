@@ -45,11 +45,35 @@ const recurrenceWeekdayOptions = [
   { value: 0, shortLabel: 'Dom', fullLabel: 'Domingo' }
 ];
 
+const agendaDemandTypeOptions = [
+  { value: 'general', label: 'Demanda geral' },
+  { value: 'patient', label: 'Paciente' }
+];
+
+const agendaConfirmationStatusOptions = [
+  { value: 'pendente', label: 'Pendente' },
+  { value: 'confirmado', label: 'Confirmado' },
+  { value: 'nao_confirmado', label: 'Nao confirmou' }
+];
+
+const agendaPatientQueueOptions = [
+  { value: 'all', label: 'Visao geral', helper: 'Todas as demandas da agenda' },
+  { value: 'pending_confirmation', label: 'Confirmacao', helper: 'Pacientes aguardando retorno' },
+  { value: 'evasion', label: 'Evasao', helper: 'Pacientes que nao confirmaram para tratativa' }
+];
+
 const emptyDraft = {
   title: '',
   description: '',
   status: 'todo',
   priority: 'normal',
+  demand_type: 'general',
+  patient_name: '',
+  patient_phone: '',
+  patient_has_scheduled: false,
+  patient_scheduled_at: '',
+  confirmation_status: 'pendente',
+  confirmation_notes: '',
   due_at: '',
   reminder_at: '',
   assigned_user_id: '',
@@ -96,11 +120,19 @@ function isOverdue(value) {
 }
 
 function normalizeDraftFromItem(item = {}) {
+  const demandType = item.demand_type || (item.patient_name || item.patient_phone ? 'patient' : 'general');
   return {
     title: item.title || '',
     description: item.description || '',
     status: item.status || 'todo',
     priority: item.priority || 'normal',
+    demand_type: demandType,
+    patient_name: item.patient_name || '',
+    patient_phone: item.patient_phone || '',
+    patient_has_scheduled: Boolean(item.patient_has_scheduled),
+    patient_scheduled_at: toDatetimeLocal(item.patient_scheduled_at),
+    confirmation_status: item.confirmation_status || 'pendente',
+    confirmation_notes: item.confirmation_notes || '',
     due_at: toDatetimeLocal(item.due_at),
     reminder_at: toDatetimeLocal(item.reminder_at),
     assigned_user_id: item.assigned_user_id ? String(item.assigned_user_id) : '',
@@ -336,6 +368,29 @@ function getPriorityLabel(priority = 'normal') {
   return 'Normal';
 }
 
+function getAgendaDemandTypeLabel(value = 'general') {
+  return value === 'patient' ? 'Paciente' : 'Demanda';
+}
+
+function getAgendaConfirmationStatusLabel(value = '') {
+  if (value === 'confirmado') return 'Confirmado';
+  if (value === 'nao_confirmado') return 'Evasao';
+  return 'Pendente';
+}
+
+function matchesAgendaPatientQueue(item = {}, queue = 'all') {
+  if (queue === 'all') return true;
+  const isPatientDemand = (item.demand_type || 'general') === 'patient' || item.patient_name || item.patient_phone;
+  if (!isPatientDemand) return false;
+  if (queue === 'pending_confirmation') {
+    return item.confirmation_status !== 'confirmado' && item.confirmation_status !== 'nao_confirmado';
+  }
+  if (queue === 'evasion') {
+    return item.confirmation_status === 'nao_confirmado';
+  }
+  return true;
+}
+
 function getAgendaDeadlineState(item = {}) {
   if (item.status === 'done') {
     return { label: 'Concluido', tone: 'done' };
@@ -393,6 +448,10 @@ function AgendaCard({ item, currentUserId, onOpen, onStatus, onDragStart }) {
         {recurrenceSummary ? <small>{recurrenceSummary}</small> : null}
         {item.requires_completion ? <small>Execução obrigatória</small> : null}
       </div>
+      <div className="agenda-card-secondary-meta">
+        {item.demand_type === 'patient' ? <small>{getAgendaDemandTypeLabel(item.demand_type)}</small> : null}
+        {item.demand_type === 'patient' ? <small>{getAgendaConfirmationStatusLabel(item.confirmation_status)}</small> : null}
+      </div>
       <div className="agenda-assignee">
         <div>
           <span>Responsavel principal</span>
@@ -405,6 +464,7 @@ function AgendaCard({ item, currentUserId, onOpen, onStatus, onDragStart }) {
         {item.reminder_at ? <span>Lembrete {formatDateTime(item.reminder_at)}</span> : null}
         {item.clinic_name ? <span>Unidade {item.clinic_name}</span> : null}
         {item.patient_name ? <span>Paciente {item.patient_name}</span> : null}
+        {item.patient_has_scheduled && item.patient_scheduled_at ? <span>Agendado para {formatDateTime(item.patient_scheduled_at)}</span> : null}
         {executionStamp ? <span>{executionStamp}</span> : null}
       </div>
       {tags.length ? (
@@ -452,6 +512,7 @@ export default function AgendaPage() {
   const [feedback, setFeedback] = useState('');
   const [search, setSearch] = useState('');
   const [activeStatus, setActiveStatus] = useState('');
+  const [activePatientQueue, setActivePatientQueue] = useState('all');
   const [activeAssignee, setActiveAssignee] = useState('');
   const [selectedItem, setSelectedItem] = useState(null);
   const [draft, setDraft] = useState(emptyDraft);
@@ -632,9 +693,13 @@ export default function AgendaPage() {
     return byId;
   }, [assigneeOptions]);
 
+  const queueFilteredItems = useMemo(() => (
+    items.filter((item) => matchesAgendaPatientQueue(item, activePatientQueue))
+  ), [activePatientQueue, items]);
+
   const allAgendaBoards = useMemo(() => (
-    buildAgendaBoards(items, assigneeDirectory, currentUserId)
-  ), [assigneeDirectory, currentUserId, items]);
+    buildAgendaBoards(queueFilteredItems, assigneeDirectory, currentUserId)
+  ), [assigneeDirectory, currentUserId, queueFilteredItems]);
 
   useEffect(() => {
     if (!activeAssignee) return;
@@ -644,17 +709,17 @@ export default function AgendaPage() {
 
   const filteredItems = useMemo(() => (
     activeAssignee
-      ? items.filter((item) => buildAgendaBoardIdentity(item, assigneeDirectory).key === activeAssignee)
-      : items
-  ), [activeAssignee, assigneeDirectory, items]);
+      ? queueFilteredItems.filter((item) => buildAgendaBoardIdentity(item, assigneeDirectory).key === activeAssignee)
+      : queueFilteredItems
+  ), [activeAssignee, assigneeDirectory, queueFilteredItems]);
 
   const globalStats = useMemo(() => {
-    const open = items.filter((item) => item.status !== 'done').length;
-    const overdue = items.filter((item) => item.status !== 'done' && isOverdue(item.due_at)).length;
-    const reminders = items.filter((item) => item.status !== 'done' && item.reminder_at && !item.reminder_acknowledged_at).length;
-    const done = items.filter((item) => item.status === 'done').length;
-    return { total: items.length, open, overdue, reminders, done };
-  }, [items]);
+    const open = queueFilteredItems.filter((item) => item.status !== 'done').length;
+    const overdue = queueFilteredItems.filter((item) => item.status !== 'done' && isOverdue(item.due_at)).length;
+    const reminders = queueFilteredItems.filter((item) => item.status !== 'done' && item.reminder_at && !item.reminder_acknowledged_at).length;
+    const done = queueFilteredItems.filter((item) => item.status === 'done').length;
+    return { total: queueFilteredItems.length, open, overdue, reminders, done };
+  }, [queueFilteredItems]);
 
   const stats = useMemo(() => {
     const open = filteredItems.filter((item) => item.status !== 'done').length;
@@ -662,6 +727,22 @@ export default function AgendaPage() {
     const reminders = filteredItems.filter((item) => item.status !== 'done' && item.reminder_at && !item.reminder_acknowledged_at).length;
     const done = filteredItems.filter((item) => item.status === 'done').length;
     return { total: filteredItems.length, open, overdue, reminders, done };
+  }, [filteredItems]);
+
+  const patientWorkflowStats = useMemo(() => {
+    const patientItems = filteredItems.filter((item) => (item.demand_type || 'general') === 'patient' || item.patient_name || item.patient_phone);
+    const confirmed = patientItems.filter((item) => item.confirmation_status === 'confirmado').length;
+    const pending = patientItems.filter((item) => item.confirmation_status !== 'confirmado' && item.confirmation_status !== 'nao_confirmado').length;
+    const evasion = patientItems.filter((item) => item.confirmation_status === 'nao_confirmado').length;
+    const scheduled = patientItems.filter((item) => item.patient_has_scheduled).length;
+    return {
+      total: patientItems.length,
+      confirmed,
+      pending,
+      evasion,
+      scheduled,
+      confirmationRate: patientItems.length ? Math.round((confirmed * 1000) / patientItems.length) / 10 : 0
+    };
   }, [filteredItems]);
 
   const agendaBoards = useMemo(() => (
@@ -718,6 +799,8 @@ export default function AgendaPage() {
     { label: 'Concluídas em 7 dias', value: dashboard?.summary?.completed_7d || 0, helper: 'produtividade recente', tone: 'success' },
     { label: 'Media diaria', value: dashboard?.summary?.daily_average_completed || 0, helper: 'entregas por dia', tone: 'success' },
     { label: 'Taxa de execucao', value: formatAgendaPercent(dashboard?.summary?.completion_rate_period || 0), helper: 'concluidas sobre programadas', tone: 'progress' },
+    { label: 'Confirmacao', value: formatAgendaPercent(dashboard?.summary?.patient_confirmation_rate || 0), helper: 'pacientes confirmados por operador', tone: 'progress' },
+    { label: 'Evasao', value: dashboard?.summary?.patient_evasion || 0, helper: 'nao confirmaram e exigem tratativa', tone: 'danger' },
     { label: 'Rotinas recorrentes', value: dashboard?.summary?.recurring || 0, helper: 'voltam automaticamente ao fluxo', tone: 'neutral' }
   ]), [dashboard]);
 
@@ -762,6 +845,10 @@ export default function AgendaPage() {
       setFeedback('Informe um titulo para o item da agenda.');
       return;
     }
+    if (draft.demand_type === 'patient' && !draft.patient_name.trim()) {
+      setFeedback('Informe o nome do paciente para a demanda.');
+      return;
+    }
 
     setSaving(true);
     setFeedback('');
@@ -771,6 +858,13 @@ export default function AgendaPage() {
       description: draft.description,
       status: draft.status,
       priority: draft.priority,
+      demand_type: draft.demand_type,
+      patient_name: draft.demand_type === 'patient' ? draft.patient_name : null,
+      patient_phone: draft.demand_type === 'patient' ? draft.patient_phone : null,
+      patient_has_scheduled: draft.demand_type === 'patient' ? Boolean(draft.patient_has_scheduled) : false,
+      patient_scheduled_at: draft.demand_type === 'patient' && draft.patient_has_scheduled ? (draft.patient_scheduled_at || null) : null,
+      confirmation_status: draft.demand_type === 'patient' ? draft.confirmation_status : null,
+      confirmation_notes: draft.demand_type === 'patient' ? draft.confirmation_notes : null,
       due_at: draft.due_at || null,
       reminder_at: draft.reminder_at || null,
       assigned_user_id: draft.assigned_user_id || null,
@@ -1163,6 +1257,8 @@ export default function AgendaPage() {
                         <th>Colaborador</th>
                         <th>Abertas</th>
                         <th>Atrasadas</th>
+                        <th>Confirmacao</th>
+                        <th>Evasao</th>
                         <th>24h</th>
                         <th>48h</th>
                         <th>Concl. 7d</th>
@@ -1179,6 +1275,8 @@ export default function AgendaPage() {
                           </td>
                           <td>{item.open}</td>
                           <td className={item.overdue ? 'danger-cell' : ''}>{item.overdue}</td>
+                          <td>{formatAgendaPercent(item.patient_confirmation_rate || 0)}</td>
+                          <td className={item.patient_evasion ? 'danger-cell' : ''}>{item.patient_evasion || 0}</td>
                           <td>{item.due_24h}</td>
                           <td>{item.due_48h}</td>
                           <td>{item.completed_7d}</td>
@@ -1230,6 +1328,25 @@ export default function AgendaPage() {
                       </article>
                     ))}
                     {!dashboardLoading && !(dashboard?.urgent_items || []).length ? <p className="empty-state">Sem demandas críticas na janela atual.</p> : null}
+                  </div>
+                </Card>
+
+                <Card className="agenda-urgent-panel">
+                  <div className="agenda-panel-headline">
+                    <div>
+                      <strong>Lista de evasao</strong>
+                      <span>Pacientes que nao confirmaram e exigem retorno ativo do operador.</span>
+                    </div>
+                  </div>
+                  <div className="agenda-urgent-list">
+                    {(dashboard?.evasion_items || []).map((item) => (
+                      <article key={`evasion-${item.id}`} className="late">
+                        <strong>{item.patient_name || item.title}</strong>
+                        <small>{item.assigned_user_name || 'Sem responsavel'} · {item.clinic_name || 'Sem unidade'}</small>
+                        <span>{item.confirmation_notes || 'Registrar motivo e plano de reversao.'}</span>
+                      </article>
+                    ))}
+                    {!dashboardLoading && !(dashboard?.evasion_items || []).length ? <p className="empty-state">Nenhum paciente em evasao na janela atual.</p> : null}
                   </div>
                 </Card>
               </div>
@@ -1356,6 +1473,9 @@ export default function AgendaPage() {
         <KPICard label="Lembretes" value={stats.reminders} helper="ativos ou programados" tone="warning" />
         <KPICard label="Atrasados" value={stats.overdue} helper="fora do prazo" tone="danger" />
         <KPICard label="Concluidos" value={stats.done} helper="finalizados" tone="success" />
+        <KPICard label="Confirmacao" value={formatAgendaPercent(patientWorkflowStats.confirmationRate)} helper={`${patientWorkflowStats.confirmed}/${patientWorkflowStats.total || 0} pacientes confirmados`} tone="progress" />
+        <KPICard label="Pendentes" value={patientWorkflowStats.pending} helper="pacientes aguardando retorno" tone="warning" />
+        <KPICard label="Evasao" value={patientWorkflowStats.evasion} helper="nao confirmaram e pedem tratativa" tone="danger" />
       </DashboardGrid>
 
       <SectionContainer className="agenda-control-panel">
@@ -1383,6 +1503,40 @@ export default function AgendaPage() {
             </select>
             <button type="button" className="outline-action" onClick={loadItems}>Atualizar</button>
           </div>
+        </div>
+      </SectionContainer>
+
+      <SectionContainer className="agenda-tabs-panel">
+        <div className="agenda-tabs-head">
+          <div>
+            <strong>Filas da agenda</strong>
+            <span>Separe a operacao geral, as confirmacoes pendentes e a lista de evasao para tratativa.</span>
+          </div>
+        </div>
+        <div className="agenda-tabs-strip" role="tablist" aria-label="Filas da agenda">
+          {agendaPatientQueueOptions.map((tab) => {
+            const isActive = activePatientQueue === tab.value;
+            return (
+              <button
+                key={tab.value}
+                type="button"
+                className={`agenda-tab-button ${isActive ? 'active' : ''}`}
+                onClick={() => setActivePatientQueue(tab.value)}
+                role="tab"
+                aria-selected={isActive}
+              >
+                <strong>{tab.label}</strong>
+                <span>{tab.helper}</span>
+                <small>
+                  {tab.value === 'pending_confirmation'
+                    ? `${patientWorkflowStats.pending} pendente(s)`
+                    : tab.value === 'evasion'
+                      ? `${patientWorkflowStats.evasion} caso(s)`
+                      : `${stats.total} item(ns)`}
+                </small>
+              </button>
+            );
+          })}
         </div>
       </SectionContainer>
 
@@ -1532,6 +1686,81 @@ export default function AgendaPage() {
                     placeholder="Descreva o objetivo, contexto, combinados e qualquer detalhe importante."
                   />
                 </label>
+                <label>
+                  Tipo da demanda
+                  <select
+                    className="field"
+                    value={draft.demand_type}
+                    onChange={(event) => setDraft((current) => ({
+                      ...current,
+                      demand_type: event.target.value,
+                      confirmation_status: event.target.value === 'patient' ? current.confirmation_status || 'pendente' : 'pendente',
+                      patient_has_scheduled: event.target.value === 'patient' ? current.patient_has_scheduled : false,
+                      patient_scheduled_at: event.target.value === 'patient' ? current.patient_scheduled_at : '',
+                      patient_name: event.target.value === 'patient' ? current.patient_name : '',
+                      patient_phone: event.target.value === 'patient' ? current.patient_phone : '',
+                      confirmation_notes: event.target.value === 'patient' ? current.confirmation_notes : ''
+                    }))}
+                  >
+                    {agendaDemandTypeOptions.map((option) => (
+                      <option key={option.value} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </label>
+                {draft.demand_type === 'patient' ? (
+                  <div className="agenda-editor-grid">
+                    <label>
+                      Paciente
+                      <input className="field" value={draft.patient_name} onChange={(event) => setDraft((current) => ({ ...current, patient_name: event.target.value }))} placeholder="Nome do paciente" />
+                    </label>
+                    <label>
+                      Telefone
+                      <input className="field" value={draft.patient_phone} onChange={(event) => setDraft((current) => ({ ...current, patient_phone: event.target.value }))} placeholder="WhatsApp do paciente" />
+                    </label>
+                    <label className="agenda-toggle-card">
+                      <input
+                        type="checkbox"
+                        checked={Boolean(draft.patient_has_scheduled)}
+                        onChange={(event) => setDraft((current) => ({
+                          ...current,
+                          patient_has_scheduled: event.target.checked,
+                          patient_scheduled_at: event.target.checked ? current.patient_scheduled_at : ''
+                        }))}
+                      />
+                      <div>
+                        <strong>Paciente agendou</strong>
+                        <small>Marque quando ja houver data reservada para o paciente.</small>
+                      </div>
+                    </label>
+                    <label>
+                      Status da confirmacao
+                      <select className="field" value={draft.confirmation_status} onChange={(event) => setDraft((current) => ({ ...current, confirmation_status: event.target.value }))}>
+                        {agendaConfirmationStatusOptions.map((option) => (
+                          <option key={option.value} value={option.value}>{option.label}</option>
+                        ))}
+                      </select>
+                    </label>
+                    <label>
+                      Data do agendamento
+                      <input
+                        className="field"
+                        type="datetime-local"
+                        value={draft.patient_scheduled_at}
+                        disabled={!draft.patient_has_scheduled}
+                        onChange={(event) => setDraft((current) => ({ ...current, patient_scheduled_at: event.target.value }))}
+                      />
+                    </label>
+                    <label className="agenda-span-2">
+                      Observacao da confirmacao
+                      <textarea
+                        className="field agenda-textarea"
+                        value={draft.confirmation_notes}
+                        onChange={(event) => setDraft((current) => ({ ...current, confirmation_notes: event.target.value }))}
+                        placeholder="Registre se confirmou, pediu retorno, nao atendeu ou entrou em evasao."
+                      />
+                    </label>
+                  </div>
+                ) : null}
                 <label>
                   Tags
                   <input

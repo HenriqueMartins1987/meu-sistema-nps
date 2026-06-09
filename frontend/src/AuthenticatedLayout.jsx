@@ -139,6 +139,10 @@ export default function AuthenticatedLayout({ remainingMsLabel, remainingWarning
   const navigate = useNavigate();
   const location = useLocation();
   const user = useMemo(() => readUser(), []);
+  const sidebarUserName = useMemo(
+    () => user?.name || user?.full_name || user?.username || user?.email || 'Usuario logado',
+    [user]
+  );
   const [expanded, setExpanded] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const menuSections = useMemo(() => buildMenuSections(user), [user]);
@@ -243,6 +247,7 @@ export default function AuthenticatedLayout({ remainingMsLabel, remainingWarning
             <div className="app-sidebar-session-copy">
               <strong>{remainingMsLabel}</strong>
               <span>sessao ativa</span>
+              <strong className="app-sidebar-session-user" title={sidebarUserName}>{sidebarUserName}</strong>
             </div>
           </div>
         </div>
