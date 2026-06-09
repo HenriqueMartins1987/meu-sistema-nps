@@ -1458,7 +1458,7 @@ export default function AgendaPage() {
                 />
               </label>
               <label>
-                Tipo de importaÃ§Ã£o
+                Tipo de importação
                 <select className="field" value={importDraft.import_type} onChange={(event) => updateImportDraft('import_type', event.target.value)}>
                   {agendaImportTypeOptions.map((option) => (
                     <option key={option.value} value={option.value}>{option.label}</option>

@@ -7,7 +7,8 @@ const maxUploadSizeBytes = 10 * 1024 * 1024;
 const detailTablePageSize = 10;
 const treatmentRoles = ['coordinator', 'manager', 'supervisor_crc', 'sac_operator'];
 const evidenceRoles = ['coordinator', 'manager', 'supervisor_crc', 'sac_operator', 'admin', 'viewer'];
-const closingTreatmentRoles = ['coordinator', 'manager'];
+const coordinatorManagerTreatmentRoles = ['coordinator', 'manager'];
+const closingTreatmentRoles = ['coordinator', 'manager', 'sac_operator'];
 const previewableImagePattern = /\.(avif|bmp|gif|jpe?g|png|svg|webp)(\?.*)?$/i;
 
 const dentalProcedureOptions = [
@@ -124,6 +125,21 @@ function buildWhatsappUrl(phone) {
 }
 
 function hasCoordinatorOrManagerTreatmentRecord(complaint) {
+  if (!complaint) return false;
+
+  const currentRole = normalizeRoleValue(complaint.treatment_by_role);
+  if (complaint.treatment_at && coordinatorManagerTreatmentRoles.includes(currentRole)) {
+    return true;
+  }
+
+  const logs = Array.isArray(complaint.logs) ? complaint.logs : [];
+  return logs.some((log) => (
+    log?.action === 'treatment_saved'
+    && coordinatorManagerTreatmentRoles.includes(normalizeRoleValue(log.actor_role))
+  ));
+}
+
+function hasClosingTreatmentRecord(complaint) {
   if (!complaint) return false;
 
   const currentRole = normalizeRoleValue(complaint.treatment_by_role);
@@ -510,6 +526,7 @@ function ComplaintDetail() {
   const hasUnitChange = String(selectedClinicId || '') !== String(complaint?.clinic_id || '');
   const hasTreatment = Boolean(complaint?.treatment_at);
   const hasCoordinatorOrManagerTreatment = hasCoordinatorOrManagerTreatmentRecord(complaint);
+  const hasClosingTreatment = hasClosingTreatmentRecord(complaint);
   const pendingTreatmentComment = comment.trim();
   const canReturnToSacWithTreatment = !canReturnToSac
     || hasCoordinatorOrManagerTreatment
@@ -529,8 +546,8 @@ function ComplaintDetail() {
     ? ''
     : !canOperationalClose
     ? 'Apenas Administrador, Administrador Master, Supervisor do CRC ou Operador de SAC podem fechar este protocolo.'
-    : !hasCoordinatorOrManagerTreatment
-      ? 'Aguarde a tratativa registrada por Coordenador ou Gerente para liberar o fechamento.'
+    : !hasClosingTreatment
+      ? 'Registre a tratativa do Coordenador, Gerente ou Operador de SAC para liberar o fechamento.'
       : isHighPriority && !hasSupervisorApproval
         ? 'Prioridade alta exige aceite do Supervisor do CRC.'
         : '';

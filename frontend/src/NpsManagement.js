@@ -574,7 +574,7 @@ function NpsManagement() {
                   ? 'Pesquisas NPS finalizadas'
                   : 'Lista de respostas NPS'}
             </h2>
-            <p className="base-subtitle">O sistema prioriza a sessÃ£o dedicada <strong>nps</strong> na VPS quando ela estiver cadastrada e conectada.</p>
+            <p className="base-subtitle">O sistema prioriza a sessão dedicada <strong>nps</strong> na VPS quando ela estiver cadastrada e conectada.</p>
           </div>
 
           <div className="patient-tabs" role="tablist" aria-label="Visões da gestão NPS">

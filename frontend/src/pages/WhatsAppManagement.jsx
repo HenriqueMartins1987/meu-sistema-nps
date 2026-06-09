@@ -2500,7 +2500,7 @@ function WhatsAppManagement() {
             <div className="whatsapp-panel-head">
               <div>
                 <h2>Pacientes que confirmaram</h2>
-                <p className="whatsapp-panel-note">Lista viva das confirmaÃ§Ãµes registradas pela assistente conversacional.</p>
+                <p className="whatsapp-panel-note">Lista viva das confirmações registradas pela assistente conversacional.</p>
               </div>
             </div>
             <div className="whatsapp-card-list compact">
@@ -2512,7 +2512,7 @@ function WhatsAppManagement() {
                   <small>{String(item.completed_at || item.last_interaction_at || item.started_at || '').slice(0, 16).replace('T', ' ')}</small>
                 </article>
               ))}
-              {!confirmationConfirmed.length && <p className="empty-state">Nenhuma confirmaÃ§Ã£o concluÃ­da ainda.</p>}
+              {!confirmationConfirmed.length && <p className="empty-state">Nenhuma confirmação concluída ainda.</p>}
             </div>
           </article>
 
@@ -2532,7 +2532,7 @@ function WhatsAppManagement() {
                   <small>{item.operator_name || item.conversation_status || 'Encaminhado pela assistente'}</small>
                 </article>
               ))}
-              {!confirmationReschedule.length && !confirmationHuman.length && <p className="empty-state">Nenhum ajuste de confirmaÃ§Ã£o pendente.</p>}
+              {!confirmationReschedule.length && !confirmationHuman.length && <p className="empty-state">Nenhum ajuste de confirmação pendente.</p>}
             </div>
           </article>
         </section>

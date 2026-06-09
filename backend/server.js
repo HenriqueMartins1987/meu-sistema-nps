@@ -2822,6 +2822,14 @@ async function insertComplaintLog(complaintId, action, message, user, metadata =
 
 async function complaintHasCoordinatorOrManagerTreatment(complaint, pendingTreatmentUser = null) {
   const acceptedRoles = new Set(['coordinator', 'manager']);
+  return complaintHasTreatmentFromRoles(complaint, pendingTreatmentUser, acceptedRoles);
+}
+
+async function complaintHasClosingTreatment(complaint, pendingTreatmentUser = null) {
+  return complaintHasTreatmentFromRoles(complaint, pendingTreatmentUser, new Set(['coordinator', 'manager', 'sac_operator']));
+}
+
+async function complaintHasTreatmentFromRoles(complaint, pendingTreatmentUser = null, acceptedRoles = new Set()) {
   const currentTreatmentRole = normalizeAccessRole(complaint?.treatment_by_role);
 
   if (complaint?.treatment_at && acceptedRoles.has(currentTreatmentRole)) {
@@ -28100,7 +28108,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
     if (nextStatus === 'resolvida') {
       const isMasterRequest = isMasterAdminUser(req.user);
       const pendingTreatmentUser = cleanedComment && canAddTreatment(req.user) ? req.user : null;
-      const hasCoordinatorOrManagerTreatment = await complaintHasCoordinatorOrManagerTreatment(complaint, pendingTreatmentUser);
+      const hasClosingTreatment = await complaintHasClosingTreatment(complaint, pendingTreatmentUser);
       const hasSupervisorApproval = Boolean(complaint.supervisor_approval_at)
         || (supervisor_accept && canSupervisorApprove(req.user));
 
@@ -28108,9 +28116,9 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         return res.status(403).json({ error: 'Somente Administrador, Administrador Master, Supervisor do CRC ou Operador de SAC podem fechar uma reclamacao.' });
       }
 
-      if (!isMasterRequest && !hasCoordinatorOrManagerTreatment) {
+      if (!isMasterRequest && !hasClosingTreatment) {
         return res.status(409).json({
-          error: 'Antes do fechamento, a reclamacao precisa ter tratativa registrada por Coordenador ou Gerente.'
+          error: 'Antes do fechamento, a reclamacao precisa ter tratativa registrada por Coordenador, Gerente ou Operador de SAC.'
         });
       }
 
