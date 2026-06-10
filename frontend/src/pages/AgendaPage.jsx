@@ -15,10 +15,10 @@ import { ActionButtons, Card, DashboardGrid, KPICard, PageHeader, SectionContain
 import { getUserDisplayName, isMasterAdmin, normalizeRoleValue, readUser } from '../constants';
 
 const agendaColumns = [
-  { key: 'todo', label: 'A fazer', helper: 'Ideias, pendencias e proximas acoes', eyebrow: 'Backlog' },
+  { key: 'todo', label: 'A fazer', helper: 'Ideias, pendências e próximas ações', eyebrow: 'Backlog' },
   { key: 'today', label: 'Hoje', helper: 'Prioridade do dia', eyebrow: 'Focus' },
-  { key: 'doing', label: 'Em andamento', helper: 'Itens em execucao', eyebrow: 'Running' },
-  { key: 'done', label: 'Concluido', helper: 'Finalizados', eyebrow: 'Closed' }
+  { key: 'doing', label: 'Em andamento', helper: 'Itens em execução', eyebrow: 'Running' },
+  { key: 'done', label: 'Concluído', helper: 'Finalizados', eyebrow: 'Closed' }
 ];
 
 const priorityOptions = [
@@ -37,11 +37,11 @@ const agendaDashboardWindowOptions = [
 
 const recurrenceWeekdayOptions = [
   { value: 1, shortLabel: 'Seg', fullLabel: 'Segunda' },
-  { value: 2, shortLabel: 'Ter', fullLabel: 'Terca' },
+  { value: 2, shortLabel: 'Ter', fullLabel: 'Terça' },
   { value: 3, shortLabel: 'Qua', fullLabel: 'Quarta' },
   { value: 4, shortLabel: 'Qui', fullLabel: 'Quinta' },
   { value: 5, shortLabel: 'Sex', fullLabel: 'Sexta' },
-  { value: 6, shortLabel: 'Sab', fullLabel: 'Sabado' },
+  { value: 6, shortLabel: 'Sab', fullLabel: 'Sábado' },
   { value: 0, shortLabel: 'Dom', fullLabel: 'Domingo' }
 ];
 
@@ -53,13 +53,13 @@ const agendaDemandTypeOptions = [
 const agendaConfirmationStatusOptions = [
   { value: 'pendente', label: 'Pendente' },
   { value: 'confirmado', label: 'Confirmado' },
-  { value: 'nao_confirmado', label: 'Nao confirmou' }
+  { value: 'nao_confirmado', label: 'Não confirmou' }
 ];
 
 const agendaPatientQueueOptions = [
-  { value: 'all', label: 'Visao geral', helper: 'Todas as demandas da agenda' },
-  { value: 'pending_confirmation', label: 'Confirmacao', helper: 'Pacientes aguardando retorno' },
-  { value: 'evasion', label: 'Evasao', helper: 'Pacientes que nao confirmaram para tratativa' }
+  { value: 'all', label: 'Visão geral', helper: 'Todas as demandas da agenda' },
+  { value: 'pending_confirmation', label: 'Confirmação', helper: 'Pacientes aguardando retorno' },
+  { value: 'evasion', label: 'Evasão', helper: 'Pacientes que não confirmaram para tratativa' }
 ];
 
 const agendaImportTypeOptions = [
@@ -167,11 +167,11 @@ function normalizeAgendaRecurrenceWeekdays(value = []) {
 }
 
 function formatAgendaAssignee(item = {}) {
-  return item.assigned_user_name || item.assignedUser?.name || item.owner_name || 'Sem responsavel';
+  return item.assigned_user_name || item.assignedUser?.name || item.owner_name || 'Sem responsável';
 }
 
 function formatAgendaUserOption(user = {}) {
-  const name = user.name || user.email || `Usuario ${user.id}`;
+  const name = user.name || user.email || `Usuário ${user.id}`;
   const detail = user.position || user.role || user.department || user.email;
   return detail ? `${name} - ${detail}` : name;
 }
@@ -220,7 +220,7 @@ function buildAgendaBoardIdentity(item = {}, assigneeDirectory = new Map()) {
   if (!responsibleUserId) {
     return {
       key: 'unassigned',
-      label: 'Sem responsavel definido',
+      label: 'Sem responsável definido',
       userId: null,
       roleLabel: '',
       delegatedBy: null,
@@ -229,7 +229,7 @@ function buildAgendaBoardIdentity(item = {}, assigneeDirectory = new Map()) {
   }
 
   const directoryUser = assigneeDirectory.get(String(responsibleUserId)) || null;
-  const label = directoryUser?.name || item.assigned_user_name || item.owner_name || directoryUser?.email || `Usuario ${responsibleUserId}`;
+  const label = directoryUser?.name || item.assigned_user_name || item.owner_name || directoryUser?.email || `Usuário ${responsibleUserId}`;
   const roleLabel = directoryUser?.position || directoryUser?.department || directoryUser?.role || '';
 
   return {
@@ -244,17 +244,17 @@ function buildAgendaBoardIdentity(item = {}, assigneeDirectory = new Map()) {
 
 function buildAgendaBoardHelper(board = {}) {
   if (!board.userId) {
-    return 'Itens sem responsavel operacional definido.';
+    return 'Itens sem responsável operacional definido.';
   }
 
   const delegatedOwners = Array.isArray(board.delegatedOwners) ? board.delegatedOwners.filter(Boolean) : [];
 
   if (delegatedOwners.length && board.hasOwnerOnlyItems) {
-    return 'Recebe demandas repassadas e tambem conduz rotinas proprias.';
+    return 'Recebe demandas repassadas e também conduz rotinas próprias.';
   }
 
   if (delegatedOwners.length === 1) {
-    return `Demandas em execucao com acompanhamento de ${delegatedOwners[0]}.`;
+    return `Demandas em execução com acompanhamento de ${delegatedOwners[0]}.`;
   }
 
   if (delegatedOwners.length > 1) {
@@ -262,7 +262,7 @@ function buildAgendaBoardHelper(board = {}) {
   }
 
   if (board.hasOwnerOnlyItems) {
-    return 'Rotina propria sem repasse formal.';
+    return 'Rotina própria sem repasse formal.';
   }
 
   return 'Carteira operacional consolidada deste colaborador.';
@@ -387,12 +387,12 @@ function getAgendaDemandTypeLabel(value = 'general') {
 
 function getAgendaConfirmationStatusLabel(value = '') {
   if (value === 'confirmado') return 'Confirmado';
-  if (value === 'nao_confirmado') return 'Evasao';
+  if (value === 'nao_confirmado') return 'Evasão';
   return 'Pendente';
 }
 
 function getAgendaImportResultLabel(value = '') {
-  if (value === 'valid') return 'Valido';
+  if (value === 'valid') return 'Válido';
   if (value === 'duplicate') return 'Duplicado';
   return 'Erro';
 }
@@ -412,7 +412,7 @@ function matchesAgendaPatientQueue(item = {}, queue = 'all') {
 
 function getAgendaDeadlineState(item = {}) {
   if (item.status === 'done') {
-    return { label: 'Concluido', tone: 'done' };
+    return { label: 'Concluído', tone: 'done' };
   }
 
   if (!item?.due_at) {
@@ -473,7 +473,7 @@ function AgendaCard({ item, currentUserId, onOpen, onStatus, onDragStart }) {
       </div>
       <div className="agenda-assignee">
         <div>
-          <span>Responsavel principal</span>
+          <span>Responsável principal</span>
           <strong>{formatAgendaAssignee(item)}</strong>
         </div>
         {ownerFollowUp ? <small>{ownerFollowUp}</small> : null}
@@ -555,7 +555,7 @@ export default function AgendaPage() {
       });
       setItems(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
-      setFeedback(getApiErrorMessage(error, 'Nao foi possivel carregar a agenda.'));
+      setFeedback(getApiErrorMessage(error, 'Não foi possível carregar a agenda.'));
     } finally {
       setLoading(false);
     }
@@ -572,7 +572,7 @@ export default function AgendaPage() {
         email: currentUser.email || null,
         role: currentUser.role || null
       }] : []);
-      setFeedback(getApiErrorMessage(error, 'Nao foi possivel carregar usuarios para atribuicao.'));
+      setFeedback(getApiErrorMessage(error, 'Não foi possível carregar usuários para atribuição.'));
     }
   };
 
@@ -606,7 +606,7 @@ export default function AgendaPage() {
       setDashboard(response.data || null);
     } catch (error) {
       setDashboard(null);
-      setFeedback(getApiErrorMessage(error, 'Nao foi possivel carregar o dashboard da agenda.'));
+      setFeedback(getApiErrorMessage(error, 'Não foi possível carregar o dashboard da agenda.'));
     } finally {
       setDashboardLoading(false);
     }
@@ -779,8 +779,8 @@ export default function AgendaPage() {
   const operatorTabs = useMemo(() => {
     const summaryTabs = [{
       key: '',
-      label: 'Visao geral',
-      helper: 'Relatorio consolidado da equipe',
+      label: 'Visão geral',
+      helper: 'Relatório consolidado da equipe',
       total: globalStats.total,
       open: globalStats.open,
       overdue: globalStats.overdue
@@ -818,10 +818,10 @@ export default function AgendaPage() {
     { label: 'Atrasadas', value: dashboard?.summary?.overdue || 0, helper: 'fora do prazo', tone: 'danger' },
     { label: 'Vencendo em 24h', value: dashboard?.summary?.due_24h || 0, helper: 'ação imediata', tone: 'warning' },
     { label: 'Concluídas em 7 dias', value: dashboard?.summary?.completed_7d || 0, helper: 'produtividade recente', tone: 'success' },
-    { label: 'Media diaria', value: dashboard?.summary?.daily_average_completed || 0, helper: 'entregas por dia', tone: 'success' },
-    { label: 'Taxa de execucao', value: formatAgendaPercent(dashboard?.summary?.completion_rate_period || 0), helper: 'concluidas sobre programadas', tone: 'progress' },
-    { label: 'Confirmacao', value: formatAgendaPercent(dashboard?.summary?.patient_confirmation_rate || 0), helper: 'pacientes confirmados por operador', tone: 'progress' },
-    { label: 'Evasao', value: dashboard?.summary?.patient_evasion || 0, helper: 'nao confirmaram e exigem tratativa', tone: 'danger' },
+    { label: 'Média diária', value: dashboard?.summary?.daily_average_completed || 0, helper: 'entregas por dia', tone: 'success' },
+    { label: 'Taxa de execução', value: formatAgendaPercent(dashboard?.summary?.completion_rate_period || 0), helper: 'concluídas sobre programadas', tone: 'progress' },
+    { label: 'Confirmação', value: formatAgendaPercent(dashboard?.summary?.patient_confirmation_rate || 0), helper: 'pacientes confirmados por operador', tone: 'progress' },
+    { label: 'Evasão', value: dashboard?.summary?.patient_evasion || 0, helper: 'não confirmaram e exigem tratativa', tone: 'danger' },
     { label: 'Rotinas recorrentes', value: dashboard?.summary?.recurring || 0, helper: 'voltam automaticamente ao fluxo', tone: 'neutral' }
   ]), [dashboard]);
 
@@ -863,7 +863,7 @@ export default function AgendaPage() {
 
   const saveItem = async () => {
     if (!draft.title.trim()) {
-      setFeedback('Informe um titulo para o item da agenda.');
+      setFeedback('Informe um título para o item da agenda.');
       return;
     }
     if (draft.demand_type === 'patient' && !draft.patient_name.trim()) {
@@ -906,7 +906,7 @@ export default function AgendaPage() {
       await Promise.all([loadItems(), loadDashboard()]);
       setFeedback('Agenda atualizada com sucesso.');
     } catch (error) {
-      setFeedback(getApiErrorMessage(error, 'Nao foi possivel salvar o item da agenda.'));
+      setFeedback(getApiErrorMessage(error, 'Não foi possível salvar o item da agenda.'));
     } finally {
       setSaving(false);
     }
@@ -922,7 +922,7 @@ export default function AgendaPage() {
       closeEditor();
       await Promise.all([loadItems(), loadDashboard()]);
     } catch (error) {
-      setFeedback(getApiErrorMessage(error, 'Nao foi possivel excluir o item.'));
+      setFeedback(getApiErrorMessage(error, 'Não foi possível excluir o item.'));
     } finally {
       setSaving(false);
     }
@@ -937,7 +937,7 @@ export default function AgendaPage() {
         loadDashboard();
       }
     } catch (error) {
-      setFeedback(getApiErrorMessage(error, 'Nao foi possivel mover o item.'));
+      setFeedback(getApiErrorMessage(error, 'Não foi possível mover o item.'));
     }
   };
 
@@ -955,17 +955,17 @@ export default function AgendaPage() {
       setReminderItem(null);
       await loadItems();
     } catch (error) {
-      setFeedback(getApiErrorMessage(error, 'Nao foi possivel confirmar o lembrete.'));
+      setFeedback(getApiErrorMessage(error, 'Não foi possível confirmar o lembrete.'));
     }
   };
 
   const requestNotifications = async () => {
     if (!('Notification' in window)) {
-      setFeedback('Este navegador nao suporta notificacoes nativas.');
+      setFeedback('Este navegador não suporta notificações nativas.');
       return;
     }
     const permission = await Notification.requestPermission();
-    setFeedback(permission === 'granted' ? 'Notificacoes da Agenda ativadas.' : 'Notificacoes nao foram autorizadas.');
+    setFeedback(permission === 'granted' ? 'Notificações da Agenda ativadas.' : 'Notificações não foram autorizadas.');
   };
 
   const updateImportDraft = (field, value) => {
@@ -987,7 +987,7 @@ export default function AgendaPage() {
           : `agenda-dashboard-${dashboardDays}d.xlsx`
       );
     } catch (error) {
-      setFeedback(getApiErrorMessage(error, `Nao foi possivel exportar o relatorio da agenda em ${format.toUpperCase()}.`));
+      setFeedback(getApiErrorMessage(error, `Não foi possível exportar o relatório da agenda em ${format.toUpperCase()}.`));
     } finally {
       setExportingReport('');
     }
@@ -1001,7 +1001,7 @@ export default function AgendaPage() {
       });
       downloadBlob(response.data, 'template-importacao-agenda.xlsx');
     } catch (error) {
-      setFeedback(getApiErrorMessage(error, 'Nao foi possivel baixar o template da agenda.'));
+      setFeedback(getApiErrorMessage(error, 'Não foi possível baixar o template da agenda.'));
     } finally {
       setExportingReport('');
     }
@@ -1038,13 +1038,13 @@ export default function AgendaPage() {
 
       setImportValidation(response.data || null);
       setFeedback(response.data?.summary?.total_error
-        ? 'Validacao concluida com pendencias. Corrija a planilha antes de importar.'
-        : 'Validacao concluida. A planilha esta pronta para importacao.'
+        ? 'Validação concluída com pendências. Corrija a planilha antes de importar.'
+        : 'Validação concluída. A planilha está pronta para importação.'
       );
       return response.data || null;
     } catch (error) {
       setImportValidation(null);
-      setFeedback(getApiErrorMessage(error, 'Nao foi possivel validar a planilha da agenda.'));
+      setFeedback(getApiErrorMessage(error, 'Não foi possível validar a planilha da agenda.'));
       return null;
     } finally {
       setValidatingImport(false);
@@ -1066,7 +1066,7 @@ export default function AgendaPage() {
       return;
     }
     if (validation?.summary?.total_error) {
-      setFeedback('A importacao foi bloqueada porque ainda existem erros de validacao na planilha.');
+      setFeedback('A importação foi bloqueada porque ainda existem erros de validação na planilha.');
       return;
     }
 
@@ -1099,9 +1099,9 @@ export default function AgendaPage() {
       setImportDraft(emptyImportDraft);
       setImportValidation(null);
       await Promise.all([loadItems(), loadDashboard()]);
-      setFeedback(response.data?.message || 'Importacao da agenda concluida.');
+      setFeedback(response.data?.message || 'Importação da agenda concluída.');
     } catch (error) {
-      setFeedback(getApiErrorMessage(error, 'Nao foi possivel importar a planilha da agenda.'));
+      setFeedback(getApiErrorMessage(error, 'Não foi possível importar a planilha da agenda.'));
     } finally {
       setImporting(false);
     }
@@ -1176,8 +1176,8 @@ export default function AgendaPage() {
               <Card className="agenda-daily-chart-panel agenda-daily-chart-panel-wide">
                 <div className="agenda-panel-headline">
                   <div>
-                    <strong>Evolucao diaria da equipe</strong>
-                    <span>Comparativo profissional entre demandas criadas, programadas e concluidas na janela selecionada.</span>
+                    <strong>Evolução diária da equipe</strong>
+                    <span>Comparativo profissional entre demandas criadas, programadas e concluídas na janela selecionada.</span>
                   </div>
                   <small>{teamDailySeries.length} dia(s) monitorados</small>
                 </div>
@@ -1198,7 +1198,7 @@ export default function AgendaPage() {
                       </ComposedChart>
                     </ResponsiveContainer>
                   ) : (
-                    <p className="empty-state">Ainda nao ha historico diario suficiente para gerar a evolucao da equipe.</p>
+                    <p className="empty-state">Ainda não há histórico diário suficiente para gerar a evolução da equipe.</p>
                   )}
                 </div>
               </Card>
@@ -1206,8 +1206,8 @@ export default function AgendaPage() {
               <Card className="agenda-daily-chart-panel">
                 <div className="agenda-panel-headline">
                   <div>
-                    <strong>Evolucao individual</strong>
-                    <span>Foco diario do colaborador para acompanhar ritmo, consistencia e capacidade de entrega.</span>
+                    <strong>Evolução individual</strong>
+                    <span>Foco diário do colaborador para acompanhar ritmo, consistência e capacidade de entrega.</span>
                   </div>
                 </div>
                 <label className="agenda-dashboard-inline-filter">
@@ -1226,9 +1226,9 @@ export default function AgendaPage() {
                   <>
                     <div className="agenda-daily-focus-metrics">
                       <article>
-                        <span>Media diaria</span>
+                        <span>Média diária</span>
                         <strong>{selectedEvolutionCollaborator.daily_average_completed || 0}</strong>
-                        <small>conclusoes por dia</small>
+                        <small>conclusões por dia</small>
                       </article>
                       <article>
                         <span>Melhor dia</span>
@@ -1241,7 +1241,7 @@ export default function AgendaPage() {
                         <small>{selectedEvolutionCollaborator.momentum_delta >= 0 ? `+${selectedEvolutionCollaborator.momentum_delta}` : selectedEvolutionCollaborator.momentum_delta} vs 7d anteriores</small>
                       </article>
                       <article>
-                        <span>Taxa de execucao</span>
+                        <span>Taxa de execução</span>
                         <strong>{formatAgendaPercent(selectedEvolutionCollaborator.completion_rate_period || 0)}</strong>
                         <small>{selectedEvolutionCollaborator.current_streak || 0} dia(s) seguidos com entrega</small>
                       </article>
@@ -1261,12 +1261,12 @@ export default function AgendaPage() {
                           </ComposedChart>
                         </ResponsiveContainer>
                       ) : (
-                        <p className="empty-state">Sem historico diario para este colaborador na janela selecionada.</p>
+                        <p className="empty-state">Sem histórico diário para este colaborador na janela selecionada.</p>
                       )}
                     </div>
                   </>
                 ) : (
-                  <p className="empty-state">Selecione um colaborador para acompanhar a evolucao diaria.</p>
+                  <p className="empty-state">Selecione um colaborador para acompanhar a evolução diária.</p>
                 )}
               </Card>
             </div>
@@ -1274,10 +1274,10 @@ export default function AgendaPage() {
             <Card className="agenda-daily-matrix-panel">
               <div className="agenda-panel-headline">
                 <div>
-                  <strong>Painel diario por colaborador</strong>
-                  <span>Leitura comparativa das conclusoes diarias para verificar evolucao, consistencia e variacao operacional da equipe.</span>
+                  <strong>Painel diário por colaborador</strong>
+                  <span>Leitura comparativa das conclusões diárias para verificar evolução, consistência e variação operacional da equipe.</span>
                 </div>
-                <small>Ultimos {dailyEvolutionMatrixDays.length || 0} dias</small>
+                <small>Últimos {dailyEvolutionMatrixDays.length || 0} dias</small>
               </div>
               <div className="agenda-daily-matrix-wrap">
                 <table className="agenda-daily-matrix-table">
@@ -1287,7 +1287,7 @@ export default function AgendaPage() {
                       {dailyEvolutionMatrixDays.map((day) => (
                         <th key={day.date_key}>{day.label}</th>
                       ))}
-                      <th>Media</th>
+                      <th>Média</th>
                       <th>Ritmo</th>
                     </tr>
                   </thead>
@@ -1317,7 +1317,7 @@ export default function AgendaPage() {
                     ))}
                   </tbody>
                 </table>
-                {!dashboardLoading && !(dashboard?.collaborators || []).length ? <p className="empty-state">Nenhuma serie diaria disponivel para os colaboradores.</p> : null}
+                {!dashboardLoading && !(dashboard?.collaborators || []).length ? <p className="empty-state">Nenhuma série diária disponível para os colaboradores.</p> : null}
               </div>
             </Card>
 
@@ -1337,8 +1337,8 @@ export default function AgendaPage() {
                         <th>Colaborador</th>
                         <th>Abertas</th>
                         <th>Atrasadas</th>
-                        <th>Confirmacao</th>
-                        <th>Evasao</th>
+                        <th>Confirmação</th>
+                        <th>Evasão</th>
                         <th>24h</th>
                         <th>48h</th>
                         <th>Concl. 7d</th>
@@ -1415,14 +1415,14 @@ export default function AgendaPage() {
                   <div className="agenda-panel-headline">
                     <div>
                       <strong>Lista de evasao</strong>
-                      <span>Pacientes que nao confirmaram e exigem retorno ativo do operador.</span>
+                      <span>Pacientes que não confirmaram e exigem retorno ativo do operador.</span>
                     </div>
                   </div>
                   <div className="agenda-urgent-list">
                     {(dashboard?.evasion_items || []).map((item) => (
                       <article key={`evasion-${item.id}`} className="late">
                         <strong>{item.patient_name || item.title}</strong>
-                        <small>{item.assigned_user_name || 'Sem responsavel'} · {item.clinic_name || 'Sem unidade'}</small>
+                        <small>{item.assigned_user_name || 'Sem responsável'} · {item.clinic_name || 'Sem unidade'}</small>
                         <span>{item.confirmation_notes || 'Registrar motivo e plano de reversao.'}</span>
                       </article>
                     ))}
@@ -1627,10 +1627,10 @@ export default function AgendaPage() {
         <KPICard label="Abertos" value={stats.open} helper="em acompanhamento" tone="progress" />
         <KPICard label="Lembretes" value={stats.reminders} helper="ativos ou programados" tone="warning" />
         <KPICard label="Atrasados" value={stats.overdue} helper="fora do prazo" tone="danger" />
-        <KPICard label="Concluidos" value={stats.done} helper="finalizados" tone="success" />
-        <KPICard label="Confirmacao" value={formatAgendaPercent(patientWorkflowStats.confirmationRate)} helper={`${patientWorkflowStats.confirmed}/${patientWorkflowStats.total || 0} pacientes confirmados`} tone="progress" />
+        <KPICard label="Concluídos" value={stats.done} helper="finalizados" tone="success" />
+        <KPICard label="Confirmação" value={formatAgendaPercent(patientWorkflowStats.confirmationRate)} helper={`${patientWorkflowStats.confirmed}/${patientWorkflowStats.total || 0} pacientes confirmados`} tone="progress" />
         <KPICard label="Pendentes" value={patientWorkflowStats.pending} helper="pacientes aguardando retorno" tone="warning" />
-        <KPICard label="Evasao" value={patientWorkflowStats.evasion} helper="nao confirmaram e pedem tratativa" tone="danger" />
+        <KPICard label="Evasão" value={patientWorkflowStats.evasion} helper="não confirmaram e pedem tratativa" tone="danger" />
       </DashboardGrid>
 
       <SectionContainer className="agenda-control-panel">
@@ -1644,14 +1644,14 @@ export default function AgendaPage() {
               className="field"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Buscar item, paciente, unidade, descricao ou tag"
+              placeholder="Buscar item, paciente, unidade, descrição ou tag"
             />
             <select className="field" value={activeStatus} onChange={(event) => setActiveStatus(event.target.value)}>
               <option value="">Todos os status</option>
               {agendaColumns.map((column) => <option key={column.key} value={column.key}>{column.label}</option>)}
             </select>
             <select className="field" value={activeAssignee} onChange={(event) => setActiveAssignee(event.target.value)}>
-              <option value="">{canUseOperatorTabs ? 'Todas as agendas' : 'Todos os usuarios'}</option>
+              <option value="">{canUseOperatorTabs ? 'Todas as agendas' : 'Todos os usuários'}</option>
               {allAgendaBoards.map((board) => (
                 <option key={board.key} value={board.key}>{board.label}</option>
               ))}
@@ -1700,7 +1700,7 @@ export default function AgendaPage() {
           <div className="agenda-tabs-head">
             <div>
               <strong>Abas por operador</strong>
-              <span>Troque rapidamente entre as agendas individuais. O relatorio executivo continua sintetico e consolidado com todos os operadores em uso.</span>
+              <span>Troque rapidamente entre as agendas individuais. O relatório executivo continua sintético e consolidado com todos os operadores em uso.</span>
             </div>
           </div>
           <div className="agenda-tabs-strip" role="tablist" aria-label="Agendas por operador">
@@ -1733,7 +1733,7 @@ export default function AgendaPage() {
             <section key={group.key} className="agenda-user-section">
               <header className="agenda-user-header">
                 <div className="agenda-user-copy">
-                  <span className="agenda-user-kicker">Responsavel</span>
+                  <span className="agenda-user-kicker">Responsável</span>
                   <strong>{group.label}</strong>
                   <small>{group.roleLabel ? `${group.roleLabel} · ${group.helper}` : group.helper}</small>
                 </div>
@@ -1751,7 +1751,7 @@ export default function AgendaPage() {
                     <strong>{group.overdue}</strong>
                   </article>
                   <article>
-                    <span>Concluidos</span>
+                    <span>Concluídos</span>
                     <strong>{group.done}</strong>
                   </article>
                 </div>
@@ -1884,11 +1884,11 @@ export default function AgendaPage() {
                       />
                       <div>
                         <strong>Paciente agendou</strong>
-                        <small>Marque quando ja houver data reservada para o paciente.</small>
+                        <small>Marque quando já houver data reservada para o paciente.</small>
                       </div>
                     </label>
                     <label>
-                      Status da confirmacao
+                      Status da confirmação
                       <select className="field" value={draft.confirmation_status} onChange={(event) => setDraft((current) => ({ ...current, confirmation_status: event.target.value }))}>
                         {agendaConfirmationStatusOptions.map((option) => (
                           <option key={option.value} value={option.value}>{option.label}</option>
@@ -1906,12 +1906,12 @@ export default function AgendaPage() {
                       />
                     </label>
                     <label className="agenda-span-2">
-                      Observacao da confirmacao
+                      Observação da confirmação
                       <textarea
                         className="field agenda-textarea"
                         value={draft.confirmation_notes}
                         onChange={(event) => setDraft((current) => ({ ...current, confirmation_notes: event.target.value }))}
-                        placeholder="Registre se confirmou, pediu retorno, nao atendeu ou entrou em evasao."
+                        placeholder="Registre se confirmou, pediu retorno, não atendeu ou entrou em evasão."
                       />
                     </label>
                   </div>
@@ -1933,13 +1933,13 @@ export default function AgendaPage() {
                   <span>{selectedItem?.id ? `ID ${selectedItem.id}` : 'Novo'}</span>
                 </div>
                 <label>
-                  Responsavel
+                  Responsável
                   <select
                     className="field"
                     value={draft.assigned_user_id}
                     onChange={(event) => setDraft((current) => ({ ...current, assigned_user_id: event.target.value }))}
                   >
-                    <option value="">Sem responsavel definido</option>
+                    <option value="">Sem responsável definido</option>
                     {assigneeOptions.map((user) => (
                       <option key={user.id} value={String(user.id)}>{formatAgendaUserOption(user)}</option>
                     ))}

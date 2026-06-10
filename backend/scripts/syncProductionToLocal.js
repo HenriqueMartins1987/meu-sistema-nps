@@ -275,8 +275,9 @@ async function upsertUsers(local, users = []) {
         [...columns.map((column) => payload[column]), existing[0].id]
       );
     } else {
-      const insertColumns = [...selectable, 'password_hash'].filter((column) => localColumns.includes(column));
-      const values = insertColumns.map((column) => (column === 'password_hash' ? hash : payload[column]));
+      const passwordColumn = ['password_hash', 'password'].find((column) => localColumns.includes(column));
+      const insertColumns = [...selectable, passwordColumn].filter(Boolean);
+      const values = insertColumns.map((column) => ((column === 'password_hash' || column === 'password') ? hash : payload[column]));
       await local.query(
         `INSERT INTO users (${insertColumns.map(escapeId).join(', ')}) VALUES (${insertColumns.map(() => '?').join(', ')})`,
         values

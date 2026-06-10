@@ -1468,11 +1468,11 @@ test('daily recurring agenda item is created with mandatory completion', async (
 
   assert.equal(response.status, 201);
   assert.ok(Array.isArray(insertedAgendaParams));
-  assert.equal(insertedAgendaParams[16], 1);
-  assert.equal(insertedAgendaParams[17], 1);
-  assert.equal(insertedAgendaParams[18], 'doing');
-  assert.match(String(insertedAgendaParams[19] || ''), /^\d{4}-\d{2}-\d{2}$/);
-  assert.equal(insertedAgendaParams[20], '[1,3,5]');
+  assert.equal(insertedAgendaParams[28], 1);
+  assert.equal(insertedAgendaParams[29], 1);
+  assert.equal(insertedAgendaParams[30], 'doing');
+  assert.match(String(insertedAgendaParams[31] || ''), /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(insertedAgendaParams[32], '[1,3,5]');
   assert.equal(response.body.is_daily_recurring, true);
   assert.equal(response.body.requires_completion, true);
   assert.equal(response.body.recurrence_base_status, 'doing');

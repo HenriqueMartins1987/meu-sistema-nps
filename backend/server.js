@@ -23238,10 +23238,10 @@ function buildAgendaImportTemplateBuffer() {
     ['1. Cole a agenda externa diretamente na aba "Agenda de Pacientes", a partir da linha 2, sem alterar os cabecalhos.'],
     ['2. O operador CRC pode copiar e colar os dados de nome, telefone, data, hora, especialidade, dentista, status, canal e observacao sem montar nova planilha.'],
     ['3. A unidade deve ser escolhida no sistema no campo "Unidade da planilha"; ela passa a valer para todos os pacientes importados.'],
-    ['4. Se colaborador e email_responsavel ficarem vazios, o sistema usa o responsavel padrao selecionado antes do upload.'],
+    ['4. Se colaborador e email_responsavel ficarem vazios, o sistema usa o responsável padrão selecionado antes do upload.'],
     ['5. data_consulta e prazo aceitam DD/MM/AAAA; hora_consulta, hora_prazo e lembrete_hora aceitam HH:MM.'],
-    ['6. enviar_confirmacao_whatsapp = sim enfileira a confirmacao do paciente no fluxo operacional ja existente.'],
-    ['7. Quando titulo_tarefa e descricao estiverem vazios, o sistema cria automaticamente uma demanda profissional de agendamento e confirmacao.'],
+    ['6. enviar_confirmacao_whatsapp = sim enfileira a confirmação do paciente no fluxo operacional já existente.'],
+    ['7. Quando titulo_tarefa e descricao estiverem vazios, o sistema cria automaticamente uma demanda profissional de agendamento e confirmação.'],
     ['8. Use a aba "Exemplo" apenas como referencia visual do preenchimento esperado.']
   ]);
   instructions['!cols'] = [{ wch: 110 }];
@@ -23317,7 +23317,7 @@ async function validateAgendaImportRows(rows = [], {
       if (!patientPhone) reasons.push('Telefone obrigatorio.');
       if (!row.data_consulta) reasons.push('Data da consulta obrigatoria.');
       if (!row.hora_consulta) reasons.push('Horario da consulta obrigatorio.');
-      if (!scheduledAt) reasons.push('Data ou horario invalido.');
+      if (!scheduledAt) reasons.push('Data ou horário inválido.');
       if (!specialty) reasons.push('Especialidade obrigatoria.');
       if (!dentist) reasons.push('Dentista obrigatorio.');
       if (specialty && catalog.specialtyKeys.size && !catalog.specialtyKeys.has(normalizeAgendaCatalogKey(specialty))) {
@@ -23398,7 +23398,7 @@ app.get('/api/agenda/users', authenticate, async (req, res) => {
     return res.json(users.map(serializeAgendaAssignableUser));
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ error: 'Erro ao carregar usuarios da agenda.' });
+    return res.status(500).json({ error: 'Erro ao carregar usuários da agenda.' });
   }
 });
 
@@ -23484,7 +23484,7 @@ app.get('/api/agenda/import-reference-data', authenticate, async (req, res) => {
     });
   } catch (error) {
     console.error(error);
-    return res.status(500).json({ error: 'Erro ao carregar referencias da importacao da agenda.' });
+    return res.status(500).json({ error: 'Erro ao carregar referências da importação da agenda.' });
   }
 });
 
@@ -23939,7 +23939,7 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
   try {
     const title = sanitizeFinancialString(req.body?.title, 180);
     if (!title) {
-      return res.status(400).json({ error: 'Informe um titulo para o item da agenda.' });
+      return res.status(400).json({ error: 'Informe um título para o item da agenda.' });
     }
 
     const companyId = Number(req.user?.company_id || req.user?.companyId || 1) || 1;
@@ -24075,7 +24075,7 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
     );
 
     if (!currentRows[0]) {
-      return res.status(404).json({ error: 'Item da agenda nao encontrado.' });
+      return res.status(404).json({ error: 'Item da agenda não encontrado.' });
     }
 
     const currentItem = currentRows[0];
@@ -24138,7 +24138,7 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
 
     if (Object.prototype.hasOwnProperty.call(req.body, 'title')) {
       const title = sanitizeFinancialString(req.body.title, 180);
-      if (!title) return res.status(400).json({ error: 'Informe um titulo para o item da agenda.' });
+      if (!title) return res.status(400).json({ error: 'Informe um título para o item da agenda.' });
       assign('title', title);
     }
     if (Object.prototype.hasOwnProperty.call(req.body, 'description')) {
@@ -24253,7 +24253,7 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
           assigned_user_id: nextAssigneeId,
           assigned_user_name: nextAssigneeName
         })) {
-          return res.status(403).json({ error: 'Somente o responsavel pela demanda pode registrar a execucao desta tarefa.' });
+          return res.status(403).json({ error: 'Somente o responsável pela demanda pode registrar a execução desta tarefa.' });
         }
         nextStatus = 'done';
         assign('status', 'done');
@@ -24364,7 +24364,7 @@ app.delete('/api/agenda/items/:id', authenticate, async (req, res) => {
 
     const [currentRows] = await pool.query('SELECT * FROM agenda_items WHERE id = ? AND deleted_at IS NULL LIMIT 1', [req.params.id]);
     if (!currentRows.length) {
-      return res.status(404).json({ error: 'Item da agenda nao encontrado.' });
+      return res.status(404).json({ error: 'Item da agenda não encontrado.' });
     }
 
     const [result] = await pool.query(
@@ -24377,7 +24377,7 @@ app.delete('/api/agenda/items/:id', authenticate, async (req, res) => {
     );
 
     if (!result?.affectedRows) {
-      return res.status(404).json({ error: 'Item da agenda nao encontrado.' });
+      return res.status(404).json({ error: 'Item da agenda não encontrado.' });
     }
 
     await insertSecurityAuditLog({
