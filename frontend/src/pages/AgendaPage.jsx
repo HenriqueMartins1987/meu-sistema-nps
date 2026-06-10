@@ -528,6 +528,8 @@ export default function AgendaPage() {
   const [validatingImport, setValidatingImport] = useState(false);
   const [importSummary, setImportSummary] = useState(null);
   const [importValidation, setImportValidation] = useState(null);
+  const [showAnalyticsPanel, setShowAnalyticsPanel] = useState(false);
+  const [showImportPanel, setShowImportPanel] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -1116,6 +1118,9 @@ export default function AgendaPage() {
         actions={(
           <>
             <button type="button" className="outline-action" onClick={requestNotifications}>Ativar lembretes</button>
+            {canUseAgendaAnalytics ? (
+              <button type="button" className="outline-action" onClick={() => setShowImportPanel(true)}>Importar agenda</button>
+            ) : null}
             <button
               type="button"
               className="primary-action"
@@ -1142,7 +1147,34 @@ export default function AgendaPage() {
       ) : null}
 
       {canUseAgendaAnalytics ? (
+        <section className="agenda-executive-dock" aria-label="Atalhos executivos da agenda">
+          <article className={`agenda-executive-toggle-card ${showAnalyticsPanel ? 'active' : ''}`}>
+            <span>Inteligência</span>
+            <strong>Dashboard executivo</strong>
+            <small>Indicadores, evolução diária, produtividade por operador e demandas críticas.</small>
+            <button type="button" className="outline-action" onClick={() => setShowAnalyticsPanel((current) => !current)}>
+              {showAnalyticsPanel ? 'Ocultar painel' : 'Abrir painel'}
+            </button>
+          </article>
+          <article className={`agenda-executive-toggle-card ${showImportPanel ? 'active' : ''}`}>
+            <span>Operação em lote</span>
+            <strong>Importação profissional</strong>
+            <small>Valide planilhas, trate duplicidades e alimente a agenda oficial com confirmação via WhatsApp.</small>
+            <div className="agenda-executive-card-actions">
+              <button type="button" className="outline-action" onClick={() => setShowImportPanel((current) => !current)}>
+                {showImportPanel ? 'Ocultar importação' : 'Abrir importação'}
+              </button>
+              <button type="button" className="secondary-action" onClick={downloadImportTemplate} disabled={exportingReport === 'template'}>
+                Template
+              </button>
+            </div>
+          </article>
+        </section>
+      ) : null}
+
+      {canUseAgendaAnalytics && (showAnalyticsPanel || showImportPanel) ? (
         <section className="agenda-intelligence-stack">
+          {showAnalyticsPanel ? (
           <SectionContainer className="agenda-intelligence-panel">
             <div className="agenda-intelligence-head">
               <div>
@@ -1432,7 +1464,9 @@ export default function AgendaPage() {
               </div>
             </div>
           </SectionContainer>
+          ) : null}
 
+          {showImportPanel ? (
           <SectionContainer className="agenda-import-panel">
             <div className="agenda-intelligence-head">
               <div>
@@ -1619,8 +1653,23 @@ export default function AgendaPage() {
               </div>
             ) : null}
           </SectionContainer>
+          ) : null}
         </section>
       ) : null}
+
+      <section className="agenda-command-center">
+        <div className="agenda-command-head">
+          <div>
+            <span>Central de operação</span>
+            <strong>Agenda ativa</strong>
+            <small>Filtre, priorize e acompanhe as filas antes de movimentar os cartões.</small>
+          </div>
+          <div className="agenda-command-summary">
+            <span>{stats.total} item(ns)</span>
+            <span>{stats.open} aberto(s)</span>
+            <span>{stats.overdue} atrasado(s)</span>
+          </div>
+        </div>
 
       <DashboardGrid className="agenda-kpis">
         <KPICard label="Total" value={stats.total} helper="itens na agenda" tone="neutral" />
@@ -1724,6 +1773,7 @@ export default function AgendaPage() {
           </div>
         </SectionContainer>
       ) : null}
+      </section>
 
       {feedback && !editorOpen ? <p className="form-feedback">{feedback}</p> : null}
 
