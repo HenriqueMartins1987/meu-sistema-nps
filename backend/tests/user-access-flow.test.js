@@ -2008,7 +2008,8 @@ test('uploaded file route serves persisted database fallback when disk file is m
 
   assert.equal(response.status, 200);
   assert.match(response.headers['content-type'], /text\/plain/);
-  assert.match(response.headers['content-disposition'], /inline/);
+  assert.match(response.headers['content-disposition'], /attachment/);
+  assert.equal(response.headers['x-content-type-options'], 'nosniff');
   assert.equal(response.text, 'arquivo persistido');
 });
 

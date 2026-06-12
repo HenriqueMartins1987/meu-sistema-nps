@@ -1,5 +1,40 @@
 const XLSX = require('xlsx');
 
+const rawDentalWorkbookMaxBytes = Number(process.env.SECURITY_WORKBOOK_MAX_BYTES || 10 * 1024 * 1024);
+const rawDentalWorkbookMaxRows = Number(process.env.SECURITY_WORKBOOK_MAX_ROWS || 5000);
+const dentalWorkbookMaxBytes = Number.isFinite(rawDentalWorkbookMaxBytes) && rawDentalWorkbookMaxBytes > 0
+  ? Math.max(1024, rawDentalWorkbookMaxBytes)
+  : 10 * 1024 * 1024;
+const dentalWorkbookMaxRows = Number.isFinite(rawDentalWorkbookMaxRows) && rawDentalWorkbookMaxRows > 0
+  ? Math.max(1, rawDentalWorkbookMaxRows)
+  : 5000;
+const blockedWorksheetKeySegments = new Set(['__proto__', 'prototype', 'constructor']);
+
+function isBlockedWorksheetKey(key) {
+  const segments = String(key || '')
+    .toLowerCase()
+    .split(/[\s.[\]'"`]+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  return segments.some((segment) => blockedWorksheetKeySegments.has(segment));
+}
+
+function sanitizeWorksheetRowObject(row = {}) {
+  return Object.entries(row || {}).reduce((acc, [key, value]) => {
+    if (isBlockedWorksheetKey(key)) return acc;
+    acc[key] = value;
+    return acc;
+  }, {});
+}
+
+function sheetToSafeJsonRows(sheet, options = {}) {
+  const rows = XLSX.utils.sheet_to_json(sheet || {}, { defval: '', ...options });
+  if (rows.length > dentalWorkbookMaxRows) {
+    throw new Error(`A planilha excede o limite seguro de ${dentalWorkbookMaxRows} linhas.`);
+  }
+  return rows.map(sanitizeWorksheetRowObject);
+}
+
 const dentalCardStatuses = [
   'Novo Lead',
   'Indicação Recebida',
@@ -453,14 +488,23 @@ function normalizeImportedDentalRow(row, sheetName = '') {
 }
 
 function parseDentalCardWorkbook(buffer) {
+  if (Number(buffer?.length || 0) > dentalWorkbookMaxBytes) {
+    throw new Error(`A planilha excede o limite seguro de ${Math.round(dentalWorkbookMaxBytes / (1024 * 1024))} MB.`);
+  }
+
   const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   const rows = [];
   const errors = [];
   let ignored = 0;
+  let totalParsedRows = 0;
 
   workbook.SheetNames.forEach((sheetName) => {
     const sheet = workbook.Sheets[sheetName];
-    const jsonRows = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    const jsonRows = sheetToSafeJsonRows(sheet);
+    totalParsedRows += jsonRows.length;
+    if (totalParsedRows > dentalWorkbookMaxRows) {
+      throw new Error(`A planilha excede o limite seguro de ${dentalWorkbookMaxRows} linhas.`);
+    }
     jsonRows.forEach((row, index) => {
       const normalized = normalizeImportedDentalRow(row, sheetName);
       if (normalized) {

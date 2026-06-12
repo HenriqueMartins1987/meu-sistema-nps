@@ -157,22 +157,56 @@ const railwayApiUrl = String(process.env.RAILWAY_API_URL || 'https://backboard.r
 const uploadDir = path.join(__dirname, 'uploads');
 const reportsDir = path.join(uploadDir, 'reports');
 const maxUploadSizeBytes = 10 * 1024 * 1024;
+const securityJsonBodyLimit = String(process.env.SECURITY_JSON_BODY_LIMIT || '1mb').trim() || '1mb';
+const securityUrlEncodedBodyLimit = String(process.env.SECURITY_URLENCODED_BODY_LIMIT || '256kb').trim() || '256kb';
+const securityGlobalRateLimitWindowMs = getEnvPositiveNumber('SECURITY_GLOBAL_RATE_LIMIT_WINDOW_MS', 60 * 1000);
+const securityGlobalRateLimitMax = getEnvPositiveNumber('SECURITY_GLOBAL_RATE_LIMIT_MAX', 240);
+const securityWorkbookMaxBytes = getEnvPositiveNumber('SECURITY_WORKBOOK_MAX_BYTES', maxUploadSizeBytes);
+const securityWorkbookMaxRows = getEnvPositiveNumber('SECURITY_WORKBOOK_MAX_ROWS', 5000);
+const securityStandbyEnabled = getEnvBoolean('SECURITY_STANDBY_ENABLED', true);
+const securityStandbyDurationMs = getEnvPositiveNumber('SECURITY_STANDBY_DURATION_MS', 10 * 60 * 1000);
+const securityStandbyEventWindowMs = getEnvPositiveNumber('SECURITY_STANDBY_EVENT_WINDOW_MS', 2 * 60 * 1000);
+const securityStandbyIpThreshold = getEnvPositiveNumber('SECURITY_STANDBY_IP_THRESHOLD', 5);
+const securityStandbyGlobalThreshold = getEnvPositiveNumber('SECURITY_STANDBY_GLOBAL_THRESHOLD', 18);
+const securityCriticalImmediateStandby = getEnvBoolean('SECURITY_CRITICAL_IMMEDIATE_STANDBY', true);
+const securityIpBlockDurationMs = getEnvPositiveNumber('SECURITY_IP_BLOCK_DURATION_MS', 10 * 60 * 1000);
+const securityIpBlockThreshold = getEnvPositiveNumber('SECURITY_IP_BLOCK_THRESHOLD', 3);
+const securityStandbyPauseJobs = getEnvBoolean('SECURITY_STANDBY_PAUSE_JOBS', true);
 const dentalCardPublicPhotoMaxBytes = Math.max(1, Number(process.env.DENTAL_CARD_PUBLIC_PHOTO_MAX_MB || 6)) * 1024 * 1024;
 const dentalCardSlaHours = Math.max(1, Number(process.env.DENTAL_CARD_SLA_HOURS || 24));
 const dentalCardSlaWarningHours = Math.max(1, Number(process.env.DENTAL_CARD_SLA_WARNING_HOURS || 12));
 const dentalCardSlaCriticalHours = Math.max(1, Number(process.env.DENTAL_CARD_SLA_CRITICAL_HOURS || 20));
 const dentalCardSlaRepeatHours = Math.max(1, Number(process.env.DENTAL_CARD_SLA_REPEAT_HOURS || 6));
+const allowLocalhostOrigins = getEnvBoolean('ALLOW_LOCALHOST_ORIGINS', process.env.NODE_ENV !== 'production');
+const allowAnyVercelPreviewOrigin = getEnvBoolean('ALLOW_ANY_VERCEL_PREVIEW_ORIGIN', process.env.NODE_ENV !== 'production');
+const allowedVercelProjectSuffixes = Array.from(new Set([
+  ...String(process.env.ALLOWED_VERCEL_PROJECT_SUFFIXES || '')
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean),
+  'henriquemartins1987s-projects.vercel.app'
+]));
 const configuredAllowedOrigins = Array.from(new Set([
   frontendUrl,
   ...String(process.env.ALLOWED_ORIGINS || '')
     .split(',')
     .map((item) => item.trim())
     .filter(Boolean),
-  'http://localhost:3000',
+  ...(allowLocalhostOrigins ? ['http://localhost:3000'] : []),
   'https://meu-sistema-nps.vercel.app',
   'https://grcconsultoria.net.br',
   'https://www.grcconsultoria.net.br'
 ]));
+
+const adaptiveSecurityState = {
+  standbyUntil: 0,
+  standbyReason: null,
+  standbyTriggeredAt: null,
+  standbyTriggerIp: null,
+  ipEvents: new Map(),
+  blockedIps: new Map(),
+  globalEvents: []
+};
 
 fs.mkdirSync(uploadDir, { recursive: true });
 fs.mkdirSync(reportsDir, { recursive: true });
@@ -182,23 +216,342 @@ function getEnvPositiveNumber(name, fallback) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+function getEnvBoolean(name, fallback = false) {
+  const raw = process.env[name];
+  if (raw === undefined || raw === null || raw === '') return Boolean(fallback);
+  return !['false', '0', 'no', 'nao', 'não', 'off'].includes(String(raw).trim().toLowerCase());
+}
+
+function hostnameMatchesSuffix(hostname, suffix) {
+  const normalizedHostname = String(hostname || '').toLowerCase();
+  const normalizedSuffix = String(suffix || '').toLowerCase();
+  return normalizedHostname === normalizedSuffix || normalizedHostname.endsWith(`.${normalizedSuffix}`);
+}
+
 function isAllowedOrigin(origin) {
   if (!origin) return true;
   if (configuredAllowedOrigins.includes(origin)) return true;
   if (/^https:\/\/([a-z0-9-]+\.)*grcconsultoria\.net\.br$/i.test(origin)) return true;
-  if (/^https:\/\/([a-z0-9-]+\.)*vercel\.app$/i.test(origin)) return true;
 
   try {
     const hostname = new URL(origin).hostname.toLowerCase();
-    return hostname === 'localhost'
-      || hostname === '127.0.0.1'
-      || hostname === 'grcconsultoria.net.br'
-      || hostname === 'www.grcconsultoria.net.br'
-      || hostname.endsWith('.vercel.app')
-      || hostname.endsWith('.grcconsultoria.net.br');
+    if (allowLocalhostOrigins && ['localhost', '127.0.0.1', '::1'].includes(hostname)) return true;
+    if (hostname === 'grcconsultoria.net.br' || hostname === 'www.grcconsultoria.net.br') return true;
+    if (hostname.endsWith('.grcconsultoria.net.br')) return true;
+    if (allowAnyVercelPreviewOrigin && hostname.endsWith('.vercel.app')) return true;
+    if (allowedVercelProjectSuffixes.some((suffix) => hostnameMatchesSuffix(hostname, suffix))) return true;
+    return false;
   } catch (error) {
     return false;
   }
+}
+
+function createSecurityRequestId() {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  return crypto.randomBytes(16).toString('hex');
+}
+
+function pruneAdaptiveSecurityState(now = Date.now()) {
+  const eventCutoff = now - securityStandbyEventWindowMs;
+
+  adaptiveSecurityState.globalEvents = adaptiveSecurityState.globalEvents
+    .filter((event) => Number(event.at || 0) >= eventCutoff);
+
+  for (const [ip, events] of adaptiveSecurityState.ipEvents.entries()) {
+    const recentEvents = events.filter((event) => Number(event.at || 0) >= eventCutoff);
+    if (recentEvents.length) {
+      adaptiveSecurityState.ipEvents.set(ip, recentEvents);
+    } else {
+      adaptiveSecurityState.ipEvents.delete(ip);
+    }
+  }
+
+  for (const [ip, blockedUntil] of adaptiveSecurityState.blockedIps.entries()) {
+    if (Number(blockedUntil || 0) <= now) {
+      adaptiveSecurityState.blockedIps.delete(ip);
+    }
+  }
+
+  if (adaptiveSecurityState.standbyUntil && adaptiveSecurityState.standbyUntil <= now) {
+    adaptiveSecurityState.standbyUntil = 0;
+    adaptiveSecurityState.standbyReason = null;
+    adaptiveSecurityState.standbyTriggeredAt = null;
+    adaptiveSecurityState.standbyTriggerIp = null;
+  }
+}
+
+function getSecurityStandbyStatus(now = Date.now()) {
+  pruneAdaptiveSecurityState(now);
+  const standbyUntil = Number(adaptiveSecurityState.standbyUntil || 0);
+  const active = standbyUntil > now;
+  return {
+    active,
+    standby: active,
+    standbyUntil: active ? new Date(standbyUntil).toISOString() : null,
+    retryAfterSeconds: active ? Math.max(1, Math.ceil((standbyUntil - now) / 1000)) : 0,
+    reason: active ? adaptiveSecurityState.standbyReason : null,
+    triggeredAt: active ? adaptiveSecurityState.standbyTriggeredAt : null,
+    triggerIp: active ? adaptiveSecurityState.standbyTriggerIp : null
+  };
+}
+
+function isAdaptiveSecurityStandbyActive() {
+  return getSecurityStandbyStatus().active;
+}
+
+function isSecurityStandbyExemptRoute(req) {
+  const route = String(req.path || req.originalUrl || '').split('?')[0];
+  if (req.method === 'OPTIONS') return true;
+  return route === '/'
+    || route === '/health'
+    || route === '/api/health'
+    || route === '/health/db'
+    || route === '/api/health/db'
+    || route === '/security/standby-status'
+    || route === '/api/security/standby-status';
+}
+
+function sendSecurityStandbyResponse(req, res, action = 'blocked_by_security_standby') {
+  const status = getSecurityStandbyStatus();
+  res.setHeader('Retry-After', String(status.retryAfterSeconds || Math.ceil(securityStandbyDurationMs / 1000)));
+  res.setHeader('Cache-Control', 'no-store');
+
+  insertSecurityAuditLog({
+    req,
+    module: 'security',
+    action,
+    outcome: 'denied',
+    metadata: {
+      route: req.originalUrl || req.path,
+      method: req.method,
+      standbyUntil: status.standbyUntil,
+      requestId: req.securityRequestId || null
+    },
+    origin: 'api'
+  });
+
+  return res.status(503).json({
+    error: 'Sistema em stand-by preventivo por segurança. Tente novamente em alguns minutos.',
+    code: 'SECURITY_STANDBY',
+    standby: true,
+    retryAfterSeconds: status.retryAfterSeconds,
+    standbyUntil: status.standbyUntil
+  });
+}
+
+function triggerAdaptiveSecurityStandby(req, reason, metadata = {}) {
+  if (!securityStandbyEnabled) return getSecurityStandbyStatus();
+
+  const now = Date.now();
+  const standbyUntil = now + securityStandbyDurationMs;
+  adaptiveSecurityState.standbyUntil = Math.max(Number(adaptiveSecurityState.standbyUntil || 0), standbyUntil);
+  adaptiveSecurityState.standbyReason = String(reason || 'security_event').slice(0, 120);
+  adaptiveSecurityState.standbyTriggeredAt = new Date(now).toISOString();
+  adaptiveSecurityState.standbyTriggerIp = req ? getRequestIp(req) : null;
+
+  insertSecurityAuditLog({
+    req,
+    module: 'security',
+    action: 'security_standby_triggered',
+    outcome: 'warning',
+    metadata: {
+      reason: adaptiveSecurityState.standbyReason,
+      standbyUntil: new Date(adaptiveSecurityState.standbyUntil).toISOString(),
+      durationMs: securityStandbyDurationMs,
+      requestId: req?.securityRequestId || null,
+      ...metadata
+    },
+    origin: 'api'
+  });
+
+  if (io) {
+    io.emit('system:security-standby', {
+      standby: true,
+      standbyUntil: new Date(adaptiveSecurityState.standbyUntil).toISOString()
+    });
+    io.disconnectSockets(true);
+  }
+
+  return getSecurityStandbyStatus(now);
+}
+
+function recordAdaptiveSecurityEvent(req, event = {}) {
+  const now = Date.now();
+  pruneAdaptiveSecurityState(now);
+
+  const ip = getRequestIp(req);
+  const normalizedEvent = {
+    at: now,
+    ip,
+    severity: event.severity || 'medium',
+    reason: event.reason || 'suspicious_request',
+    route: String(req.originalUrl || req.path || '').slice(0, 500),
+    method: req.method,
+    requestId: req.securityRequestId || null
+  };
+
+  const ipEvents = adaptiveSecurityState.ipEvents.get(ip) || [];
+  ipEvents.push(normalizedEvent);
+  adaptiveSecurityState.ipEvents.set(ip, ipEvents);
+  adaptiveSecurityState.globalEvents.push(normalizedEvent);
+
+  if (ipEvents.length >= securityIpBlockThreshold || normalizedEvent.severity === 'critical') {
+    adaptiveSecurityState.blockedIps.set(ip, now + securityIpBlockDurationMs);
+  }
+
+  insertSecurityAuditLog({
+    req,
+    module: 'security',
+    action: normalizedEvent.reason,
+    outcome: normalizedEvent.severity === 'critical' ? 'critical' : 'warning',
+    metadata: {
+      route: normalizedEvent.route,
+      method: normalizedEvent.method,
+      severity: normalizedEvent.severity,
+      ipEventsInWindow: ipEvents.length,
+      globalEventsInWindow: adaptiveSecurityState.globalEvents.length,
+      requestId: normalizedEvent.requestId,
+      pattern: event.pattern || null
+    },
+    origin: 'api'
+  });
+
+  const shouldStandby = securityStandbyEnabled && (
+    (securityCriticalImmediateStandby && normalizedEvent.severity === 'critical')
+    || ipEvents.length >= securityStandbyIpThreshold
+    || adaptiveSecurityState.globalEvents.length >= securityStandbyGlobalThreshold
+  );
+
+  if (shouldStandby) {
+    triggerAdaptiveSecurityStandby(req, normalizedEvent.reason, {
+      severity: normalizedEvent.severity,
+      ipEventsInWindow: ipEvents.length,
+      globalEventsInWindow: adaptiveSecurityState.globalEvents.length
+    });
+  }
+
+  return {
+    ip,
+    ipEventsInWindow: ipEvents.length,
+    blocked: adaptiveSecurityState.blockedIps.has(ip),
+    standby: isAdaptiveSecurityStandbyActive()
+  };
+}
+
+const criticalRequestProbePatterns = [
+  { reason: 'env_file_probe', pattern: /(?:^|[/?=&]|%2f)\.env(?:$|[/?#=&]|%3f)/i },
+  { reason: 'git_metadata_probe', pattern: /(?:^|[/?]|%2f)\.git(?:[/?]|%2f)/i },
+  { reason: 'path_traversal_probe', pattern: /(?:\.\.[/\\]|%2e%2e|%252e%252e|%c0%ae)/i },
+  { reason: 'server_file_probe', pattern: /(?:\/|%2f)(?:etc\/passwd|proc\/self|windows\/win\.ini|boot\.ini)/i },
+  { reason: 'log4j_probe', pattern: /\$\{\s*jndi\s*:/i }
+];
+
+const suspiciousRequestProbePatterns = [
+  { reason: 'sql_injection_probe', pattern: /(?:union(?:\s|%20|\+)+select|information_schema|sleep\s*\(|benchmark\s*\(|drop(?:\s|%20|\+)+table|or(?:\s|%20|\+)+1\s*=\s*1)/i },
+  { reason: 'xss_probe', pattern: /(?:<\s*script|%3c\s*script|javascript\s*:|onerror\s*=|onload\s*=)/i },
+  { reason: 'command_injection_probe', pattern: /(?:;|\||%7c|`|\$\()(\s|%20)*(?:cat|curl|wget|bash|sh|powershell|cmd\.exe|nc)\b/i },
+  { reason: 'scanner_route_probe', pattern: /(?:wp-admin|wp-login|xmlrpc\.php|phpmyadmin|adminer\.php|composer\.json|package-lock\.json|yarn\.lock)/i }
+];
+
+function classifySecurityProbeText(text, options = {}) {
+  const normalizedText = String(text || '').slice(0, options.maxLength || 12000);
+  if (!normalizedText) return null;
+
+  const critical = criticalRequestProbePatterns.find((item) => item.pattern.test(normalizedText));
+  if (critical) {
+    return { ...critical, severity: 'critical' };
+  }
+
+  const suspicious = suspiciousRequestProbePatterns.find((item) => item.pattern.test(normalizedText));
+  if (suspicious) {
+    return { ...suspicious, severity: options.body ? 'medium' : 'high' };
+  }
+
+  return null;
+}
+
+function buildRequestProbeText(req) {
+  return [
+    req.originalUrl || req.url || '',
+    req.headers['user-agent'] || '',
+    req.headers.referer || '',
+    req.headers.origin || ''
+  ].join('\n');
+}
+
+function buildBodyProbeText(req) {
+  if (!req.body || typeof req.body !== 'object') return '';
+  try {
+    return JSON.stringify(sanitizeActivityValue(req.body)).slice(0, 12000);
+  } catch (error) {
+    return '';
+  }
+}
+
+function assignSecurityRequestId(req, res, next) {
+  const inboundRequestId = String(req.headers['x-request-id'] || '').trim();
+  req.securityRequestId = /^[a-zA-Z0-9._:-]{8,120}$/.test(inboundRequestId)
+    ? inboundRequestId
+    : createSecurityRequestId();
+  res.setHeader('X-Request-Id', req.securityRequestId);
+  return next();
+}
+
+function installAdditionalSecurityHeaders(req, res, next) {
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()');
+  res.setHeader('X-Permitted-Cross-Domain-Policies', 'none');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow, nosnippet, noarchive');
+  return next();
+}
+
+function securityStandbyGate(req, res, next) {
+  if (isSecurityStandbyExemptRoute(req)) return next();
+  if (!isAdaptiveSecurityStandbyActive()) return next();
+  return sendSecurityStandbyResponse(req, res);
+}
+
+function blockedIpSecurityGate(req, res, next) {
+  if (isSecurityStandbyExemptRoute(req)) return next();
+  pruneAdaptiveSecurityState();
+  const blockedUntil = adaptiveSecurityState.blockedIps.get(getRequestIp(req));
+  if (!blockedUntil) return next();
+
+  const retryAfterSeconds = Math.max(1, Math.ceil((blockedUntil - Date.now()) / 1000));
+  res.setHeader('Retry-After', String(retryAfterSeconds));
+  return res.status(429).json({
+    error: 'Origem temporariamente bloqueada por comportamento suspeito.',
+    code: 'SECURITY_IP_BLOCKED',
+    retryAfterSeconds
+  });
+}
+
+function securityProbeGate(req, res, next) {
+  const event = classifySecurityProbeText(buildRequestProbeText(req));
+  if (!event) return next();
+
+  const state = recordAdaptiveSecurityEvent(req, event);
+  if (state.standby) return sendSecurityStandbyResponse(req, res, 'blocked_after_security_probe');
+
+  return res.status(403).json({
+    error: 'Requisição bloqueada pela política de segurança.',
+    code: 'SECURITY_REQUEST_BLOCKED'
+  });
+}
+
+function requestBodySecurityGate(req, res, next) {
+  const event = classifySecurityProbeText(buildBodyProbeText(req), { body: true });
+  if (!event) return next();
+
+  const state = recordAdaptiveSecurityEvent(req, {
+    ...event,
+    reason: `${event.reason}_body`
+  });
+  if (state.standby) return sendSecurityStandbyResponse(req, res, 'blocked_after_body_security_probe');
+
+  return res.status(403).json({
+    error: 'Conteúdo bloqueado pela política de segurança.',
+    code: 'SECURITY_BODY_BLOCKED'
+  });
 }
 
 io = new Server(httpServer, {
@@ -214,10 +567,18 @@ io = new Server(httpServer, {
 // ============================================
 // MIDDLEWARES
 // ============================================
+app.set('trust proxy', 1);
 app.disable('x-powered-by');
+app.use(assignSecurityRequestId);
 app.use(helmet({
-  crossOriginResourcePolicy: false
+  crossOriginResourcePolicy: false,
+  frameguard: { action: 'deny' },
+  referrerPolicy: { policy: 'no-referrer' },
+  hsts: process.env.NODE_ENV === 'production'
+    ? { maxAge: 15552000, includeSubDomains: true }
+    : false
 }));
+app.use(installAdditionalSecurityHeaders);
 
 app.use(cors({
   origin: (origin, callback) => callback(null, isAllowedOrigin(origin) ? (origin || true) : false),
@@ -226,8 +587,44 @@ app.use(cors({
   credentials: false
 }));
 
-app.use(express.json());
-app.use('/uploads', express.static(uploadDir));
+app.use(securityStandbyGate);
+app.use(blockedIpSecurityGate);
+app.use(securityProbeGate);
+
+const globalApiLimiter = rateLimit({
+  windowMs: securityGlobalRateLimitWindowMs,
+  max: securityGlobalRateLimitMax,
+  standardHeaders: true,
+  legacyHeaders: false,
+  skip: (req) => ['OPTIONS'].includes(String(req.method || '').toUpperCase()),
+  handler: (req, res, next, options) => {
+    const state = recordAdaptiveSecurityEvent(req, {
+      reason: 'global_rate_limit_exceeded',
+      severity: 'high'
+    });
+    if (state.standby) return sendSecurityStandbyResponse(req, res, 'blocked_after_global_rate_limit');
+    return res.status(options.statusCode).json({
+      error: 'Muitas requisições em pouco tempo. Aguarde alguns instantes e tente novamente.',
+      code: 'SECURITY_GLOBAL_RATE_LIMIT'
+    });
+  }
+});
+
+app.use(globalApiLimiter);
+app.use(express.json({ limit: securityJsonBodyLimit }));
+app.use(express.urlencoded({
+  extended: false,
+  limit: securityUrlEncodedBodyLimit,
+  parameterLimit: 100
+}));
+app.use(requestBodySecurityGate);
+app.use('/uploads', express.static(uploadDir, {
+  setHeaders: (res, filePath) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Cache-Control', 'private, max-age=3600');
+    res.setHeader('Content-Disposition', buildUploadContentDisposition(path.basename(filePath)));
+  }
+}));
 app.get(/^\/uploads\/(.+)$/, servePersistedUploadedFile);
 
 const initialPasswordChangeLimiter = rateLimit({
@@ -253,6 +650,47 @@ const passwordRecoveryRequestLimiter = rateLimit({
 // ============================================
 // CONFIGURAÇÃO DE UPLOAD (CORRETA)
 // ============================================
+const allowedBusinessUploadExtensions = new Set([
+  '.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic', '.heif',
+  '.pdf',
+  '.xlsx', '.xls', '.csv',
+  '.doc', '.docx', '.odt',
+  '.ods',
+  '.txt',
+  '.mp4', '.mov', '.webm'
+]);
+
+const blockedUploadExtensions = new Set([
+  '.app', '.bat', '.bin', '.cmd', '.com', '.cpl', '.dll', '.dmg', '.exe',
+  '.hta', '.htm', '.html', '.jar', '.js', '.jse', '.jsp', '.lnk', '.mjs',
+  '.msi', '.php', '.phtml', '.ps1', '.py', '.rb', '.reg', '.scr', '.sh',
+  '.svg', '.swf', '.vbe', '.vbs', '.wsf', '.xhtml', '.xml', '.xlsm', '.docm'
+]);
+
+function validateBusinessUploadFile(req, file, cb) {
+  const extension = getSafeUploadExtension(file);
+  const originalName = normalizeUploadedOriginalName(file) || file?.originalname || '';
+
+  if (!extension || blockedUploadExtensions.has(extension) || !allowedBusinessUploadExtensions.has(extension)) {
+    recordAdaptiveSecurityEvent(req, {
+      reason: 'blocked_upload_extension',
+      severity: blockedUploadExtensions.has(extension) ? 'high' : 'medium',
+      pattern: extension || 'sem_extensao'
+    });
+    return cb(new Error('Tipo de arquivo não permitido pela política de segurança.'));
+  }
+
+  if (/[\u0000-\u001f\u007f]/.test(originalName)) {
+    recordAdaptiveSecurityEvent(req, {
+      reason: 'blocked_upload_filename',
+      severity: 'high'
+    });
+    return cb(new Error('Nome de arquivo inválido.'));
+  }
+
+  return cb(null, true);
+}
+
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
     cb(null, uploadDir);
@@ -310,7 +748,8 @@ const upload = multer({
   storage,
   limits: {
     fileSize: maxUploadSizeBytes
-  }
+  },
+  fileFilter: validateBusinessUploadFile
 });
 
 const publicDentalCardPhotoUpload = multer({
@@ -867,11 +1306,25 @@ function calculateResolutionDueAt(baseDate = new Date()) {
   return dueAt;
 }
 
+function normalizeRequestIpValue(value) {
+  const raw = String(value || '').split(',')[0].trim();
+  if (!raw) return '';
+  const withoutIpv6Prefix = raw.replace(/^::ffff:/, '');
+  if (/^[a-f0-9:.]+$/i.test(withoutIpv6Prefix) || /^[\d.]+$/.test(withoutIpv6Prefix)) {
+    return withoutIpv6Prefix.slice(0, 80);
+  }
+  return raw.replace(/[^a-zA-Z0-9:.:-]/g, '').slice(0, 80);
+}
+
 function getRequestIp(req) {
-  const forwardedFor = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  const realIp = String(req.headers['x-real-ip'] || '').trim();
-  const remoteAddress = String(req.socket?.remoteAddress || req.ip || '').trim();
-  return forwardedFor || realIp || remoteAddress || 'ip-nao-informado';
+  const candidates = [
+    req.ip,
+    req.headers['x-real-ip'],
+    req.headers['x-forwarded-for'],
+    req.socket?.remoteAddress
+  ];
+  const ip = candidates.map(normalizeRequestIpValue).find(Boolean);
+  return ip || 'ip-nao-informado';
 }
 
 function toMysqlDateTime(date) {
@@ -1036,6 +1489,26 @@ function buildInlineContentDisposition(filename) {
   return `inline; filename="${safeFilename.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`;
 }
 
+function isInlineSafeUpload(filename, mimeType = '') {
+  const extension = path.extname(String(filename || '')).toLowerCase();
+  const mime = String(mimeType || '').toLowerCase();
+  const inlineImageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif', '.heic', '.heif']);
+  if (extension === '.svg' || mime.includes('svg')) return false;
+  if (inlineImageExtensions.has(extension)) return true;
+  if (mime.startsWith('image/')) return true;
+  if (mime === 'application/pdf' || extension === '.pdf') return true;
+  return false;
+}
+
+function buildUploadContentDisposition(filename, mimeType = '') {
+  const safeFilename = String(filename || 'arquivo')
+    .replace(/[\r\n"]/g, '')
+    .trim() || 'arquivo';
+  const disposition = isInlineSafeUpload(safeFilename, mimeType) ? 'inline' : 'attachment';
+
+  return `${disposition}; filename="${safeFilename.replace(/[^\x20-\x7e]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(safeFilename)}`;
+}
+
 async function ensureUploadedFilesTable() {
   if (uploadedFilesTableReady) {
     return;
@@ -1136,7 +1609,8 @@ async function servePersistedUploadedFile(req, res, next) {
 
     res.setHeader('Content-Type', file.mime_type || 'application/octet-stream');
     res.setHeader('Content-Length', file.size_bytes || content.length);
-    res.setHeader('Content-Disposition', buildInlineContentDisposition(displayName));
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Disposition', buildUploadContentDisposition(displayName, file.mime_type));
     res.setHeader('Cache-Control', 'private, max-age=3600');
 
     return res.send(content);
@@ -2422,6 +2896,48 @@ function getSafeUploadExtension(file) {
   return extension || '';
 }
 
+const blockedWorksheetKeySegments = new Set(['__proto__', 'prototype', 'constructor']);
+
+function isBlockedWorksheetKey(key) {
+  const segments = String(key || '')
+    .toLowerCase()
+    .split(/[\s.[\]'"`]+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean);
+  return segments.some((segment) => blockedWorksheetKeySegments.has(segment));
+}
+
+function sanitizeWorksheetRowObject(row = {}) {
+  return Object.entries(row || {}).reduce((acc, [key, value]) => {
+    if (isBlockedWorksheetKey(key)) return acc;
+    acc[key] = value;
+    return acc;
+  }, {});
+}
+
+function assertSafeWorkbookFile(filePath) {
+  const stat = fs.statSync(filePath);
+  if (Number(stat.size || 0) > securityWorkbookMaxBytes) {
+    throw new Error(`A planilha excede o limite seguro de ${Math.round(securityWorkbookMaxBytes / (1024 * 1024))} MB.`);
+  }
+}
+
+function readWorkbookFileSafely(filePath) {
+  assertSafeWorkbookFile(filePath);
+  return XLSX.readFile(filePath, {
+    cellDates: true,
+    WTF: false
+  });
+}
+
+function sheetToSafeJsonRows(sheet, options = {}) {
+  const rows = XLSX.utils.sheet_to_json(sheet || {}, { defval: '', ...options });
+  if (rows.length > securityWorkbookMaxRows) {
+    throw new Error(`A planilha excede o limite seguro de ${securityWorkbookMaxRows} linhas.`);
+  }
+  return rows.map(sanitizeWorksheetRowObject);
+}
+
 function normalizeClinicLookupValue(value) {
   return decodePossiblyLatin1Text(value)
     .normalize('NFD')
@@ -2557,9 +3073,9 @@ function parseBulkNpsWorksheetRows(rows = []) {
 function parseBulkNpsUpload(filePath, originalName = '') {
   const extension = String(path.extname(originalName || filePath || '')).trim().toLowerCase();
   if (['.xlsx', '.xls'].includes(extension)) {
-    const workbook = XLSX.readFile(filePath);
+    const workbook = readWorkbookFileSafely(filePath);
     const firstSheetName = workbook.SheetNames[0];
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName] || {}, { defval: '' });
+    const rows = sheetToSafeJsonRows(workbook.Sheets[firstSheetName] || {});
     return parseBulkNpsWorksheetRows(rows);
   }
 
@@ -12264,6 +12780,9 @@ async function authenticateSocketUser(socket) {
 function setupRealtimeSockets() {
   io.use(async (socket, next) => {
     try {
+      if (isAdaptiveSecurityStandbyActive()) {
+        return next(new Error('Sistema em stand-by preventivo por segurança'));
+      }
       socket.user = await authenticateSocketUser(socket);
       return next();
     } catch (error) {
@@ -12391,6 +12910,17 @@ app.get(['/health/db', '/api/health/db'], async (req, res) => {
 app.get(['/system/maintenance-status', '/api/system/maintenance-status'], async (req, res) => {
   const settings = await loadSystemMaintenanceSettings();
   res.json(publicSystemMaintenancePayload(settings));
+});
+
+app.get(['/security/standby-status', '/api/security/standby-status'], (req, res) => {
+  const status = getSecurityStandbyStatus();
+  res.setHeader('Cache-Control', 'no-store');
+  res.json({
+    active: status.active,
+    standby: status.standby,
+    standbyUntil: status.standbyUntil,
+    retryAfterSeconds: status.retryAfterSeconds
+  });
 });
 
 app.use(systemMaintenanceGate);
@@ -18111,9 +18641,9 @@ function parseMassWhatsAppRecipientsFromWorksheetRows(rows = []) {
 function parseMassWhatsAppRecipientsFromUpload(filePath, originalName = '') {
   const extension = String(path.extname(originalName || filePath || '')).trim().toLowerCase();
   if (['.xlsx', '.xls'].includes(extension)) {
-    const workbook = XLSX.readFile(filePath);
+    const workbook = readWorkbookFileSafely(filePath);
     const firstSheetName = workbook.SheetNames[0];
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName] || {}, { defval: '' });
+    const rows = sheetToSafeJsonRows(workbook.Sheets[firstSheetName] || {});
     return parseMassWhatsAppRecipientsFromWorksheetRows(rows);
   }
   return parseMassWhatsAppRecipients(decodeUploadedText(fs.readFileSync(filePath)));
@@ -23099,9 +23629,9 @@ function parseAgendaImportRowsFromWorksheetRows(rows = []) {
 function parseAgendaImportRowsFromUpload(filePath, originalName = '') {
   const extension = String(path.extname(originalName || filePath || '')).trim().toLowerCase();
   if (['.xlsx', '.xls'].includes(extension)) {
-    const workbook = XLSX.readFile(filePath);
+    const workbook = readWorkbookFileSafely(filePath);
     const firstSheetName = workbook.SheetNames[0];
-    const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName] || {}, { defval: '' });
+    const rows = sheetToSafeJsonRows(workbook.Sheets[firstSheetName] || {});
     return parseAgendaImportRowsFromWorksheetRows(rows);
   }
 
@@ -30916,6 +31446,35 @@ app.use((error, req, res, next) => {
     return res.status(413).json({ error: 'O arquivo deve ter no maximo 10 MB.' });
   }
 
+  if (error instanceof multer.MulterError) {
+    return res.status(400).json({ error: 'Não foi possível processar o upload enviado.' });
+  }
+
+  if (error?.type === 'entity.too.large') {
+    recordAdaptiveSecurityEvent(req, {
+      reason: 'request_body_too_large',
+      severity: 'high'
+    });
+    return res.status(413).json({
+      error: 'Payload acima do limite permitido.',
+      code: 'SECURITY_PAYLOAD_TOO_LARGE'
+    });
+  }
+
+  if (error instanceof SyntaxError && error.status === 400 && 'body' in error) {
+    return res.status(400).json({
+      error: 'JSON inválido.',
+      code: 'INVALID_JSON'
+    });
+  }
+
+  if (error?.message && /política de segurança|arquivo inválido|arquivo não permitido/i.test(error.message)) {
+    return res.status(400).json({
+      error: error.message,
+      code: 'SECURITY_UPLOAD_BLOCKED'
+    });
+  }
+
   return next(error);
 });
 
@@ -30925,6 +31484,11 @@ app.use((error, req, res, next) => {
 async function startServer() {
   const scheduledJobsRunning = new Set();
   const runScheduledJob = async (jobKey, label, job) => {
+    if (securityStandbyPauseJobs && isAdaptiveSecurityStandbyActive()) {
+      console.warn(`Rotina pausada por stand-by preventivo de segurança: ${label}`);
+      return null;
+    }
+
     if (scheduledJobsRunning.has(jobKey)) {
       console.warn(`Rotina ignorada por já estar em execução: ${label}`);
       return null;
