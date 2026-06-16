@@ -106,6 +106,13 @@ const emptyImportDraft = {
   message_text: ''
 };
 
+const emptyReplicationDraft = {
+  source_user_id: '',
+  target_user_id: '',
+  include_done: false,
+  skip_duplicates: true
+};
+
 function toDatetimeLocal(value) {
   if (!value) return '';
   const date = new Date(value);
@@ -205,6 +212,11 @@ function canAccessAgendaAnalytics(user) {
 function canUseAgendaOperatorTabs(user) {
   if (isMasterAdmin(user)) return true;
   return ['admin', 'supervisor_crc', 'crc_leader'].includes(normalizeRoleValue(user?.role));
+}
+
+function canReplicateAgendaItems(user) {
+  if (isMasterAdmin(user)) return true;
+  return normalizeRoleValue(user?.role) === 'supervisor_crc';
 }
 
 function normalizeAgendaBoardUserId(value) {
@@ -515,6 +527,7 @@ export default function AgendaPage() {
   const canDeleteAgendaItem = isMasterAdmin(currentUser);
   const canUseAgendaAnalytics = canAccessAgendaAnalytics(currentUser);
   const canUseOperatorTabs = canUseAgendaOperatorTabs(currentUser);
+  const canReplicateAgenda = canReplicateAgendaItems(currentUser);
   const [items, setItems] = useState([]);
   const [assignableUsers, setAssignableUsers] = useState([]);
   const [clinicOptions, setClinicOptions] = useState([]);
@@ -528,8 +541,12 @@ export default function AgendaPage() {
   const [validatingImport, setValidatingImport] = useState(false);
   const [importSummary, setImportSummary] = useState(null);
   const [importValidation, setImportValidation] = useState(null);
+  const [replicationDraft, setReplicationDraft] = useState(emptyReplicationDraft);
+  const [replicatingAgenda, setReplicatingAgenda] = useState(false);
+  const [replicationSummary, setReplicationSummary] = useState(null);
   const [showAnalyticsPanel, setShowAnalyticsPanel] = useState(false);
   const [showImportPanel, setShowImportPanel] = useState(false);
+  const [showReplicationPanel, setShowReplicationPanel] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -715,6 +732,12 @@ export default function AgendaPage() {
     });
     return byId;
   }, [assigneeOptions]);
+
+  const replicationUserOptions = useMemo(() => (
+    assigneeOptions
+      .filter((user) => user?.id)
+      .sort((left, right) => formatAgendaUserOption(left).localeCompare(formatAgendaUserOption(right), 'pt-BR'))
+  ), [assigneeOptions]);
 
   const queueFilteredItems = useMemo(() => (
     items.filter((item) => matchesAgendaPatientQueue(item, activePatientQueue))
@@ -1109,6 +1132,50 @@ export default function AgendaPage() {
     }
   };
 
+  const updateReplicationDraft = (field, value) => {
+    setReplicationDraft((current) => ({ ...current, [field]: value }));
+    setReplicationSummary(null);
+  };
+
+  const replicateAgendaItems = async () => {
+    if (!replicationDraft.source_user_id || !replicationDraft.target_user_id) {
+      setFeedback('Selecione a pessoa de origem e a pessoa de destino para replicar a agenda.');
+      return;
+    }
+    if (String(replicationDraft.source_user_id) === String(replicationDraft.target_user_id)) {
+      setFeedback('Origem e destino precisam ser pessoas diferentes.');
+      return;
+    }
+
+    const sourceUser = replicationUserOptions.find((user) => String(user.id) === String(replicationDraft.source_user_id));
+    const targetUser = replicationUserOptions.find((user) => String(user.id) === String(replicationDraft.target_user_id));
+    const confirmed = window.confirm(
+      `Replicar tarefas de ${sourceUser?.name || 'origem'} para ${targetUser?.name || 'destino'}? As tarefas atuais serao mantidas.`
+    );
+    if (!confirmed) return;
+
+    setReplicatingAgenda(true);
+    setFeedback('');
+    setReplicationSummary(null);
+
+    try {
+      const response = await api.post('/api/agenda/items/replicate', {
+        source_user_id: replicationDraft.source_user_id,
+        target_user_id: replicationDraft.target_user_id,
+        include_done: Boolean(replicationDraft.include_done),
+        skip_duplicates: Boolean(replicationDraft.skip_duplicates)
+      });
+      setReplicationSummary(response.data || null);
+      setReplicationDraft(emptyReplicationDraft);
+      await Promise.all([loadItems(), loadDashboard()]);
+      setFeedback(response.data?.message || 'Agenda replicada com sucesso.');
+    } catch (error) {
+      setFeedback(getApiErrorMessage(error, 'Nao foi possivel replicar a agenda.'));
+    } finally {
+      setReplicatingAgenda(false);
+    }
+  };
+
   return (
     <main className="app-page agenda-page">
       <PageHeader
@@ -1120,6 +1187,11 @@ export default function AgendaPage() {
             <button type="button" className="outline-action" onClick={requestNotifications}>Ativar lembretes</button>
             {canUseAgendaAnalytics ? (
               <button type="button" className="outline-action" onClick={() => setShowImportPanel(true)}>Importar agenda</button>
+            ) : null}
+            {canReplicateAgenda ? (
+              <button type="button" className="outline-action" onClick={() => setShowReplicationPanel((current) => !current)}>
+                Replicar agenda
+              </button>
             ) : null}
             <button
               type="button"
@@ -1144,6 +1216,109 @@ export default function AgendaPage() {
             <button type="button" className="secondary-action" onClick={acknowledgeReminder}>Marcar como visto</button>
           </ActionButtons>
         </section>
+      ) : null}
+
+      {canReplicateAgenda && showReplicationPanel ? (
+        <SectionContainer className="agenda-import-panel agenda-replication-panel">
+          <div className="agenda-intelligence-head">
+            <div>
+              <span className="agenda-panel-kicker">Operacao assistida</span>
+              <strong>Replicar tarefas entre colaboradores</strong>
+              <small>Copie a agenda ativa de uma pessoa para outra sem mover, excluir ou alterar as tarefas originais.</small>
+            </div>
+            <div className="agenda-intelligence-actions">
+              <button type="button" className="outline-action" onClick={() => setShowReplicationPanel(false)}>
+                Fechar
+              </button>
+            </div>
+          </div>
+
+          <div className="agenda-import-grid">
+            <label>
+              Pessoa de origem
+              <select
+                className="field"
+                value={replicationDraft.source_user_id}
+                onChange={(event) => updateReplicationDraft('source_user_id', event.target.value)}
+              >
+                <option value="">Selecione quem sera copiado</option>
+                {replicationUserOptions.map((user) => (
+                  <option key={`replication-source-${user.id}`} value={String(user.id)}>{formatAgendaUserOption(user)}</option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Pessoa de destino
+              <select
+                className="field"
+                value={replicationDraft.target_user_id}
+                onChange={(event) => updateReplicationDraft('target_user_id', event.target.value)}
+              >
+                <option value="">Selecione quem recebera as tarefas</option>
+                {replicationUserOptions.map((user) => (
+                  <option key={`replication-target-${user.id}`} value={String(user.id)}>{formatAgendaUserOption(user)}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="agenda-import-options">
+            <label className="agenda-toggle-card">
+              <input
+                type="checkbox"
+                checked={Boolean(replicationDraft.skip_duplicates)}
+                onChange={(event) => updateReplicationDraft('skip_duplicates', event.target.checked)}
+              />
+              <div>
+                <strong>Ignorar tarefas ja existentes</strong>
+                <small>Evita criar copias quando o destino ja possui uma tarefa equivalente.</small>
+              </div>
+            </label>
+            <label className="agenda-toggle-card">
+              <input
+                type="checkbox"
+                checked={Boolean(replicationDraft.include_done)}
+                onChange={(event) => updateReplicationDraft('include_done', event.target.checked)}
+              />
+              <div>
+                <strong>Incluir concluidas</strong>
+                <small>Quando marcado, tarefas concluidas da origem tambem serao copiadas, mas reabertas no destino.</small>
+              </div>
+            </label>
+          </div>
+
+          <div className="agenda-import-actions">
+            <button
+              type="button"
+              className="primary-action"
+              onClick={replicateAgendaItems}
+              disabled={replicatingAgenda || replicationUserOptions.length < 2}
+            >
+              {replicatingAgenda ? 'Replicando...' : 'Replicar tarefas'}
+            </button>
+          </div>
+
+          {replicationSummary ? (
+            <div className="agenda-import-summary">
+              <article>
+                <span>Tarefas analisadas</span>
+                <strong>{replicationSummary.sourceTotal || 0}</strong>
+              </article>
+              <article>
+                <span>Tarefas criadas</span>
+                <strong>{replicationSummary.created || 0}</strong>
+              </article>
+              <article>
+                <span>Duplicidades ignoradas</span>
+                <strong>{replicationSummary.skippedDuplicates || 0}</strong>
+              </article>
+              <article>
+                <span>Destino</span>
+                <strong>{replicationSummary.targetUser?.name || '-'}</strong>
+              </article>
+            </div>
+          ) : null}
+        </SectionContainer>
       ) : null}
 
       {canUseAgendaAnalytics ? (

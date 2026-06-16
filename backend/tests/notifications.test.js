@@ -473,6 +473,93 @@ test('assigned complaint notifications email only current responsible and master
   }
 });
 
+test('configured complaint alert recipient keeps the complaint VPS session and selected phone', () => {
+  const recipient = __testables.buildConfiguredComplaintAlertRecipient({
+    coordinator_user_id: 17,
+    coordinator_name: 'Ana Coordenadora',
+    coordinator_phone: '5562999990000'
+  }, 'coordinator', [{
+    userId: 17,
+    name: 'Nome anterior',
+    role: 'coordinator',
+    email: 'ana@example.com',
+    phone: '5562888880000'
+  }]);
+
+  assert.deepEqual(recipient, {
+    userId: 17,
+    name: 'Ana Coordenadora',
+    role: 'coordinator',
+    email: 'ana@example.com',
+    phone: '5562999990000',
+    sessionId: 'reclamacoes'
+  });
+});
+
+test('managed complaint alerts resolve coordinator and manager from saved clinic settings', async () => {
+  const originalQuery = serverModule.pool.query;
+
+  serverModule.pool.query = async (sql, params = []) => {
+    if (sql.includes('FROM complaint_whatsapp_alert_settings')) {
+      assert.equal(params[0], 5);
+      return [[{
+        clinic_id: 5,
+        enabled: 1,
+        notify_coordinator: 1,
+        notify_manager: 1,
+        coordinator_user_id: 17,
+        coordinator_name: 'Ana Coordenadora',
+        coordinator_phone: '5562999990000',
+        manager_user_id: 21,
+        manager_name: 'Bruno Gerente',
+        manager_phone: '5562999991111'
+      }]];
+    }
+
+    if (sql.includes('SELECT coordinator_name, responsible_email, responsible_whatsapp FROM clinics')) {
+      return [[{
+        coordinator_name: '',
+        responsible_email: '',
+        responsible_whatsapp: ''
+      }]];
+    }
+
+    if (sql.includes('INNER JOIN user_clinics uc ON uc.user_id = u.id AND uc.clinic_id = ?')) {
+      return [[
+        { id: 17, name: 'Ana Coordenadora', email: 'ana@example.com', whatsapp: '5562888880000', phone: '', role: 'coordinator' },
+        { id: 21, name: 'Bruno Gerente', email: 'bruno@example.com', whatsapp: '5562888881111', phone: '', role: 'manager' }
+      ]];
+    }
+
+    throw new Error(`Unexpected query in test: ${sql}`);
+  };
+
+  try {
+    const recipients = await __testables.getManagedComplaintAlertRecipients(5);
+
+    assert.deepEqual(recipients, [
+      {
+        userId: 17,
+        name: 'Ana Coordenadora',
+        role: 'coordinator',
+        email: 'ana@example.com',
+        phone: '5562999990000',
+        sessionId: 'reclamacoes'
+      },
+      {
+        userId: 21,
+        name: 'Bruno Gerente',
+        role: 'manager',
+        email: 'bruno@example.com',
+        phone: '5562999991111',
+        sessionId: 'reclamacoes'
+      }
+    ]);
+  } finally {
+    serverModule.pool.query = originalQuery;
+  }
+});
+
 test('daily coordinator WhatsApp reminder is ASCII-safe and professional', () => {
   const message = __testables.buildDailyCoordinatorDemandReminderMessage({
     coordinator: { name: 'Joao Coordenador' },

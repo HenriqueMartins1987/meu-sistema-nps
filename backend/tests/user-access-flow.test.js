@@ -1383,6 +1383,204 @@ test('supervisor crc can assign agenda item to crc operator', async () => {
   assert.equal(response.body.assigned_user_id, 55);
 });
 
+test('only master admin and crc supervisor can replicate agenda items', () => {
+  assert.equal(serverModule.__testables.canReplicateAgendaItems({
+    email: 'henrique.martins@grcconsultoria.net.br',
+    role: 'admin'
+  }), true);
+  assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'master_admin' }), true);
+  assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'supervisor_crc' }), true);
+  assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'admin' }), false);
+  assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'crc_leader' }), false);
+  assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'crc_operator' }), false);
+});
+
+test('supervisor crc can replicate open agenda items between users without duplicating existing task', async () => {
+  const insertedAgendaParams = [];
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1, role: 'supervisor_crc' }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM users u') && sql.includes('WHERE u.id = ?') && sql.includes('u.active = 1'),
+      reply: async (_sql, params) => {
+        const requestedId = Number(params[0]);
+        if (requestedId === 55) {
+          return [[{
+            id: 55,
+            name: 'Operador Origem',
+            email: 'origem@example.com',
+            role: 'crc_operator',
+            position: 'Operador de CRC',
+            department: 'CRC'
+          }]];
+        }
+        if (requestedId === 56) {
+          return [[{
+            id: 56,
+            name: 'Operador Destino',
+            email: 'destino@example.com',
+            role: 'crc_operator',
+            position: 'Operador de CRC',
+            department: 'CRC'
+          }]];
+        }
+        return [[]];
+      }
+    },
+    {
+      match: (sql) => sql.includes('FROM agenda_items a') && sql.includes('a.is_daily_recurring = 1'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM agenda_items a') && sql.includes('a.assigned_user_id = ?') && sql.includes("a.status <> 'done'"),
+      reply: async () => [[
+        {
+          id: 201,
+          company_id: 1,
+          owner_user_id: 9,
+          owner_name: 'Supervisor CRC',
+          assigned_user_id: 55,
+          assigned_user_name: 'Operador Origem',
+          assigned_user_email: 'origem@example.com',
+          clinic_id: 7,
+          clinic_name: 'Garavelo',
+          demand_type: 'general',
+          source_external_id: null,
+          patient_name: null,
+          patient_phone: null,
+          patient_specialty: null,
+          patient_dentist: null,
+          patient_channel: null,
+          patient_has_scheduled: 0,
+          patient_scheduled_at: null,
+          confirmation_status: null,
+          confirmation_notes: null,
+          source_label: 'manual',
+          source_batch_id: null,
+          title: 'Confirmar agenda da unidade',
+          description: 'Duplicada no destino',
+          status: 'today',
+          priority: 'alta',
+          is_daily_recurring: 0,
+          requires_completion: 1,
+          recurrence_base_status: null,
+          recurrence_cycle_date: null,
+          recurrence_weekdays_json: null,
+          due_at: '2026-06-16 09:00:00',
+          reminder_at: null,
+          tags_json: '["CRC"]',
+          checklist_json: '[]',
+          board_order: 0
+        },
+        {
+          id: 202,
+          company_id: 1,
+          owner_user_id: 9,
+          owner_name: 'Supervisor CRC',
+          assigned_user_id: 55,
+          assigned_user_name: 'Operador Origem',
+          assigned_user_email: 'origem@example.com',
+          clinic_id: 7,
+          clinic_name: 'Garavelo',
+          demand_type: 'patient',
+          source_external_id: null,
+          patient_name: 'Maria Silva',
+          patient_phone: '5562999999999',
+          patient_specialty: 'Ortodontia',
+          patient_dentist: 'Dr. Ana',
+          patient_channel: 'WhatsApp',
+          patient_has_scheduled: 1,
+          patient_scheduled_at: '2026-06-17 10:00:00',
+          confirmation_status: 'pendente',
+          confirmation_notes: 'Aguardando retorno.',
+          source_label: 'manual',
+          source_batch_id: null,
+          title: 'Retornar paciente Maria Silva',
+          description: 'Contato ativo de confirmacao.',
+          status: 'doing',
+          priority: 'normal',
+          is_daily_recurring: 1,
+          requires_completion: 1,
+          recurrence_base_status: 'today',
+          recurrence_cycle_date: '2026-06-16',
+          recurrence_weekdays_json: '[1,2,3,4,5]',
+          due_at: '2026-06-17 10:00:00',
+          reminder_at: '2026-06-17 09:00:00',
+          tags_json: '["Garavelo"]',
+          checklist_json: '[]',
+          board_order: 2
+        }
+      ]]
+    },
+    {
+      match: (sql) => sql.includes('FROM agenda_items a') && sql.includes('LIMIT 1000'),
+      reply: async () => [[{
+        title: 'Confirmar agenda da unidade',
+        demand_type: 'general',
+        due_at: '2026-06-16 09:00:00',
+        patient_scheduled_at: null,
+        patient_name: null,
+        patient_phone: null,
+        clinic_id: 7,
+        is_daily_recurring: 0
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO agenda_items'),
+      reply: async (_sql, params) => {
+        insertedAgendaParams.push(params);
+        return [{ insertId: 777 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO notification_events'),
+      reply: async () => [{ insertId: 88 }]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO security_audit_logs'),
+      reply: async () => [{ insertId: 89 }]
+    }
+  ]);
+
+  const response = await request(app)
+    .post('/api/agenda/items/replicate')
+    .set('Authorization', `Bearer ${signToken({
+      id: 9,
+      email: 'supervisor@example.com',
+      role: 'supervisor_crc',
+      name: 'Supervisor CRC',
+      permissions: ['home'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({
+      source_user_id: 55,
+      target_user_id: 56,
+      skip_duplicates: true
+    });
+
+  assert.equal(response.status, 201);
+  assert.equal(response.body.sourceTotal, 2);
+  assert.equal(response.body.created, 1);
+  assert.equal(response.body.skippedDuplicates, 1);
+  assert.equal(insertedAgendaParams.length, 1);
+  assert.equal(insertedAgendaParams[0][1], 9);
+  assert.equal(insertedAgendaParams[0][3], 56);
+  assert.equal(insertedAgendaParams[0][4], 'Operador Destino');
+  assert.equal(insertedAgendaParams[0][22], 'agenda_replication');
+  assert.equal(insertedAgendaParams[0][24], 'Retornar paciente Maria Silva');
+  assert.equal(insertedAgendaParams[0][27], 'normal');
+  assert.equal(insertedAgendaParams[0][28], 1);
+  assert.equal(insertedAgendaParams[0][29], 1);
+});
+
 test('daily recurring agenda item is created with mandatory completion', async () => {
   let insertedAgendaParams = null;
 

@@ -155,6 +155,7 @@ export const screenPermissions = [
   { value: 'whatsapp_absent', label: 'WhatsApp CRC - Ausentes' },
   { value: 'whatsapp_history', label: 'WhatsApp CRC - Histórico' },
   { value: 'whatsapp_reports', label: 'WhatsApp CRC - Relatórios' },
+  { value: 'whatsapp_complaint_alerts', label: 'WhatsApp CRC - Alertas de reclamações' },
   { value: 'whatsapp_settings', label: 'WhatsApp CRC - Configurações' },
   { value: 'admin_panel', label: 'Painel gerencial' }
 ];
@@ -362,7 +363,7 @@ export function hasPermission(user, permission) {
   const sacOperatorDefaults = ['home', 'complaints_register', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'crm_relationship', 'whatsapp_management', 'dental_card'];
   const managerDefaults = ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship', 'dental_card'];
   const coordinatorDefaults = ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship'];
-  const crcLeaderDefaults = ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports', 'dental_card'];
+  const crcLeaderDefaults = ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports', 'whatsapp_complaint_alerts', 'dental_card'];
   const crcOperatorDefaults = ['home', 'whatsapp_management', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'dental_card'];
 
   if (['manager', 'coordinator', 'viewer'].includes(role) && permission.startsWith('whatsapp')) {

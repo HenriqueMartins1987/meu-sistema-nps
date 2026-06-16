@@ -9,6 +9,7 @@ import { readToken } from '../session';
 const sections = [
   { id: 'dashboard', label: 'Visao geral', path: '/home/whatsapp-management/dashboard', permission: 'whatsapp_dashboard', leader: true, group: 'Operacao' },
   { id: 'instances', label: 'Cadastro de Numero', path: '/home/whatsapp-management/instances', permission: 'whatsapp_instances', leader: true, group: 'Operacao' },
+  { id: 'complaints', label: 'Alertas de Reclamacoes', path: '/home/whatsapp-management/complaints', permission: 'whatsapp_complaint_alerts', leader: true, restrictedConfig: true, group: 'Operacao' },
   { id: 'attendance', label: 'Atendimento', path: '/home/whatsapp-management/attendance', permission: 'whatsapp_attendance', operator: true, group: 'Operacao' },
   { id: 'send', label: 'Envio manual', path: '/home/whatsapp-management/send', permission: 'whatsapp_send', operator: true, group: 'Mensagens' },
   { id: 'templates', label: 'Mensagens padrao', path: '/home/whatsapp-management/templates', permission: 'whatsapp_templates', operator: true, group: 'Mensagens' },
@@ -24,6 +25,7 @@ const sections = [
 const sectionDescriptions = {
   dashboard: 'Visao executiva das sessoes, filas, operadores e ritmo operacional do WhatsApp.',
   instances: 'Cadastro, vinculo e governanca dos numeros que operam na central.',
+  complaints: 'Governanca dos alertas enviados ao coordenador e gerente quando uma nova reclamacao e cadastrada.',
   attendance: 'Operacao em tempo real para assumir, responder, transferir e finalizar atendimentos.',
   send: 'Disparo individual com padronizacao de sessao, paciente, clinica e mensagem.',
   templates: 'Biblioteca oficial de mensagens para manter padrao, velocidade e qualidade.',
@@ -96,6 +98,27 @@ function formatNumber(value) {
   return Number(value || 0).toLocaleString('pt-BR');
 }
 
+function formatDateTimeValue(value) {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 16).replace('T', ' ');
+  return date.toLocaleString('pt-BR');
+}
+
+function buildComplaintAlertDraft(item = {}) {
+  return {
+    enabled: Boolean(item.enabled),
+    notifyCoordinator: Boolean(item.notifyCoordinator),
+    notifyManager: Boolean(item.notifyManager),
+    coordinatorUserId: item.coordinator?.userId ? String(item.coordinator.userId) : '',
+    coordinatorName: item.coordinator?.name || '',
+    coordinatorPhone: item.coordinator?.phone || '',
+    managerUserId: item.manager?.userId ? String(item.manager.userId) : '',
+    managerName: item.manager?.name || '',
+    managerPhone: item.manager?.phone || ''
+  };
+}
+
 function formatLoadWarningKey(key) {
   const labels = {
     config: 'status do servico',
@@ -112,13 +135,15 @@ function formatLoadWarningKey(key) {
     flows: 'chatbot',
     chatbotSessions: 'sessoes do chatbot',
     confirmationResponses: 'confirmacoes do chatbot',
-    partnersVideo: 'painel de confirmacao'
+    partnersVideo: 'painel de confirmacao',
+    complaintAlerts: 'alertas de reclamacoes'
   };
   return labels[key] || key;
 }
 
 function sectionBadgeValue(sectionId, context = {}) {
   if (sectionId === 'instances') return context.instances?.length || 0;
+  if (sectionId === 'complaints') return context.complaintAlerts?.summary?.incompleteClinics || 0;
   if (sectionId === 'attendance') return context.queue?.length || 0;
   if (sectionId === 'templates') return context.templates?.length || 0;
   if (sectionId === 'chatbot') return context.flows?.length || 0;
@@ -307,6 +332,9 @@ function canAccessSection(user, item) {
   if (isMasterAdmin(user)) return true;
   if (item.masterOnly) return false;
   const role = normalizeRoleValue(user?.role);
+  if (item.restrictedConfig) {
+    return hasPermission(user, item.permission) || ['admin', 'supervisor_crc', 'crc_leader', 'crc_manager'].includes(role);
+  }
   if (role === 'crc_operator') return Boolean(item.operator);
   if (role === 'crc_leader' || role === 'crc_manager') return item.id !== 'settings';
   if (hasPermission(user, item.permission)) return true;
@@ -353,6 +381,7 @@ function WhatsAppManagement() {
   }, {}), [allowedSections]);
   const allowed = hasPermission(user, 'whatsapp_management') || isMasterAdmin(user) || ['admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator'].includes(role);
   const canConfigure = isMasterAdmin(user) || hasActionPermission(user, 'whatsapp_config_manage') || ['admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager'].includes(role);
+  const canManageComplaintAlerts = isMasterAdmin(user) || hasActionPermission(user, 'whatsapp_config_manage') || ['admin', 'supervisor_crc', 'crc_leader', 'crc_manager'].includes(role);
   const canRouteAttendance = canConfigure && role !== 'crc_operator';
   const canDeleteWhatsappItems = isMasterAdmin(user) || hasActionPermission(user, 'whatsapp_instance_delete');
   const canDeleteTemplates = isMasterAdmin(user) || hasActionPermission(user, 'whatsapp_template_delete');
@@ -377,6 +406,7 @@ function WhatsAppManagement() {
   const [chatbotSessions, setChatbotSessions] = useState([]);
   const [confirmationResponses, setConfirmationResponses] = useState([]);
   const [partnersVideo, setPartnersVideo] = useState(null);
+  const [complaintAlerts, setComplaintAlerts] = useState(null);
   const [messages, setMessages] = useState([]);
   const [selectedConversationId, setSelectedConversationId] = useState('');
   const [qrResult, setQrResult] = useState(null);
@@ -408,6 +438,8 @@ function WhatsAppManagement() {
   const [transferTargetId, setTransferTargetId] = useState('');
   const [settingsDraft, setSettingsDraft] = useState({ baseUrl: '', apiKey: '', antiBan: {} });
   const [historyFilters, setHistoryFilters] = useState({ search: '', status: '', instanceName: '' });
+  const [complaintAlertDrafts, setComplaintAlertDrafts] = useState({});
+  const [complaintAlertSearch, setComplaintAlertSearch] = useState('');
   const [dashboardFilters] = useState({ operatorId: '', clinicId: '', instanceName: '', status: '', campaign: '' });
   const selectedConversationIdRef = useRef('');
   const instanceEditorRef = useRef(null);
@@ -465,6 +497,15 @@ function WhatsAppManagement() {
   const currentSectionMeta = allowedSections.find((item) => item.id === currentSection) || allowedSections[0] || null;
   const headerMetrics = useMemo(() => {
     const connectedSessions = instances.filter((item) => String(item.status || '').toLowerCase() === 'conectado').length;
+    if (currentSection === 'complaints') {
+      const summary = complaintAlerts?.summary || {};
+      return [
+        { label: 'Unidades prontas', value: formatNumber(summary.readyClinics || 0), tone: summary.incompleteClinics ? 'warning' : 'success' },
+        { label: 'Cadastros pendentes', value: formatNumber(summary.incompleteClinics || 0), tone: summary.incompleteClinics ? 'danger' : 'success' },
+        { label: 'Alertas enviados hoje', value: formatNumber(summary.sentToday || 0), tone: 'success' },
+        { label: 'Falhas hoje', value: formatNumber(summary.failedToday || 0), tone: summary.failedToday ? 'danger' : 'success' }
+      ];
+    }
     if (currentSection === 'confirmation') {
       const summary = partnersVideo?.summary || {};
       return [
@@ -482,7 +523,7 @@ function WhatsAppManagement() {
       { label: 'Mensagens hoje', value: formatNumber(dashboard?.summary?.sentToday || 0), tone: 'neutral' },
       { label: 'Operadores', value: formatNumber(operators.length), tone: 'neutral' }
     ];
-  }, [currentSection, dashboard?.summary?.sentToday, instances, operators.length, partnersVideo?.summary, queue.length]);
+  }, [complaintAlerts?.summary, currentSection, dashboard?.summary?.sentToday, instances, operators.length, partnersVideo?.summary, queue.length]);
 
   const setSuccess = (message) => setFeedback({ type: 'success', message });
   const setError = (message) => setFeedback({ type: 'error', message });
@@ -518,7 +559,8 @@ function WhatsAppManagement() {
       flows: api.get('/api/whatsapp/chatbot/flows'),
       chatbotSessions: api.get('/api/whatsapp/chatbot/sessions'),
       confirmationResponses: api.get('/api/whatsapp/confirmation/responses'),
-      partnersVideo: api.get('/api/partners-video/dashboard')
+      partnersVideo: api.get('/api/partners-video/dashboard'),
+      complaintAlerts: api.get('/api/whatsapp/complaint-alerts')
     };
     const entries = Object.entries(requests);
     const results = await Promise.allSettled(entries.map(([, request]) => request));
@@ -549,6 +591,7 @@ function WhatsAppManagement() {
       if (key === 'chatbotSessions') setChatbotSessions(Array.isArray(data) ? data : []);
       if (key === 'confirmationResponses') setConfirmationResponses(Array.isArray(data) ? data : []);
       if (key === 'partnersVideo') setPartnersVideo(data || null);
+      if (key === 'complaintAlerts') setComplaintAlerts(data || null);
     });
 
     if (!silent) {
@@ -572,6 +615,17 @@ function WhatsAppManagement() {
     if (!partnersVideo?.settings || partnerSettingsDraft) return;
     setPartnerSettingsDraft(normalizePartnerVideoSettingsDraft(partnersVideo.settings));
   }, [partnersVideo?.settings, partnerSettingsDraft]);
+
+  useEffect(() => {
+    if (!Array.isArray(complaintAlerts?.clinics)) return;
+    setComplaintAlertDrafts((current) => {
+      const next = {};
+      complaintAlerts.clinics.forEach((item) => {
+        next[item.id] = current[item.id] || buildComplaintAlertDraft(item);
+      });
+      return next;
+    });
+  }, [complaintAlerts?.clinics]);
 
   useEffect(() => {
     if (selectedConversation?.id) {
@@ -1423,6 +1477,48 @@ function WhatsAppManagement() {
       await loadBaseData({ silent: true });
       return response;
     }, 'Relatorio semanal enfileirado.', 'Nao foi possivel enviar relatorio semanal.');
+  };
+
+  const updateComplaintAlertDraft = (clinicId, patch) => {
+    setComplaintAlertDrafts((current) => ({
+      ...current,
+      [clinicId]: {
+        ...(current[clinicId] || {}),
+        ...patch
+      }
+    }));
+  };
+
+  const selectComplaintAlertUser = (clinic, roleKey, userId) => {
+    const candidateList = roleKey === 'manager'
+      ? clinic.candidates?.managers || []
+      : clinic.candidates?.coordinators || [];
+    const selected = candidateList.find((item) => String(item.id) === String(userId)) || null;
+    updateComplaintAlertDraft(clinic.id, {
+      [`${roleKey}UserId`]: selected ? String(selected.id) : '',
+      [`${roleKey}Name`]: selected?.name || '',
+      [`${roleKey}Phone`]: selected?.phone || ''
+    });
+  };
+
+  const saveComplaintAlert = (clinic) => runAction(`complaint-alert-save-${clinic.id}`, async () => {
+    const draft = complaintAlertDrafts[clinic.id] || buildComplaintAlertDraft(clinic);
+    const response = await api.put(`/api/whatsapp/complaint-alerts/clinics/${clinic.id}`, {
+      ...draft,
+      coordinatorPhone: normalizePhone(draft.coordinatorPhone),
+      managerPhone: normalizePhone(draft.managerPhone)
+    });
+    await loadBaseData({ silent: true });
+    return response;
+  }, `Alertas de ${clinic.name} atualizados.`, 'Nao foi possivel salvar os alertas da unidade.');
+
+  const testComplaintAlert = (clinic) => {
+    if (!window.confirm(`Enviar uma mensagem de teste ao coordenador e gerente configurados para ${clinic.name}?`)) return null;
+    return runAction(`complaint-alert-test-${clinic.id}`, async () => {
+      const response = await api.post(`/api/whatsapp/complaint-alerts/clinics/${clinic.id}/test`);
+      await loadBaseData({ silent: true });
+      return response;
+    }, (data) => `Teste concluido: ${data?.sent || 0} enviado(s), ${data?.failed || 0} falha(s).`, 'Nao foi possivel testar os alertas da unidade.');
   };
 
   const printWhatsAppReport = () => {
@@ -3443,9 +3539,179 @@ function WhatsAppManagement() {
     </section>
   );
 
+  const renderComplaintAlerts = () => {
+    const session = complaintAlerts?.session || {};
+    const summary = complaintAlerts?.summary || {};
+    const normalizedSearch = complaintAlertSearch.trim().toLowerCase();
+    const clinicItems = (complaintAlerts?.clinics || []).filter((clinic) => {
+      if (!normalizedSearch) return true;
+      return [
+        clinic.name,
+        clinic.city,
+        clinic.state,
+        clinic.coordinator?.name,
+        clinic.manager?.name
+      ].some((value) => String(value || '').toLowerCase().includes(normalizedSearch));
+    });
+    const statusLabels = {
+      ready: 'Pronta',
+      incomplete: 'Cadastro incompleto',
+      paused: 'Pausada'
+    };
+
+    return (
+      <section className="complaint-alerts-shell">
+        <section className="complaint-alert-command">
+          <div>
+            <p className="eyebrow">Canal oficial de reclamacoes</p>
+            <h2>Sessao exclusiva: reclamacoes</h2>
+            <p>Todo novo protocolo usa o numero conectado na VPS para avisar coordenador e gerente da unidade, com rastreio individual de cada entrega.</p>
+          </div>
+          <div className="complaint-alert-session">
+            <span className={`whatsapp-badge ${statusTone(session.status)}`}>{session.status || 'nao cadastrada'}</span>
+            <strong>{session.phoneNumber || 'Numero nao informado'}</strong>
+            <small>{session.provider === 'whatsapp_service_vps' ? 'whatsapp-service na VPS' : session.provider || 'whatsapp-service'}</small>
+            <small>Ultima verificacao: {formatDateTimeValue(session.lastStatusCheckAt)}</small>
+          </div>
+        </section>
+
+        {session.error && (
+          <section className="whatsapp-load-warning-strip">
+            <div>
+              <strong>Atencao na sessao de reclamacoes</strong>
+              <p>{session.error}</p>
+            </div>
+          </section>
+        )}
+
+        <section className="whatsapp-kpi-grid complaint-alert-kpis">
+          {[
+            ['Unidades monitoradas', summary.totalClinics || 0, 'neutral'],
+            ['Prontas para envio', summary.readyClinics || 0, summary.incompleteClinics ? 'warning' : 'success'],
+            ['Pausadas', summary.pausedClinics || 0, summary.pausedClinics ? 'warning' : 'neutral'],
+            ['Ultimo disparo', formatDateTimeValue(summary.lastDispatchAt), summary.failedToday ? 'danger' : 'success']
+          ].map(([label, value, tone]) => (
+            <article className={`whatsapp-kpi ${tone}`} key={label}>
+              <span>{label}</span>
+              <strong>{value}</strong>
+              <small>Atualizacao automatica e trilha de auditoria ativa.</small>
+            </article>
+          ))}
+        </section>
+
+        <section className="whatsapp-panel">
+          <div className="whatsapp-panel-head complaint-alert-directory-head">
+            <div>
+              <h2>Responsaveis por unidade</h2>
+              <p className="whatsapp-panel-note">Selecione usuarios vinculados ou informe um numero operacional. Os dois destinatarios ficam ativos por padrao.</p>
+            </div>
+            <label>
+              Buscar unidade
+              <input className="field" value={complaintAlertSearch} onChange={(event) => setComplaintAlertSearch(event.target.value)} placeholder="Unidade, cidade ou responsavel" />
+            </label>
+          </div>
+
+          <div className="complaint-alert-grid">
+            {clinicItems.map((clinic) => {
+              const draft = complaintAlertDrafts[clinic.id] || buildComplaintAlertDraft(clinic);
+              return (
+                <article className={`complaint-alert-card ${clinic.status}`} key={clinic.id}>
+                  <header>
+                    <div>
+                      <span>{clinic.city || 'Cidade nao informada'}{clinic.state ? ` / ${clinic.state}` : ''}</span>
+                      <strong>{clinic.name}</strong>
+                    </div>
+                    <span className={`whatsapp-badge ${clinic.status === 'ready' ? 'success' : clinic.status === 'paused' ? 'neutral' : 'warning'}`}>
+                      {statusLabels[clinic.status] || clinic.status}
+                    </span>
+                  </header>
+
+                  <div className="complaint-alert-switches">
+                    <label><input type="checkbox" checked={Boolean(draft.enabled)} onChange={(event) => updateComplaintAlertDraft(clinic.id, { enabled: event.target.checked })} disabled={!canManageComplaintAlerts} /> Automacao ativa</label>
+                    <label><input type="checkbox" checked={Boolean(draft.notifyCoordinator)} onChange={(event) => updateComplaintAlertDraft(clinic.id, { notifyCoordinator: event.target.checked })} disabled={!canManageComplaintAlerts || !draft.enabled} /> Avisar coordenador</label>
+                    <label><input type="checkbox" checked={Boolean(draft.notifyManager)} onChange={(event) => updateComplaintAlertDraft(clinic.id, { notifyManager: event.target.checked })} disabled={!canManageComplaintAlerts || !draft.enabled} /> Avisar gerente</label>
+                  </div>
+
+                  <section className="complaint-alert-recipient">
+                    <div>
+                      <span>Coordenador</span>
+                      <small>{(clinic.candidates?.coordinators || []).length} usuario(s) vinculado(s)</small>
+                    </div>
+                    <select className="field" value={draft.coordinatorUserId || ''} onChange={(event) => selectComplaintAlertUser(clinic, 'coordinator', event.target.value)} disabled={!canManageComplaintAlerts || !draft.enabled || !draft.notifyCoordinator}>
+                      <option value="">Cadastro manual</option>
+                      {(clinic.candidates?.coordinators || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                    </select>
+                    <input className="field" value={draft.coordinatorName || ''} onChange={(event) => updateComplaintAlertDraft(clinic.id, { coordinatorName: event.target.value })} placeholder="Nome do coordenador" disabled={!canManageComplaintAlerts || !draft.enabled || !draft.notifyCoordinator} />
+                    <input className="field" value={draft.coordinatorPhone || ''} onChange={(event) => updateComplaintAlertDraft(clinic.id, { coordinatorPhone: event.target.value })} placeholder="5562999999999" disabled={!canManageComplaintAlerts || !draft.enabled || !draft.notifyCoordinator} />
+                  </section>
+
+                  <section className="complaint-alert-recipient">
+                    <div>
+                      <span>Gerente</span>
+                      <small>{(clinic.candidates?.managers || []).length} usuario(s) vinculado(s)</small>
+                    </div>
+                    <select className="field" value={draft.managerUserId || ''} onChange={(event) => selectComplaintAlertUser(clinic, 'manager', event.target.value)} disabled={!canManageComplaintAlerts || !draft.enabled || !draft.notifyManager}>
+                      <option value="">Cadastro manual</option>
+                      {(clinic.candidates?.managers || []).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                    </select>
+                    <input className="field" value={draft.managerName || ''} onChange={(event) => updateComplaintAlertDraft(clinic.id, { managerName: event.target.value })} placeholder="Nome do gerente" disabled={!canManageComplaintAlerts || !draft.enabled || !draft.notifyManager} />
+                    <input className="field" value={draft.managerPhone || ''} onChange={(event) => updateComplaintAlertDraft(clinic.id, { managerPhone: event.target.value })} placeholder="5562999999999" disabled={!canManageComplaintAlerts || !draft.enabled || !draft.notifyManager} />
+                  </section>
+
+                  <footer>
+                    <small>Envio por <strong>reclamacoes</strong>{clinic.updatedBy ? ` · ultima alteracao por ${clinic.updatedBy}` : ' · configuracao automatica'}</small>
+                    {canManageComplaintAlerts && (
+                      <div className="row-actions">
+                        <Button actionKey={`complaint-alert-save-${clinic.id}`} className="primary-action" onClick={() => saveComplaintAlert(clinic)}>Salvar</Button>
+                        <Button actionKey={`complaint-alert-test-${clinic.id}`} onClick={() => testComplaintAlert(clinic)} disabled={!draft.enabled}>Testar envio</Button>
+                      </div>
+                    )}
+                  </footer>
+                </article>
+              );
+            })}
+          </div>
+          {!clinicItems.length && <p className="empty-state">Nenhuma unidade encontrada para o filtro informado.</p>}
+        </section>
+
+        <section className="whatsapp-panel">
+          <div className="whatsapp-panel-head">
+            <div>
+              <h2>Historico dos alertas</h2>
+              <p className="whatsapp-panel-note">Auditoria dos envios pela VPS, incluindo testes, destinatario, protocolo e retorno do provedor.</p>
+            </div>
+            <span className="whatsapp-badge neutral">{(complaintAlerts?.history || []).length} registros</span>
+          </div>
+          <div className="whatsapp-table-wrap">
+            <table className="whatsapp-table complaint-alert-history">
+              <thead><tr><th>Data</th><th>Unidade / protocolo</th><th>Destinatario</th><th>Perfil</th><th>Status</th><th>Detalhe</th></tr></thead>
+              <tbody>
+                {(complaintAlerts?.history || []).map((item) => (
+                  <tr key={item.id}>
+                    <td>{formatDateTimeValue(item.created_at)}</td>
+                    <td>
+                      <strong>{item.clinic_name || (item.event_type === 'COMPLAINT_ALERT_TEST' ? 'Teste operacional' : 'Unidade nao localizada')}</strong>
+                      <small>{item.protocol || '-'}</small>
+                    </td>
+                    <td>{item.recipient_phone || '-'}</td>
+                    <td>{item.recipient_role || '-'}</td>
+                    <td><span className={`whatsapp-badge ${statusTone(item.status)}`}>{item.status}</span></td>
+                    <td>{item.error_message || item.provider_message_id || 'Processado pela VPS'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {!(complaintAlerts?.history || []).length && <p className="empty-state">Os primeiros envios aparecerao aqui depois do cadastro de uma reclamacao ou de um teste manual.</p>}
+        </section>
+      </section>
+    );
+  };
+
   const renderSection = () => {
     if (currentSection === 'dashboard') return renderDashboard();
     if (currentSection === 'instances') return renderInstances();
+    if (currentSection === 'complaints') return renderComplaintAlerts();
     if (currentSection === 'attendance') return renderAttendance();
     if (currentSection === 'send') return renderSend();
     if (currentSection === 'templates') return renderTemplates();
@@ -3506,8 +3772,8 @@ function WhatsAppManagement() {
               {items.map((item) => (
                 <button key={item.id} type="button" className={currentSection === item.id ? 'active' : ''} onClick={() => navigate(item.path)}>
                   <span>{item.label}</span>
-                  {sectionBadgeValue(item.id, { instances, queue, templates, flows, absent, history }) ? (
-                    <small>{sectionBadgeValue(item.id, { instances, queue, templates, flows, absent, history })}</small>
+                  {sectionBadgeValue(item.id, { instances, queue, templates, flows, absent, history, complaintAlerts }) ? (
+                    <small>{sectionBadgeValue(item.id, { instances, queue, templates, flows, absent, history, complaintAlerts })}</small>
                   ) : null}
                 </button>
               ))}

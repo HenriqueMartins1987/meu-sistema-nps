@@ -6,9 +6,7 @@ function normalizeBaseUrl(value) {
 
 function getConfig(overrides = {}) {
   const baseURL = normalizeBaseUrl(overrides.baseURL || overrides.baseUrl || process.env.WHATSAPP_API_URL || process.env.WHATSAPP_SERVICE_BASE_URL || 'http://2.24.101.6:3005');
-  // Fallback operacional da VPS atual. Preferir sempre WHATSAPP_API_KEY/WHATSAPP_SERVICE_API_KEY no Render.
-  const isAutomatedTest = process.env.NODE_ENV === 'test' || process.env.npm_lifecycle_event === 'test';
-  const defaultApiKey = String(process.env.WHATSAPP_SERVICE_DEFAULT_API_KEY || (isAutomatedTest ? '' : 'senha_teste_123')).trim();
+  const defaultApiKey = String(process.env.WHATSAPP_SERVICE_DEFAULT_API_KEY || '').trim();
   const apiKey = String(overrides.apiKey || overrides.api_key || process.env.WHATSAPP_API_KEY || process.env.WHATSAPP_SERVICE_API_KEY || defaultApiKey || '').trim();
   const missing = [];
 

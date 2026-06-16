@@ -3,13 +3,13 @@ const assert = require('node:assert/strict');
 
 const whatsappVpsService = require('../services/whatsappVpsService');
 
-test('getConfig keeps the VPS fallback configured without exposing it to the frontend', () => {
+test('getConfig accepts the VPS API key only from environment configuration', () => {
   const previousApiKey = process.env.WHATSAPP_API_KEY;
   const previousServiceApiKey = process.env.WHATSAPP_SERVICE_API_KEY;
   const previousDefaultApiKey = process.env.WHATSAPP_SERVICE_DEFAULT_API_KEY;
   delete process.env.WHATSAPP_API_KEY;
   delete process.env.WHATSAPP_SERVICE_API_KEY;
-  process.env.WHATSAPP_SERVICE_DEFAULT_API_KEY = 'senha_teste_123';
+  process.env.WHATSAPP_SERVICE_DEFAULT_API_KEY = 'configured-test-key';
 
   const config = whatsappVpsService.getConfig({ baseURL: 'http://2.24.101.6:3005' });
 
