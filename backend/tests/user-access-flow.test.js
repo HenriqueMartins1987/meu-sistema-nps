@@ -15,6 +15,7 @@ const serverModule = require('../server');
 const { app, pool } = serverModule;
 
 const originalPoolQuery = pool.query.bind(pool);
+const originalPoolGetConnection = pool.getConnection.bind(pool);
 const originalSendWelcomeEmail = emailService.sendWelcomeEmail;
 const originalSendEmail = emailService.sendEmail;
 
@@ -36,6 +37,7 @@ function buildQueryStub(handlers) {
 
 test.afterEach(() => {
   pool.query = originalPoolQuery;
+  pool.getConnection = originalPoolGetConnection;
   emailService.sendWelcomeEmail = originalSendWelcomeEmail;
   emailService.sendEmail = originalSendEmail;
 });
@@ -548,7 +550,9 @@ test('change-initial-password clears must_change_password and returns refreshed 
       reply: async () => [[{ must_change_password: 1, token_version: 1, active: 1 }]]
     },
     {
-      match: (sql) => sql.includes('SELECT id, name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password, token_version, created_at, updated_at'),
+      match: (sql) => sql.includes('SELECT id, name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password, token_version')
+        && sql.includes('FROM users')
+        && sql.includes('WHERE id = ? AND deleted_at IS NULL'),
       reply: async () => [[{
         id: 9,
         name: 'Ana Teste',
@@ -575,7 +579,9 @@ test('change-initial-password clears must_change_password and returns refreshed 
       }
     },
     {
-      match: (sql) => sql.includes('SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, token_version, created_at, updated_at'),
+      match: (sql) => sql.includes('SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, token_version')
+        && sql.includes('FROM users')
+        && sql.includes('WHERE id = ?'),
       reply: async () => [[{
         id: 9,
         name: 'Ana Teste',
@@ -1616,6 +1622,214 @@ test('CRC operator downloads agenda template and sees only linked clinics', asyn
   assert.equal(clinicsResponse.status, 200);
   assert.deepEqual(clinicsResponse.body.map((clinic) => clinic.id), [7, 9]);
   assert.ok(clinicQueryParams.some((params) => Array.isArray(params) && params.includes(7) && params.includes(9)));
+});
+
+test('CRC operator first access loads active clinics for initial selection', async () => {
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1, company_id: 1, role: 'crc_operator', permissions: '["home"]', action_permissions: '[]' }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT setting_value, updated_by, updated_at FROM system_settings'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT crc_clinic_selection_completed_at FROM users'),
+      reply: async () => [[{ crc_clinic_selection_completed_at: null }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM clinics') && sql.includes('WHERE active = 1') && sql.includes('ORDER BY name ASC'),
+      reply: async () => [[
+        { id: 7, name: 'Garavelo', city: 'Aparecida', state: 'GO', region: 'Metropolitana', active: 1 },
+        { id: 9, name: 'Centro', city: 'Goiania', state: 'GO', region: 'Capital', active: 1 }
+      ]]
+    }
+  ]);
+
+  const response = await request(app)
+    .get('/api/crc/initial-clinic-selection')
+    .set('Authorization', `Bearer ${signToken({
+      id: 88,
+      email: null,
+      username: 'paula.crc',
+      role: 'crc_operator',
+      name: 'Paula CRC',
+      permissions: ['home'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.required, true);
+  assert.equal(response.body.completed, false);
+  assert.deepEqual(response.body.selectedClinicIds, []);
+  assert.deepEqual(response.body.clinics.map((clinic) => clinic.id), [7, 9]);
+});
+
+test('CRC operator saves initial clinic selection once and receives refreshed session', async () => {
+  const insertedLinks = [];
+  let deleteParams = null;
+  let completedUpdateParams = null;
+  let transactionStarted = false;
+  let transactionCommitted = false;
+  let transactionRolledBack = false;
+  let connectionReleased = false;
+
+  const transactionQuery = buildQueryStub([
+    {
+      match: (sql) => sql.includes('DELETE FROM user_clinics WHERE user_id = ?'),
+      reply: async (_sql, params) => {
+        deleteParams = params;
+        return [{ affectedRows: 2 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO user_clinics'),
+      reply: async (_sql, params) => {
+        insertedLinks.push(params);
+        return [{ insertId: insertedLinks.length }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE users SET crc_clinic_selection_completed_at'),
+      reply: async (_sql, params) => {
+        completedUpdateParams = params;
+        return [{ affectedRows: 1 }];
+      }
+    }
+  ]);
+
+  pool.getConnection = async () => ({
+    beginTransaction: async () => {
+      transactionStarted = true;
+    },
+    query: transactionQuery,
+    commit: async () => {
+      transactionCommitted = true;
+    },
+    rollback: async () => {
+      transactionRolledBack = true;
+    },
+    release: () => {
+      connectionReleased = true;
+    }
+  });
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1, company_id: 1, role: 'crc_operator', permissions: '["home"]', action_permissions: '[]' }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[{ clinic_id: 7 }, { clinic_id: 9 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT setting_value, updated_by, updated_at FROM system_settings'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT crc_clinic_selection_completed_at FROM users'),
+      reply: async () => [[{ crc_clinic_selection_completed_at: null }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT id FROM clinics WHERE active = 1 AND id IN (?)'),
+      reply: async (_sql, params) => [[
+        { id: params[0][0] },
+        { id: params[0][1] }
+      ]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1'),
+      reply: async () => [[{
+        id: 88,
+        name: 'Paula CRC',
+        username: 'paula.crc',
+        email: null,
+        role: 'crc_operator',
+        company_id: 1,
+        permissions: '["home"]',
+        action_permissions: '[]',
+        active: 1,
+        must_change_password: 0,
+        token_version: 1,
+        crc_clinic_selection_completed_at: '2026-06-17 10:00:00'
+      }]]
+    }
+  ]);
+
+  const response = await request(app)
+    .post('/api/crc/initial-clinic-selection')
+    .set('Authorization', `Bearer ${signToken({
+      id: 88,
+      email: null,
+      username: 'paula.crc',
+      role: 'crc_operator',
+      name: 'Paula CRC',
+      permissions: ['home'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({ clinicIds: [7, 9] });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.success, true);
+  assert.equal(transactionStarted, true);
+  assert.equal(transactionCommitted, true);
+  assert.equal(transactionRolledBack, false);
+  assert.equal(connectionReleased, true);
+  assert.deepEqual(deleteParams, [88]);
+  assert.deepEqual(insertedLinks, [[88, 7], [88, 9]]);
+  assert.deepEqual(completedUpdateParams, [88]);
+  assert.deepEqual(response.body.clinicIds, [7, 9]);
+  assert.deepEqual(response.body.user.clinicIds, [7, 9]);
+  assert.equal(response.body.user.crcClinicSelectionCompletedAt, '2026-06-17 10:00:00');
+  assert.ok(response.body.token);
+});
+
+test('CRC operator completed initial clinic selection no longer receives popup payload', async () => {
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1, company_id: 1, role: 'crc_operator', permissions: '["home"]', action_permissions: '[]' }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[{ clinic_id: 7 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT setting_value, updated_by, updated_at FROM system_settings'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT crc_clinic_selection_completed_at FROM users'),
+      reply: async () => [[{ crc_clinic_selection_completed_at: '2026-06-17 10:00:00' }]]
+    }
+  ]);
+
+  const response = await request(app)
+    .get('/api/crc/initial-clinic-selection')
+    .set('Authorization', `Bearer ${signToken({
+      id: 88,
+      email: null,
+      username: 'paula.crc',
+      role: 'crc_operator',
+      name: 'Paula CRC',
+      permissions: ['home'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.required, false);
+  assert.equal(response.body.completed, true);
+  assert.deepEqual(response.body.clinics, []);
+  assert.deepEqual(response.body.selectedClinicIds, [7]);
 });
 
 test('supervisor crc can replicate open agenda items between users without duplicating existing task', async () => {

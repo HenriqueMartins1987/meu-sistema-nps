@@ -213,6 +213,7 @@ function canAccessAgendaHomePanel(user) {
 function HomeShellFixed() {
   const navigate = useNavigate();
   const user = useMemo(() => readUser(), []);
+  const isCrcOperator = normalizeRoleValue(user?.role) === 'crc_operator';
   const masterUser = isMasterAdmin(user);
   const canManageComplaints = hasPermission(user, 'complaints_management');
   const canManagePatients = hasPermission(user, 'patient_management');
@@ -233,6 +234,11 @@ function HomeShellFixed() {
   const [dentalPendingCount, setDentalPendingCount] = useState(0);
   const [agendaLoading, setAgendaLoading] = useState(false);
   const [agendaAlertOpen, setAgendaAlertOpen] = useState(false);
+  const [clinicSelectionLoading, setClinicSelectionLoading] = useState(isCrcOperator);
+  const [clinicSelectionRequired, setClinicSelectionRequired] = useState(false);
+  const [clinicSelectionClinics, setClinicSelectionClinics] = useState([]);
+  const [clinicSelectionIds, setClinicSelectionIds] = useState([]);
+  const [clinicSelectionSaving, setClinicSelectionSaving] = useState(false);
   const [passwordForm, setPasswordForm] = useState({
     current_password: '',
     new_password: '',
@@ -367,6 +373,29 @@ function HomeShellFixed() {
     }
   }, [masterUser]);
 
+  const loadInitialClinicSelection = useCallback(async () => {
+    if (!isCrcOperator) {
+      setClinicSelectionLoading(false);
+      return;
+    }
+
+    setClinicSelectionLoading(true);
+    try {
+      const response = await api.get('/api/crc/initial-clinic-selection');
+      const payload = response.data || {};
+      setClinicSelectionRequired(Boolean(payload.required));
+      setClinicSelectionClinics(Array.isArray(payload.clinics) ? payload.clinics : []);
+      setClinicSelectionIds((Array.isArray(payload.selectedClinicIds) ? payload.selectedClinicIds : []).map((clinicId) => Number(clinicId)));
+    } catch (error) {
+      setClinicSelectionRequired(false);
+      setClinicSelectionClinics([]);
+      setClinicSelectionIds([]);
+      setFeedback(error.response?.data?.error || 'Nao foi possivel carregar a selecao inicial de clinicas.');
+    } finally {
+      setClinicSelectionLoading(false);
+    }
+  }, [isCrcOperator]);
+
   const loadDentalCardBadge = useCallback(async () => {
     if (!hasPermission(user, 'dental_card')) {
       setDentalPendingCount(0);
@@ -391,10 +420,15 @@ function HomeShellFixed() {
   }, [loadDentalCardBadge, loadNotifications]);
 
   useEffect(() => {
-    if (crcWhatsappHomeTarget && !mustChangePassword) {
+    if (mustChangePassword) return;
+    loadInitialClinicSelection();
+  }, [loadInitialClinicSelection, mustChangePassword]);
+
+  useEffect(() => {
+    if (crcWhatsappHomeTarget && !mustChangePassword && !clinicSelectionRequired && !clinicSelectionLoading) {
       navigate(crcWhatsappHomeTarget, { replace: true });
     }
-  }, [crcWhatsappHomeTarget, mustChangePassword, navigate]);
+  }, [clinicSelectionLoading, clinicSelectionRequired, crcWhatsappHomeTarget, mustChangePassword, navigate]);
 
   useEffect(() => {
     if (!notificationGroups.unread.some((item) => item.type === 'nps_duplicate_phone')) {
@@ -794,6 +828,48 @@ function HomeShellFixed() {
     setPasswordForm((prev) => ({ ...prev, [field]: value }));
   };
 
+  const toggleInitialClinicSelection = (clinicId) => {
+    const normalizedClinicId = Number(clinicId);
+    if (!normalizedClinicId) return;
+
+    setClinicSelectionIds((prev) => (
+      prev.includes(normalizedClinicId)
+        ? prev.filter((id) => id !== normalizedClinicId)
+        : [...prev, normalizedClinicId]
+    ));
+  };
+
+  const submitInitialClinicSelection = async (event) => {
+    event.preventDefault();
+    setFeedback('');
+
+    if (!clinicSelectionIds.length) {
+      setFeedback('Selecione ao menos uma clinica para continuar.');
+      return;
+    }
+
+    setClinicSelectionSaving(true);
+    try {
+      const response = await api.post('/api/crc/initial-clinic-selection', {
+        clinicIds: clinicSelectionIds
+      });
+      const refreshedUser = response.data?.user || {
+        ...(readUser() || user || {}),
+        clinicIds: clinicSelectionIds,
+        crcClinicSelectionCompletedAt: new Date().toISOString()
+      };
+
+      saveSession(response.data?.token || localStorage.getItem('token') || '', refreshedUser);
+      setClinicSelectionRequired(false);
+      setClinicSelectionClinics([]);
+      setFeedback(response.data?.message || 'Clinicas vinculadas com sucesso.');
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Nao foi possivel salvar suas clinicas.');
+    } finally {
+      setClinicSelectionSaving(false);
+    }
+  };
+
   const handleForcedPasswordChange = async (event) => {
     event.preventDefault();
     setFeedback('');
@@ -916,6 +992,45 @@ function HomeShellFixed() {
             {feedback && <p className="form-feedback">{feedback}</p>}
 
             <button className="primary-action" type="submit">Alterar senha</button>
+          </form>
+        </div>
+      )}
+
+      {!mustChangePassword && clinicSelectionRequired && (
+        <div className="modal-backdrop forced-password-backdrop" role="dialog" aria-modal="true">
+          <form className="modal-panel crc-clinic-selection-modal" onSubmit={submitInitialClinicSelection}>
+            <p className="eyebrow">Primeiro acesso CRC</p>
+            <h2>Selecione suas clinicas de responsabilidade</h2>
+            <p>Esta etapa aparece apenas uma vez. Escolha as unidades que voce vai cuidar para liberar sua agenda, importacao de pacientes e rotinas CRC com o escopo correto.</p>
+
+            <div className="crc-clinic-selection-grid">
+              {clinicSelectionClinics.map((clinic) => {
+                const clinicId = Number(clinic.id);
+                const checked = clinicSelectionIds.includes(clinicId);
+                return (
+                  <label key={`crc-initial-clinic-${clinic.id}`} className={checked ? 'selected' : ''}>
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleInitialClinicSelection(clinicId)}
+                    />
+                    <span>
+                      <strong>{clinic.name}</strong>
+                      <small>{[clinic.city, clinic.state].filter(Boolean).join(' / ') || 'Unidade ativa'}</small>
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+
+            {!clinicSelectionClinics.length && (
+              <p className="form-feedback">Nenhuma clinica ativa encontrada. Acione o Administrador Master para concluir o vinculo.</p>
+            )}
+            {feedback && <p className="form-feedback">{feedback}</p>}
+
+            <button className="primary-action" type="submit" disabled={clinicSelectionSaving || !clinicSelectionClinics.length}>
+              {clinicSelectionSaving ? 'Salvando...' : 'Confirmar clinicas'}
+            </button>
           </form>
         </div>
       )}

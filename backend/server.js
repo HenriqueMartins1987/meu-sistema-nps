@@ -3830,6 +3830,7 @@ async function ensureDatabaseSchema() {
   await ensureColumn('users', 'token_version', 'INT NOT NULL DEFAULT 1');
   await ensureColumn('users', 'active', 'TINYINT(1) NOT NULL DEFAULT 1');
   await ensureColumn('users', 'authorization_status', "VARCHAR(30) NOT NULL DEFAULT 'aprovado'");
+  await ensureColumn('users', 'crc_clinic_selection_completed_at', 'TIMESTAMP NULL');
   await ensureColumn('users', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
   await ensureColumn('users', 'updated_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP');
   await pool.query('ALTER TABLE users MODIFY COLUMN password VARCHAR(255) NOT NULL');
@@ -8394,6 +8395,7 @@ async function buildAuthenticatedUser(user) {
   const clinicIds = await getUserClinicIds(user.id, safeUser);
   const mustChangePassword = Boolean(user.must_change_password);
   const tokenVersion = Number(user.token_version || 1);
+  const crcClinicSelectionCompletedAt = user.crc_clinic_selection_completed_at || null;
 
   return {
     ...safeUser,
@@ -8402,6 +8404,7 @@ async function buildAuthenticatedUser(user) {
     permissions,
     actionPermissions,
     clinicIds,
+    crcClinicSelectionCompletedAt,
     mustChangePassword,
     tokenVersion
   };
@@ -8416,6 +8419,7 @@ function signUserToken(user) {
     permissions: user.permissions,
     actionPermissions: user.actionPermissions,
     clinicIds: user.clinicIds,
+    crcClinicSelectionCompletedAt: user.crcClinicSelectionCompletedAt || null,
     company_id: Number(user.company_id || user.companyId || 1),
     mustChangePassword: Boolean(user.mustChangePassword),
     tokenVersion: Number(user.tokenVersion || user.token_version || 1)
@@ -10674,6 +10678,41 @@ async function getActiveClinicById(clinicId) {
        AND active = 1
      LIMIT 1`,
     [normalizedClinicId]
+  );
+
+  return rows[0] || null;
+}
+
+async function getActiveClinicsForCrcInitialSelection() {
+  const [rows] = await pool.query(
+    `SELECT
+       id,
+       name,
+       city,
+       state,
+       region,
+       active
+     FROM clinics
+     WHERE active = 1
+     ORDER BY name ASC`
+  );
+
+  return rows;
+}
+
+async function getCrcClinicSelectionStatus(userId) {
+  const [rows] = await pool.query(
+    'SELECT crc_clinic_selection_completed_at FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+    [userId]
+  );
+
+  return rows[0]?.crc_clinic_selection_completed_at || null;
+}
+
+async function getAuthenticatedUserById(userId) {
+  const [rows] = await pool.query(
+    'SELECT * FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1',
+    [userId]
   );
 
   return rows[0] || null;
@@ -22615,7 +22654,7 @@ app.post('/auth/reset-password-with-code', passwordRecoveryRequestLimiter, async
 
     const normalizedEmail = String(parsed.data.email || '').trim().toLowerCase();
     const [userRows] = await pool.query(
-      `SELECT id, name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password, token_version, created_at, updated_at
+      `SELECT id, name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password, token_version, crc_clinic_selection_completed_at, created_at, updated_at
          FROM users
         WHERE LOWER(email) = ?
           AND active = 1
@@ -25836,6 +25875,100 @@ app.get('/clinics', authenticate, async (req, res) => {
   }
 });
 
+app.get('/api/crc/initial-clinic-selection', authenticate, async (req, res) => {
+  try {
+    if (!isCrcOperatorUser(req.user)) {
+      return res.json({
+        required: false,
+        completed: true,
+        clinics: [],
+        selectedClinicIds: clinicIdsFromUser(req.user)
+      });
+    }
+
+    const completedAt = await getCrcClinicSelectionStatus(req.user.id);
+    const selectedClinicIds = await getCurrentUserClinicIds(req.user);
+    const clinics = completedAt ? [] : await getActiveClinicsForCrcInitialSelection();
+
+    return res.json({
+      required: !completedAt,
+      completed: Boolean(completedAt),
+      completedAt,
+      clinics,
+      selectedClinicIds
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar selecao inicial de clinicas.' });
+  }
+});
+
+app.post('/api/crc/initial-clinic-selection', authenticate, async (req, res) => {
+  try {
+    if (!isCrcOperatorUser(req.user)) {
+      return res.status(403).json({ error: 'Recurso exclusivo para Operador CRC.' });
+    }
+
+    const completedAt = await getCrcClinicSelectionStatus(req.user.id);
+    if (completedAt) {
+      return res.status(409).json({ error: 'A selecao inicial de clinicas ja foi concluida.' });
+    }
+
+    const clinicIds = normalizeClinicIds(req.body?.clinicIds || req.body?.clinic_ids || []);
+    if (!clinicIds.length) {
+      return res.status(400).json({ error: 'Selecione ao menos uma clinica para continuar.' });
+    }
+
+    const [activeClinicRows] = await pool.query(
+      'SELECT id FROM clinics WHERE active = 1 AND id IN (?)',
+      [clinicIds]
+    );
+    const activeClinicIds = normalizeClinicIds(activeClinicRows.map((clinic) => clinic.id));
+    const invalidClinicIds = clinicIds.filter((clinicId) => !activeClinicIds.includes(clinicId));
+    if (invalidClinicIds.length) {
+      return res.status(400).json({ error: 'Selecione apenas clinicas ativas.' });
+    }
+
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.query('DELETE FROM user_clinics WHERE user_id = ?', [req.user.id]);
+      for (const clinicId of clinicIds) {
+        await connection.query('INSERT INTO user_clinics (user_id, clinic_id, can_edit) VALUES (?, ?, 1)', [req.user.id, clinicId]);
+      }
+      await connection.query(
+        'UPDATE users SET crc_clinic_selection_completed_at = COALESCE(crc_clinic_selection_completed_at, NOW()) WHERE id = ?',
+        [req.user.id]
+      );
+      await connection.commit();
+    } catch (transactionError) {
+      await connection.rollback();
+      throw transactionError;
+    } finally {
+      connection.release();
+    }
+
+    const refreshedUserRow = await getAuthenticatedUserById(req.user.id);
+    const refreshedUser = refreshedUserRow ? await buildAuthenticatedUser(refreshedUserRow) : {
+      ...req.user,
+      clinicIds,
+      crcClinicSelectionCompletedAt: new Date().toISOString()
+    };
+    const token = signUserToken(refreshedUser);
+
+    return res.json({
+      success: true,
+      message: 'Clinicas vinculadas ao Operador CRC com sucesso.',
+      clinicIds,
+      user: refreshedUser,
+      token
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao salvar selecao inicial de clinicas.' });
+  }
+});
+
 app.get('/public/clinics', async (req, res) => {
   try {
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
@@ -27676,7 +27809,7 @@ app.patch('/profile', authenticate, async (req, res) => {
     );
 
     const [updatedRows] = await pool.query(
-      `SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, created_at, updated_at
+      `SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, crc_clinic_selection_completed_at, created_at, updated_at
        FROM users
        WHERE id = ?`,
       [current.id]
@@ -27698,6 +27831,7 @@ app.patch('/profile', authenticate, async (req, res) => {
         ...updated,
         permissions,
         clinicIds,
+        crcClinicSelectionCompletedAt: updated.crc_clinic_selection_completed_at || null,
         mustChangePassword: Boolean(updated.must_change_password)
       }
     });
@@ -27727,7 +27861,7 @@ async function changeUserPassword({ userId, currentPassword, newPassword }) {
   }
 
   const [rows] = await pool.query(
-    `SELECT id, name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password, token_version, created_at, updated_at
+    `SELECT id, name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password, token_version, crc_clinic_selection_completed_at, created_at, updated_at
        FROM users
       WHERE id = ? AND deleted_at IS NULL`,
     [userId]
@@ -27757,7 +27891,7 @@ async function changeUserPassword({ userId, currentPassword, newPassword }) {
   await sendPasswordChangedNotifications(user);
 
   const [updatedRows] = await pool.query(
-    `SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, token_version, created_at, updated_at
+    `SELECT id, name, email, role, position, phone, whatsapp, department, permissions, active, must_change_password, token_version, crc_clinic_selection_completed_at, created_at, updated_at
        FROM users
       WHERE id = ?`,
     [user.id]

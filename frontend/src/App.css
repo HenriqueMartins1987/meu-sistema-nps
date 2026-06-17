@@ -2459,6 +2459,50 @@ a {
   font-weight: 800;
 }
 
+.crc-clinic-selection-modal {
+  width: min(760px, calc(100vw - 32px));
+  display: grid;
+  gap: 14px;
+}
+
+.crc-clinic-selection-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  max-height: min(46vh, 420px);
+  overflow: auto;
+  padding: 4px 2px;
+}
+
+.crc-clinic-selection-grid label {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(147, 116, 74, 0.22);
+  border-radius: 16px;
+  background: rgba(255, 250, 244, 0.78);
+  cursor: pointer;
+}
+
+.crc-clinic-selection-grid label.selected {
+  border-color: rgba(132, 91, 41, 0.68);
+  background: rgba(245, 234, 217, 0.92);
+}
+
+.crc-clinic-selection-grid strong {
+  display: block;
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+
+.crc-clinic-selection-grid small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+}
+
 .nps-treatment-summary div,
 .nps-treatment-relato,
 .nps-treatment-history {
