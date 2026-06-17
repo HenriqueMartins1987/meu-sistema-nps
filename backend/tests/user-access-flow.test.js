@@ -97,6 +97,10 @@ test('admin user creation keeps the user when welcome e-mail fails', async () =>
       reply: async () => [[]]
     },
     {
+      match: (sql) => sql.includes('SELECT id FROM users WHERE cpf = ? AND deleted_at IS NULL'),
+      reply: async () => [[]]
+    },
+    {
       match: (sql) => sql.includes('INSERT INTO users'),
       reply: async (_sql, params) => {
         insertedUserParams = params;
@@ -137,7 +141,87 @@ test('admin user creation keeps the user when welcome e-mail fails', async () =>
   assert.ok(insertedUserParams);
   assert.equal(insertedUserParams[1], 'maria');
   assert.match(insertedUserParams[3], /^\$2[aby]\$/);
-  assert.equal(insertedUserParams[insertedUserParams.length - 1], 1);
+  assert.equal(insertedUserParams.at(-2), 1);
+  assert.equal(insertedUserParams.at(-1), 'aprovado');
+});
+
+test('master admin creates CRC operator with phone only and pending authorization', async () => {
+  let insertedUserParams = null;
+  let notificationParams = null;
+
+  emailService.sendEmail = async () => ({ provider: 'test', from: 'noreply@example.com', id: 'email-1' });
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT id FROM users WHERE LOWER(username) = ?'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT id FROM users WHERE cpf = ? AND deleted_at IS NULL'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO users'),
+      reply: async (_sql, params) => {
+        insertedUserParams = params;
+        return [{ insertId: 156 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('SELECT id') && sql.includes('role IN') && sql.includes('deleted_at IS NULL') && sql.includes('FROM users'),
+      reply: async () => [[{ id: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO notification_events'),
+      reply: async (_sql, params) => {
+        notificationParams = params;
+        return [{ insertId: 901 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO email_delivery_logs'),
+      reply: async () => [{ insertId: 23 }]
+    }
+  ]);
+
+  const response = await request(app)
+    .post('/admin/users')
+    .set('Authorization', `Bearer ${signToken({
+      id: 1,
+      email: 'henrique.martins@grcconsultoria.net.br',
+      role: 'master_admin',
+      name: 'Administrador Master',
+      permissions: ['admin_panel'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({
+      name: 'Paula Operadora CRC',
+      role: 'crc_operator',
+      phone: '+5562999999999',
+      cpf: '529.982.247-25',
+      crcOperatorArea: 'confirmacao_agendamento'
+    });
+
+  assert.equal(response.status, 201);
+  assert.equal(response.body.pendingAuthorization, true);
+  assert.equal(response.body.username, 'paula.crc');
+  assert.ok(insertedUserParams);
+  assert.equal(insertedUserParams[1], 'paula.crc');
+  assert.equal(insertedUserParams[2], null);
+  assert.match(insertedUserParams[3], /^\$2[aby]\$/);
+  assert.equal(await bcrypt.compare('52998224725', insertedUserParams[3]), true);
+  assert.equal(insertedUserParams[8], '52998224725');
+  assert.equal(insertedUserParams[9], 'confirmacao_agendamento');
+  assert.equal(insertedUserParams[10], 'Confirmação e Agendamento');
+  assert.equal(insertedUserParams.at(-3), 0);
+  assert.equal(insertedUserParams.at(-2), 0);
+  assert.equal(insertedUserParams.at(-1), 'pendente');
+  assert.equal(notificationParams[1], 'crc_operator_approval_required');
 });
 
 test('CRC operator self-registration stays inactive and notifies master for approval', async () => {
@@ -154,6 +238,10 @@ test('CRC operator self-registration stays inactive and notifies master for appr
   pool.query = buildQueryStub([
     {
       match: (sql) => sql.includes('SELECT id') && sql.includes('LOWER(username) = ?') && sql.includes('FROM users'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT id') && sql.includes('cpf = ?') && sql.includes('FROM users'),
       reply: async () => [[]]
     },
     {
@@ -185,10 +273,9 @@ test('CRC operator self-registration stays inactive and notifies master for appr
     .post('/auth/crc-operator/register')
     .send({
       name: 'Paula Operadora CRC',
-      username: 'paula.crc',
-      email: 'paula.crc@example.com',
       phone: '+5562999999999',
-      password: 'Senha@123'
+      cpf: '529.982.247-25',
+      crcOperatorArea: 'ortodontia'
     });
 
   assert.equal(response.status, 201);
@@ -197,13 +284,77 @@ test('CRC operator self-registration stays inactive and notifies master for appr
   assert.match(insertedUserSql, /active,\s*must_change_password,\s*authorization_status\)\s*VALUES[\s\S]+0,\s*0,\s*'pendente'\)/);
   assert.equal(insertedUserParams[0], 'Paula Operadora CRC');
   assert.equal(insertedUserParams[1], 'paula.crc');
-  assert.equal(insertedUserParams[2], 'paula.crc@example.com');
+  assert.equal(insertedUserParams[2], null);
   assert.match(insertedUserParams[3], /^\$2[aby]\$/);
+  assert.equal(await bcrypt.compare('52998224725', insertedUserParams[3]), true);
+  assert.equal(insertedUserParams[6], '52998224725');
+  assert.equal(insertedUserParams[7], 'ortodontia');
+  assert.equal(insertedUserParams[8], 'Ortodontia');
   assert.equal(notificationParams[0], 1);
   assert.equal(notificationParams[1], 'crc_operator_approval_required');
   assert.match(notificationParams[3], /Paula Operadora CRC solicitou acesso/);
   assert.ok(emailSent);
   assert.match(emailSent.subject, /Operador de CRC aguardando autorização/);
+});
+
+test('master admin reset uses CPF as CRC operator password', async () => {
+  let passwordHash = null;
+  let updateParams = null;
+
+  emailService.sendEmail = async () => ({ provider: 'test', from: 'noreply@example.com', id: 'email-reset' });
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT id, role, email, name, phone, whatsapp, cpf FROM users WHERE id = ?'),
+      reply: async () => [[{
+        id: 155,
+        role: 'crc_operator',
+        email: null,
+        name: 'Paula Operadora CRC',
+        phone: '+5562999999999',
+        whatsapp: '+5562999999999',
+        cpf: '52998224725'
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE users SET password = ?'),
+      reply: async (_sql, params) => {
+        updateParams = params;
+        passwordHash = params[0];
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO notification_events'),
+      reply: async () => [{ insertId: 902 }]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO email_delivery_logs'),
+      reply: async () => [{ insertId: 24 }]
+    }
+  ]);
+
+  const response = await request(app)
+    .post('/admin/users/155/reset-password')
+    .set('Authorization', `Bearer ${signToken({
+      id: 1,
+      email: 'henrique.martins@grcconsultoria.net.br',
+      role: 'master_admin',
+      name: 'Administrador Master',
+      permissions: ['admin_panel'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({ password: 'OutraSenha@123' });
+
+  assert.equal(response.status, 200);
+  assert.match(response.body.message, /CPF cadastrado/i);
+  assert.equal(updateParams[1], 0);
+  assert.equal(await bcrypt.compare('52998224725', passwordHash), true);
 });
 
 test('master admin can update a user e-mail from user management', async () => {

@@ -3,6 +3,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import logo from './assets/logo3.png';
 import api, { getApiErrorMessage } from './api';
 import { saveSession } from './session';
+import { formatBrazilPhoneInput, isCompleteBrazilPhone } from './constants';
 
 const experienceModules = [
   {
@@ -40,12 +41,60 @@ const initialRecoveryForm = {
 
 const initialCrcOperatorForm = {
   name: '',
-  username: '',
   phone: '+55',
-  email: '',
-  password: '',
-  confirm_password: ''
+  cpf: '',
+  crcOperatorArea: '',
+  email: ''
 };
+
+const crcOperatorAreaOptions = [
+  { value: 'confirmacao_agendamento', label: 'Confirmação e Agendamento' },
+  { value: 'ortodontia', label: 'Ortodontia' }
+];
+
+function normalizeUsernamePreview(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9._-]/g, '');
+}
+
+function buildUsernamePreviewFromName(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return '';
+  return normalizeUsernamePreview(`${parts[0]}.${parts[parts.length - 1]}`);
+}
+
+function onlyCpfDigits(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 11);
+}
+
+function formatCpfInput(value) {
+  const digits = onlyCpfDigits(value);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+  if (digits.length <= 9) return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+}
+
+function isValidCpf(value) {
+  const cpf = onlyCpfDigits(value);
+  if (!/^\d{11}$/.test(cpf)) return false;
+  if (/^(\d)\1{10}$/.test(cpf)) return false;
+
+  const calculateDigit = (length) => {
+    let sum = 0;
+    for (let index = 0; index < length; index += 1) {
+      sum += Number(cpf[index]) * (length + 1 - index);
+    }
+    const remainder = (sum * 10) % 11;
+    return remainder === 10 ? 0 : remainder;
+  };
+
+  return calculateDigit(9) === Number(cpf[9]) && calculateDigit(10) === Number(cpf[10]);
+}
 
 function Login() {
   const navigate = useNavigate();
@@ -68,6 +117,10 @@ function Login() {
   const selectedModule = useMemo(
     () => experienceModules.find((item) => item.id === activeModule) || experienceModules[0],
     [activeModule]
+  );
+  const generatedCrcUsername = useMemo(
+    () => buildUsernamePreviewFromName(crcRegisterForm.name),
+    [crcRegisterForm.name]
   );
 
   const redirectPath = location.state?.from || '/home';
@@ -229,8 +282,26 @@ function Login() {
     setError('');
     setInfo('');
 
-    if (crcRegisterForm.password !== crcRegisterForm.confirm_password) {
-      setError('A confirmação de senha não confere.');
+    if (!generatedCrcUsername) {
+      setError('Informe nome e sobrenome para gerar seu usuario de acesso.');
+      setCrcRegisterLoading(false);
+      return;
+    }
+
+    if (!isCompleteBrazilPhone(crcRegisterForm.phone)) {
+      setError('Informe o celular completo no formato +55DDDNÚMERO.');
+      setCrcRegisterLoading(false);
+      return;
+    }
+
+    if (!isValidCpf(crcRegisterForm.cpf)) {
+      setError('Informe um CPF válido.');
+      setCrcRegisterLoading(false);
+      return;
+    }
+
+    if (!crcRegisterForm.crcOperatorArea) {
+      setError('Selecione a área de atuação do Operador CRC.');
       setCrcRegisterLoading(false);
       return;
     }
@@ -238,13 +309,13 @@ function Login() {
     try {
       const response = await api.post('/auth/crc-operator/register', {
         name: crcRegisterForm.name,
-        username: crcRegisterForm.username,
         phone: crcRegisterForm.phone,
-        email: crcRegisterForm.email,
-        password: crcRegisterForm.password
+        cpf: crcRegisterForm.cpf,
+        crcOperatorArea: crcRegisterForm.crcOperatorArea,
+        email: crcRegisterForm.email
       });
       closeCrcRegister();
-      setEmail(response.data?.pendingAuthorization ? '' : (response.data?.username || crcRegisterForm.username));
+      setEmail(response.data?.pendingAuthorization ? '' : (response.data?.username || generatedCrcUsername));
       setPassword('');
       setInfo(response.data?.message || 'Operador CRC cadastrado. Faça login com seu usuário.');
     } catch (err) {
@@ -495,32 +566,34 @@ function Login() {
           >
             <p className="eyebrow">Acesso WhatsApp CRC</p>
             <h2>Cadastro de Operador CRC</h2>
-            <p>Crie seu usuário de acesso. O e-mail será usado apenas para recuperação de senha.</p>
+            <p>Informe nome completo, celular, CPF e área. O usuário será gerado automaticamente e a senha inicial será o CPF.</p>
 
             <div className="login-modal-grid">
               <label>
                 Nome completo
                 <input className="field" value={crcRegisterForm.name} onChange={(event) => updateCrcRegisterField('name', event.target.value)} required />
-              </label>
-              <label>
-                Usuário de acesso
-                <input className="field" value={crcRegisterForm.username} onChange={(event) => updateCrcRegisterField('username', event.target.value)} placeholder="ex.: operador.crc" autoComplete="username" required />
+                <small>Usuario gerado: <strong>{generatedCrcUsername || 'informe nome e sobrenome'}</strong></small>
               </label>
               <label>
                 Celular
-                <input className="field" value={crcRegisterForm.phone} onChange={(event) => updateCrcRegisterField('phone', event.target.value)} placeholder="+5562999999999" required />
+                <input className="field" value={crcRegisterForm.phone} onChange={(event) => updateCrcRegisterField('phone', formatBrazilPhoneInput(event.target.value))} placeholder="+5562999999999" maxLength={14} required />
               </label>
               <label>
-                E-mail de recuperação
-                <input className="field" type="email" value={crcRegisterForm.email} onChange={(event) => updateCrcRegisterField('email', event.target.value)} placeholder="nome@empresa.com.br" required />
+                CPF
+                <input className="field" value={crcRegisterForm.cpf} onChange={(event) => updateCrcRegisterField('cpf', formatCpfInput(event.target.value))} placeholder="000.000.000-00" maxLength={14} required />
               </label>
               <label>
-                Senha
-                <input className="field" type="password" value={crcRegisterForm.password} onChange={(event) => updateCrcRegisterField('password', event.target.value)} autoComplete="new-password" required />
+                Área de atuação
+                <select className="field" value={crcRegisterForm.crcOperatorArea} onChange={(event) => updateCrcRegisterField('crcOperatorArea', event.target.value)} required>
+                  <option value="">Selecione</option>
+                  {crcOperatorAreaOptions.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
               </label>
               <label>
-                Confirmar senha
-                <input className="field" type="password" value={crcRegisterForm.confirm_password} onChange={(event) => updateCrcRegisterField('confirm_password', event.target.value)} autoComplete="new-password" required />
+                E-mail opcional
+                <input className="field" type="email" value={crcRegisterForm.email} onChange={(event) => updateCrcRegisterField('email', event.target.value)} placeholder="opcional" />
               </label>
             </div>
 

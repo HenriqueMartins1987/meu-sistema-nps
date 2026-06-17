@@ -25,9 +25,16 @@ function buildNewUserDraft() {
     position: '',
     phone: defaultBrazilPhone,
     whatsapp: defaultBrazilPhone,
+    cpf: '',
+    crcOperatorArea: '',
     department: ''
   };
 }
+
+const crcOperatorAreaOptions = [
+  { value: 'confirmacao_agendamento', label: 'Confirmação e Agendamento' },
+  { value: 'ortodontia', label: 'Ortodontia' }
+];
 
 function buildBulkEmailDraft() {
   return {
@@ -64,6 +71,54 @@ function authorizationStatusLabel(status) {
   return 'Pendente';
 }
 
+function isCrcOperatorRole(role) {
+  return role === 'crc_operator';
+}
+
+function normalizeUsernamePreview(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9._-]/g, '');
+}
+
+function buildUsernamePreviewFromName(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return '';
+  return normalizeUsernamePreview(`${parts[0]}.${parts[parts.length - 1]}`);
+}
+
+function onlyCpfDigits(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 11);
+}
+
+function formatCpfInput(value) {
+  const digits = onlyCpfDigits(value);
+  if (digits.length <= 3) return digits;
+  if (digits.length <= 6) return `${digits.slice(0, 3)}.${digits.slice(3)}`;
+  if (digits.length <= 9) return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6)}`;
+  return `${digits.slice(0, 3)}.${digits.slice(3, 6)}.${digits.slice(6, 9)}-${digits.slice(9)}`;
+}
+
+function isValidCpf(value) {
+  const cpf = onlyCpfDigits(value);
+  if (!/^\d{11}$/.test(cpf)) return false;
+  if (/^(\d)\1{10}$/.test(cpf)) return false;
+
+  const calculateDigit = (length) => {
+    let sum = 0;
+    for (let index = 0; index < length; index += 1) {
+      sum += Number(cpf[index]) * (length + 1 - index);
+    }
+    const remainder = (sum * 10) % 11;
+    return remainder === 10 ? 0 : remainder;
+  };
+
+  return calculateDigit(9) === Number(cpf[9]) && calculateDigit(10) === Number(cpf[10]);
+}
+
 function AdminPanel() {
   const navigate = useNavigate();
   const currentUser = useMemo(() => readUser(), []);
@@ -91,6 +146,11 @@ function AdminPanel() {
   const selectedUser = useMemo(() => (
     users.find((user) => String(user.id) === String(selectedUserId)) || null
   ), [users, selectedUserId]);
+  const newUserIsCrcOperator = isCrcOperatorRole(newUser.role);
+  const newUserGeneratedUsername = useMemo(
+    () => buildUsernamePreviewFromName(newUser.name),
+    [newUser.name]
+  );
 
   const filteredUsers = useMemo(() => {
     const term = userSearch.trim().toLowerCase();
@@ -126,6 +186,8 @@ function AdminPanel() {
         name: user.name,
         username: user.username,
         email: user.email,
+        cpf: user.cpf,
+        crcOperatorArea: user.crc_operator_area || user.crcOperatorArea,
         role: user.role,
         position: user.position || 'Operador de CRC',
         phone: user.phone,
@@ -231,6 +293,8 @@ function AdminPanel() {
       position: selectedUser.position || '',
       phone: selectedUser.phone ? formatBrazilPhoneInput(selectedUser.phone) : defaultBrazilPhone,
       whatsapp: selectedUser.whatsapp ? formatBrazilPhoneInput(selectedUser.whatsapp) : defaultBrazilPhone,
+      cpf: selectedUser.cpf ? formatCpfInput(selectedUser.cpf) : '',
+      crcOperatorArea: selectedUser.crc_operator_area || selectedUser.crcOperatorArea || '',
       department: selectedUser.department || '',
       active: Boolean(selectedUser.active),
       authorizationStatus: selectedUser.authorization_status || (selectedUser.active ? 'aprovado' : 'pendente'),
@@ -259,11 +323,33 @@ function AdminPanel() {
   }, [bulkEmailEligibleUsers]);
 
   const updateDraft = (field, value) => {
-    setDraft((prev) => ({ ...prev, [field]: value }));
+    setDraft((prev) => {
+      const next = { ...prev, [field]: value };
+      if (field === 'phone' && isCrcOperatorRole(prev.role)) {
+        next.whatsapp = value;
+      }
+      if (field === 'role' && value === 'crc_operator') {
+        next.position = 'Operador de CRC';
+        next.whatsapp = next.phone || defaultBrazilPhone;
+      }
+      return next;
+    });
   };
 
   const updateNewUser = (field, value) => {
-    setNewUser((prev) => ({ ...prev, [field]: value }));
+    setNewUser((prev) => {
+      const next = { ...prev, [field]: value };
+      if (field === 'role' && value === 'crc_operator') {
+        next.position = 'Operador de CRC';
+        next.department = '';
+        next.crcOperatorArea = next.crcOperatorArea || '';
+        next.whatsapp = next.phone || defaultBrazilPhone;
+      }
+      if (field === 'phone' && prev.role === 'crc_operator') {
+        next.whatsapp = value;
+      }
+      return next;
+    });
   };
 
   const togglePermission = (permission) => {
@@ -300,9 +386,21 @@ function AdminPanel() {
 
   const saveUser = async () => {
     setFeedback('');
+    const draftIsCrcOperator = isCrcOperatorRole(draft.role);
+    const draftEmail = String(draft.email || '').trim();
 
-    if (!draft.email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(draft.email).trim())) {
+    if ((!draftIsCrcOperator || draftEmail) && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(draftEmail)) {
       setFeedback('Informe um e-mail válido para o usuário.');
+      return;
+    }
+
+    if (draftIsCrcOperator && !isValidCpf(draft.cpf)) {
+      setFeedback('Informe um CPF válido para o Operador CRC.');
+      return;
+    }
+
+    if (draftIsCrcOperator && !draft.crcOperatorArea) {
+      setFeedback('Selecione a área de atuação do Operador CRC.');
       return;
     }
 
@@ -410,7 +508,7 @@ function AdminPanel() {
       const emailSent = response.data?.notifications?.emailSent;
       const whatsappSent = response.data?.notifications?.whatsappSent;
       setFeedback(
-        `Senha reiniciada com sucesso. ${emailSent ? 'E-mail enviado.' : 'E-mail pendente.'} ${whatsappSent ? 'WhatsApp enviado.' : 'WhatsApp pendente.'}`
+        `${response.data?.message || 'Senha reiniciada com sucesso.'} ${emailSent ? 'E-mail enviado.' : 'E-mail pendente.'} ${whatsappSent ? 'WhatsApp enviado.' : 'WhatsApp pendente.'}`
       );
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível reiniciar a senha.');
@@ -478,13 +576,43 @@ function AdminPanel() {
 
   const createUser = async () => {
     setFeedback('');
+    const email = String(newUser.email || '').trim();
 
-    if (!newUser.name || !newUser.email || !newUser.position) {
-      setFeedback('Preencha nome completo, e-mail e cargo para criar o usuário.');
+    if (!newUser.name || (!newUserIsCrcOperator && (!email || !newUser.position))) {
+      setFeedback(newUserIsCrcOperator
+        ? 'Preencha o nome completo para criar o Operador CRC.'
+        : 'Preencha nome completo, e-mail e cargo para criar o usuário.');
       return;
     }
 
-    if (!isCompleteBrazilPhone(newUser.phone) || !isCompleteBrazilPhone(newUser.whatsapp)) {
+    if (newUserIsCrcOperator && !newUserGeneratedUsername) {
+      setFeedback('Informe nome e sobrenome para gerar o usuario do Operador CRC.');
+      return;
+    }
+
+    if (newUserIsCrcOperator && !isValidCpf(newUser.cpf)) {
+      setFeedback('Informe um CPF válido para o Operador CRC.');
+      return;
+    }
+
+    if (newUserIsCrcOperator && !newUser.crcOperatorArea) {
+      setFeedback('Selecione a área de atuação do Operador CRC.');
+      return;
+    }
+
+    if (!newUserIsCrcOperator && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setFeedback('Informe um e-mail valido para o usuario.');
+      return;
+    }
+
+    if (newUserIsCrcOperator && email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      setFeedback('O e-mail do Operador CRC e opcional, mas precisa ser valido quando preenchido.');
+      return;
+    }
+
+    const crcPhone = newUser.phone;
+    const crcWhatsapp = newUserIsCrcOperator ? newUser.phone : newUser.whatsapp;
+    if (!isCompleteBrazilPhone(crcPhone) || !isCompleteBrazilPhone(crcWhatsapp)) {
       setFeedback('Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.');
       return;
     }
@@ -492,7 +620,16 @@ function AdminPanel() {
     setCreating(true);
 
     try {
-      const response = await api.post('/admin/users', newUser);
+      const payload = newUserIsCrcOperator
+        ? {
+          ...newUser,
+          email,
+          position: 'Operador de CRC',
+          department: crcOperatorAreaOptions.find((option) => option.value === newUser.crcOperatorArea)?.label || '',
+          whatsapp: newUser.phone
+        }
+        : { ...newUser, email };
+      const response = await api.post('/admin/users', payload);
       await loadData();
       if (response.data?.id) {
         setSelectedUserId(String(response.data.id));
@@ -501,6 +638,11 @@ function AdminPanel() {
       setNewUser(buildNewUserDraft());
       const emailSent = response.data?.notifications?.emailSent;
       const whatsappSent = response.data?.notifications?.whatsappSent;
+      if (response.data?.pendingAuthorization) {
+        setActiveAdminTab('authorizations');
+        setFeedback(`Operador CRC cadastrado como ${response.data.username || newUserGeneratedUsername}. Aguardando autorizacao do Administrador Master.`);
+        return;
+      }
       setFeedback(
         `Usuário criado com sucesso. Senha temporária gerada com envio ${emailSent ? 'por e-mail' : 'de e-mail pendente'} e ${whatsappSent ? 'por WhatsApp' : 'de WhatsApp pendente'}.`
       );
@@ -851,9 +993,37 @@ function AdminPanel() {
                       value={draft.email}
                       onChange={(event) => updateDraft('email', event.target.value)}
                       disabled={isSelectedMaster}
-                      required
+                      required={!isCrcOperatorRole(draft.role)}
                     />
                   </label>
+                  {isCrcOperatorRole(draft.role) && (
+                    <>
+                      <label>
+                        CPF
+                        <input
+                          className="field"
+                          value={draft.cpf || ''}
+                          onChange={(event) => updateDraft('cpf', formatCpfInput(event.target.value))}
+                          maxLength={14}
+                          required
+                        />
+                      </label>
+                      <label>
+                        Área de atuação CRC
+                        <select
+                          className="field"
+                          value={draft.crcOperatorArea || ''}
+                          onChange={(event) => updateDraft('crcOperatorArea', event.target.value)}
+                          required
+                        >
+                          <option value="">Selecione</option>
+                          {crcOperatorAreaOptions.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                    </>
+                  )}
                   <label>
                     Perfil
                     <select className="field" value={draft.role} onChange={(event) => updateDraft('role', event.target.value)} disabled={isSelectedMaster}>
@@ -1054,18 +1224,28 @@ function AdminPanel() {
           <section className="modal-panel create-user-modal" onClick={(event) => event.stopPropagation()}>
             <div>
               <p className="eyebrow">Novo usuário</p>
-              <h2>Cadastrar parceiro</h2>
-              <p>O sistema gerará uma senha temporária segura e enviará o acesso automaticamente para o parceiro.</p>
+              <h2>{newUserIsCrcOperator ? 'Cadastrar Operador CRC' : 'Cadastrar parceiro'}</h2>
+              {newUserIsCrcOperator && (
+                <p>O usuario sera gerado pelo nome e o acesso ficara pendente para autorizacao do Administrador Master.</p>
+              )}
+              {newUserIsCrcOperator && (
+                <p>A senha inicial e todo reset de senha serao sempre o CPF cadastrado.</p>
+              )}
+              {!newUserIsCrcOperator && <p>O sistema gerará uma senha temporária segura e enviará o acesso automaticamente para o parceiro.</p>}
             </div>
 
             <div className="admin-form-grid">
               <label>
                 Nome completo
                 <input className="field" value={newUser.name} onChange={(event) => updateNewUser('name', event.target.value)} />
+                {newUserIsCrcOperator && (
+                  <small>Usuario gerado: <strong>{newUserGeneratedUsername || 'informe nome e sobrenome'}</strong></small>
+                )}
               </label>
               <label>
-                E-mail
+                {newUserIsCrcOperator ? 'E-mail opcional' : 'E-mail'}
                 <input className="field" type="email" value={newUser.email} onChange={(event) => updateNewUser('email', event.target.value)} />
+                {newUserIsCrcOperator && <small>Opcional para Operador CRC.</small>}
               </label>
               <label>
                 Perfil
@@ -1075,22 +1255,47 @@ function AdminPanel() {
                   ))}
                 </select>
               </label>
-              <label>
-                Cargo
-                <input className="field" value={newUser.position} onChange={(event) => updateNewUser('position', event.target.value)} />
-              </label>
+              {!newUserIsCrcOperator && (
+                <label>
+                  Cargo
+                  <input className="field" value={newUser.position} onChange={(event) => updateNewUser('position', event.target.value)} />
+                </label>
+              )}
               <label>
                 Telefone
                 <input className="field" value={newUser.phone} onChange={(event) => updateNewUser('phone', formatBrazilPhoneInput(event.target.value))} maxLength={14} />
+                {newUserIsCrcOperator && <small>Este celular sera usado como contato/WhatsApp do Operador CRC.</small>}
               </label>
-              <label>
-                WhatsApp
-                <input className="field" value={newUser.whatsapp} onChange={(event) => updateNewUser('whatsapp', formatBrazilPhoneInput(event.target.value))} maxLength={14} />
-              </label>
-              <label className="admin-form-span">
+              {newUserIsCrcOperator && (
+                <>
+                  <label>
+                    CPF
+                    <input className="field" value={newUser.cpf} onChange={(event) => updateNewUser('cpf', formatCpfInput(event.target.value))} maxLength={14} />
+                    <small>Senha inicial padrao do Operador CRC.</small>
+                  </label>
+                  <label>
+                    Área de atuação CRC
+                    <select className="field" value={newUser.crcOperatorArea} onChange={(event) => updateNewUser('crcOperatorArea', event.target.value)}>
+                      <option value="">Selecione</option>
+                      {crcOperatorAreaOptions.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              )}
+              {!newUserIsCrcOperator && (
+                <label>
+                  WhatsApp
+                  <input className="field" value={newUser.whatsapp} onChange={(event) => updateNewUser('whatsapp', formatBrazilPhoneInput(event.target.value))} maxLength={14} />
+                </label>
+              )}
+              {!newUserIsCrcOperator && (
+                <label className="admin-form-span">
                 Área ou unidade
                 <input className="field" value={newUser.department} onChange={(event) => updateNewUser('department', event.target.value)} />
-              </label>
+                </label>
+              )}
             </div>
 
             <div className="heading-actions">

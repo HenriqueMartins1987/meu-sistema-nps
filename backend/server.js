@@ -3101,6 +3101,67 @@ function normalizeUsername(value) {
     .replace(/[^a-z0-9._-]/g, '');
 }
 
+function getNameParts(value) {
+  return String(value || '')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function buildFirstLastUsernameCandidate(name) {
+  const parts = getNameParts(name);
+  if (parts.length < 2) return '';
+  return normalizeUsername(`${parts[0]}.${parts[parts.length - 1]}`);
+}
+
+function normalizeCpf(value) {
+  return String(value || '').replace(/\D/g, '').slice(0, 11);
+}
+
+function isValidCpf(value) {
+  const cpf = normalizeCpf(value);
+  if (!/^\d{11}$/.test(cpf)) return false;
+  if (/^(\d)\1{10}$/.test(cpf)) return false;
+
+  const calculateDigit = (length) => {
+    let sum = 0;
+    for (let index = 0; index < length; index += 1) {
+      sum += Number(cpf[index]) * (length + 1 - index);
+    }
+    const remainder = (sum * 10) % 11;
+    return remainder === 10 ? 0 : remainder;
+  };
+
+  return calculateDigit(9) === Number(cpf[9]) && calculateDigit(10) === Number(cpf[10]);
+}
+
+const crcOperatorAreas = {
+  confirmacao_agendamento: 'Confirmação e Agendamento',
+  ortodontia: 'Ortodontia'
+};
+
+function normalizeCrcOperatorArea(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+
+  if (['confirmacao', 'agendamento', 'confirmacao_agendamento', 'confirmacao_e_agendamento'].includes(normalized)) {
+    return 'confirmacao_agendamento';
+  }
+
+  if (normalized === 'ortodontia') return 'ortodontia';
+
+  return '';
+}
+
+function getCrcOperatorAreaLabel(value) {
+  return crcOperatorAreas[normalizeCrcOperatorArea(value)] || '';
+}
+
 function buildUsernameBaseCandidate({ username = '', email = '', name = '' } = {}) {
   const explicitUsername = normalizeUsername(username);
   if (explicitUsername) return explicitUsername;
@@ -3169,11 +3230,13 @@ async function backfillMissingUsernames() {
 
 const adminUserCreateSchema = z.object({
   name: z.string().trim().min(1, 'Preencha o nome completo.').max(160),
-  email: z.string().trim().email('Informe um e-mail válido.').max(180),
+  email: z.string().trim().email('Informe um e-mail válido.').max(180).optional().or(z.literal('')).or(z.null()),
   role: z.string().trim().min(1, 'Informe o perfil de acesso.').max(60),
-  position: z.string().trim().min(1, 'Informe o cargo.').max(160),
+  position: z.string().trim().max(160).optional().or(z.literal('')).or(z.null()),
   phone: z.string().trim().min(1, 'Informe o telefone.').max(40),
-  whatsapp: z.string().trim().min(1, 'Informe o WhatsApp.').max(40),
+  whatsapp: z.string().trim().max(40).optional().or(z.literal('')).or(z.null()),
+  cpf: z.string().trim().max(20).optional().or(z.literal('')).or(z.null()),
+  crcOperatorArea: z.string().trim().max(80).optional().or(z.literal('')).or(z.null()),
   department: z.string().trim().max(160).optional().or(z.literal('')).or(z.null()),
   permissions: z.array(z.string().trim().min(1)).max(50).optional(),
   actionPermissions: z.array(z.string().trim().min(1)).max(80).optional(),
@@ -3236,10 +3299,11 @@ const passwordResetConfirmSchema = z.object({
 
 const crcOperatorRegistrationSchema = z.object({
   name: z.string().trim().min(3, 'Informe o nome completo.').max(160),
-  username: z.string().trim().min(4, 'O usuário deve ter pelo menos 4 caracteres.').max(80),
-  email: z.string().trim().email('Informe um e-mail válido para recuperação de senha.').max(180),
+  username: z.string().trim().max(80).optional().or(z.literal('')).or(z.null()),
+  email: z.string().trim().email('Informe um e-mail válido para recuperação de senha.').max(180).optional().or(z.literal('')).or(z.null()),
   phone: z.string().trim().min(1, 'Informe o celular.').max(40),
-  password: z.string().trim().min(8, 'A senha deve ter no mínimo 8 caracteres.').max(160)
+  cpf: z.string().trim().min(1, 'Informe o CPF.').max(20),
+  crcOperatorArea: z.string().trim().min(1, 'Informe a área de atuação.').max(80)
 });
 
 function parseBodyWithSchema(schema, payload) {
@@ -3733,12 +3797,14 @@ async function ensureDatabaseSchema() {
     CREATE TABLE IF NOT EXISTS users (
       id INT AUTO_INCREMENT PRIMARY KEY,
       name VARCHAR(160) NOT NULL,
-      email VARCHAR(180) NOT NULL UNIQUE,
+      email VARCHAR(180) NULL UNIQUE,
       password VARCHAR(255) NOT NULL,
       role VARCHAR(60) NOT NULL DEFAULT 'viewer',
       position VARCHAR(160) NULL,
       phone VARCHAR(40) NULL,
       whatsapp VARCHAR(40) NULL,
+      cpf VARCHAR(11) NULL,
+      crc_operator_area VARCHAR(80) NULL,
       department VARCHAR(160) NULL,
       active TINYINT(1) NOT NULL DEFAULT 1,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -3748,10 +3814,13 @@ async function ensureDatabaseSchema() {
 
   await ensureColumn('users', 'role', "VARCHAR(60) NOT NULL DEFAULT 'viewer'");
   await pool.query("ALTER TABLE users MODIFY COLUMN role VARCHAR(60) NOT NULL DEFAULT 'viewer'");
+  await pool.query('ALTER TABLE users MODIFY COLUMN email VARCHAR(180) NULL');
   await ensureColumn('users', 'username', 'VARCHAR(80) NULL');
   await ensureColumn('users', 'position', 'VARCHAR(160) NULL');
   await ensureColumn('users', 'phone', 'VARCHAR(40) NULL');
   await ensureColumn('users', 'whatsapp', 'VARCHAR(40) NULL');
+  await ensureColumn('users', 'cpf', 'VARCHAR(11) NULL');
+  await ensureColumn('users', 'crc_operator_area', 'VARCHAR(80) NULL');
   await ensureColumn('users', 'department', 'VARCHAR(160) NULL');
   await ensureColumn('users', 'permissions', 'LONGTEXT NULL');
   await ensureColumn('users', 'action_permissions', 'LONGTEXT NULL');
@@ -8679,6 +8748,7 @@ async function notifyCrcOperatorApprovalRequired(operator) {
     username: operator.username,
     email: operator.email,
     phone: operator.phone,
+    crcOperatorArea: operator.crcOperatorArea || null,
     role: 'crc_operator',
     requiresAuthorization: true
   };
@@ -8714,18 +8784,21 @@ async function sendUserAccessNotifications(user, temporaryPassword) {
   let emailError = null;
   let whatsappError = null;
 
-  try {
-    const emailResult = await emailService.sendWelcomeEmail({
-      to: user.email,
-      name: user.name,
-      loginEmail: user.email,
-      password: temporaryPassword,
-      appUrl: appBaseUrl
-    });
-    emailSent = !emailResult?.skipped;
-  } catch (error) {
-    emailError = error.message;
-    console.warn('Nao foi possivel enviar o e-mail de primeiro acesso:', error.message);
+  const email = getUserEmailTarget(user);
+  if (email) {
+    try {
+      const emailResult = await emailService.sendWelcomeEmail({
+        to: email,
+        name: user.name,
+        loginEmail: email,
+        password: temporaryPassword,
+        appUrl: appBaseUrl
+      });
+      emailSent = !emailResult?.skipped;
+    } catch (error) {
+      emailError = error.message;
+      console.warn('Nao foi possivel enviar o e-mail de primeiro acesso:', error.message);
+    }
   }
 
   try {
@@ -8754,21 +8827,24 @@ async function sendUserAccessNotifications(user, temporaryPassword) {
 }
 
 async function sendRegistrationApprovedNotifications(user) {
-  const emailTemplate = emailService.renderRegistrationApprovedEmail({
-    name: user.name,
-    appUrl: appBaseUrl
-  });
   let emailSent = false;
   let whatsappSent = false;
   let emailError = null;
   let whatsappError = null;
 
-  try {
-    const emailResult = await sendEmail(user.email, emailTemplate.subject, emailTemplate.html);
-    emailSent = !emailResult?.skipped;
-  } catch (error) {
-    emailError = error.message;
-    console.warn('Nao foi possivel enviar o e-mail de aprovacao do cadastro:', error.message);
+  const email = getUserEmailTarget(user);
+  if (email) {
+    try {
+      const emailTemplate = emailService.renderRegistrationApprovedEmail({
+        name: user.name,
+        appUrl: appBaseUrl
+      });
+      const emailResult = await sendEmail(email, emailTemplate.subject, emailTemplate.html);
+      emailSent = !emailResult?.skipped;
+    } catch (error) {
+      emailError = error.message;
+      console.warn('Nao foi possivel enviar o e-mail de aprovacao do cadastro:', error.message);
+    }
   }
 
   try {
@@ -8790,17 +8866,20 @@ async function sendPasswordResetNotifications(user, temporaryPassword) {
   let whatsappError = null;
   const changePasswordUrl = buildPasswordChangeUrl();
 
-  try {
-    const emailTemplate = emailService.renderPasswordResetEmail({
-      name: user.name,
-      temporaryPassword,
-      appUrl: changePasswordUrl
-    });
-    const emailResult = await sendEmail(user.email, emailTemplate.subject, emailTemplate.html);
-    emailSent = !emailResult?.skipped;
-  } catch (error) {
-    emailError = error.message;
-    console.warn('Nao foi possivel enviar e-mail de reset de senha:', error.message);
+  const email = getUserEmailTarget(user);
+  if (email) {
+    try {
+      const emailTemplate = emailService.renderPasswordResetEmail({
+        name: user.name,
+        temporaryPassword,
+        appUrl: changePasswordUrl
+      });
+      const emailResult = await sendEmail(email, emailTemplate.subject, emailTemplate.html);
+      emailSent = !emailResult?.skipped;
+    } catch (error) {
+      emailError = error.message;
+      console.warn('Nao foi possivel enviar e-mail de reset de senha:', error.message);
+    }
   }
 
   try {
@@ -26117,7 +26196,7 @@ app.delete('/admin/registration-requests/:id', authenticate, requireMasterAdmin,
 app.get('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
   try {
     const [users] = await pool.query(
-      `SELECT id, name, username, email, role, position, phone, whatsapp, department, permissions, action_permissions, active, authorization_status, must_change_password, created_at, updated_at
+      `SELECT id, name, username, email, role, position, phone, whatsapp, cpf, crc_operator_area, department, permissions, action_permissions, active, authorization_status, must_change_password, created_at, updated_at
        FROM users
        WHERE deleted_at IS NULL
        ORDER BY name ASC`
@@ -26189,6 +26268,8 @@ async function getAdminUsersExportRows() {
         u.position,
         u.phone,
         u.whatsapp,
+        u.cpf,
+        u.crc_operator_area,
         u.department,
         u.permissions,
         u.action_permissions,
@@ -26229,11 +26310,13 @@ async function getAdminUsersExportRows() {
       nome: user.name || '',
       usuario: user.username || '',
       email: user.email || '',
+      cpf: user.cpf || '',
       telefone: user.phone || '',
       whatsapp: user.whatsapp || '',
       perfil: getAccessProfileLabel(user.role),
       perfil_codigo: user.role || '',
       cargo: user.position || '',
+      area_crc: getCrcOperatorAreaLabel(user.crc_operator_area) || '',
       departamento: user.department || '',
       status: Number(user.active) ? 'Ativo' : 'Desabilitado',
       autorizacao: user.authorization_status || (Number(user.active) ? 'aprovado' : 'pendente'),
@@ -26253,11 +26336,13 @@ function buildAdminUsersExcelBuffer(rows = []) {
     'Nome completo': user.nome,
     Usuário: user.usuario,
     'E-mail': user.email,
+    CPF: user.cpf,
     Telefone: user.telefone,
     WhatsApp: user.whatsapp,
     Perfil: user.perfil,
     'Código do perfil': user.perfil_codigo,
     Cargo: user.cargo,
+    'Área CRC': user.area_crc,
     'Departamento / área': user.departamento,
     Status: user.status,
     'Status de autorização': user.autorizacao,
@@ -26275,11 +26360,13 @@ function buildAdminUsersExcelBuffer(rows = []) {
     { wch: 34 },
     { wch: 22 },
     { wch: 34 },
+    { wch: 16 },
     { wch: 18 },
     { wch: 18 },
     { wch: 22 },
     { wch: 22 },
     { wch: 24 },
+    { wch: 28 },
     { wch: 24 },
     { wch: 14 },
     { wch: 20 },
@@ -26425,71 +26512,124 @@ app.post('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
       position,
       phone,
       whatsapp,
+      cpf,
+      crcOperatorArea,
       department,
       permissions,
       actionPermissions: requestedActionPermissions,
       clinicIds
     } = parsed.data;
+    const normalizedRole = normalizeAccessRole(role);
 
-    if (role === 'master_admin') {
+    if (normalizedRole === 'master_admin') {
       return res.status(403).json({ error: 'Administrador Master é exclusivo para o usuário master.' });
     }
 
-    if (!accessProfiles[role]) {
+    if (!accessProfiles[normalizedRole]) {
       return res.status(400).json({ error: 'Perfil de acesso inválido.' });
     }
 
-    const normalizedEmail = String(email).trim().toLowerCase();
+    const isCrcOperator = normalizedRole === 'crc_operator';
+    const normalizedEmail = String(email || '').trim().toLowerCase() || null;
     const normalizedPhone = normalizeBrazilPhone(phone);
-    const normalizedWhatsapp = normalizeBrazilPhone(whatsapp);
+    const normalizedWhatsapp = normalizeBrazilPhone(isCrcOperator ? phone : whatsapp);
+    const normalizedCpf = normalizeCpf(cpf);
+    const normalizedCrcOperatorArea = normalizeCrcOperatorArea(crcOperatorArea || req.body?.crc_operator_area);
+    const resolvedPosition = isCrcOperator
+      ? 'Operador de CRC'
+      : String(position || '').trim();
+    const resolvedDepartment = isCrcOperator
+      ? getCrcOperatorAreaLabel(normalizedCrcOperatorArea)
+      : String(department || '').trim() || null;
 
     if (!isCompleteBrazilPhone(normalizedPhone) || !isCompleteBrazilPhone(normalizedWhatsapp)) {
       return res.status(400).json({ error: 'Informe telefone e WhatsApp completos no formato +55DDDNÚMERO.' });
     }
 
-    const [existing] = await pool.query(
-      'SELECT id FROM users WHERE LOWER(email) = ? AND deleted_at IS NULL',
-      [normalizedEmail]
-    );
+    if (!isCrcOperator && !resolvedPosition) {
+      return res.status(400).json({ error: 'Informe o cargo.' });
+    }
 
-    if (existing.length) {
-      return res.status(409).json({ error: 'Já existe um usuário ativo com este e-mail.' });
+    if (!isCrcOperator && !normalizedEmail) {
+      return res.status(400).json({ error: 'Informe um e-mail válido para o usuário.' });
+    }
+
+    if (isCrcOperator && getNameParts(name).length < 2) {
+      return res.status(400).json({ error: 'Informe nome e sobrenome para gerar o usuário do Operador CRC.' });
+    }
+
+    if (isCrcOperator && !isValidCpf(normalizedCpf)) {
+      return res.status(400).json({ error: 'Informe um CPF válido para o Operador CRC.' });
+    }
+
+    if (isCrcOperator && !normalizedCrcOperatorArea) {
+      return res.status(400).json({ error: 'Selecione a área de atuação do Operador CRC.' });
+    }
+
+    if (normalizedEmail) {
+      const [existing] = await pool.query(
+        'SELECT id FROM users WHERE LOWER(email) = ? AND deleted_at IS NULL',
+        [normalizedEmail]
+      );
+
+      if (existing.length) {
+        return res.status(409).json({ error: 'Já existe um usuário ativo com este e-mail.' });
+      }
+    }
+
+    if (isCrcOperator) {
+      const [existingCpf] = await pool.query(
+        'SELECT id FROM users WHERE cpf = ? AND deleted_at IS NULL',
+        [normalizedCpf]
+      );
+
+      if (existingCpf.length) {
+        return res.status(409).json({ error: 'Já existe um Operador CRC cadastrado com este CPF.' });
+      }
     }
 
     const allowedPermissions = Array.isArray(permissions)
       ? permissions.filter((permission) => screenPermissions[permission])
-      : defaultPermissionsForRole(role);
+      : defaultPermissionsForRole(normalizedRole);
     const allowedActionPermissions = Array.isArray(requestedActionPermissions)
       ? requestedActionPermissions.filter((permission) => actionPermissions[permission])
-      : defaultActionPermissionsForRole(role);
+      : defaultActionPermissionsForRole(normalizedRole);
     const normalizedClinicIds = Array.isArray(clinicIds)
       ? clinicIds
         .map((clinicId) => Number(clinicId))
         .filter((clinicId) => Number.isFinite(clinicId) && clinicId > 0)
       : [];
     const resolvedUsername = await resolveUserUsername({
-      name,
-      email: normalizedEmail
+      name: String(name).trim(),
+      email: normalizedEmail || '',
+      username: isCrcOperator ? buildFirstLastUsernameCandidate(name) : ''
     });
-    const temporaryPassword = generateTemporaryPassword();
-    const passwordHash = await bcrypt.hash(temporaryPassword, 10);
+    const finalPassword = isCrcOperator ? normalizedCpf : generateTemporaryPassword();
+    const passwordHash = await bcrypt.hash(finalPassword, 10);
+    const active = isCrcOperator ? 0 : 1;
+    const mustChangePassword = isCrcOperator ? 0 : (requirePasswordChangeOnFirstLogin ? 1 : 0);
+    const authorizationStatus = isCrcOperator ? 'pendente' : 'aprovado';
     const [result] = await pool.query(
       `INSERT INTO users
-       (name, username, email, password, role, position, phone, whatsapp, department, permissions, action_permissions, active, must_change_password)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`,
+       (name, username, email, password, role, position, phone, whatsapp, cpf, crc_operator_area, department, permissions, action_permissions, active, must_change_password, authorization_status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         String(name).trim(),
         resolvedUsername,
         normalizedEmail,
         passwordHash,
-        role,
-        String(position).trim(),
+        normalizedRole,
+        resolvedPosition,
         normalizedPhone,
         normalizedWhatsapp,
-        String(department || '').trim() || null,
+        isCrcOperator ? normalizedCpf : null,
+        isCrcOperator ? normalizedCrcOperatorArea : null,
+        resolvedDepartment,
         JSON.stringify(allowedPermissions),
         JSON.stringify(allowedActionPermissions),
-        requirePasswordChangeOnFirstLogin ? 1 : 0
+        active,
+        mustChangePassword,
+        authorizationStatus
       ]
     );
 
@@ -26505,12 +26645,31 @@ app.post('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
     await syncClinicLeadershipForUser({
       userId: result.insertId,
       previousRole: null,
-      nextRole: role,
+      nextRole: normalizedRole,
       previousName: null,
       nextName: String(name).trim(),
       previousClinicIds: [],
       nextClinicIds: normalizedClinicIds
     });
+
+    if (isCrcOperator) {
+      await notifyCrcOperatorApprovalRequired({
+        id: result.insertId,
+        name: String(name).trim(),
+        username: resolvedUsername,
+        email: normalizedEmail,
+        phone: normalizedPhone,
+        crcOperatorArea: normalizedCrcOperatorArea
+      });
+
+      return res.status(201).json({
+        message: 'Operador CRC cadastrado. O Administrador Master deve autorizar o acesso antes do primeiro login.',
+        id: result.insertId,
+        username: resolvedUsername,
+        pendingAuthorization: true,
+        notifications: { masterNotified: true, emailSent: false, whatsappSent: false }
+      });
+    }
 
     const notificationResult = await sendUserAccessNotifications(
       {
@@ -26519,9 +26678,9 @@ app.post('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
         email: normalizedEmail,
         phone: normalizedPhone,
         whatsapp: normalizedWhatsapp,
-        role
+        role: normalizedRole
       },
-      temporaryPassword
+      finalPassword
     );
 
     const warning = !notificationResult.emailSent
@@ -26548,13 +26707,26 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
     }
 
     const current = rows[0];
-    const requestedRole = req.body.role || current.role;
+    const requestedRole = normalizeAccessRole(req.body.role || current.role);
     const currentEmail = String(current.email || '').toLowerCase();
     const requestedEmail = Object.prototype.hasOwnProperty.call(req.body || {}, 'email')
       ? String(req.body.email || '').trim().toLowerCase()
       : currentEmail;
+    const emailRequired = requestedRole !== 'crc_operator';
+    const normalizedCpf = normalizeCpf(
+      Object.prototype.hasOwnProperty.call(req.body || {}, 'cpf') ? req.body.cpf : current.cpf
+    );
+    const normalizedCrcOperatorArea = normalizeCrcOperatorArea(
+      req.body?.crcOperatorArea || req.body?.crc_operator_area || current.crc_operator_area
+    );
 
-    const parsedEmail = z.string().trim().email('Informe um e-mail válido.').max(180).safeParse(requestedEmail);
+    if (emailRequired && !requestedEmail) {
+      return res.status(400).json({ error: 'Informe um e-mail válido para o usuário.' });
+    }
+
+    const parsedEmail = requestedEmail
+      ? z.string().trim().email('Informe um e-mail válido.').max(180).safeParse(requestedEmail)
+      : { success: true };
 
     if (!parsedEmail.success) {
       return res.status(400).json({ error: parsedEmail.error.issues[0]?.message || 'Informe um e-mail válido.' });
@@ -26584,7 +26756,7 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
       return res.status(403).json({ error: 'Apenas o Administrador Master pode alterar esse perfil.' });
     }
 
-    if (requestedEmail !== currentEmail) {
+    if (requestedEmail && requestedEmail !== currentEmail) {
       const [duplicates] = await pool.query(
         'SELECT id FROM users WHERE LOWER(email) = ? AND id <> ? AND deleted_at IS NULL',
         [requestedEmail, current.id]
@@ -26596,11 +26768,38 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
     }
 
     const normalizedPhone = req.body.phone ? normalizeBrazilPhone(req.body.phone) : current.phone;
-    const normalizedWhatsapp = req.body.whatsapp ? normalizeBrazilPhone(req.body.whatsapp) : current.whatsapp;
+    const normalizedWhatsapp = requestedRole === 'crc_operator'
+      ? normalizedPhone
+      : req.body.whatsapp ? normalizeBrazilPhone(req.body.whatsapp) : current.whatsapp;
+    const nextName = req.body.name || current.name;
+
+    if (requestedRole === 'crc_operator' && getNameParts(nextName).length < 2) {
+      return res.status(400).json({ error: 'Informe nome e sobrenome para gerar o usuário do Operador CRC.' });
+    }
+
+    if (requestedRole === 'crc_operator' && !isValidCpf(normalizedCpf)) {
+      return res.status(400).json({ error: 'Informe um CPF válido para o Operador CRC.' });
+    }
+
+    if (requestedRole === 'crc_operator' && !normalizedCrcOperatorArea) {
+      return res.status(400).json({ error: 'Selecione a área de atuação do Operador CRC.' });
+    }
+
+    if (requestedRole === 'crc_operator' && normalizedCpf !== normalizeCpf(current.cpf)) {
+      const [cpfDuplicates] = await pool.query(
+        'SELECT id FROM users WHERE cpf = ? AND id <> ? AND deleted_at IS NULL',
+        [normalizedCpf, current.id]
+      );
+
+      if (cpfDuplicates.length) {
+        return res.status(409).json({ error: 'Já existe outro Operador CRC cadastrado com este CPF.' });
+      }
+    }
+
     const resolvedUsername = await resolveUserUsername({
-      username: current.username,
-      email: requestedEmail,
-      name: req.body.name || current.name
+      username: requestedRole === 'crc_operator' ? buildFirstLastUsernameCandidate(nextName) : current.username,
+      email: requestedEmail || '',
+      name: nextName
     }, current.id);
 
     if (!isCompleteBrazilPhone(normalizedPhone) || !isCompleteBrazilPhone(normalizedWhatsapp)) {
@@ -26624,20 +26823,26 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
               position = ?,
               phone = ?,
               whatsapp = ?,
+              cpf = ?,
+              crc_operator_area = ?,
               department = ?,
               permissions = ?,
               action_permissions = ?,
               active = ?
         WHERE id = ?`,
       [
-        req.body.name || current.name,
+        nextName,
         resolvedUsername,
-        requestedEmail,
+        requestedEmail || null,
         nextRole,
         req.body.position || current.position,
         normalizedPhone,
-        normalizedWhatsapp,
-        req.body.department || current.department,
+        requestedRole === 'crc_operator' ? normalizedPhone : normalizedWhatsapp,
+        requestedRole === 'crc_operator' ? normalizedCpf : (current.cpf || null),
+        requestedRole === 'crc_operator' ? normalizedCrcOperatorArea : (current.crc_operator_area || null),
+        requestedRole === 'crc_operator'
+          ? getCrcOperatorAreaLabel(normalizedCrcOperatorArea)
+          : req.body.department || current.department,
         JSON.stringify(permissions),
         JSON.stringify(nextActionPermissions),
         req.body.active === undefined ? current.active : (req.body.active ? 1 : 0),
@@ -26763,7 +26968,7 @@ app.post('/admin/users/:id/block', authenticate, requireMasterAdmin, async (req,
 
 app.post('/admin/users/:id/reset-password', authenticate, requireMasterAdmin, async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT id, role, email, name, phone, whatsapp FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
+    const [rows] = await pool.query('SELECT id, role, email, name, phone, whatsapp, cpf FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
 
     if (!rows.length) {
       return res.status(404).json({ error: 'Usuário não encontrado.' });
@@ -26771,12 +26976,17 @@ app.post('/admin/users/:id/reset-password', authenticate, requireMasterAdmin, as
 
     const user = rows[0];
 
-    if (String(user.email).toLowerCase() === masterAdminEmail) {
+    if (String(user.email || '').toLowerCase() === masterAdminEmail) {
       return res.status(403).json({ error: 'A senha do Administrador Master não pode ser reiniciada pelo painel.' });
     }
 
     if (user.role === 'master_admin' && !isMasterAdminUser(req.user)) {
       return res.status(403).json({ error: 'Apenas o Administrador Master pode reiniciar a senha deste usuário.' });
+    }
+
+    const isCrcOperator = normalizeAccessRole(user.role) === 'crc_operator';
+    if (isCrcOperator && !isValidCpf(user.cpf)) {
+      return res.status(400).json({ error: 'Operador CRC sem CPF válido cadastrado. Atualize o CPF antes de reiniciar a senha.' });
     }
 
     const requestedPassword = String(
@@ -26785,13 +26995,13 @@ app.post('/admin/users/:id/reset-password', authenticate, requireMasterAdmin, as
       || req.body?.customPassword
       || ''
     ).trim();
-    if (requestedPassword && requestedPassword.length < 8) {
+    if (!isCrcOperator && requestedPassword && requestedPassword.length < 8) {
       return res.status(400).json({ error: 'A senha definida manualmente precisa ter no mínimo 8 caracteres.' });
     }
 
-    const nextPassword = requestedPassword || generateTemporaryPassword();
+    const nextPassword = isCrcOperator ? normalizeCpf(user.cpf) : (requestedPassword || generateTemporaryPassword());
     const passwordHash = await bcrypt.hash(nextPassword, 10);
-    const mustChangePassword = requestedPassword ? 0 : (requirePasswordChangeOnFirstLogin ? 1 : 0);
+    const mustChangePassword = isCrcOperator ? 0 : (requestedPassword ? 0 : (requirePasswordChangeOnFirstLogin ? 1 : 0));
     await pool.query(
       'UPDATE users SET password = ?, must_change_password = ?, token_version = COALESCE(token_version, 1) + 1 WHERE id = ?',
       [passwordHash, mustChangePassword, user.id]
@@ -26800,17 +27010,21 @@ app.post('/admin/users/:id/reset-password', authenticate, requireMasterAdmin, as
       user.id,
       'password_reset',
       'Senha reiniciada',
-      requestedPassword
+      isCrcOperator
+        ? 'Sua senha foi reiniciada para o CPF cadastrado. Use seu CPF para acessar o sistema.'
+        : requestedPassword
         ? 'Sua senha foi definida pelo administrador. Use a nova senha informada para acessar o sistema.'
         : 'Sua senha foi reiniciada pelo administrador. Use a senha temporária recebida e altere no primeiro acesso.',
       '/perfil',
-      { temporaryPassword: !requestedPassword, manualPassword: Boolean(requestedPassword) }
+      { temporaryPassword: !isCrcOperator && !requestedPassword, manualPassword: Boolean(requestedPassword), cpfPassword: isCrcOperator }
     );
 
     const notificationResult = await sendPasswordResetNotifications(user, nextPassword);
 
     res.json({
-      message: requestedPassword ? 'Senha definida com sucesso.' : 'Senha reiniciada com sucesso.',
+      message: isCrcOperator
+        ? 'Senha do Operador CRC reiniciada para o CPF cadastrado.'
+        : requestedPassword ? 'Senha definida com sucesso.' : 'Senha reiniciada com sucesso.',
       notifications: notificationResult
     });
   } catch (error) {
@@ -26827,7 +27041,7 @@ app.post('/admin/users/resend-pending-passwords', authenticate, requireMasterAdm
        WHERE active = 1
          AND deleted_at IS NULL
          AND must_change_password = 1
-         AND LOWER(email) <> ?
+         AND (email IS NULL OR LOWER(email) <> ?)
        ORDER BY name ASC
     `, [masterAdminEmail]);
 
@@ -26914,11 +27128,11 @@ app.delete('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res
 
     const user = rows[0];
 
-    if (String(user.email).toLowerCase() === masterAdminEmail) {
+    if (String(user.email || '').toLowerCase() === masterAdminEmail) {
       return res.status(403).json({ error: 'O Administrador Master não pode ser excluído ou desabilitado.' });
     }
 
-    if ((user.role === 'master_admin' || String(user.email).toLowerCase() === masterAdminEmail) && !isMasterAdminUser(req.user)) {
+    if ((user.role === 'master_admin' || String(user.email || '').toLowerCase() === masterAdminEmail) && !isMasterAdminUser(req.user)) {
       return res.status(403).json({ error: 'Apenas o Administrador Master pode excluir esse usuário.' });
     }
 
@@ -27146,42 +27360,60 @@ app.post('/auth/crc-operator/register', async (req, res) => {
     const parsed = parseBodyWithSchema(crcOperatorRegistrationSchema, req.body);
     if (parsed.error) return res.status(400).json({ error: parsed.error });
 
-    const username = normalizeUsername(parsed.data.username);
-    if (!/^[a-z0-9._-]{4,80}$/.test(username)) {
-      return res.status(400).json({ error: 'Use um usuário com letras, números, ponto, hífen ou underline.' });
+    if (getNameParts(parsed.data.name).length < 2) {
+      return res.status(400).json({ error: 'Informe nome e sobrenome para gerar seu usuário de acesso.' });
     }
 
-    if (!isStrongPassword(parsed.data.password)) {
-      return res.status(400).json({
-        error: 'A senha deve ter no mínimo 8 caracteres, letra maiúscula, letra minúscula, número e caractere especial.'
-      });
-    }
-
-    const normalizedEmail = String(parsed.data.email || '').trim().toLowerCase();
+    const normalizedEmail = String(parsed.data.email || '').trim().toLowerCase() || null;
     const normalizedPhone = normalizeBrazilPhone(parsed.data.phone);
+    const normalizedCpf = normalizeCpf(parsed.data.cpf);
+    const normalizedCrcOperatorArea = normalizeCrcOperatorArea(parsed.data.crcOperatorArea || req.body?.crc_operator_area);
     if (!isCompleteBrazilPhone(normalizedPhone)) {
       return res.status(400).json({ error: 'Informe o celular completo no formato +55DDDNÚMERO.' });
     }
 
-    const [duplicates] = await pool.query(
+    if (!isValidCpf(normalizedCpf)) {
+      return res.status(400).json({ error: 'Informe um CPF válido.' });
+    }
+
+    if (!normalizedCrcOperatorArea) {
+      return res.status(400).json({ error: 'Selecione a área de atuação do Operador CRC.' });
+    }
+
+    if (normalizedEmail) {
+      const [duplicates] = await pool.query(
+        `SELECT id
+           FROM users
+          WHERE deleted_at IS NULL
+            AND LOWER(email) = ?
+          LIMIT 1`,
+        [normalizedEmail]
+      );
+      if (duplicates.length) {
+        return res.status(409).json({ error: 'Já existe um usuário ou cadastro pendente com este e-mail.' });
+      }
+    }
+
+    const [cpfDuplicates] = await pool.query(
       `SELECT id
          FROM users
         WHERE deleted_at IS NULL
-          AND (LOWER(email) = ? OR LOWER(username) = ?)
+          AND cpf = ?
         LIMIT 1`,
-      [normalizedEmail, username]
+      [normalizedCpf]
     );
-    if (duplicates.length) {
-      return res.status(409).json({ error: 'Já existe um usuário ou cadastro pendente com este usuário ou e-mail.' });
+    if (cpfDuplicates.length) {
+      return res.status(409).json({ error: 'Já existe um Operador CRC cadastrado com este CPF.' });
     }
 
-    const passwordHash = await bcrypt.hash(parsed.data.password, 10);
+    const username = await resolveUniqueUsername(buildFirstLastUsernameCandidate(parsed.data.name));
+    const passwordHash = await bcrypt.hash(normalizedCpf, 10);
     const permissions = defaultPermissionsForRole('crc_operator');
     const actionPermissionList = defaultActionPermissionsForRole('crc_operator');
     const [result] = await pool.query(
       `INSERT INTO users
-       (name, username, email, password, role, position, phone, whatsapp, department, permissions, action_permissions, active, must_change_password, authorization_status)
-       VALUES (?, ?, ?, ?, 'crc_operator', 'Operador de CRC', ?, ?, 'CRC WhatsApp', ?, ?, 0, 0, 'pendente')`,
+       (name, username, email, password, role, position, phone, whatsapp, cpf, crc_operator_area, department, permissions, action_permissions, active, must_change_password, authorization_status)
+       VALUES (?, ?, ?, ?, 'crc_operator', 'Operador de CRC', ?, ?, ?, ?, ?, ?, ?, 0, 0, 'pendente')`,
       [
         parsed.data.name,
         username,
@@ -27189,6 +27421,9 @@ app.post('/auth/crc-operator/register', async (req, res) => {
         passwordHash,
         normalizedPhone,
         normalizedPhone,
+        normalizedCpf,
+        normalizedCrcOperatorArea,
+        getCrcOperatorAreaLabel(normalizedCrcOperatorArea),
         JSON.stringify(permissions),
         JSON.stringify(actionPermissionList)
       ]
@@ -27199,7 +27434,8 @@ app.post('/auth/crc-operator/register', async (req, res) => {
       name: parsed.data.name,
       username,
       email: normalizedEmail,
-      phone: normalizedPhone
+      phone: normalizedPhone,
+      crcOperatorArea: normalizedCrcOperatorArea
     });
 
     return res.status(201).json({
@@ -27289,6 +27525,12 @@ app.post('/login', loginLimiter, async (req, res) => {
       user.password = migratedHash;
     } else {
       validPassword = await bcrypt.compare(password, user.password);
+      if (!validPassword && normalizeAccessRole(user.role) === 'crc_operator') {
+        const cpfPassword = normalizeCpf(password);
+        if (cpfPassword && cpfPassword !== password) {
+          validPassword = await bcrypt.compare(cpfPassword, user.password);
+        }
+      }
     }
 
     if (!validPassword) {
