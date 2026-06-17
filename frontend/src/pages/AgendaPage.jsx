@@ -62,6 +62,16 @@ const agendaPatientQueueOptions = [
   { value: 'evasion', label: 'Evasão', helper: 'Pacientes que não confirmaram para tratativa' }
 ];
 
+const agendaConfirmationMonitorFilterOptions = [
+  { value: 'all', label: 'Todos' },
+  { value: 'pendente', label: 'Sem confirmacao' },
+  { value: 'confirmado', label: 'Confirmados' },
+  { value: 'nao_confirmado', label: 'Nao confirmados' },
+  { value: 'reagendamento', label: 'Reagendamento' },
+  { value: 'falha_envio', label: 'Falha de envio' },
+  { value: 'sem_whatsapp', label: 'Sem WhatsApp' }
+];
+
 const agendaImportTypeOptions = [
   { value: 'demands', label: 'Demandas' },
   { value: 'patient_agenda', label: 'Agenda de Pacientes' }
@@ -214,6 +224,11 @@ function canUseAgendaImport(user) {
   return normalizeRoleValue(user?.role) === 'crc_operator';
 }
 
+function canUseAgendaConfirmationMonitor(user) {
+  if (canAccessAgendaAnalytics(user)) return true;
+  return normalizeRoleValue(user?.role) === 'crc_operator';
+}
+
 function canUseAgendaOperatorTabs(user) {
   if (isMasterAdmin(user)) return true;
   return ['admin', 'supervisor_crc', 'crc_leader'].includes(normalizeRoleValue(user?.role));
@@ -356,6 +371,14 @@ function getAgendaEvolutionToneClass(value) {
   if (numeric >= 2) return 'steady';
   if (numeric >= 1) return 'light';
   return 'idle';
+}
+
+function getAgendaConfirmationToneClass(value) {
+  const normalized = String(value || '').trim();
+  if (normalized === 'confirmado') return 'success';
+  if (['nao_confirmado', 'reagendamento', 'humano', 'falha_envio', 'sem_whatsapp'].includes(normalized)) return 'danger';
+  if (['pendente_envio', 'aguardando_resposta'].includes(normalized)) return 'warning';
+  return 'neutral';
 }
 
 function AgendaDashboardTooltip({ active, payload, label }) {
@@ -532,6 +555,7 @@ export default function AgendaPage() {
   const canDeleteAgendaItem = isMasterAdmin(currentUser);
   const canUseAgendaAnalytics = canAccessAgendaAnalytics(currentUser);
   const canUseAgendaImportPanel = canUseAgendaImport(currentUser);
+  const canUseAgendaConfirmationPanel = canUseAgendaConfirmationMonitor(currentUser);
   const canUseOperatorTabs = canUseAgendaOperatorTabs(currentUser);
   const canReplicateAgenda = canReplicateAgendaItems(currentUser);
   const [items, setItems] = useState([]);
@@ -541,6 +565,12 @@ export default function AgendaPage() {
   const [dashboardDays, setDashboardDays] = useState('30');
   const [selectedEvolutionCollaboratorKey, setSelectedEvolutionCollaboratorKey] = useState('');
   const [dashboardLoading, setDashboardLoading] = useState(false);
+  const [confirmationReport, setConfirmationReport] = useState(null);
+  const [confirmationDays, setConfirmationDays] = useState('30');
+  const [confirmationSearch, setConfirmationSearch] = useState('');
+  const [confirmationStatus, setConfirmationStatus] = useState('all');
+  const [confirmationLoading, setConfirmationLoading] = useState(false);
+  const [confirmationActiveTab, setConfirmationActiveTab] = useState(canUseAgendaAnalytics ? 'dashboard' : 'monitor');
   const [exportingReport, setExportingReport] = useState('');
   const [importDraft, setImportDraft] = useState(emptyImportDraft);
   const [importing, setImporting] = useState(false);
@@ -551,6 +581,7 @@ export default function AgendaPage() {
   const [replicatingAgenda, setReplicatingAgenda] = useState(false);
   const [replicationSummary, setReplicationSummary] = useState(null);
   const [showAnalyticsPanel, setShowAnalyticsPanel] = useState(false);
+  const [showConfirmationPanel, setShowConfirmationPanel] = useState(false);
   const [showImportPanel, setShowImportPanel] = useState(false);
   const [showReplicationPanel, setShowReplicationPanel] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -637,6 +668,31 @@ export default function AgendaPage() {
     }
   };
 
+  const loadConfirmationReport = async () => {
+    if (!canUseAgendaConfirmationPanel) {
+      setConfirmationReport(null);
+      return;
+    }
+
+    setConfirmationLoading(true);
+    try {
+      const endpoint = canUseAgendaAnalytics ? '/api/agenda/confirmations/dashboard' : '/api/agenda/confirmations';
+      const response = await api.get(endpoint, {
+        params: {
+          days: confirmationDays,
+          search: confirmationSearch.trim() || undefined,
+          confirmationStatus: confirmationStatus !== 'all' ? confirmationStatus : undefined
+        }
+      });
+      setConfirmationReport(response.data || null);
+    } catch (error) {
+      setConfirmationReport(null);
+      setFeedback(getApiErrorMessage(error, 'Nao foi possivel carregar a agenda de confirmacoes.'));
+    } finally {
+      setConfirmationLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -656,6 +712,18 @@ export default function AgendaPage() {
     loadDashboard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canUseAgendaAnalytics, dashboardDays]);
+
+  useEffect(() => {
+    loadConfirmationReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canUseAgendaConfirmationPanel, canUseAgendaAnalytics, confirmationDays, confirmationStatus]);
+
+  useEffect(() => {
+    if (!canUseAgendaConfirmationPanel) return undefined;
+    const timer = window.setTimeout(loadConfirmationReport, 350);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [confirmationSearch]);
 
   useEffect(() => {
     const collaboratorOptions = dashboard?.collaborators || [];
@@ -856,6 +924,23 @@ export default function AgendaPage() {
     { label: 'Rotinas recorrentes', value: dashboard?.summary?.recurring || 0, helper: 'voltam automaticamente ao fluxo', tone: 'neutral' }
   ]), [dashboard]);
 
+  const confirmationItems = useMemo(() => (
+    Array.isArray(confirmationReport?.items) ? confirmationReport.items : []
+  ), [confirmationReport]);
+
+  const confirmationDailySeries = useMemo(() => (
+    Array.isArray(confirmationReport?.daily_series) ? confirmationReport.daily_series : []
+  ), [confirmationReport]);
+
+  const confirmationSummaryCards = useMemo(() => ([
+    { label: 'Pacientes', value: confirmationReport?.summary?.total || 0, helper: 'base monitorada', tone: 'neutral' },
+    { label: 'Confirmados', value: confirmationReport?.summary?.confirmed || 0, helper: 'presenca validada', tone: 'success' },
+    { label: 'Sem confirmacao', value: confirmationReport?.summary?.without_confirmation || 0, helper: 'precisam acompanhamento', tone: 'warning' },
+    { label: 'WhatsApp enviado', value: confirmationReport?.summary?.sent || 0, helper: 'com data de disparo', tone: 'progress' },
+    { label: 'Acao necessaria', value: confirmationReport?.summary?.action_required || 0, helper: 'prioridade operacional', tone: 'danger' },
+    { label: 'Taxa de confirmacao', value: formatAgendaPercent(confirmationReport?.summary?.confirmation_rate || 0), helper: 'confirmados sobre total', tone: 'progress' }
+  ]), [confirmationReport]);
+
   const openCreate = (status = 'todo', assignedUserId = currentUserId || '') => {
     setSelectedItem(null);
     setDraft({
@@ -1019,6 +1104,47 @@ export default function AgendaPage() {
       );
     } catch (error) {
       setFeedback(getApiErrorMessage(error, `Não foi possível exportar o relatório da agenda em ${format.toUpperCase()}.`));
+    } finally {
+      setExportingReport('');
+    }
+  };
+
+  const downloadTaskExport = async (format) => {
+    const exportKey = `tasks-${format}`;
+    setExportingReport(exportKey);
+    try {
+      const response = await api.get(`/api/agenda/items/export/${format}`, {
+        params: {
+          search: search.trim() || undefined,
+          status: activeStatus || undefined,
+          queue: activePatientQueue !== 'all' ? activePatientQueue : undefined,
+          assignee: activeAssignee || undefined
+        },
+        responseType: 'blob'
+      });
+      downloadBlob(response.data, format === 'pdf' ? 'agenda-tarefas.pdf' : 'agenda-tarefas.xlsx');
+    } catch (error) {
+      setFeedback(getApiErrorMessage(error, `Nao foi possivel exportar as tarefas em ${format.toUpperCase()}.`));
+    } finally {
+      setExportingReport('');
+    }
+  };
+
+  const downloadConfirmationReport = async (format) => {
+    const exportKey = `confirmations-${format}`;
+    setExportingReport(exportKey);
+    try {
+      const response = await api.get(`/api/agenda/confirmations/export/${format}`, {
+        params: {
+          days: confirmationDays,
+          search: confirmationSearch.trim() || undefined,
+          confirmationStatus: confirmationStatus !== 'all' ? confirmationStatus : undefined
+        },
+        responseType: 'blob'
+      });
+      downloadBlob(response.data, format === 'pdf' ? 'agenda-confirmacoes.pdf' : 'agenda-confirmacoes.xlsx');
+    } catch (error) {
+      setFeedback(getApiErrorMessage(error, `Nao foi possivel exportar as confirmacoes em ${format.toUpperCase()}.`));
     } finally {
       setExportingReport('');
     }
@@ -1191,6 +1317,12 @@ export default function AgendaPage() {
         actions={(
           <>
             <button type="button" className="outline-action" onClick={requestNotifications}>Ativar lembretes</button>
+            <button type="button" className="outline-action" onClick={() => downloadTaskExport('excel')} disabled={exportingReport === 'tasks-excel'}>
+              Excel tarefas
+            </button>
+            <button type="button" className="outline-action" onClick={() => downloadTaskExport('pdf')} disabled={exportingReport === 'tasks-pdf'}>
+              PDF tarefas
+            </button>
             {canUseAgendaImportPanel ? (
               <button type="button" className="outline-action" onClick={() => setShowImportPanel(true)}>Importar agenda</button>
             ) : null}
@@ -1327,7 +1459,7 @@ export default function AgendaPage() {
         </SectionContainer>
       ) : null}
 
-      {canUseAgendaAnalytics || canUseAgendaImportPanel ? (
+      {canUseAgendaAnalytics || canUseAgendaImportPanel || canUseAgendaConfirmationPanel ? (
         <section className="agenda-executive-dock" aria-label="Atalhos executivos da agenda">
           {canUseAgendaAnalytics ? (
           <article className={`agenda-executive-toggle-card ${showAnalyticsPanel ? 'active' : ''}`}>
@@ -1336,6 +1468,16 @@ export default function AgendaPage() {
             <small>Indicadores, evolução diária, produtividade por operador e demandas críticas.</small>
             <button type="button" className="outline-action" onClick={() => setShowAnalyticsPanel((current) => !current)}>
               {showAnalyticsPanel ? 'Ocultar painel' : 'Abrir painel'}
+            </button>
+          </article>
+          ) : null}
+          {canUseAgendaConfirmationPanel ? (
+          <article className={`agenda-executive-toggle-card ${showConfirmationPanel ? 'active' : ''}`}>
+            <span>Confirmacoes CRC</span>
+            <strong>Agenda de confirmacao geral</strong>
+            <small>Monitore pacientes confirmados, pendentes e datas de envio das mensagens pelo WhatsApp.</small>
+            <button type="button" className="outline-action" onClick={() => setShowConfirmationPanel((current) => !current)}>
+              {showConfirmationPanel ? 'Ocultar confirmacoes' : 'Abrir confirmacoes'}
             </button>
           </article>
           ) : null}
@@ -1357,7 +1499,7 @@ export default function AgendaPage() {
         </section>
       ) : null}
 
-      {(canUseAgendaAnalytics && showAnalyticsPanel) || (canUseAgendaImportPanel && showImportPanel) ? (
+      {(canUseAgendaAnalytics && showAnalyticsPanel) || (canUseAgendaConfirmationPanel && showConfirmationPanel) || (canUseAgendaImportPanel && showImportPanel) ? (
         <section className="agenda-intelligence-stack">
           {canUseAgendaAnalytics && showAnalyticsPanel ? (
           <SectionContainer className="agenda-intelligence-panel">
@@ -1648,6 +1790,233 @@ export default function AgendaPage() {
                 </Card>
               </div>
             </div>
+          </SectionContainer>
+          ) : null}
+
+          {canUseAgendaConfirmationPanel && showConfirmationPanel ? (
+          <SectionContainer className="agenda-intelligence-panel agenda-confirmation-panel">
+            <div className="agenda-intelligence-head">
+              <div>
+                <span className="agenda-panel-kicker">Confirmacoes CRC</span>
+                <strong>Agenda de confirmacao geral</strong>
+                <small>Pacientes com status de confirmacao, datas de envio no WhatsApp e acao recomendada para acompanhamento proximo.</small>
+              </div>
+              <div className="agenda-intelligence-actions">
+                <select className="field" value={confirmationDays} onChange={(event) => setConfirmationDays(event.target.value)}>
+                  {agendaDashboardWindowOptions.map((option) => (
+                    <option key={`confirmation-days-${option.value}`} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <button type="button" className="outline-action" onClick={loadConfirmationReport} disabled={confirmationLoading}>
+                  {confirmationLoading ? 'Atualizando...' : 'Atualizar'}
+                </button>
+                <button type="button" className="outline-action" onClick={() => downloadConfirmationReport('excel')} disabled={exportingReport === 'confirmations-excel'}>
+                  Excel
+                </button>
+                <button type="button" className="outline-action" onClick={() => downloadConfirmationReport('pdf')} disabled={exportingReport === 'confirmations-pdf'}>
+                  PDF
+                </button>
+              </div>
+            </div>
+
+            <div className="agenda-confirmation-tabs" role="tablist" aria-label="Confirmacoes da agenda">
+              <button
+                type="button"
+                className={confirmationActiveTab === 'monitor' ? 'active' : ''}
+                onClick={() => setConfirmationActiveTab('monitor')}
+                role="tab"
+                aria-selected={confirmationActiveTab === 'monitor'}
+              >
+                Monitor geral
+              </button>
+              {canUseAgendaAnalytics ? (
+                <button
+                  type="button"
+                  className={confirmationActiveTab === 'dashboard' ? 'active' : ''}
+                  onClick={() => setConfirmationActiveTab('dashboard')}
+                  role="tab"
+                  aria-selected={confirmationActiveTab === 'dashboard'}
+                >
+                  Dashboard lideranca
+                </button>
+              ) : null}
+            </div>
+
+            <DashboardGrid className="agenda-intelligence-kpis">
+              {confirmationSummaryCards.map((card) => (
+                <KPICard key={`confirmation-${card.label}`} label={card.label} value={card.value} helper={card.helper} tone={card.tone} />
+              ))}
+            </DashboardGrid>
+
+            {confirmationActiveTab === 'dashboard' && canUseAgendaAnalytics ? (
+              <div className="agenda-confirmation-dashboard">
+                <Card className="agenda-daily-chart-panel agenda-daily-chart-panel-wide">
+                  <div className="agenda-panel-headline">
+                    <div>
+                      <strong>Evolucao das confirmacoes</strong>
+                      <span>Confirmados, pendentes e mensagens enviadas por dia na janela selecionada.</span>
+                    </div>
+                    <small>{confirmationDailySeries.length} dia(s)</small>
+                  </div>
+                  <div className="agenda-chart-shell">
+                    {confirmationDailySeries.length ? (
+                      <ResponsiveContainer>
+                        <ComposedChart data={confirmationDailySeries}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(148, 163, 184, 0.22)" />
+                          <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 11 }} />
+                          <YAxis tick={{ fill: '#64748b', fontSize: 11 }} />
+                          <Tooltip content={<AgendaDashboardTooltip />} />
+                          <Legend />
+                          <Bar dataKey="total" name="Pacientes" fill="#cbd5e1" radius={[6, 6, 0, 0]} />
+                          <Bar dataKey="sent" name="WhatsApp enviado" fill="#c89a57" radius={[6, 6, 0, 0]} />
+                          <Line type="monotone" dataKey="confirmed" name="Confirmados" stroke="#1d8f6a" strokeWidth={3} dot={false} />
+                          <Line type="monotone" dataKey="action_required" name="Acao necessaria" stroke="#dc2626" strokeWidth={2} dot={false} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    ) : (
+                      <p className="empty-state">Ainda nao ha dados suficientes para montar a evolucao diaria de confirmacoes.</p>
+                    )}
+                  </div>
+                </Card>
+
+                <div className="agenda-confirmation-dashboard-grid">
+                  <Card className="agenda-dashboard-table-card">
+                    <div className="agenda-panel-headline">
+                      <div>
+                        <strong>Evolucao por colaborador</strong>
+                        <span>Taxa de confirmacao, envios e pacientes que exigem acao.</span>
+                      </div>
+                    </div>
+                    <div className="agenda-dashboard-table-wrapper">
+                      <table className="agenda-dashboard-table">
+                        <thead>
+                          <tr>
+                            <th>Colaborador</th>
+                            <th>Total</th>
+                            <th>Confirmados</th>
+                            <th>Sem confirmacao</th>
+                            <th>Enviados</th>
+                            <th>Acao</th>
+                            <th>Taxa</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(confirmationReport?.collaborators || []).map((item) => (
+                            <tr key={`confirmation-user-${item.user_id || item.name}`}>
+                              <td><strong>{item.name || item.label}</strong></td>
+                              <td>{item.total}</td>
+                              <td>{item.confirmed}</td>
+                              <td className={item.without_confirmation ? 'danger-cell' : ''}>{item.without_confirmation}</td>
+                              <td>{item.sent}</td>
+                              <td className={item.action_required ? 'danger-cell' : ''}>{item.action_required}</td>
+                              <td>{formatAgendaPercent(item.confirmation_rate || 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {!confirmationLoading && !(confirmationReport?.collaborators || []).length ? <p className="empty-state">Sem dados por colaborador na janela selecionada.</p> : null}
+                    </div>
+                  </Card>
+
+                  <Card className="agenda-dashboard-table-card">
+                    <div className="agenda-panel-headline">
+                      <div>
+                        <strong>Evolucao por clinica</strong>
+                        <span>Comparativo das confirmacoes por unidade responsavel.</span>
+                      </div>
+                    </div>
+                    <div className="agenda-dashboard-table-wrapper">
+                      <table className="agenda-dashboard-table">
+                        <thead>
+                          <tr>
+                            <th>Clinica</th>
+                            <th>Total</th>
+                            <th>Confirmados</th>
+                            <th>Sem confirmacao</th>
+                            <th>Enviados</th>
+                            <th>Acao</th>
+                            <th>Taxa</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(confirmationReport?.clinics || []).map((item) => (
+                            <tr key={`confirmation-clinic-${item.clinic_id || item.clinic_name}`}>
+                              <td><strong>{item.clinic_name || item.label}</strong></td>
+                              <td>{item.total}</td>
+                              <td>{item.confirmed}</td>
+                              <td className={item.without_confirmation ? 'danger-cell' : ''}>{item.without_confirmation}</td>
+                              <td>{item.sent}</td>
+                              <td className={item.action_required ? 'danger-cell' : ''}>{item.action_required}</td>
+                              <td>{formatAgendaPercent(item.confirmation_rate || 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {!confirmationLoading && !(confirmationReport?.clinics || []).length ? <p className="empty-state">Sem dados por clinica na janela selecionada.</p> : null}
+                    </div>
+                  </Card>
+                </div>
+              </div>
+            ) : (
+              <div className="agenda-confirmation-monitor">
+                <div className="agenda-confirmation-filters">
+                  <input
+                    className="field"
+                    value={confirmationSearch}
+                    onChange={(event) => setConfirmationSearch(event.target.value)}
+                    placeholder="Buscar paciente, telefone, clinica ou responsavel"
+                  />
+                  <select className="field" value={confirmationStatus} onChange={(event) => setConfirmationStatus(event.target.value)}>
+                    {agendaConfirmationMonitorFilterOptions.map((option) => (
+                      <option key={`confirmation-filter-${option.value}`} value={option.value}>{option.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="agenda-dashboard-table-wrapper agenda-confirmation-table-wrapper">
+                  <table className="agenda-dashboard-table agenda-confirmation-table">
+                    <thead>
+                      <tr>
+                        <th>Paciente</th>
+                        <th>Clinica</th>
+                        <th>Responsavel</th>
+                        <th>Consulta</th>
+                        <th>WhatsApp enviado</th>
+                        <th>Status envio</th>
+                        <th>Confirmacao</th>
+                        <th>Ultima resposta</th>
+                        <th>Acao recomendada</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {confirmationItems.slice(0, 150).map((item) => (
+                        <tr key={`confirmation-row-${item.agenda_item_id}`}>
+                          <td>
+                            <strong>{item.patient_name || '-'}</strong>
+                            <small>{item.patient_phone || '-'}</small>
+                          </td>
+                          <td>{item.clinic_name || '-'}</td>
+                          <td>{item.assigned_user_name || '-'}</td>
+                          <td>{formatAgendaDashboardDate(item.patient_scheduled_at || item.due_at)}</td>
+                          <td>{formatAgendaDashboardDate(item.whatsapp_sent_at)}</td>
+                          <td>{item.whatsapp_status_label || '-'}</td>
+                          <td>
+                            <span className={`agenda-confirmation-badge ${getAgendaConfirmationToneClass(item.confirmation_status)}`}>
+                              {item.confirmation_label || '-'}
+                            </span>
+                            {item.chatbot_decision_label && item.chatbot_decision_label !== '-' ? <small>{item.chatbot_decision_label}</small> : null}
+                          </td>
+                          <td>{formatAgendaDashboardDate(item.last_response_at)}</td>
+                          <td className={item.needs_attention ? 'danger-cell' : ''}>{item.action_label || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {!confirmationLoading && !confirmationItems.length ? <p className="empty-state">Nenhum paciente encontrado para os filtros selecionados.</p> : null}
+                  {confirmationItems.length > 150 ? <p className="empty-state">Mostrando os primeiros 150 registros. Use a exportacao em Excel para analisar a base completa.</p> : null}
+                </div>
+              </div>
+            )}
           </SectionContainer>
           ) : null}
 

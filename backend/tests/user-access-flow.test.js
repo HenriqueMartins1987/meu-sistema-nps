@@ -2742,3 +2742,186 @@ test('sac operator can close complaint when manager treatment exists in immutabl
   assert.equal(closeLogParams[3], 'Operador SAC');
 });
 
+test('CRC operator exports visible agenda tasks in Excel without e-mail dependency', async () => {
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{
+        must_change_password: 0,
+        token_version: 1,
+        active: 1,
+        role: 'crc_operator',
+        permissions: JSON.stringify(['home']),
+        action_permissions: null
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM agenda_items a') && sql.includes('is_daily_recurring = 1'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM agenda_items a') && sql.includes('LEFT JOIN users u') && sql.includes('ORDER BY COALESCE(a.due_at'),
+      reply: async () => [[{
+        id: 10,
+        company_id: 1,
+        title: 'Confirmar paciente Ana',
+        description: 'Confirmacao de agenda',
+        status: 'todo',
+        priority: 'alta',
+        owner_user_id: 21,
+        owner_name: 'Operadora CRC',
+        assigned_user_id: 21,
+        assigned_user_name: 'Operadora CRC',
+        assigned_user_email: null,
+        clinic_id: 7,
+        clinic_name: 'Clinica Centro',
+        demand_type: 'patient',
+        patient_name: 'Ana Paciente',
+        patient_phone: '5562999999999',
+        patient_specialty: 'Ortodontia',
+        patient_dentist: 'Dra. Teste',
+        patient_channel: 'WhatsApp',
+        patient_has_scheduled: 1,
+        patient_scheduled_at: new Date('2026-06-20T13:00:00.000Z'),
+        confirmation_status: 'pendente',
+        due_at: new Date('2026-06-19T12:00:00.000Z'),
+        reminder_at: null,
+        completed_at: null,
+        created_at: new Date('2026-06-17T12:00:00.000Z'),
+        updated_at: new Date('2026-06-17T12:10:00.000Z')
+      }]]
+    }
+  ]);
+
+  const response = await request(app)
+    .get('/api/agenda/items/export/excel')
+    .set('Authorization', `Bearer ${signToken({
+      id: 21,
+      role: 'crc_operator',
+      name: 'Operadora CRC',
+      permissions: ['home'],
+      clinicIds: [7],
+      mustChangePassword: false
+    })}`);
+
+  assert.equal(response.status, 200);
+  assert.match(response.headers['content-type'], /spreadsheetml\.sheet/);
+  assert.match(response.headers['content-disposition'], /agenda-tarefas\.xlsx/);
+});
+
+test('agenda confirmations dashboard summarizes WhatsApp sent dates by collaborator and clinic', async () => {
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{
+        must_change_password: 0,
+        token_version: 1,
+        active: 1,
+        role: 'admin',
+        permissions: JSON.stringify(['home']),
+        action_permissions: null
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM agenda_items a') && sql.includes('LEFT JOIN whatsapp_campaign_recipients wcr'),
+      reply: async () => [[{
+        id: 22,
+        company_id: 1,
+        title: 'Confirmar Joao',
+        description: null,
+        status: 'today',
+        priority: 'normal',
+        owner_user_id: 3,
+        owner_name: 'Lider CRC',
+        assigned_user_id: 31,
+        assigned_user_name: 'Colaborador CRC',
+        assigned_user_email: null,
+        clinic_id: 8,
+        clinic_name: 'Clinica Norte',
+        demand_type: 'patient',
+        patient_name: 'Joao Paciente',
+        patient_phone: '5562888888888',
+        patient_has_scheduled: 1,
+        patient_scheduled_at: new Date('2026-06-22T13:00:00.000Z'),
+        confirmation_status: 'pendente',
+        due_at: new Date('2026-06-21T12:00:00.000Z'),
+        reminder_at: null,
+        source_batch_id: 'agenda-import-test',
+        created_at: new Date('2026-06-17T12:00:00.000Z'),
+        updated_at: new Date('2026-06-17T12:10:00.000Z'),
+        whatsapp_recipient_id: 70,
+        whatsapp_batch_id: 'agenda-import-test',
+        whatsapp_recipient_status: 'queued',
+        routing_error: null,
+        whatsapp_recipient_created_at: new Date('2026-06-17T12:20:00.000Z'),
+        whatsapp_recipient_updated_at: new Date('2026-06-17T12:20:00.000Z'),
+        whatsapp_queue_status: 'processed',
+        whatsapp_send_status: 'sent',
+        whatsapp_scheduled_at: new Date('2026-06-17T12:19:00.000Z'),
+        whatsapp_sent_at: new Date('2026-06-17T12:21:00.000Z'),
+        whatsapp_processed_at: new Date('2026-06-17T12:21:00.000Z'),
+        whatsapp_error: null,
+        message_status: 'sent',
+        message_sent_at: new Date('2026-06-17T12:21:00.000Z'),
+        message_delivered_at: null,
+        message_read_at: null,
+        message_responded_at: new Date('2026-06-17T12:25:00.000Z'),
+        message_error: null,
+        chatbot_status: 'completed',
+        chatbot_collected_data: JSON.stringify({ confirmation_decision: 'confirmado' }),
+        chatbot_completed_at: new Date('2026-06-17T12:25:00.000Z'),
+        chatbot_last_interaction_at: new Date('2026-06-17T12:25:00.000Z')
+      }]]
+    }
+  ]);
+
+  const response = await request(app)
+    .get('/api/agenda/confirmations/dashboard?days=30')
+    .set('Authorization', `Bearer ${signToken({
+      id: 3,
+      role: 'admin',
+      name: 'Administrador',
+      permissions: ['home'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.summary.total, 1);
+  assert.equal(response.body.summary.confirmed, 1);
+  assert.equal(response.body.summary.confirmation_rate, 100);
+  assert.equal(response.body.items[0].confirmation_status, 'confirmado');
+  assert.ok(response.body.items[0].whatsapp_sent_at);
+  assert.equal(response.body.collaborators[0].name, 'Colaborador CRC');
+  assert.equal(response.body.clinics[0].clinic_name, 'Clinica Norte');
+});
+
+test('CRC operator cannot open leadership confirmations dashboard', async () => {
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{
+        must_change_password: 0,
+        token_version: 1,
+        active: 1,
+        role: 'crc_operator',
+        permissions: JSON.stringify(['home']),
+        action_permissions: null
+      }]]
+    }
+  ]);
+
+  const response = await request(app)
+    .get('/api/agenda/confirmations/dashboard')
+    .set('Authorization', `Bearer ${signToken({
+      id: 21,
+      role: 'crc_operator',
+      name: 'Operadora CRC',
+      permissions: ['home'],
+      clinicIds: [7],
+      mustChangePassword: false
+    })}`);
+
+  assert.equal(response.status, 403);
+});
+

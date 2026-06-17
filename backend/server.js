@@ -23015,6 +23015,11 @@ function canAccessAgendaDashboard(user) {
   return canAccessAgendaCompanyBoard(user);
 }
 
+function canAccessAgendaConfirmationDashboard(user) {
+  if (isMasterAdminUser(user)) return true;
+  return ['admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'manager'].includes(normalizeAccessRole(user?.role));
+}
+
 function canAccessAgendaHomeDigest(user) {
   if (isMasterAdminUser(user)) return true;
   return ['admin', 'supervisor_crc', 'crc_leader'].includes(normalizeAccessRole(user?.role));
@@ -23910,6 +23915,975 @@ async function loadAgendaDashboardReport(user, options = {}) {
   };
 }
 
+function getAgendaReportDateLabel(value) {
+  return value ? formatMessageDateTime(value) : '-';
+}
+
+function getAgendaReportStatusLabel(value) {
+  const normalized = normalizeAgendaStatus(value);
+  const labels = {
+    todo: 'Aberta',
+    today: 'Hoje',
+    doing: 'Em andamento',
+    done: 'Concluida'
+  };
+  return labels[normalized] || normalized || '-';
+}
+
+function getAgendaReportPriorityLabel(value) {
+  const normalized = normalizeAgendaPriority(value);
+  const labels = {
+    baixa: 'Baixa',
+    normal: 'Normal',
+    alta: 'Alta',
+    urgente: 'Urgente'
+  };
+  return labels[normalized] || normalized || '-';
+}
+
+function getAgendaReportConfirmationLabel(value, demandType = 'general') {
+  const normalized = normalizeAgendaConfirmationStatus(value, demandType);
+  const labels = {
+    confirmado: 'Confirmado',
+    pendente: 'Pendente',
+    nao_confirmado: 'Nao confirmado'
+  };
+  return normalized ? (labels[normalized] || normalized) : '-';
+}
+
+function normalizeAgendaAssigneeFilter(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized || normalized === 'all') return { type: 'all' };
+  if (normalized === 'mine') return { type: 'mine' };
+  if (normalized === 'unassigned') return { type: 'unassigned' };
+  const match = normalized.match(/^user-(\d+)$/);
+  if (match) return { type: 'user', id: Number(match[1]) };
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) && numeric > 0 ? { type: 'user', id: numeric } : { type: 'all' };
+}
+
+function buildAgendaTaskReportWhere(user, query = {}, alias = 'a') {
+  const visibility = buildAgendaVisibilityWhere(user, alias);
+  const where = [`${alias}.deleted_at IS NULL`, visibility.sql];
+  const params = [...visibility.params];
+  const prefix = `${alias}.`;
+
+  const rawStatus = String(query.status || '').trim().toLowerCase();
+  if (rawStatus && rawStatus !== 'all') {
+    where.push(`${prefix}status = ?`);
+    params.push(normalizeAgendaStatus(rawStatus));
+  }
+
+  const rawSearch = String(query.search || '').trim();
+  if (rawSearch) {
+    const term = `%${rawSearch}%`;
+    where.push(`(
+      ${prefix}title LIKE ?
+      OR ${prefix}description LIKE ?
+      OR ${prefix}assigned_user_name LIKE ?
+      OR ${prefix}clinic_name LIKE ?
+      OR ${prefix}patient_name LIKE ?
+      OR ${prefix}patient_phone LIKE ?
+    )`);
+    params.push(term, term, term, term, term, term);
+  }
+
+  const rawQueue = String(query.queue || '').trim().toLowerCase();
+  const patientClause = `(${prefix}demand_type = 'patient' OR ${prefix}patient_name IS NOT NULL OR ${prefix}patient_phone IS NOT NULL)`;
+  if (rawQueue === 'pending_confirmation') {
+    where.push(`${patientClause} AND COALESCE(${prefix}confirmation_status, 'pendente') NOT IN ('confirmado', 'nao_confirmado')`);
+  } else if (rawQueue === 'evasion') {
+    where.push(`${patientClause} AND ${prefix}confirmation_status = 'nao_confirmado'`);
+  }
+
+  const clinicId = Number(query.clinicId || query.clinic_id || 0);
+  if (Number.isFinite(clinicId) && clinicId > 0) {
+    where.push(`${prefix}clinic_id = ?`);
+    params.push(clinicId);
+  }
+
+  const assignee = normalizeAgendaAssigneeFilter(query.assignee || query.assigneeKey);
+  if (assignee.type === 'mine') {
+    where.push(`(${prefix}assigned_user_id = ? OR ${prefix}owner_user_id = ?)`);
+    params.push(Number(user?.id || 0), Number(user?.id || 0));
+  } else if (assignee.type === 'user' && assignee.id) {
+    where.push(`${prefix}assigned_user_id = ?`);
+    params.push(assignee.id);
+  } else if (assignee.type === 'unassigned') {
+    where.push(`${prefix}assigned_user_id IS NULL`);
+  }
+
+  return { where, params };
+}
+
+function summarizeAgendaTaskReport(items = []) {
+  const summary = {
+    total: items.length,
+    open: 0,
+    done: 0,
+    overdue: 0,
+    due_24h: 0,
+    patient_total: 0,
+    patient_confirmed: 0,
+    patient_pending: 0,
+    patient_not_confirmed: 0
+  };
+
+  items.forEach((item) => {
+    const status = normalizeAgendaStatus(item.status);
+    if (status === 'done') summary.done += 1;
+    else summary.open += 1;
+    const dueHours = getAgendaHoursUntil(item.due_at);
+    if (status !== 'done' && dueHours !== null && dueHours < 0) summary.overdue += 1;
+    if (status !== 'done' && dueHours !== null && dueHours >= 0 && dueHours <= 24) summary.due_24h += 1;
+
+    const demandType = normalizeAgendaDemandType(item.demand_type, item);
+    if (demandType === 'patient') {
+      summary.patient_total += 1;
+      const confirmationStatus = normalizeAgendaConfirmationStatus(item.confirmation_status, demandType);
+      if (confirmationStatus === 'confirmado') summary.patient_confirmed += 1;
+      else if (confirmationStatus === 'nao_confirmado') summary.patient_not_confirmed += 1;
+      else summary.patient_pending += 1;
+    }
+  });
+
+  summary.patient_confirmation_rate = summary.patient_total
+    ? Math.round((summary.patient_confirmed * 1000) / summary.patient_total) / 10
+    : 0;
+  summary.completion_rate = summary.total ? Math.round((summary.done * 1000) / summary.total) / 10 : 0;
+  return summary;
+}
+
+async function loadAgendaTaskReport(user, query = {}) {
+  await syncAgendaRecurringItemsForUser(user);
+  const filters = buildAgendaTaskReportWhere(user, query, 'a');
+  const limit = Math.min(Math.max(Number(query.limit || 5000) || 5000, 1), 10000);
+  const [rows] = await pool.query(
+    `SELECT
+       a.*,
+       u.role AS assigned_user_role,
+       u.position AS assigned_user_position
+     FROM agenda_items a
+     LEFT JOIN users u ON u.id = a.assigned_user_id
+     WHERE ${filters.where.join(' AND ')}
+     ORDER BY COALESCE(a.due_at, a.patient_scheduled_at, '9999-12-31 23:59:59') ASC, a.updated_at DESC
+     LIMIT ?`,
+    [...filters.params, limit]
+  );
+  const items = rows.map(serializeAgendaItem);
+  return {
+    generated_at: new Date().toISOString(),
+    summary: summarizeAgendaTaskReport(items),
+    filters: {
+      search: String(query.search || '').trim(),
+      status: String(query.status || 'all').trim() || 'all',
+      queue: String(query.queue || 'all').trim() || 'all',
+      assignee: String(query.assignee || query.assigneeKey || 'all').trim() || 'all'
+    },
+    items
+  };
+}
+
+function buildAgendaTaskExcelBuffer(report = {}) {
+  const workbook = XLSX.utils.book_new();
+  const summary = report.summary || {};
+  const summarySheet = XLSX.utils.json_to_sheet([
+    { indicador: 'Tarefas no relatorio', valor: Number(summary.total || 0) },
+    { indicador: 'Abertas', valor: Number(summary.open || 0) },
+    { indicador: 'Concluidas', valor: Number(summary.done || 0) },
+    { indicador: 'Atrasadas', valor: Number(summary.overdue || 0) },
+    { indicador: 'Vencendo em 24h', valor: Number(summary.due_24h || 0) },
+    { indicador: 'Pacientes', valor: Number(summary.patient_total || 0) },
+    { indicador: 'Pacientes confirmados', valor: Number(summary.patient_confirmed || 0) },
+    { indicador: 'Pacientes pendentes', valor: Number(summary.patient_pending || 0) },
+    { indicador: 'Pacientes nao confirmados', valor: Number(summary.patient_not_confirmed || 0) },
+    { indicador: 'Taxa de confirmacao (%)', valor: Number(summary.patient_confirmation_rate || 0) }
+  ]);
+  summarySheet['!cols'] = [{ wch: 32 }, { wch: 18 }];
+  XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumo');
+
+  const itemsSheet = XLSX.utils.json_to_sheet((report.items || []).map((item) => {
+    const demandType = normalizeAgendaDemandType(item.demand_type, item);
+    return {
+      id: item.id,
+      titulo: item.title || '-',
+      status: getAgendaReportStatusLabel(item.status),
+      prioridade: getAgendaReportPriorityLabel(item.priority),
+      responsavel: item.assigned_user_name || item.owner_name || '-',
+      clinica: item.clinic_name || '-',
+      tipo_demanda: demandType === 'patient' ? 'Paciente' : 'Geral',
+      paciente: item.patient_name || '-',
+      telefone: item.patient_phone || '-',
+      especialidade: item.patient_specialty || '-',
+      dentista: item.patient_dentist || '-',
+      canal: item.patient_channel || '-',
+      status_confirmacao: getAgendaReportConfirmationLabel(item.confirmation_status, demandType),
+      observacao_confirmacao: item.confirmation_notes || '-',
+      consulta: getAgendaReportDateLabel(item.patient_scheduled_at),
+      vencimento: getAgendaReportDateLabel(item.due_at),
+      lembrete: getAgendaReportDateLabel(item.reminder_at),
+      recorrente: item.is_daily_recurring ? 'Sim' : 'Nao',
+      origem: item.source_label || '-',
+      lote_origem: item.source_batch_id || '-',
+      concluido_em: getAgendaReportDateLabel(item.completed_at),
+      criado_em: getAgendaReportDateLabel(item.created_at),
+      atualizado_em: getAgendaReportDateLabel(item.updated_at)
+    };
+  }));
+  itemsSheet['!cols'] = [
+    { wch: 8 }, { wch: 34 }, { wch: 16 }, { wch: 14 }, { wch: 28 }, { wch: 28 },
+    { wch: 14 }, { wch: 30 }, { wch: 18 }, { wch: 20 }, { wch: 24 }, { wch: 18 },
+    { wch: 20 }, { wch: 34 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 12 },
+    { wch: 20 }, { wch: 28 }, { wch: 20 }, { wch: 20 }, { wch: 20 }
+  ];
+  XLSX.utils.book_append_sheet(workbook, itemsSheet, 'Tarefas');
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+}
+
+function buildAgendaTaskPdfBuffer(report = {}) {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ size: 'A4', margin: 36 });
+      const chunks = [];
+      doc.on('data', (chunk) => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+
+      const summary = report.summary || {};
+      doc.fontSize(18).font('Helvetica-Bold').fillColor('#111827').text('Relatorio profissional de tarefas da agenda');
+      doc.moveDown(0.25);
+      doc.fontSize(9).font('Helvetica').fillColor('#6b7280').text(`Gerado em ${formatMessageDateTime(new Date())}`);
+      doc.moveDown(0.8);
+
+      const metrics = [
+        ['Tarefas', summary.total || 0],
+        ['Abertas', summary.open || 0],
+        ['Concluidas', summary.done || 0],
+        ['Atrasadas', summary.overdue || 0],
+        ['Conf. pacientes', `${summary.patient_confirmation_rate || 0}%`]
+      ];
+      const cardWidth = 100;
+      const cardY = doc.y;
+      metrics.forEach((metric, index) => {
+        const x = 36 + (index * 104);
+        doc.roundedRect(x, cardY, cardWidth, 48, 8).fillAndStroke('#f8fafc', '#e5e7eb');
+        doc.fillColor('#6b7280').fontSize(7).font('Helvetica-Bold').text(metric[0], x + 10, cardY + 10, { width: cardWidth - 20 });
+        doc.fillColor('#111827').fontSize(14).font('Helvetica-Bold').text(String(metric[1]), x + 10, cardY + 25, { width: cardWidth - 20 });
+      });
+      doc.y = cardY + 64;
+
+      doc.fontSize(12).font('Helvetica-Bold').fillColor('#111827').text('Tarefas');
+      doc.moveDown(0.35);
+      const rows = (report.items || []).slice(0, 80);
+      const columns = [
+        { title: 'Titulo', width: 150 },
+        { title: 'Responsavel', width: 95 },
+        { title: 'Clinica', width: 95 },
+        { title: 'Status', width: 62 },
+        { title: 'Vencimento', width: 92 },
+        { title: 'Confirmacao', width: 78 }
+      ];
+      const startX = 36;
+      const rowHeight = 22;
+      const renderHeader = () => {
+        let x = startX;
+        doc.rect(startX, doc.y, 523, rowHeight).fill('#111827');
+        columns.forEach((column) => {
+          doc.fillColor('#ffffff').fontSize(7).font('Helvetica-Bold').text(column.title, x + 4, doc.y + 7, { width: column.width - 8 });
+          x += column.width;
+        });
+        doc.y += rowHeight;
+      };
+      renderHeader();
+      rows.forEach((item, index) => {
+        if (doc.y > 760) {
+          doc.addPage();
+          renderHeader();
+        }
+        const demandType = normalizeAgendaDemandType(item.demand_type, item);
+        let x = startX;
+        doc.rect(startX, doc.y, 523, rowHeight).fill(index % 2 === 0 ? '#ffffff' : '#f9fafb');
+        [
+          item.title || '-',
+          item.assigned_user_name || item.owner_name || '-',
+          item.clinic_name || '-',
+          getAgendaReportStatusLabel(item.status),
+          getAgendaReportDateLabel(item.due_at || item.patient_scheduled_at),
+          getAgendaReportConfirmationLabel(item.confirmation_status, demandType)
+        ].forEach((value, columnIndex) => {
+          doc.fillColor('#111827').fontSize(6.6).font('Helvetica').text(String(value).slice(0, 48), x + 4, doc.y + 7, { width: columns[columnIndex].width - 8 });
+          x += columns[columnIndex].width;
+        });
+        doc.y += rowHeight;
+      });
+      if ((report.items || []).length > rows.length) {
+        doc.moveDown(0.6);
+        doc.fontSize(8).fillColor('#6b7280').text(`PDF exibindo os primeiros ${rows.length} registros. Use o Excel para a base completa.`);
+      }
+
+      doc.end();
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+function normalizeAgendaConfirmationDecision(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  if (!normalized) return null;
+  if (['nao_confirmado', 'nao', 'evasao', 'cancelado', 'cancelamento', 'desmarcou'].includes(normalized)) return 'nao_confirmado';
+  if (['reagendar', 'reagendamento', 'remarcar', 'remarcacao'].includes(normalized)) return 'reagendamento';
+  if (['humano', 'atendente', 'falar_com_atendente', 'suporte'].includes(normalized)) return 'humano';
+  if (['confirmado', 'confirmar', 'sim', 'presenca_confirmada'].includes(normalized)) return 'confirmado';
+  return normalized;
+}
+
+function extractAgendaChatbotDecision(attempt = {}) {
+  const data = normalizeChatbotSessionData(attempt.chatbot_collected_data);
+  return normalizeAgendaConfirmationDecision(
+    data.confirmation_decision
+    || data.confirmationDecision
+    || data.confirmacao
+    || data.status_confirmacao
+    || data.statusConfirmacao
+    || data.resposta
+  );
+}
+
+function getAgendaDecisionLabel(value) {
+  const labels = {
+    confirmado: 'Confirmado pelo paciente',
+    nao_confirmado: 'Nao confirmado',
+    reagendamento: 'Solicitou reagendamento',
+    humano: 'Precisa de atendimento humano'
+  };
+  return labels[value] || (value ? String(value) : '-');
+}
+
+function normalizeAgendaWhatsAppStatus(value) {
+  const normalized = String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return normalized || null;
+}
+
+function getAgendaWhatsAppStatusLabel(value) {
+  const normalized = normalizeAgendaWhatsAppStatus(value);
+  const labels = {
+    queued: 'Na fila',
+    pending: 'Pendente',
+    scheduled: 'Agendado',
+    processing: 'Processando',
+    processed: 'Processado',
+    sent: 'Enviado',
+    enviado: 'Enviado',
+    delivered: 'Entregue',
+    read: 'Lido',
+    responded: 'Respondido',
+    success: 'Sucesso',
+    failed: 'Falhou',
+    error: 'Erro',
+    canceled: 'Cancelado',
+    cancelado: 'Cancelado'
+  };
+  return normalized ? (labels[normalized] || normalized.replace(/_/g, ' ')) : '-';
+}
+
+function getAgendaAttemptSentAt(attempt = {}) {
+  return attempt.message_sent_at
+    || attempt.whatsapp_sent_at
+    || attempt.whatsapp_processed_at
+    || attempt.whatsapp_scheduled_at
+    || attempt.whatsapp_recipient_created_at
+    || null;
+}
+
+function isAgendaWhatsAppSent(attempt = {}) {
+  if (!attempt || !attempt.whatsapp_recipient_id) return false;
+  if (getAgendaAttemptSentAt(attempt)) return true;
+  const status = normalizeAgendaWhatsAppStatus(
+    attempt.message_status
+    || attempt.whatsapp_send_status
+    || attempt.whatsapp_queue_status
+    || attempt.whatsapp_recipient_status
+  );
+  return ['sent', 'enviado', 'delivered', 'read', 'responded', 'success', 'processed'].includes(status);
+}
+
+function isAgendaWhatsAppFailed(attempt = {}) {
+  if (!attempt || !attempt.whatsapp_recipient_id) return false;
+  const status = normalizeAgendaWhatsAppStatus(
+    attempt.message_status
+    || attempt.whatsapp_send_status
+    || attempt.whatsapp_queue_status
+    || attempt.whatsapp_recipient_status
+  );
+  return ['failed', 'failure', 'error', 'erro', 'canceled', 'cancelado', 'rejected'].includes(status)
+    || Boolean(attempt.whatsapp_error || attempt.message_error || attempt.routing_error);
+}
+
+function getAgendaConfirmationDerivedStatus(item = {}, attempt = {}) {
+  const demandType = normalizeAgendaDemandType(item.demand_type, item);
+  const manualStatus = normalizeAgendaConfirmationStatus(item.confirmation_status, demandType);
+  const decision = extractAgendaChatbotDecision(attempt);
+  const hasWhatsapp = Boolean(attempt?.whatsapp_recipient_id);
+  const whatsappFailed = isAgendaWhatsAppFailed(attempt);
+  const whatsappSent = isAgendaWhatsAppSent(attempt);
+
+  if (manualStatus === 'confirmado' || decision === 'confirmado') {
+    return {
+      key: 'confirmado',
+      label: 'Confirmado',
+      action_label: 'Confirmacao registrada',
+      is_confirmed: true,
+      needs_attention: false
+    };
+  }
+
+  if (manualStatus === 'nao_confirmado' || decision === 'nao_confirmado') {
+    return {
+      key: 'nao_confirmado',
+      label: 'Nao confirmado',
+      action_label: 'Priorizar contato ativo',
+      is_confirmed: false,
+      needs_attention: true
+    };
+  }
+
+  if (decision === 'reagendamento') {
+    return {
+      key: 'reagendamento',
+      label: 'Solicitou reagendamento',
+      action_label: 'Agendar nova data',
+      is_confirmed: false,
+      needs_attention: true
+    };
+  }
+
+  if (decision === 'humano') {
+    return {
+      key: 'humano',
+      label: 'Precisa de atendimento humano',
+      action_label: 'Acionar operador responsavel',
+      is_confirmed: false,
+      needs_attention: true
+    };
+  }
+
+  if (whatsappFailed) {
+    return {
+      key: 'falha_envio',
+      label: 'Falha no envio',
+      action_label: 'Revisar telefone ou reenviar',
+      is_confirmed: false,
+      needs_attention: true
+    };
+  }
+
+  if (!hasWhatsapp) {
+    return {
+      key: 'sem_whatsapp',
+      label: 'Sem WhatsApp enviado',
+      action_label: 'Enviar confirmacao',
+      is_confirmed: false,
+      needs_attention: true
+    };
+  }
+
+  if (whatsappSent) {
+    return {
+      key: 'aguardando_resposta',
+      label: 'Aguardando resposta',
+      action_label: 'Monitorar retorno',
+      is_confirmed: false,
+      needs_attention: false
+    };
+  }
+
+  return {
+    key: 'pendente_envio',
+    label: 'Pendente de envio',
+    action_label: 'Acompanhar fila de envio',
+    is_confirmed: false,
+    needs_attention: true
+  };
+}
+
+function createAgendaConfirmationAccumulator(label = '-') {
+  return {
+    label,
+    total: 0,
+    confirmed: 0,
+    without_confirmation: 0,
+    pending: 0,
+    action_required: 0,
+    sent: 0,
+    without_whatsapp: 0,
+    failed: 0,
+    confirmation_rate: 0
+  };
+}
+
+function addAgendaConfirmationToAccumulator(accumulator, row = {}) {
+  accumulator.total += 1;
+  if (row.is_confirmed) accumulator.confirmed += 1;
+  else accumulator.without_confirmation += 1;
+  if (row.needs_attention) accumulator.action_required += 1;
+  if (row.confirmation_status === 'aguardando_resposta' || row.confirmation_status === 'pendente_envio') accumulator.pending += 1;
+  if (row.whatsapp_sent_at) accumulator.sent += 1;
+  if (!row.whatsapp_recipient_id) accumulator.without_whatsapp += 1;
+  if (row.confirmation_status === 'falha_envio') accumulator.failed += 1;
+}
+
+function finalizeAgendaConfirmationAccumulator(accumulator) {
+  return {
+    ...accumulator,
+    confirmation_rate: accumulator.total ? Math.round((accumulator.confirmed * 1000) / accumulator.total) / 10 : 0
+  };
+}
+
+function buildAgendaConfirmationSummaries(rows = []) {
+  const summary = createAgendaConfirmationAccumulator('Geral');
+  const clinicMap = new Map();
+  const collaboratorMap = new Map();
+  const dailyMap = new Map();
+
+  rows.forEach((row) => {
+    addAgendaConfirmationToAccumulator(summary, row);
+
+    const clinicKey = row.clinic_id ? `clinic-${row.clinic_id}` : `clinic-name-${row.clinic_name || 'sem-clinica'}`;
+    if (!clinicMap.has(clinicKey)) {
+      clinicMap.set(clinicKey, {
+        ...createAgendaConfirmationAccumulator(row.clinic_name || 'Sem clinica'),
+        clinic_id: row.clinic_id || null,
+        clinic_name: row.clinic_name || 'Sem clinica'
+      });
+    }
+    addAgendaConfirmationToAccumulator(clinicMap.get(clinicKey), row);
+
+    const collaboratorKey = row.assigned_user_id ? `user-${row.assigned_user_id}` : `name-${row.assigned_user_name || 'sem-responsavel'}`;
+    if (!collaboratorMap.has(collaboratorKey)) {
+      collaboratorMap.set(collaboratorKey, {
+        ...createAgendaConfirmationAccumulator(row.assigned_user_name || 'Sem responsavel'),
+        user_id: row.assigned_user_id || null,
+        name: row.assigned_user_name || 'Sem responsavel'
+      });
+    }
+    addAgendaConfirmationToAccumulator(collaboratorMap.get(collaboratorKey), row);
+
+    const dateKey = getSaoPauloDateKey(row.patient_scheduled_at || row.due_at || row.whatsapp_sent_at || row.created_at || new Date());
+    if (!dailyMap.has(dateKey)) {
+      dailyMap.set(dateKey, {
+        date: dateKey,
+        total: 0,
+        confirmed: 0,
+        without_confirmation: 0,
+        sent: 0,
+        action_required: 0
+      });
+    }
+    const point = dailyMap.get(dateKey);
+    point.total += 1;
+    if (row.is_confirmed) point.confirmed += 1;
+    else point.without_confirmation += 1;
+    if (row.whatsapp_sent_at) point.sent += 1;
+    if (row.needs_attention) point.action_required += 1;
+  });
+
+  return {
+    summary: finalizeAgendaConfirmationAccumulator(summary),
+    clinics: Array.from(clinicMap.values())
+      .map(finalizeAgendaConfirmationAccumulator)
+      .sort((left, right) => right.total - left.total || right.confirmation_rate - left.confirmation_rate),
+    collaborators: Array.from(collaboratorMap.values())
+      .map(finalizeAgendaConfirmationAccumulator)
+      .sort((left, right) => right.total - left.total || right.confirmation_rate - left.confirmation_rate),
+    daily_series: Array.from(dailyMap.values()).sort((left, right) => String(left.date).localeCompare(String(right.date)))
+  };
+}
+
+function buildAgendaConfirmationWhere(user, query = {}, alias = 'a') {
+  const visibility = buildAgendaVisibilityWhere(user, alias);
+  const where = [
+    `${alias}.deleted_at IS NULL`,
+    `(${alias}.demand_type = 'patient' OR ${alias}.patient_name IS NOT NULL OR ${alias}.patient_phone IS NOT NULL)`,
+    visibility.sql
+  ];
+  const params = [...visibility.params];
+  const days = normalizeAgendaDashboardDays(query.days, 30);
+  const since = toMysqlDateTime(new Date(Date.now() - (days * 86400000)));
+  where.push(`COALESCE(${alias}.patient_scheduled_at, ${alias}.due_at, ${alias}.created_at) >= ?`);
+  params.push(since);
+
+  const clinicId = Number(query.clinicId || query.clinic_id || 0);
+  if (Number.isFinite(clinicId) && clinicId > 0) {
+    where.push(`${alias}.clinic_id = ?`);
+    params.push(clinicId);
+  }
+
+  const rawSearch = String(query.search || '').trim();
+  if (rawSearch) {
+    const term = `%${rawSearch}%`;
+    where.push(`(
+      ${alias}.title LIKE ?
+      OR ${alias}.patient_name LIKE ?
+      OR ${alias}.patient_phone LIKE ?
+      OR ${alias}.clinic_name LIKE ?
+      OR ${alias}.assigned_user_name LIKE ?
+    )`);
+    params.push(term, term, term, term, term);
+  }
+
+  return { where, params, days };
+}
+
+function pickLatestAgendaConfirmationAttempt(attempts = []) {
+  return attempts
+    .filter((attempt) => attempt && attempt.whatsapp_recipient_id)
+    .sort((left, right) => {
+      const leftTime = new Date(left.message_responded_at || left.chatbot_completed_at || left.message_sent_at || left.whatsapp_sent_at || left.whatsapp_recipient_created_at || 0).getTime();
+      const rightTime = new Date(right.message_responded_at || right.chatbot_completed_at || right.message_sent_at || right.whatsapp_sent_at || right.whatsapp_recipient_created_at || 0).getTime();
+      return rightTime - leftTime;
+    })[0] || {};
+}
+
+async function loadAgendaConfirmationReport(user, query = {}) {
+  const filters = buildAgendaConfirmationWhere(user, query, 'a');
+  const limit = Math.min(Math.max(Number(query.limit || 5000) || 5000, 1), 10000);
+  const [rows] = await pool.query(
+    `SELECT
+       a.*,
+       wcr.id AS whatsapp_recipient_id,
+       wcr.batch_id AS whatsapp_batch_id,
+       wcr.status AS whatsapp_recipient_status,
+       wcr.routing_error AS routing_error,
+       wcr.created_at AS whatsapp_recipient_created_at,
+       wcr.updated_at AS whatsapp_recipient_updated_at,
+       q.status AS whatsapp_queue_status,
+       q.send_status AS whatsapp_send_status,
+       q.scheduled_at AS whatsapp_scheduled_at,
+       q.sent_at AS whatsapp_sent_at,
+       q.processed_at AS whatsapp_processed_at,
+       q.error_message AS whatsapp_error,
+       m.status AS message_status,
+       m.sent_at AS message_sent_at,
+       m.delivered_at AS message_delivered_at,
+       m.read_at AS message_read_at,
+       m.responded_at AS message_responded_at,
+       m.error_message AS message_error,
+       s.status AS chatbot_status,
+       s.collected_data AS chatbot_collected_data,
+       s.completed_at AS chatbot_completed_at,
+       s.last_interaction_at AS chatbot_last_interaction_at
+     FROM agenda_items a
+     LEFT JOIN whatsapp_campaign_recipients wcr
+       ON wcr.campaign_type = 'confirmacao'
+      AND wcr.batch_id = a.source_batch_id
+      AND (
+        wcr.patient_phone = a.patient_phone
+        OR RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(wcr.patient_phone, '+', ''), ' ', ''), '-', ''), '(', ''), 10)
+           = RIGHT(REPLACE(REPLACE(REPLACE(REPLACE(a.patient_phone, '+', ''), ' ', ''), '-', ''), '(', ''), 10)
+      )
+      AND (wcr.clinic_id <=> a.clinic_id OR wcr.clinic_id IS NULL OR a.clinic_id IS NULL)
+     LEFT JOIN whatsapp_dispatch_queue q ON q.id = wcr.dispatch_queue_id
+     LEFT JOIN whatsapp_messages m ON m.id = wcr.message_id
+     LEFT JOIN whatsapp_chatbot_sessions s ON s.conversation_id = wcr.conversation_id
+     WHERE ${filters.where.join(' AND ')}
+     ORDER BY COALESCE(a.patient_scheduled_at, a.due_at, a.created_at) ASC, a.id DESC, wcr.created_at DESC
+     LIMIT ?`,
+    [...filters.params, limit]
+  );
+
+  const grouped = new Map();
+  rows.forEach((row) => {
+    const key = Number(row.id || 0);
+    if (!grouped.has(key)) {
+      grouped.set(key, { item: serializeAgendaItem(row), attempts: [], raw: row });
+    }
+    if (row.whatsapp_recipient_id) {
+      grouped.get(key).attempts.push({
+        whatsapp_recipient_id: row.whatsapp_recipient_id,
+        whatsapp_batch_id: row.whatsapp_batch_id,
+        whatsapp_recipient_status: row.whatsapp_recipient_status,
+        whatsapp_queue_status: row.whatsapp_queue_status,
+        whatsapp_send_status: row.whatsapp_send_status,
+        whatsapp_scheduled_at: row.whatsapp_scheduled_at,
+        whatsapp_sent_at: row.whatsapp_sent_at,
+        whatsapp_processed_at: row.whatsapp_processed_at,
+        whatsapp_recipient_created_at: row.whatsapp_recipient_created_at,
+        whatsapp_recipient_updated_at: row.whatsapp_recipient_updated_at,
+        whatsapp_error: row.whatsapp_error,
+        routing_error: row.routing_error,
+        message_status: row.message_status,
+        message_sent_at: row.message_sent_at,
+        message_delivered_at: row.message_delivered_at,
+        message_read_at: row.message_read_at,
+        message_responded_at: row.message_responded_at,
+        message_error: row.message_error,
+        chatbot_status: row.chatbot_status,
+        chatbot_collected_data: row.chatbot_collected_data,
+        chatbot_completed_at: row.chatbot_completed_at,
+        chatbot_last_interaction_at: row.chatbot_last_interaction_at
+      });
+    }
+  });
+
+  let confirmations = Array.from(grouped.values()).map(({ item, attempts }) => {
+    const attempt = pickLatestAgendaConfirmationAttempt(attempts);
+    const decision = extractAgendaChatbotDecision(attempt);
+    const derived = getAgendaConfirmationDerivedStatus(item, attempt);
+    const whatsappStatus = attempt.message_status
+      || attempt.whatsapp_send_status
+      || attempt.whatsapp_queue_status
+      || attempt.whatsapp_recipient_status
+      || null;
+    const lastResponseAt = attempt.message_responded_at
+      || attempt.chatbot_completed_at
+      || attempt.chatbot_last_interaction_at
+      || null;
+    return {
+      agenda_item_id: item.id,
+      title: item.title || '-',
+      patient_name: item.patient_name || '-',
+      patient_phone: item.patient_phone || '-',
+      clinic_id: item.clinic_id || null,
+      clinic_name: item.clinic_name || 'Sem clinica',
+      assigned_user_id: item.assigned_user_id || null,
+      assigned_user_name: item.assigned_user_name || item.owner_name || 'Sem responsavel',
+      patient_scheduled_at: item.patient_scheduled_at || null,
+      due_at: item.due_at || null,
+      created_at: item.created_at || null,
+      manual_confirmation_status: item.confirmation_status || null,
+      confirmation_status: derived.key,
+      confirmation_label: derived.label,
+      action_label: derived.action_label,
+      is_confirmed: derived.is_confirmed,
+      needs_attention: derived.needs_attention,
+      whatsapp_recipient_id: attempt.whatsapp_recipient_id || null,
+      whatsapp_batch_id: attempt.whatsapp_batch_id || item.source_batch_id || null,
+      whatsapp_sent_at: getAgendaAttemptSentAt(attempt),
+      whatsapp_status: whatsappStatus,
+      whatsapp_status_label: getAgendaWhatsAppStatusLabel(whatsappStatus),
+      whatsapp_error: attempt.whatsapp_error || attempt.message_error || attempt.routing_error || null,
+      chatbot_decision: decision,
+      chatbot_decision_label: getAgendaDecisionLabel(decision),
+      chatbot_status: attempt.chatbot_status || null,
+      last_response_at: lastResponseAt,
+      response_read_at: attempt.message_read_at || null,
+      response_delivered_at: attempt.message_delivered_at || null,
+      attempts_count: attempts.length
+    };
+  });
+
+  const statusFilter = normalizeAgendaConfirmationDecision(query.confirmationStatus || query.confirmation_status || query.status);
+  if (statusFilter && statusFilter !== 'all') {
+    confirmations = confirmations.filter((row) => {
+      if (statusFilter === 'pendente') return !row.is_confirmed;
+      return row.confirmation_status === statusFilter || row.manual_confirmation_status === statusFilter || row.chatbot_decision === statusFilter;
+    });
+  }
+
+  confirmations.sort((left, right) => {
+    if (left.needs_attention !== right.needs_attention) return left.needs_attention ? -1 : 1;
+    if (left.is_confirmed !== right.is_confirmed) return left.is_confirmed ? 1 : -1;
+    const leftTime = new Date(left.patient_scheduled_at || left.due_at || left.created_at || 0).getTime();
+    const rightTime = new Date(right.patient_scheduled_at || right.due_at || right.created_at || 0).getTime();
+    return leftTime - rightTime;
+  });
+
+  const summaries = buildAgendaConfirmationSummaries(confirmations);
+  return {
+    generated_at: new Date().toISOString(),
+    window_days: filters.days,
+    ...summaries,
+    items: confirmations
+  };
+}
+
+function buildAgendaConfirmationExcelBuffer(report = {}) {
+  const workbook = XLSX.utils.book_new();
+  const summary = report.summary || {};
+  const summarySheet = XLSX.utils.json_to_sheet([
+    { indicador: 'Pacientes monitorados', valor: summary.total || 0 },
+    { indicador: 'Confirmados', valor: summary.confirmed || 0 },
+    { indicador: 'Sem confirmacao', valor: summary.without_confirmation || 0 },
+    { indicador: 'Pendentes', valor: summary.pending || 0 },
+    { indicador: 'Acao necessaria', valor: summary.action_required || 0 },
+    { indicador: 'WhatsApp enviado', valor: summary.sent || 0 },
+    { indicador: 'Sem WhatsApp', valor: summary.without_whatsapp || 0 },
+    { indicador: 'Falhas de envio', valor: summary.failed || 0 },
+    { indicador: 'Taxa de confirmacao (%)', valor: summary.confirmation_rate || 0 }
+  ]);
+  summarySheet['!cols'] = [{ wch: 32 }, { wch: 18 }];
+  XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumo');
+
+  const patientsSheet = XLSX.utils.json_to_sheet((report.items || []).map((item) => ({
+    paciente: item.patient_name,
+    telefone: item.patient_phone,
+    clinica: item.clinic_name,
+    responsavel: item.assigned_user_name,
+    consulta: getAgendaReportDateLabel(item.patient_scheduled_at || item.due_at),
+    whatsapp_enviado_em: getAgendaReportDateLabel(item.whatsapp_sent_at),
+    status_whatsapp: item.whatsapp_status_label || '-',
+    status_confirmacao: item.confirmation_label || '-',
+    decisao_chatbot: item.chatbot_decision_label || '-',
+    ultima_resposta: getAgendaReportDateLabel(item.last_response_at),
+    acao_recomendada: item.action_label || '-',
+    tentativas: item.attempts_count || 0,
+    erro: item.whatsapp_error || '-'
+  })));
+  patientsSheet['!cols'] = [
+    { wch: 30 }, { wch: 18 }, { wch: 28 }, { wch: 28 }, { wch: 20 },
+    { wch: 22 }, { wch: 18 }, { wch: 24 }, { wch: 26 }, { wch: 22 },
+    { wch: 28 }, { wch: 10 }, { wch: 38 }
+  ];
+  XLSX.utils.book_append_sheet(workbook, patientsSheet, 'Confirmacoes');
+
+  const collaboratorSheet = XLSX.utils.json_to_sheet((report.collaborators || []).map((item) => ({
+    colaborador: item.name,
+    total: item.total,
+    confirmados: item.confirmed,
+    sem_confirmacao: item.without_confirmation,
+    pendentes: item.pending,
+    acao_necessaria: item.action_required,
+    whatsapp_enviado: item.sent,
+    sem_whatsapp: item.without_whatsapp,
+    falhas: item.failed,
+    taxa_confirmacao: item.confirmation_rate
+  })));
+  collaboratorSheet['!cols'] = [{ wch: 30 }, ...Array.from({ length: 9 }, () => ({ wch: 16 }))];
+  XLSX.utils.book_append_sheet(workbook, collaboratorSheet, 'Por colaborador');
+
+  const clinicSheet = XLSX.utils.json_to_sheet((report.clinics || []).map((item) => ({
+    clinica: item.clinic_name || item.label,
+    total: item.total,
+    confirmados: item.confirmed,
+    sem_confirmacao: item.without_confirmation,
+    pendentes: item.pending,
+    acao_necessaria: item.action_required,
+    whatsapp_enviado: item.sent,
+    sem_whatsapp: item.without_whatsapp,
+    falhas: item.failed,
+    taxa_confirmacao: item.confirmation_rate
+  })));
+  clinicSheet['!cols'] = [{ wch: 30 }, ...Array.from({ length: 9 }, () => ({ wch: 16 }))];
+  XLSX.utils.book_append_sheet(workbook, clinicSheet, 'Por clinica');
+
+  const dailySheet = XLSX.utils.json_to_sheet((report.daily_series || []).map((item) => ({
+    data: item.date,
+    total: item.total,
+    confirmados: item.confirmed,
+    sem_confirmacao: item.without_confirmation,
+    whatsapp_enviado: item.sent,
+    acao_necessaria: item.action_required
+  })));
+  dailySheet['!cols'] = [{ wch: 14 }, ...Array.from({ length: 5 }, () => ({ wch: 18 }))];
+  XLSX.utils.book_append_sheet(workbook, dailySheet, 'Evolucao diaria');
+  return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
+}
+
+function buildAgendaConfirmationPdfBuffer(report = {}) {
+  return new Promise((resolve, reject) => {
+    try {
+      const doc = new PDFDocument({ size: 'A4', margin: 36 });
+      const chunks = [];
+      doc.on('data', (chunk) => chunks.push(chunk));
+      doc.on('end', () => resolve(Buffer.concat(chunks)));
+
+      const summary = report.summary || {};
+      doc.fontSize(18).font('Helvetica-Bold').fillColor('#111827').text('Relatorio de confirmacoes da agenda');
+      doc.moveDown(0.25);
+      doc.fontSize(9).font('Helvetica').fillColor('#6b7280').text(`Janela: ${report.window_days || 30} dias | Gerado em ${formatMessageDateTime(new Date())}`);
+      doc.moveDown(0.8);
+
+      const metrics = [
+        ['Pacientes', summary.total || 0],
+        ['Confirmados', summary.confirmed || 0],
+        ['Sem confirmacao', summary.without_confirmation || 0],
+        ['WhatsApp enviado', summary.sent || 0],
+        ['Taxa', `${summary.confirmation_rate || 0}%`]
+      ];
+      const cardY = doc.y;
+      metrics.forEach((metric, index) => {
+        const x = 36 + (index * 104);
+        doc.roundedRect(x, cardY, 100, 48, 8).fillAndStroke('#f8fafc', '#e5e7eb');
+        doc.fillColor('#6b7280').fontSize(7).font('Helvetica-Bold').text(metric[0], x + 10, cardY + 10, { width: 80 });
+        doc.fillColor('#111827').fontSize(14).font('Helvetica-Bold').text(String(metric[1]), x + 10, cardY + 25, { width: 80 });
+      });
+      doc.y = cardY + 66;
+
+      const renderSimpleTable = (title, rows, columns) => {
+        doc.fontSize(12).font('Helvetica-Bold').fillColor('#111827').text(title);
+        doc.moveDown(0.3);
+        const startX = 36;
+        const rowHeight = 22;
+        const tableWidth = columns.reduce((sum, column) => sum + column.width, 0);
+        const headerY = doc.y;
+        doc.rect(startX, headerY, tableWidth, rowHeight).fill('#111827');
+        let x = startX;
+        columns.forEach((column) => {
+          doc.fillColor('#ffffff').fontSize(7).font('Helvetica-Bold').text(column.title, x + 4, headerY + 7, { width: column.width - 8 });
+          x += column.width;
+        });
+        doc.y = headerY + rowHeight;
+        rows.forEach((row, rowIndex) => {
+          if (doc.y > 760) doc.addPage();
+          const y = doc.y;
+          doc.rect(startX, y, tableWidth, rowHeight).fill(rowIndex % 2 === 0 ? '#ffffff' : '#f9fafb');
+          x = startX;
+          columns.forEach((column) => {
+            const value = typeof column.value === 'function' ? column.value(row) : row[column.value];
+            doc.fillColor('#111827').fontSize(6.6).font('Helvetica').text(String(value || '-').slice(0, 46), x + 4, y + 7, { width: column.width - 8 });
+            x += column.width;
+          });
+          doc.y = y + rowHeight;
+        });
+        doc.moveDown(0.8);
+      };
+
+      renderSimpleTable('Pacientes sem confirmacao priorizados', (report.items || []).filter((item) => !item.is_confirmed).slice(0, 50), [
+        { title: 'Paciente', width: 120, value: 'patient_name' },
+        { title: 'Clinica', width: 95, value: 'clinic_name' },
+        { title: 'Responsavel', width: 95, value: 'assigned_user_name' },
+        { title: 'Consulta', width: 82, value: (row) => getAgendaReportDateLabel(row.patient_scheduled_at || row.due_at) },
+        { title: 'WhatsApp', width: 82, value: (row) => getAgendaReportDateLabel(row.whatsapp_sent_at) },
+        { title: 'Acao', width: 49, value: 'action_label' }
+      ]);
+
+      renderSimpleTable('Desempenho por colaborador', (report.collaborators || []).slice(0, 12), [
+        { title: 'Colaborador', width: 160, value: 'name' },
+        { title: 'Total', width: 55, value: 'total' },
+        { title: 'Confirm.', width: 60, value: 'confirmed' },
+        { title: 'Sem conf.', width: 65, value: 'without_confirmation' },
+        { title: 'Enviados', width: 65, value: 'sent' },
+        { title: 'Taxa', width: 55, value: (row) => `${row.confirmation_rate || 0}%` }
+      ]);
+
+      renderSimpleTable('Desempenho por clinica', (report.clinics || []).slice(0, 12), [
+        { title: 'Clinica', width: 160, value: 'clinic_name' },
+        { title: 'Total', width: 55, value: 'total' },
+        { title: 'Confirm.', width: 60, value: 'confirmed' },
+        { title: 'Sem conf.', width: 65, value: 'without_confirmation' },
+        { title: 'Enviados', width: 65, value: 'sent' },
+        { title: 'Taxa', width: 55, value: (row) => `${row.confirmation_rate || 0}%` }
+      ]);
+
+      doc.end();
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
 function buildAgendaDashboardExcelBuffer(report = {}) {
   const workbook = XLSX.utils.book_new();
   const summarySheet = XLSX.utils.json_to_sheet([
@@ -24695,6 +25669,82 @@ app.get('/api/agenda/report/pdf', exportLimiter, authenticate, async (req, res) 
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao exportar a agenda em PDF.' });
+  }
+});
+
+app.get('/api/agenda/items/export/excel', exportLimiter, authenticate, async (req, res) => {
+  try {
+    const report = await loadAgendaTaskReport(req.user, req.query || {});
+    const buffer = buildAgendaTaskExcelBuffer(report);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="agenda-tarefas.xlsx"');
+    return res.send(buffer);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao exportar tarefas da agenda em Excel.' });
+  }
+});
+
+app.get('/api/agenda/items/export/pdf', exportLimiter, authenticate, async (req, res) => {
+  try {
+    const report = await loadAgendaTaskReport(req.user, req.query || {});
+    const buffer = await buildAgendaTaskPdfBuffer(report);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="agenda-tarefas.pdf"');
+    return res.send(buffer);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao exportar tarefas da agenda em PDF.' });
+  }
+});
+
+app.get('/api/agenda/confirmations', authenticate, async (req, res) => {
+  try {
+    const report = await loadAgendaConfirmationReport(req.user, req.query || {});
+    return res.json(report);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar agenda de confirmações.' });
+  }
+});
+
+app.get('/api/agenda/confirmations/dashboard', authenticate, async (req, res) => {
+  try {
+    if (!canAccessAgendaConfirmationDashboard(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não possui acesso ao dashboard de confirmações.' });
+    }
+
+    const report = await loadAgendaConfirmationReport(req.user, req.query || {});
+    return res.json(report);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar dashboard de confirmações.' });
+  }
+});
+
+app.get('/api/agenda/confirmations/export/excel', exportLimiter, authenticate, async (req, res) => {
+  try {
+    const report = await loadAgendaConfirmationReport(req.user, req.query || {});
+    const buffer = buildAgendaConfirmationExcelBuffer(report);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename="agenda-confirmacoes.xlsx"');
+    return res.send(buffer);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao exportar confirmações em Excel.' });
+  }
+});
+
+app.get('/api/agenda/confirmations/export/pdf', exportLimiter, authenticate, async (req, res) => {
+  try {
+    const report = await loadAgendaConfirmationReport(req.user, req.query || {});
+    const buffer = await buildAgendaConfirmationPdfBuffer(report);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="agenda-confirmacoes.pdf"');
+    return res.send(buffer);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao exportar confirmações em PDF.' });
   }
 });
 
