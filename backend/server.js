@@ -8603,6 +8603,12 @@ function clinicIdsFromUser(user) {
 
 async function getCurrentUserClinicIds(user) {
   if (!user?.id) return [];
+  if (isCrcOperatorUser(user)) {
+    return getUserClinicIds(user.id, {
+      role: user.role,
+      name: user.name
+    });
+  }
   const tokenClinicIds = clinicIdsFromUser(user);
   if (tokenClinicIds.length) return tokenClinicIds;
   return getUserClinicIds(user.id);
@@ -8614,15 +8620,15 @@ async function assertCrcOperatorClinicAccess(user, clinicId) {
   const clinicIds = await getCurrentUserClinicIds(user);
 
   if (!clinicIds.length) {
-    throw new Error('Seu usuário de Operador CRC não possui clínicas vinculadas para envio.');
+    throw new Error('Seu usuário de Operador CRC não possui clínicas vinculadas pelo Administrador Master.');
   }
 
   if (!Number.isInteger(normalizedClinicId) || normalizedClinicId <= 0) {
-    throw new Error('Selecione uma clínica vinculada ao seu usuário para enviar ou registrar atendimento.');
+    throw new Error('Selecione uma clínica vinculada ao seu usuário.');
   }
 
   if (!clinicIds.includes(normalizedClinicId)) {
-    throw new Error('Você só pode enviar mensagens para clínicas vinculadas ao seu usuário.');
+    throw new Error('Você só pode atuar em clínicas vinculadas ao seu usuário.');
   }
 }
 
@@ -22976,7 +22982,7 @@ function canAccessAgendaHomeDigest(user) {
 }
 
 function canImportAgendaWorkbook(user) {
-  return canAccessAgendaCompanyBoard(user);
+  return canAccessAgendaCompanyBoard(user) || isCrcOperatorUser(user);
 }
 
 function canReplicateAgendaItems(user) {
@@ -23227,6 +23233,19 @@ function buildAgendaVisibilityWhere(user, itemAlias = '') {
   }
   if (!ownerUserId) {
     return { sql: '1 = 0', params: [] };
+  }
+  if (isCrcOperatorUser(user)) {
+    const clinicIds = clinicIdsFromUser(user);
+    if (!clinicIds.length) {
+      return {
+        sql: `(${companyScope.sql}) AND (${prefix}owner_user_id = ? OR ${prefix}assigned_user_id = ?) AND ${prefix}clinic_id IS NULL`,
+        params: [...companyScope.params, ownerUserId, ownerUserId]
+      };
+    }
+    return {
+      sql: `(${companyScope.sql}) AND (${prefix}owner_user_id = ? OR ${prefix}assigned_user_id = ?) AND (${prefix}clinic_id IS NULL OR ${prefix}clinic_id IN (?))`,
+      params: [...companyScope.params, ownerUserId, ownerUserId, clinicIds]
+    };
   }
   return {
     sql: `(${companyScope.sql}) AND (${prefix}owner_user_id = ? OR ${prefix}assigned_user_id = ?)`,
@@ -24769,10 +24788,13 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
     }
 
     const defaultAssigneeId = req.body?.default_assigned_user_id || req.body?.defaultAssignedUserId || null;
-    const defaultAssignee = createTasks && defaultAssigneeId
-      ? await getAgendaAssignableUser(defaultAssigneeId, req.user)
-      : null;
     const directory = createTasks ? await loadAgendaImportUsers(req.user) : null;
+    let defaultAssignee = null;
+    if (createTasks && defaultAssigneeId) {
+      defaultAssignee = await getAgendaAssignableUser(defaultAssigneeId, req.user);
+    } else if (createTasks && isCrcOperatorUser(req.user) && directory?.byId?.has(String(req.user.id))) {
+      defaultAssignee = directory.byId.get(String(req.user.id));
+    }
     const batchId = `agenda-import-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
     const companyId = Number(req.user?.company_id || req.user?.companyId || 1) || 1;
     const antiBan = dispatchWhatsapp ? getWhatsAppAntiBanConfig() : null;
@@ -32684,6 +32706,8 @@ module.exports = {
     parseMassWhatsAppRecipientsFromWorksheetRows,
     parseBulkNpsWorksheetRows,
     buildAgendaDashboardSnapshot,
+    buildAgendaVisibilityWhere,
+    canImportAgendaWorkbook,
     canReplicateAgendaItems,
     normalizeAgendaRecurrenceWeekdays,
     fillPartnerVideoTemplate,

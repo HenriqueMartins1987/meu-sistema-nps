@@ -27,7 +27,8 @@ function buildNewUserDraft() {
     whatsapp: defaultBrazilPhone,
     cpf: '',
     crcOperatorArea: '',
-    department: ''
+    department: '',
+    clinicIds: []
   };
 }
 
@@ -349,6 +350,14 @@ function AdminPanel() {
         next.whatsapp = value;
       }
       return next;
+    });
+  };
+
+  const toggleNewUserClinic = (clinicId) => {
+    setNewUser((prev) => {
+      const clinicIds = new Set(prev.clinicIds || []);
+      clinicIds.has(clinicId) ? clinicIds.delete(clinicId) : clinicIds.add(clinicId);
+      return { ...prev, clinicIds: Array.from(clinicIds) };
     });
   };
 
@@ -1297,6 +1306,31 @@ function AdminPanel() {
                 </label>
               )}
             </div>
+
+            {newUserIsCrcOperator && (
+              <section className="admin-check-section">
+                <div className="admin-section-heading">
+                  <div>
+                    <p className="eyebrow">Clinicas vinculadas</p>
+                    <h3>Unidades que este operador vai cuidar</h3>
+                    <p className="base-subtitle">Na agenda, o Operador CRC so conseguira selecionar e importar pacientes dessas clinicas.</p>
+                  </div>
+                </div>
+                <div className="admin-check-grid clinic-check-grid">
+                  {clinics.map((clinic) => (
+                    <label key={`new-user-clinic-${clinic.id}`}>
+                      <input
+                        type="checkbox"
+                        checked={(newUser.clinicIds || []).includes(clinic.id)}
+                        onChange={() => toggleNewUserClinic(clinic.id)}
+                      />
+                      {clinic.name} - {clinic.city || 'Cidade'} / {clinic.state || 'UF'}
+                    </label>
+                  ))}
+                </div>
+                {!clinics.length && <p className="empty-state">Nenhuma clinica ativa encontrada para vincular.</p>}
+              </section>
+            )}
 
             <div className="heading-actions">
               <button className="outline-action" onClick={() => { setCreateOpen(false); setNewUser(buildNewUserDraft()); }} disabled={creating}>

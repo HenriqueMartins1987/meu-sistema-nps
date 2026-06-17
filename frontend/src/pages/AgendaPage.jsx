@@ -209,6 +209,11 @@ function canAccessAgendaAnalytics(user) {
   return ['admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'manager'].includes(normalizeRoleValue(user?.role));
 }
 
+function canUseAgendaImport(user) {
+  if (canAccessAgendaAnalytics(user)) return true;
+  return normalizeRoleValue(user?.role) === 'crc_operator';
+}
+
 function canUseAgendaOperatorTabs(user) {
   if (isMasterAdmin(user)) return true;
   return ['admin', 'supervisor_crc', 'crc_leader'].includes(normalizeRoleValue(user?.role));
@@ -526,6 +531,7 @@ export default function AgendaPage() {
   const currentUserId = String(currentUser?.id || '');
   const canDeleteAgendaItem = isMasterAdmin(currentUser);
   const canUseAgendaAnalytics = canAccessAgendaAnalytics(currentUser);
+  const canUseAgendaImportPanel = canUseAgendaImport(currentUser);
   const canUseOperatorTabs = canUseAgendaOperatorTabs(currentUser);
   const canReplicateAgenda = canReplicateAgendaItems(currentUser);
   const [items, setItems] = useState([]);
@@ -596,7 +602,7 @@ export default function AgendaPage() {
   };
 
   const loadClinics = async () => {
-    if (!canUseAgendaAnalytics) {
+    if (!canUseAgendaImportPanel) {
       setClinicOptions([]);
       return;
     }
@@ -644,7 +650,7 @@ export default function AgendaPage() {
   useEffect(() => {
     loadClinics();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canUseAgendaAnalytics]);
+  }, [canUseAgendaImportPanel]);
 
   useEffect(() => {
     loadDashboard();
@@ -1185,7 +1191,7 @@ export default function AgendaPage() {
         actions={(
           <>
             <button type="button" className="outline-action" onClick={requestNotifications}>Ativar lembretes</button>
-            {canUseAgendaAnalytics ? (
+            {canUseAgendaImportPanel ? (
               <button type="button" className="outline-action" onClick={() => setShowImportPanel(true)}>Importar agenda</button>
             ) : null}
             {canReplicateAgenda ? (
@@ -1321,8 +1327,9 @@ export default function AgendaPage() {
         </SectionContainer>
       ) : null}
 
-      {canUseAgendaAnalytics ? (
+      {canUseAgendaAnalytics || canUseAgendaImportPanel ? (
         <section className="agenda-executive-dock" aria-label="Atalhos executivos da agenda">
+          {canUseAgendaAnalytics ? (
           <article className={`agenda-executive-toggle-card ${showAnalyticsPanel ? 'active' : ''}`}>
             <span>Inteligência</span>
             <strong>Dashboard executivo</strong>
@@ -1331,6 +1338,8 @@ export default function AgendaPage() {
               {showAnalyticsPanel ? 'Ocultar painel' : 'Abrir painel'}
             </button>
           </article>
+          ) : null}
+          {canUseAgendaImportPanel ? (
           <article className={`agenda-executive-toggle-card ${showImportPanel ? 'active' : ''}`}>
             <span>Operação em lote</span>
             <strong>Importação profissional</strong>
@@ -1344,12 +1353,13 @@ export default function AgendaPage() {
               </button>
             </div>
           </article>
+          ) : null}
         </section>
       ) : null}
 
-      {canUseAgendaAnalytics && (showAnalyticsPanel || showImportPanel) ? (
+      {(canUseAgendaAnalytics && showAnalyticsPanel) || (canUseAgendaImportPanel && showImportPanel) ? (
         <section className="agenda-intelligence-stack">
-          {showAnalyticsPanel ? (
+          {canUseAgendaAnalytics && showAnalyticsPanel ? (
           <SectionContainer className="agenda-intelligence-panel">
             <div className="agenda-intelligence-head">
               <div>
@@ -1641,7 +1651,7 @@ export default function AgendaPage() {
           </SectionContainer>
           ) : null}
 
-          {showImportPanel ? (
+          {canUseAgendaImportPanel && showImportPanel ? (
           <SectionContainer className="agenda-import-panel">
             <div className="agenda-intelligence-head">
               <div>
@@ -1682,6 +1692,7 @@ export default function AgendaPage() {
                     <option key={clinic.id} value={clinic.id}>{clinic.name}</option>
                   ))}
                 </select>
+                {!clinicOptions.length ? <small>Nenhuma clinica vinculada ao seu usuario. Peca ao Administrador Master para definir suas unidades.</small> : null}
               </label>
               <label>
                 Responsável padrão

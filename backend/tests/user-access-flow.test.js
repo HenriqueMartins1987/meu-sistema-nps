@@ -1546,6 +1546,78 @@ test('only master admin and crc supervisor can replicate agenda items', () => {
   assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'crc_operator' }), false);
 });
 
+test('CRC operator can import agenda workbook without executive agenda access', () => {
+  assert.equal(serverModule.__testables.canImportAgendaWorkbook({ role: 'crc_operator' }), true);
+  assert.equal(serverModule.__testables.canImportAgendaWorkbook({ role: 'viewer' }), false);
+  assert.equal(serverModule.__testables.canImportAgendaWorkbook({ role: 'supervisor_crc' }), true);
+
+  const visibility = serverModule.__testables.buildAgendaVisibilityWhere({
+    id: 88,
+    role: 'crc_operator',
+    company_id: 1,
+    clinicIds: [7, 9]
+  }, 'a');
+
+  assert.match(visibility.sql, /a\.assigned_user_id = \?/);
+  assert.match(visibility.sql, /a\.clinic_id IS NULL OR a\.clinic_id IN \(\?\)/);
+  assert.deepEqual(visibility.params, [1, 88, 88, [7, 9]]);
+});
+
+test('CRC operator downloads agenda template and sees only linked clinics', async () => {
+  const clinicQueryParams = [];
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1, company_id: 1, role: 'crc_operator', permissions: '["home"]', action_permissions: '[]' }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[{ clinic_id: 7 }, { clinic_id: 9 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT setting_value, updated_by, updated_at FROM system_settings'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM clinics') && sql.includes('id IN'),
+      reply: async (_sql, params) => {
+        clinicQueryParams.push(params);
+        return [[
+          { id: 7, name: 'Garavelo', city: 'Aparecida', state: 'GO', active: 1 },
+          { id: 9, name: 'Centro', city: 'Goiania', state: 'GO', active: 1 }
+        ]];
+      }
+    }
+  ]);
+
+  const token = signToken({
+    id: 88,
+    email: null,
+    username: 'paula.crc',
+    role: 'crc_operator',
+    name: 'Paula CRC',
+    permissions: ['home'],
+    clinicIds: [],
+    mustChangePassword: false
+  });
+
+  const templateResponse = await request(app)
+    .get('/api/agenda/import-template')
+    .set('Authorization', `Bearer ${token}`);
+
+  assert.equal(templateResponse.status, 200);
+  assert.match(templateResponse.headers['content-type'], /spreadsheetml\.sheet/);
+
+  const clinicsResponse = await request(app)
+    .get('/clinics')
+    .set('Authorization', `Bearer ${token}`);
+
+  assert.equal(clinicsResponse.status, 200);
+  assert.deepEqual(clinicsResponse.body.map((clinic) => clinic.id), [7, 9]);
+  assert.ok(clinicQueryParams.some((params) => Array.isArray(params) && params.includes(7) && params.includes(9)));
+});
+
 test('supervisor crc can replicate open agenda items between users without duplicating existing task', async () => {
   const insertedAgendaParams = [];
 
