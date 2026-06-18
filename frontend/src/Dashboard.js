@@ -882,7 +882,16 @@ function Dashboard() {
         </section>
       ) : (
         <>
-          <section className="chart-grid dashboard-chart-grid">
+          <section className="management-panel dashboard-stage-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Visao executiva</p>
+                <h2>Panorama principal da operacao</h2>
+                <p className="base-subtitle">Os indicadores mais importantes ficam agrupados primeiro para leitura rapida e tomada de decisao.</p>
+              </div>
+            </div>
+
+            <div className="chart-grid dashboard-chart-grid dashboard-chart-grid-executive">
             <article className="chart-card dashboard-evolution-card large">
               <div className="dashboard-section-head">
                 <div>
@@ -964,7 +973,19 @@ function Dashboard() {
                 </article>
               </div>
             </article>
+            </div>
+          </section>
 
+          <section className="management-panel dashboard-stage-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Leituras analiticas</p>
+                <h2>Classificacao, status e servicos</h2>
+                <p className="base-subtitle">A demanda deixa de ficar espalhada e passa a ser lida por blocos analiticos coerentes.</p>
+              </div>
+            </div>
+
+            <div className="chart-grid dashboard-chart-grid dashboard-chart-grid-analytics">
             <article className="chart-card dashboard-type-intelligence-card large">
               <div className="dashboard-section-head">
                 <div>
@@ -1003,7 +1024,19 @@ function Dashboard() {
                 <Doughnut data={buildDoughnutData(byStatus)} options={chartOptions} />
               </div>
             </article>
+            </div>
+          </section>
 
+          <section className="management-panel dashboard-stage-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Distribuicao operacional</p>
+                <h2>Territorio, prioridade, canal e SLA</h2>
+                <p className="base-subtitle">Os cortes de distribuicao ficam agrupados para reduzir ruido e facilitar a leitura territorial e de criticidade.</p>
+              </div>
+            </div>
+
+            <div className="chart-grid dashboard-chart-grid dashboard-chart-grid-territory">
             <article className="chart-card">
               <h2>Classificação da ocorrência</h2>
               <div className="chart-box">
@@ -1052,6 +1085,19 @@ function Dashboard() {
                 <Bar data={buildBarData(byChannel, '#5d6d7e')} options={chartOptions} />
               </div>
             </article>
+            </div>
+          </section>
+
+          <section className="management-panel dashboard-stage-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Ownership</p>
+                <h2>Responsaveis e parceiros pressionados</h2>
+                <p className="base-subtitle">Os graficos de ownership ficam isolados para facilitar a leitura de responsabilizacao e carga da carteira.</p>
+              </div>
+            </div>
+
+            <div className="chart-grid dashboard-chart-grid dashboard-chart-grid-ownership">
 
             {canViewCollaboratorWorkload && (
               <>
@@ -1104,6 +1150,7 @@ function Dashboard() {
                 </div>
               </article>
             )}
+            </div>
           </section>
 
           <section className="management-panel dashboard-base-panel">
