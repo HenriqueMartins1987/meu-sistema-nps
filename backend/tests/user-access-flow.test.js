@@ -1017,6 +1017,12 @@ test('marketing viewer can list every complaint without assignment scope', async
   assert.doesNotMatch(complaintQuerySql, /assigned_responsible_user_id = \?/);
   assert.doesNotMatch(complaintQuerySql, /forwarded_to_role = \?/);
   assert.doesNotMatch(complaintQuerySql, /clinic_id IN \(\?\)/);
+  assert.match(complaintQuerySql, /created_by_role/);
+  assert.match(complaintQuerySql, /created_by_email/);
+  assert.equal(
+    complaintQueryParams.filter((value) => value === 'henrique.martins@grcconsultoria.net.br').length,
+    2
+  );
 });
 
 test('marketing viewer cannot edit complaint data', async () => {

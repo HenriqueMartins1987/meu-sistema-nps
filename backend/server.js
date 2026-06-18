@@ -6040,13 +6040,42 @@ function buildComplaintFilters(query) {
   };
 }
 
+function appendComplaintWhereClause(filters, clause, params = []) {
+  filters.clause += filters.clause ? ` AND ${clause}` : `WHERE ${clause}`;
+  filters.params.push(...params);
+}
+
+function appendMasterAdminComplaintVisibilityFilter(filters, user) {
+  if (!user || isMasterAdminUser(user)) return;
+
+  appendComplaintWhereClause(
+    filters,
+    `NOT (
+      LOWER(TRIM(COALESCE(c.created_by_role, ''))) = 'master_admin'
+      OR LOWER(TRIM(COALESCE(c.created_by_email, ''))) = ?
+      OR EXISTS (
+        SELECT 1
+        FROM users creator
+        WHERE creator.id = c.created_by_user_id
+          AND (
+            LOWER(TRIM(COALESCE(creator.role, ''))) = 'master_admin'
+            OR LOWER(TRIM(COALESCE(creator.email, ''))) = ?
+          )
+      )
+    )`,
+    [masterAdminEmail, masterAdminEmail]
+  );
+}
+
 async function getComplaintRows(query = {}, user = null) {
   const filters = buildComplaintFilters(query);
   const includeDeleted = Boolean(query.include_deleted) && canViewDeletedRecords(user);
 
   if (!includeDeleted) {
-    filters.clause += filters.clause ? ' AND c.deleted_at IS NULL' : 'WHERE c.deleted_at IS NULL';
+    appendComplaintWhereClause(filters, 'c.deleted_at IS NULL');
   }
+
+  appendMasterAdminComplaintVisibilityFilter(filters, user);
 
   const normalizedAccessRole = normalizeAccessRole(user?.role);
 
@@ -6146,8 +6175,7 @@ async function getComplaintRows(query = {}, user = null) {
       accessParams.push(user.id);
     }
 
-    filters.clause += filters.clause ? ` AND (${accessClauses.join(' OR ')})` : `WHERE (${accessClauses.join(' OR ')})`;
-    filters.params.push(...accessParams);
+    appendComplaintWhereClause(filters, `(${accessClauses.join(' OR ')})`, accessParams);
   }
 
   const [rows] = await pool.query(
@@ -33624,9 +33652,9 @@ app.post(['/crc-operational-costs', '/api/crc-operational-costs'], authenticate,
 // ============================================
 // DASHBOARD / BI
 // ============================================
-app.get('/dashboard/summary', async (req, res) => {
+app.get('/dashboard/summary', authenticate, async (req, res) => {
   try {
-    const rows = await getComplaintRows(req.query);
+    const rows = await getComplaintRows(req.query, req.user);
     const total = rows.length;
     const resolved = rows.filter((row) => row.status === 'resolvida').length;
 
@@ -33650,7 +33678,7 @@ app.get('/dashboard/summary', async (req, res) => {
 
 app.get('/bi/complaints', authenticate, requireAdmin, async (req, res) => {
   try {
-    const rows = await getComplaintRows(req.query);
+    const rows = await getComplaintRows(req.query, req.user);
 
     if (req.query.format === 'csv') {
       res.setHeader('Content-Type', 'text/csv; charset=utf-8');
