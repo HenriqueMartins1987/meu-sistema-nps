@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Bar, Doughnut } from 'react-chartjs-2';
+import { Bar, Doughnut, Line } from 'react-chartjs-2';
 import 'chart.js/auto';
 import api from './api';
 import {
@@ -18,6 +18,25 @@ import {
 
 const chartColors = ['#0b6f5f', '#1f7a8c', '#4c956c', '#d08c31', '#8a4f7d', '#5d6d7e', '#c44536', '#247ba0'];
 const pageSizeOptions = [10, 25, 50, 100];
+const monthOptions = [
+  { value: '01', label: 'Janeiro' },
+  { value: '02', label: 'Fevereiro' },
+  { value: '03', label: 'Marco' },
+  { value: '04', label: 'Abril' },
+  { value: '05', label: 'Maio' },
+  { value: '06', label: 'Junho' },
+  { value: '07', label: 'Julho' },
+  { value: '08', label: 'Agosto' },
+  { value: '09', label: 'Setembro' },
+  { value: '10', label: 'Outubro' },
+  { value: '11', label: 'Novembro' },
+  { value: '12', label: 'Dezembro' }
+];
+const evolutionGranularityOptions = [
+  { value: 'month', label: 'Mensal' },
+  { value: 'week', label: 'Semanal' },
+  { value: 'day', label: 'Diaria' }
+];
 
 const initialFilters = {
   clinic: '',
@@ -30,6 +49,8 @@ const initialFilters = {
   priority: '',
   channel: '',
   sla: '',
+  year: '',
+  month: '',
   startDate: '',
   endDate: '',
   search: ''
@@ -148,6 +169,129 @@ function formatShortDate(value) {
   }).format(new Date(value));
 }
 
+function formatShortDay(value) {
+  if (!value) return 'Sem data';
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit'
+  }).format(new Date(value));
+}
+
+function formatMonthLabel(year, monthIndex) {
+  return new Intl.DateTimeFormat('pt-BR', {
+    month: 'short',
+    year: 'numeric'
+  }).format(new Date(year, monthIndex, 1));
+}
+
+function toDateOrNull(value) {
+  if (!value) return null;
+  const parsed = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function startOfDay(value) {
+  const date = toDateOrNull(value);
+  if (!date) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function endOfDay(value) {
+  const date = toDateOrNull(value);
+  if (!date) return null;
+  date.setHours(23, 59, 59, 999);
+  return date;
+}
+
+function addDays(value, amount) {
+  const date = new Date(value);
+  date.setDate(date.getDate() + amount);
+  return date;
+}
+
+function diffInDaysInclusive(start, end) {
+  const startDate = startOfDay(start);
+  const endDate = startOfDay(end);
+  if (!startDate || !endDate) return 0;
+  return Math.max(1, Math.round((endDate.getTime() - startDate.getTime()) / (24 * 60 * 60 * 1000)) + 1);
+}
+
+function formatDecimal(value, digits = 1) {
+  return new Intl.NumberFormat('pt-BR', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits
+  }).format(Number.isFinite(value) ? value : 0);
+}
+
+function formatDaysMetric(value) {
+  if (!Number.isFinite(value) || value <= 0) return '0,0 dia';
+  const safeValue = Math.max(0, value);
+  return `${formatDecimal(safeValue, safeValue >= 10 ? 0 : 1)} dia${safeValue >= 1.5 ? 's' : ''}`;
+}
+
+function resolutionDateForItem(item) {
+  if (item?.status !== 'resolvida') return null;
+  return toDateOrNull(item?.closed_at || item?.resolved_at || item?.updated_at);
+}
+
+function startOfWeek(value) {
+  const date = startOfDay(value);
+  if (!date) return null;
+  const day = date.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  return addDays(date, diff);
+}
+
+function buildTimelineBuckets(items, granularity) {
+  const buckets = new Map();
+
+  items.forEach((item) => {
+    const createdAt = toDateOrNull(item.created_at);
+    if (!createdAt) return;
+
+    let key = '';
+    let label = '';
+
+    if (granularity === 'day') {
+      key = startOfDay(createdAt).toISOString();
+      label = formatShortDay(createdAt);
+    } else if (granularity === 'week') {
+      const weekStart = startOfWeek(createdAt);
+      key = weekStart.toISOString();
+      label = `Sem ${formatShortDay(weekStart)}`;
+    } else {
+      key = `${createdAt.getFullYear()}-${String(createdAt.getMonth() + 1).padStart(2, '0')}`;
+      label = formatMonthLabel(createdAt.getFullYear(), createdAt.getMonth());
+    }
+
+    const current = buckets.get(key) || { label, total: 0 };
+    current.total += 1;
+    buckets.set(key, current);
+  });
+
+  return Array.from(buckets.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([, value]) => value);
+}
+
+function buildLineData(rows, label, color = '#0b6f5f', fill = true) {
+  return {
+    labels: rows.map((row) => row.label),
+    datasets: [{
+      label,
+      data: rows.map((row) => row.total),
+      borderColor: color,
+      backgroundColor: fill ? `${color}22` : color,
+      fill,
+      tension: 0.32,
+      pointRadius: 3,
+      pointHoverRadius: 5,
+      borderWidth: 3
+    }]
+  };
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -213,6 +357,7 @@ function Dashboard() {
   const [tablePageSize, setTablePageSize] = useState(10);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState('');
+  const [evolutionGranularity, setEvolutionGranularity] = useState('month');
 
   useEffect(() => {
     const loadRows = async () => {
@@ -243,13 +388,20 @@ function Dashboard() {
     regions: mergeValues(uniqueValues(clinics, 'region'), uniqueValues(rows, 'region')),
     coordinators: mergeValues(uniqueValues(clinics, 'coordinator_name'), uniqueValues(rows, 'coordinator_name')),
     types: mergeValues(complaintTypes.map((item) => item.label), uniqueValues(rows, 'complaint_type')),
-    channels: orderOtherLast(dedupeDisplayValues(mergeValues(channels.map((item) => item.label), uniqueValues(rows, 'channel'))))
+    channels: orderOtherLast(dedupeDisplayValues(mergeValues(channels.map((item) => item.label), uniqueValues(rows, 'channel')))),
+    years: Array.from(new Set(rows
+      .map((row) => toDateOrNull(row.created_at)?.getFullYear())
+      .filter(Boolean)))
+      .sort((a, b) => b - a)
+      .map((year) => String(year))
   }), [clinics, rows]);
 
   const filteredRows = useMemo(() => rows.filter((item) => {
-    const createdAt = item.created_at ? new Date(item.created_at) : null;
-    const startDate = filters.startDate ? new Date(`${filters.startDate}T00:00:00`) : null;
-    const endDate = filters.endDate ? new Date(`${filters.endDate}T23:59:59`) : null;
+    const createdAt = toDateOrNull(item.created_at);
+    const startDate = filters.startDate ? startOfDay(`${filters.startDate}T00:00:00`) : null;
+    const endDate = filters.endDate ? endOfDay(`${filters.endDate}T23:59:59`) : null;
+    const createdYear = createdAt ? String(createdAt.getFullYear()) : '';
+    const createdMonth = createdAt ? String(createdAt.getMonth() + 1).padStart(2, '0') : '';
     const searchable = [
       item.protocol,
       item.patient_name,
@@ -275,6 +427,8 @@ function Dashboard() {
       && (!filters.priority || item.priority === filters.priority)
       && (!filters.channel || item.channel === filters.channel)
       && (!filters.sla || buildDeadlineInfo(item) === filters.sla)
+      && (!filters.year || createdYear === filters.year)
+      && (!filters.month || createdMonth === filters.month)
       && (!startDate || (createdAt && createdAt >= startDate))
       && (!endDate || (createdAt && createdAt <= endDate))
       && (!filters.search || searchable.includes(normalizeText(filters.search)))
@@ -289,6 +443,34 @@ function Dashboard() {
     const overdue = filteredRows.filter((item) => buildDeadlineInfo(item) === 'overdue').length;
     const warning = filteredRows.filter((item) => buildDeadlineInfo(item) === 'warning').length;
     const open = filteredRows.filter((item) => item.status !== 'resolvida').length;
+    const createdDates = filteredRows
+      .map((item) => startOfDay(item.created_at))
+      .filter(Boolean)
+      .sort((a, b) => a.getTime() - b.getTime());
+    const resolvedRows = filteredRows.filter((item) => resolutionDateForItem(item) && toDateOrNull(item.created_at));
+    const shelfLifeDays = resolvedRows.map((item) => {
+      const createdAt = startOfDay(item.created_at);
+      const resolvedAt = startOfDay(resolutionDateForItem(item));
+      return createdAt && resolvedAt ? diffInDaysInclusive(createdAt, resolvedAt) : 0;
+    }).filter((value) => value > 0);
+    const openAgingDays = filteredRows
+      .filter((item) => item.status !== 'resolvida' && toDateOrNull(item.created_at))
+      .map((item) => diffInDaysInclusive(item.created_at, new Date()));
+    const periodStart = filters.startDate
+      ? startOfDay(`${filters.startDate}T00:00:00`)
+      : createdDates[0] || null;
+    const periodEnd = filters.endDate
+      ? endOfDay(`${filters.endDate}T23:59:59`)
+      : createdDates[createdDates.length - 1] || null;
+    const periodDays = periodStart && periodEnd ? diffInDaysInclusive(periodStart, periodEnd) : 0;
+    const distinctDays = new Set(createdDates.map((date) => date.toISOString().slice(0, 10))).size;
+    const avgPerDay = periodDays ? total / periodDays : 0;
+    const avgShelfLifeDays = shelfLifeDays.length
+      ? shelfLifeDays.reduce((sum, value) => sum + value, 0) / shelfLifeDays.length
+      : 0;
+    const avgOpenAgingDays = openAgingDays.length
+      ? openAgingDays.reduce((sum, value) => sum + value, 0) / openAgingDays.length
+      : 0;
 
     return {
       total,
@@ -298,9 +480,15 @@ function Dashboard() {
       closed,
       overdue,
       warning,
-      closeRate: total ? (closed / total) * 100 : 0
+      closeRate: total ? (closed / total) * 100 : 0,
+      distinctDays,
+      periodDays,
+      avgPerDay,
+      avgShelfLifeDays,
+      avgOpenAgingDays,
+      resolvedCount: resolvedRows.length
     };
-  }, [filteredRows]);
+  }, [filteredRows, filters.startDate, filters.endDate]);
 
   const searchSuggestions = useMemo(() => (
     mergeValues(
@@ -323,6 +511,15 @@ function Dashboard() {
   const byChannel = useMemo(() => groupCount(filteredRows, (item) => item.channel).slice(0, 10), [filteredRows]);
   const byCoordinator = useMemo(() => groupCount(filteredRows, (item) => item.coordinator_name).slice(0, 10), [filteredRows]);
   const bySla = useMemo(() => groupCount(filteredRows, (item) => slaLabel(buildDeadlineInfo(item))), [filteredRows]);
+  const evolutionSeries = useMemo(
+    () => buildTimelineBuckets(filteredRows, evolutionGranularity),
+    [filteredRows, evolutionGranularity]
+  );
+  const treatmentLifecycle = useMemo(() => ([
+    { label: 'Abertas', total: filteredRows.filter((item) => item.status === 'aberta').length },
+    { label: 'Em andamento', total: filteredRows.filter((item) => item.status === 'em_andamento').length },
+    { label: 'Resolvidas', total: filteredRows.filter((item) => item.status === 'resolvida').length }
+  ]), [filteredRows]);
   const baseRows = useMemo(() => filteredRows, [filteredRows]);
   const baseExportRows = useMemo(() => baseRows.map((item) => {
     const deadline = buildDeadlineInfo(item);
@@ -554,6 +751,8 @@ function Dashboard() {
         <div className="dashboard-filter-heading">
           <div>
             <p className="eyebrow">Filtros</p>
+            <h2>Recorte executivo da carteira</h2>
+            <p className="base-subtitle">Cruze filtros operacionais com mes, ano e periodo para ler a pressao real das reclamacoes.</p>
           </div>
           <button className="outline-action" onClick={() => setFilters(initialFilters)}>
             Limpar filtros
@@ -619,6 +818,14 @@ function Dashboard() {
             <option value="ontime">No prazo</option>
             <option value="closed">Fechadas</option>
           </select>
+          <select className="field" value={filters.year} onChange={(event) => updateFilter('year', event.target.value)}>
+            <option value="">Todos os anos</option>
+            {options.years.map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+          <select className="field" value={filters.month} onChange={(event) => updateFilter('month', event.target.value)}>
+            <option value="">Todos os meses</option>
+            {monthOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+          </select>
           <input className="field" type="date" value={filters.startDate} onChange={(event) => updateFilter('startDate', event.target.value)} />
           <input className="field" type="date" value={filters.endDate} onChange={(event) => updateFilter('endDate', event.target.value)} />
         </div>
@@ -632,6 +839,21 @@ function Dashboard() {
           <strong>{metrics.total}</strong>
           <p>{percentOf(rows.length, metrics.total)} DA BASE TOTAL</p>
         </button>
+        <article className="kpi-card dashboard-insight-card">
+          <span>Media por dia</span>
+          <strong>{formatDecimal(metrics.avgPerDay)}</strong>
+          <p>{metrics.periodDays || 0} dias avaliados no recorte</p>
+        </article>
+        <article className="kpi-card dashboard-insight-card">
+          <span>Shelf life medio</span>
+          <strong>{formatDaysMetric(metrics.avgShelfLifeDays)}</strong>
+          <p>{metrics.resolvedCount} demandas resolvidas no calculo</p>
+        </article>
+        <article className="kpi-card dashboard-insight-card">
+          <span>Backlog medio</span>
+          <strong>{formatDaysMetric(metrics.avgOpenAgingDays)}</strong>
+          <p>{metrics.open} protocolos ainda em aberto</p>
+        </article>
         <button className="kpi-card warning kpi-button" type="button" onClick={() => updateFilter('status', 'aberta')}>
           <span>Abertas</span>
           <strong>{metrics.opened}</strong>
@@ -661,6 +883,88 @@ function Dashboard() {
       ) : (
         <>
           <section className="chart-grid dashboard-chart-grid">
+            <article className="chart-card dashboard-evolution-card large">
+              <div className="dashboard-section-head">
+                <div>
+                  <p className="eyebrow">Evolucao</p>
+                  <h2>Ritmo das reclamacoes por dia, semana e mes</h2>
+                  <p className="base-subtitle">Alterne a granularidade para enxergar sazonalidade, picos de demanda e tendencia operacional no mesmo dashboard.</p>
+                </div>
+                <div className="dashboard-segmented-control" role="tablist" aria-label="Granularidade da evolucao">
+                  {evolutionGranularityOptions.map((item) => (
+                    <button
+                      key={item.value}
+                      type="button"
+                      className={evolutionGranularity === item.value ? 'active' : ''}
+                      onClick={() => setEvolutionGranularity(item.value)}
+                    >
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="dashboard-type-highlight-grid dashboard-executive-highlight-grid">
+                <article className="dashboard-type-highlight-card">
+                  <span>Dias com volume</span>
+                  <strong>{metrics.distinctDays}</strong>
+                  <p>dias com reclamacoes registradas</p>
+                </article>
+                <article className="dashboard-type-highlight-card">
+                  <span>Resolucao</span>
+                  <strong>{formatPercent(metrics.closeRate)}</strong>
+                  <p>taxa de encerramento no recorte</p>
+                </article>
+                <article className="dashboard-type-highlight-card">
+                  <span>Prazos criticos</span>
+                  <strong>{metrics.warning + metrics.overdue}</strong>
+                  <p>demandas em alerta ou vencidas</p>
+                </article>
+                <article className="dashboard-type-highlight-card">
+                  <span>Periodo</span>
+                  <strong>{metrics.periodDays || 0}</strong>
+                  <p>dias corridos analisados</p>
+                </article>
+              </div>
+
+              <div className="dashboard-inner-grid">
+                <div className="chart-box">
+                  <Line data={buildLineData(evolutionSeries, 'Volume de reclamacoes', '#0b6f5f')} options={chartOptions} />
+                </div>
+                <div className="chart-box">
+                  <Bar data={buildBarData(treatmentLifecycle, '#8a4f7d')} options={chartOptions} />
+                </div>
+              </div>
+            </article>
+
+            <article className="chart-card dashboard-resolution-card">
+              <div className="dashboard-section-head">
+                <div>
+                  <p className="eyebrow">Tratativas</p>
+                  <h2>Shelf life medio das resolucoes</h2>
+                  <p className="base-subtitle">Tempo medio gasto entre a abertura e o encerramento definitivo das demandas selecionadas.</p>
+                </div>
+              </div>
+
+              <div className="dashboard-resolution-grid">
+                <article className="dashboard-summary-card">
+                  <span>Media de resolucao</span>
+                  <strong>{formatDaysMetric(metrics.avgShelfLifeDays)}</strong>
+                  <p>tempo medio para concluir a demanda</p>
+                </article>
+                <article className="dashboard-summary-card">
+                  <span>Resolvidas no periodo</span>
+                  <strong>{metrics.resolvedCount}</strong>
+                  <p>base usada no calculo do shelf life</p>
+                </article>
+                <article className="dashboard-summary-card">
+                  <span>Backlog aberto</span>
+                  <strong>{metrics.open}</strong>
+                  <p>protocolos ainda exigindo tratativa</p>
+                </article>
+              </div>
+            </article>
+
             <article className="chart-card dashboard-type-intelligence-card large">
               <div className="dashboard-section-head">
                 <div>
