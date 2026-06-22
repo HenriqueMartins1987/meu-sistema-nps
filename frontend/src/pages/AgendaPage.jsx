@@ -106,7 +106,9 @@ const emptyDraft = {
 };
 
 const emptyImportDraft = {
+  source_mode: 'clipboard',
   file: null,
+  raw_text: '',
   import_type: 'patient_agenda',
   duplicate_strategy: 'ignore',
   clinic_id: '',
@@ -1165,9 +1167,32 @@ export default function AgendaPage() {
     }
   };
 
+  const hasImportSourceContent = importDraft.source_mode === 'clipboard'
+    ? Boolean(importDraft.raw_text.trim())
+    : Boolean(importDraft.file);
+
+  const buildAgendaImportFormData = () => {
+    const formData = new FormData();
+    if (importDraft.source_mode === 'clipboard') {
+      formData.append('raw_text', importDraft.raw_text.trim());
+    } else if (importDraft.file) {
+      formData.append('file', importDraft.file);
+    }
+    formData.append('import_type', importDraft.import_type);
+    formData.append('campaign_clinic_id', importDraft.clinic_id);
+    formData.append('agenda_date', importDraft.agenda_date);
+    if (importDraft.default_assigned_user_id) {
+      formData.append('default_assigned_user_id', importDraft.default_assigned_user_id);
+    }
+    return formData;
+  };
+
   const validateImport = async () => {
-    if (!importDraft.file) {
-      setFeedback('Selecione a planilha para validar a agenda.');
+    if (!hasImportSourceContent) {
+      setFeedback(importDraft.source_mode === 'clipboard'
+        ? 'Cole o conteúdo bruto da agenda para validar.'
+        : 'Selecione a planilha para validar a agenda.'
+      );
       return null;
     }
     if (!importDraft.clinic_id) {
@@ -1184,14 +1209,7 @@ export default function AgendaPage() {
     setImportSummary(null);
 
     try {
-      const formData = new FormData();
-      formData.append('file', importDraft.file);
-      formData.append('import_type', importDraft.import_type);
-      formData.append('campaign_clinic_id', importDraft.clinic_id);
-      formData.append('agenda_date', importDraft.agenda_date);
-      if (importDraft.default_assigned_user_id) {
-        formData.append('default_assigned_user_id', importDraft.default_assigned_user_id);
-      }
+      const formData = buildAgendaImportFormData();
 
       const response = await api.post('/api/agenda/import/validate', formData, {
         headers: {
@@ -1215,8 +1233,11 @@ export default function AgendaPage() {
   };
 
   const submitImport = async () => {
-    if (!importDraft.file) {
-      setFeedback('Selecione a planilha para importar a agenda.');
+    if (!hasImportSourceContent) {
+      setFeedback(importDraft.source_mode === 'clipboard'
+        ? 'Cole o conteúdo bruto da agenda para importar.'
+        : 'Selecione a planilha para importar a agenda.'
+      );
       return;
     }
     if (!importDraft.clinic_id) {
@@ -1242,17 +1263,10 @@ export default function AgendaPage() {
     setImportSummary(null);
 
     try {
-      const formData = new FormData();
-      formData.append('file', importDraft.file);
-      formData.append('import_type', importDraft.import_type);
+      const formData = buildAgendaImportFormData();
       formData.append('duplicate_strategy', importDraft.duplicate_strategy);
       formData.append('create_tasks', importDraft.create_tasks ? 'true' : 'false');
       formData.append('dispatch_whatsapp', importDraft.dispatch_whatsapp ? 'true' : 'false');
-      formData.append('campaign_clinic_id', importDraft.clinic_id);
-      formData.append('agenda_date', importDraft.agenda_date);
-      if (importDraft.default_assigned_user_id) {
-        formData.append('default_assigned_user_id', importDraft.default_assigned_user_id);
-      }
       if (importDraft.message_text.trim()) {
         formData.append('message_text', importDraft.message_text.trim());
       }
@@ -2048,6 +2062,14 @@ export default function AgendaPage() {
 
             <div className="agenda-import-grid">
               <label>
+                Origem da importacao
+                <select className="field" value={importDraft.source_mode} onChange={(event) => updateImportDraft('source_mode', event.target.value)}>
+                  <option value="clipboard">Importar por Colagem Direta</option>
+                  <option value="file">Importar por Planilha</option>
+                </select>
+              </label>
+              {importDraft.source_mode === 'file' ? (
+              <label>
                 Planilha
                 <input
                   className="field"
@@ -2056,6 +2078,7 @@ export default function AgendaPage() {
                   onChange={(event) => updateImportDraft('file', event.target.files?.[0] || null)}
                 />
               </label>
+              ) : null}
               <label>
                 Tipo de importação
                 <select className="field" value={importDraft.import_type} onChange={(event) => updateImportDraft('import_type', event.target.value)}>
@@ -2091,7 +2114,7 @@ export default function AgendaPage() {
                   value={importDraft.agenda_date}
                   onChange={(event) => updateImportDraft('agenda_date', event.target.value)}
                 />
-                <small>Essa data sera aplicada a todos os pacientes do template vertical.</small>
+                <small>Essa data sera aplicada a todos os pacientes reconstruidos pelo parser.</small>
               </label>
               <label>
                 Duplicidade
@@ -2102,6 +2125,20 @@ export default function AgendaPage() {
                 </select>
               </label>
             </div>
+
+            {importDraft.source_mode === 'clipboard' ? (
+              <label>
+                Conteudo bruto da agenda
+                <textarea
+                  className="field agenda-import-message"
+                  value={importDraft.raw_text}
+                  onChange={(event) => updateImportDraft('raw_text', event.target.value)}
+                  placeholder={'Cole aqui a agenda copiada do sistema externo.\n\nExemplo:\nWHRV6\nLidiane Freitas Cardoso\n08:15\nA Confirmar\nReavaliacao\nFollow up\nFachada'}
+                  rows={14}
+                />
+                <small>O sistema ignora linhas tecnicas, remonta os blocos por paciente e usa a data informada acima.</small>
+              </label>
+            ) : null}
 
             <div className="agenda-import-options">
               <label className="agenda-toggle-card">
@@ -2137,7 +2174,7 @@ export default function AgendaPage() {
                 {validatingImport ? 'Validando...' : 'Validar dados'}
               </button>
               <button type="button" className="primary-action" onClick={submitImport} disabled={importing}>
-                {importing ? 'Importando...' : 'Importar planilha'}
+                {importing ? 'Importando...' : 'Importar agenda'}
               </button>
             </div>
 
@@ -2160,6 +2197,10 @@ export default function AgendaPage() {
                     <span>Total com erro</span>
                     <strong>{importValidation.summary?.total_error || 0}</strong>
                   </article>
+                  <article>
+                    <span>Total com alerta</span>
+                    <strong>{importValidation.summary?.total_alert || 0}</strong>
+                  </article>
                 </div>
                 <div className="agenda-dashboard-table-wrapper">
                   <table className="agenda-dashboard-table">
@@ -2169,10 +2210,12 @@ export default function AgendaPage() {
                         <th>Telefone</th>
                         <th>Data</th>
                         <th>Hora</th>
+                        <th>Status</th>
                         <th>Especialidade</th>
                         <th>Dentista</th>
-                        <th>Status</th>
+                        <th>Canal</th>
                         <th>Resultado</th>
+                        <th>Observacoes</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2180,15 +2223,20 @@ export default function AgendaPage() {
                         <tr key={`agenda-import-validation-${row.line}`}>
                           <td>
                             <strong>{row.patient_name || `Linha ${row.line}`}</strong>
-                            {row.reasons?.length ? <small className="table-helper">{row.reasons.join(' | ')}</small> : null}
                           </td>
                           <td>{row.patient_phone || '-'}</td>
                           <td>{row.data_consulta || '-'}</td>
                           <td>{row.hora_consulta || '-'}</td>
+                          <td>{row.status || '-'}</td>
                           <td>{row.patient_specialty || '-'}</td>
                           <td>{row.patient_dentist || '-'}</td>
-                          <td>{row.status || '-'}</td>
+                          <td>{row.patient_channel || '-'}</td>
                           <td>{getAgendaImportResultLabel(row.result)}</td>
+                          <td>
+                            {[...(row.reasons || []), ...(row.warnings || [])].length
+                              ? <small className="table-helper">{[...(row.reasons || []), ...(row.warnings || [])].join(' | ')}</small>
+                              : '-'}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

@@ -59,6 +59,10 @@ const {
   toDentalNumber
 } = require('./services/dentalCardService');
 const {
+  buildClipboardTextFromWorksheetRows,
+  parseAgendaClipboard
+} = require('./services/agendaImportService');
+const {
   sendComplaintNotification: sendTwilioComplaintNotification,
   sendGenericNotification: sendTwilioGenericNotification,
   sendNpsNotification: sendTwilioNpsNotification,
@@ -4849,6 +4853,36 @@ async function ensureDatabaseSchema() {
       INDEX idx_system_activity_logs_route (route),
       INDEX idx_system_activity_logs_actor_user_id (actor_user_id),
       INDEX idx_system_activity_logs_action (action)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agenda_import_audit_logs (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      company_id INT NULL DEFAULT 1,
+      user_id INT NULL,
+      user_name VARCHAR(160) NULL,
+      user_email VARCHAR(180) NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      import_source VARCHAR(40) NOT NULL DEFAULT 'file',
+      import_type VARCHAR(40) NOT NULL DEFAULT 'patient_agenda',
+      agenda_date DATE NULL,
+      batch_id VARCHAR(120) NULL,
+      total_found INT NOT NULL DEFAULT 0,
+      total_imported INT NOT NULL DEFAULT 0,
+      total_updated INT NOT NULL DEFAULT 0,
+      total_duplicate INT NOT NULL DEFAULT 0,
+      total_alert INT NOT NULL DEFAULT 0,
+      total_error INT NOT NULL DEFAULT 0,
+      raw_text_hash VARCHAR(128) NULL,
+      rejected_rows_json LONGTEXT NULL,
+      metadata_json LONGTEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_agenda_import_audit_created_at (created_at),
+      INDEX idx_agenda_import_audit_user_id (user_id),
+      INDEX idx_agenda_import_audit_clinic_id (clinic_id),
+      INDEX idx_agenda_import_audit_batch_id (batch_id)
     )
   `);
 
@@ -25584,12 +25618,76 @@ function resolveAgendaImportWorkbookSheetName(workbook) {
   return preferredSheet || sheetNames[0];
 }
 
+function buildAgendaImportRowsFromClipboardResult(parsed = {}, selectedDate = '') {
+  const normalizedDate = String(selectedDate || '').trim();
+  return (parsed.registros || []).map((record, index) => ({
+    line: Number(record.line || index + 2),
+    assignee_id: null,
+    assignee_name: '',
+    assignee_email: '',
+    assignee_username: '',
+    title: buildAgendaImportTaskTitle({
+      patient_name: record.paciente,
+      clinic_name: '',
+      id_externo: record.codigoExterno
+    }),
+    description: buildAgendaImportDescription({
+      patient_name: record.paciente,
+      data_consulta: record.data,
+      hora_consulta: record.hora,
+      especialidade: record.especialidade,
+      dentista: record.dentista,
+      canal: record.canal,
+      id_externo: record.codigoExterno
+    }),
+    priority: 'normal',
+    status: normalizeAgendaStatus(record.status || 'todo'),
+    due_at: normalizeAgendaImportDateTime(normalizedDate, record.hora, '09:00'),
+    reminder_at: null,
+    is_daily_recurring: false,
+    recurrence_weekdays: [],
+    tags: normalizeAgendaTags([record.especialidade, record.canal].filter(Boolean).join(',')),
+    clinic_name: '',
+    demand_type: 'patient',
+    source_external_id: sanitizeFinancialString(record.codigoExterno, 120) || null,
+    patient_name: normalizeWhatsAppPatientName(record.paciente || ''),
+    patient_phone: '',
+    patient_specialty: sanitizeFinancialString(record.especialidade, 180) || null,
+    patient_dentist: sanitizeFinancialString(record.dentista, 180) || null,
+    patient_channel: sanitizeFinancialString(record.canal, 120) || null,
+    patient_has_scheduled: Boolean(normalizedDate && record.hora),
+    patient_scheduled_at: normalizeAgendaImportDateTime(normalizedDate, record.hora, '09:00'),
+    confirmation_status: normalizeAgendaStatus(record.status || 'pendente'),
+    data_consulta: record.data || normalizeMassCampaignDateValue(normalizedDate) || '',
+    hora_consulta: record.hora || '',
+    whatsapp_preference: null,
+    warnings: Array.isArray(record.warnings) ? record.warnings : [],
+    errors: Array.isArray(record.errors) ? record.errors : [],
+    raw: {
+      rawBlock: record.rawBlock || []
+    }
+  }));
+}
+
+function parseAgendaImportRowsFromRawText(rawText = '', selectedDate = '') {
+  const parsed = parseAgendaClipboard(rawText, { dataAgenda: selectedDate });
+  return buildAgendaImportRowsFromClipboardResult(parsed, selectedDate);
+}
+
+function getAgendaImportRawTextFromRequest(req) {
+  return String(req.body?.raw_text || req.body?.rawText || '').trim();
+}
+
 function parseAgendaImportRowsFromUpload(filePath, originalName = '', selectedDate = '') {
   const extension = String(path.extname(originalName || filePath || '')).trim().toLowerCase();
   if (['.xlsx', '.xls'].includes(extension)) {
     const workbook = readWorkbookFileSafely(filePath);
     const targetSheetName = resolveAgendaImportWorkbookSheetName(workbook);
     const rows = sheetToSafeJsonRows(workbook.Sheets[targetSheetName] || {});
+    const clipboardRows = parseAgendaImportRowsFromRawText(buildClipboardTextFromWorksheetRows(rows), selectedDate);
+    if (clipboardRows.length) {
+      return applyAgendaImportSelectedDate(clipboardRows, selectedDate);
+    }
     return applyAgendaImportSelectedDate(parseAgendaImportRowsFromWorksheetRows(rows), selectedDate);
   }
 
@@ -25777,6 +25875,7 @@ async function validateAgendaImportRows(rows = [], {
   let valid = 0;
   let duplicates = 0;
   let errors = 0;
+  let alerts = 0;
 
   for (const row of rows) {
     const specialty = sanitizeFinancialString(row.patient_specialty || row.especialidade, 180) || null;
@@ -25784,30 +25883,29 @@ async function validateAgendaImportRows(rows = [], {
     const patientName = sanitizeFinancialString(row.patient_name, 180) || null;
     const patientPhone = sanitizeFinancialString(row.patient_phone, 40) || null;
     const scheduledAt = row.patient_scheduled_at || null;
-    const reasons = [];
+    const blockingReasons = Array.isArray(row.errors) ? [...row.errors] : [];
+    const warningReasons = Array.isArray(row.warnings) ? [...row.warnings] : [];
     let duplicateRecordId = null;
 
     if (!selectedClinic?.clinic_id) {
-      reasons.push('Selecione a unidade da planilha.');
+      blockingReasons.push('Selecione a unidade da planilha.');
     }
 
     if (normalizedImportType === 'patient_agenda') {
-      if (!patientName) reasons.push('Nome do paciente obrigatorio.');
-      if (!patientPhone) reasons.push('Telefone obrigatorio.');
-      if (!row.data_consulta) reasons.push('Data da consulta obrigatoria.');
-      if (!row.hora_consulta) reasons.push('Horario da consulta obrigatorio.');
-      if (!scheduledAt) reasons.push('Data ou horário inválido.');
-      if (!specialty) reasons.push('Especialidade obrigatoria.');
-      if (!dentist) reasons.push('Dentista obrigatorio.');
+      if (!patientName) blockingReasons.push('Nome do paciente obrigatorio.');
+      if (!row.data_consulta) blockingReasons.push('Data da consulta obrigatoria.');
+      if (!row.hora_consulta) blockingReasons.push('Horario da consulta obrigatorio.');
+      if (!scheduledAt) blockingReasons.push('Data ou horário inválido.');
+      if (!patientPhone) warningReasons.push('Telefone não informado na origem.');
+      if (!specialty) warningReasons.push('Especialidade pendente de mapeamento.');
+      if (!dentist) warningReasons.push('Dentista não especificado.');
       if (specialty && catalog.specialtyKeys.size && !catalog.specialtyKeys.has(normalizeAgendaCatalogKey(specialty))) {
-        reasons.push('Especialidade inexistente no cadastro oficial.');
+        warningReasons.push('Especialidade pendente de mapeamento.');
       }
-      if (dentist && catalog.dentistKeys.size && !catalog.dentistKeys.has(normalizeAgendaCatalogKey(dentist))) {
-        reasons.push('Dentista inexistente no cadastro oficial.');
-      }
+      if (!row.patient_channel) warningReasons.push('Canal não identificado.');
     }
 
-    if (!reasons.length && selectedClinic?.clinic_id && patientName && scheduledAt) {
+    if (!blockingReasons.length && selectedClinic?.clinic_id && patientName && scheduledAt) {
       const [duplicateRows] = await pool.query(
         `SELECT id
            FROM agenda_items
@@ -25823,7 +25921,7 @@ async function validateAgendaImportRows(rows = [], {
     }
 
     let result = 'valid';
-    if (reasons.length) {
+    if (blockingReasons.length) {
       result = 'error';
       errors += 1;
     } else if (duplicateRecordId) {
@@ -25832,6 +25930,7 @@ async function validateAgendaImportRows(rows = [], {
     } else {
       valid += 1;
     }
+    if (warningReasons.length) alerts += 1;
 
     results.push({
       line: row.line,
@@ -25841,10 +25940,18 @@ async function validateAgendaImportRows(rows = [], {
       hora_consulta: row.hora_consulta || '',
       patient_specialty: specialty,
       patient_dentist: dentist,
+      patient_channel: row.patient_channel || '',
       status: row.confirmation_status || row.status || 'pendente',
       result,
-      reasons,
-      duplicate_record_id: duplicateRecordId
+      reasons: blockingReasons,
+      warnings: warningReasons,
+      duplicate_record_id: duplicateRecordId,
+      prepared_row: {
+        ...row,
+        patient_specialty: specialty,
+        patient_dentist: dentist,
+        patient_phone: patientPhone
+      }
     });
   }
 
@@ -25853,10 +25960,70 @@ async function validateAgendaImportRows(rows = [], {
       total_found: rows.length,
       total_valid: valid,
       total_duplicate: duplicates,
-      total_error: errors
+      total_error: errors,
+      total_alert: alerts
     },
     rows: results
   };
+}
+
+async function insertAgendaImportAuditLog({
+  user = null,
+  selectedClinic = null,
+  importSource = 'file',
+  importType = 'patient_agenda',
+  agendaDate = null,
+  batchId = null,
+  summary = null,
+  rawText = '',
+  invalidRows = [],
+  unresolvedAssignees = [],
+  whatsappBlocked = 0,
+  whatsappQueued = 0,
+  created = 0,
+  updated = 0,
+  duplicateSkipped = 0
+} = {}) {
+  try {
+    const companyId = Number(user?.company_id || user?.companyId || 1) || 1;
+    const rawTextHash = String(rawText || '').trim()
+      ? crypto.createHash('sha256').update(String(rawText)).digest('hex')
+      : null;
+    await pool.query(
+      `INSERT INTO agenda_import_audit_logs
+       (company_id, user_id, user_name, user_email, clinic_id, clinic_name, import_source, import_type, agenda_date, batch_id,
+        total_found, total_imported, total_updated, total_duplicate, total_alert, total_error, raw_text_hash, rejected_rows_json, metadata_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        companyId,
+        user?.id || null,
+        user?.name || null,
+        user?.email || null,
+        selectedClinic?.clinic_id || null,
+        selectedClinic?.clinic_name || null,
+        String(importSource || 'file').slice(0, 40),
+        String(importType || 'patient_agenda').slice(0, 40),
+        agendaDate || null,
+        batchId || null,
+        Number(summary?.total_found || 0),
+        Number(created || 0),
+        Number(updated || 0),
+        Number(summary?.total_duplicate || duplicateSkipped || 0),
+        Number(summary?.total_alert || 0),
+        Number(summary?.total_error || 0),
+        rawTextHash,
+        JSON.stringify(invalidRows || []),
+        JSON.stringify({
+          unresolvedAssignees: unresolvedAssignees || [],
+          whatsappBlocked: Number(whatsappBlocked || 0),
+          whatsappQueued: Number(whatsappQueued || 0),
+          duplicateSkipped: Number(duplicateSkipped || 0)
+        })
+      ]
+    );
+  } catch (error) {
+    console.warn('Não foi possível gravar auditoria da importação da agenda:', error.message);
+  }
 }
 
 app.get('/api/agenda/users', authenticate, async (req, res) => {
@@ -26048,8 +26215,9 @@ app.post('/api/agenda/import/validate', authenticate, upload.single('file'), asy
     if (!canImportAgendaWorkbook(req.user)) {
       return res.status(403).json({ error: 'Seu perfil não pode importar demandas em lote.' });
     }
-    if (!req.file?.path) {
-      return res.status(400).json({ error: 'Envie uma planilha .xlsx, .xls ou .csv para validar a agenda.' });
+    const rawText = getAgendaImportRawTextFromRequest(req);
+    if (!req.file?.path && !rawText) {
+      return res.status(400).json({ error: 'Envie uma planilha ou cole o conteúdo bruto da agenda para validar.' });
     }
 
     const selectedClinic = await resolveMassCampaignSelectedClinic(req, req.user);
@@ -26059,9 +26227,13 @@ app.post('/api/agenda/import/validate', authenticate, upload.single('file'), asy
 
     const importType = normalizeAgendaImportType(req.body?.import_type || req.body?.importType);
     const importedRows = applyAgendaImportSelectedClinic(
-      parseAgendaImportRowsFromUpload(req.file.path, req.file.originalname, req.body?.agenda_date || req.body?.agendaDate),
+      req.file?.path
+        ? parseAgendaImportRowsFromUpload(req.file.path, req.file.originalname, req.body?.agenda_date || req.body?.agendaDate)
+        : parseAgendaImportRowsFromRawText(rawText, req.body?.agenda_date || req.body?.agendaDate),
       selectedClinic
     );
+    const importSource = rawText ? 'clipboard' : 'file';
+    const agendaDate = req.body?.agenda_date || req.body?.agendaDate || '';
 
     if (!importedRows.length) {
       return res.status(400).json({ error: 'Nenhuma linha válida foi encontrada na planilha enviada.' });
@@ -26100,9 +26272,9 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
     if (!canImportAgendaWorkbook(req.user)) {
       return res.status(403).json({ error: 'Seu perfil não pode importar demandas em lote.' });
     }
-
-    if (!req.file?.path) {
-      return res.status(400).json({ error: 'Envie uma planilha .xlsx, .xls ou .csv para importar a agenda.' });
+    const rawText = getAgendaImportRawTextFromRequest(req);
+    if (!req.file?.path && !rawText) {
+      return res.status(400).json({ error: 'Envie uma planilha ou cole o conteúdo bruto da agenda para importar.' });
     }
 
     const createTasks = normalizeAgendaBoolean(req.body?.create_tasks ?? req.body?.createTasks, true);
@@ -26118,9 +26290,13 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
       return res.status(400).json({ error: 'Selecione a unidade da planilha antes de importar.' });
     }
     const importedRows = applyAgendaImportSelectedClinic(
-      parseAgendaImportRowsFromUpload(req.file.path, req.file.originalname, req.body?.agenda_date || req.body?.agendaDate),
+      req.file?.path
+        ? parseAgendaImportRowsFromUpload(req.file.path, req.file.originalname, req.body?.agenda_date || req.body?.agendaDate)
+        : parseAgendaImportRowsFromRawText(rawText, req.body?.agenda_date || req.body?.agendaDate),
       selectedClinic
     );
+    const importSource = rawText ? 'clipboard' : 'file';
+    const agendaDate = req.body?.agenda_date || req.body?.agendaDate || '';
 
     if (!importedRows.length) {
       return res.status(400).json({ error: 'Nenhuma linha válida foi encontrada na planilha enviada.' });
@@ -26133,6 +26309,22 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
       referenceData
     });
     if (validation.summary.total_error > 0) {
+      await insertAgendaImportAuditLog({
+        user: req.user,
+        selectedClinic,
+        importSource,
+        importType,
+        agendaDate,
+        summary: validation.summary,
+        rawText,
+        invalidRows: validation.rows
+          .filter((item) => Array.isArray(item.reasons) && item.reasons.length)
+          .map((item) => ({
+            line: item.line,
+            patient_name: item.patient_name || null,
+            reason: item.reasons.join(' | ')
+          }))
+      });
       return res.status(400).json({
         error: 'A planilha possui erros de validação. Corrija os dados antes de importar.',
         validation
@@ -26165,30 +26357,31 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
 
     for (const [index, row] of importedRows.entries()) {
       const validationRow = validation.rows.find((item) => Number(item.line) === Number(row.line)) || null;
+      const preparedRow = validationRow?.prepared_row || row;
       if (validationRow?.result === 'duplicate' && duplicateStrategy === 'ignore') {
         duplicateSkipped += 1;
         continue;
       }
 
-      const rowTags = normalizeAgendaTags([...(Array.isArray(row.tags) ? row.tags : []), row.clinic_name].filter(Boolean));
-      const assignee = createTasks ? resolveAgendaImportAssignee(directory, row, defaultAssignee) : null;
+      const rowTags = normalizeAgendaTags([...(Array.isArray(preparedRow.tags) ? preparedRow.tags : []), preparedRow.clinic_name].filter(Boolean));
+      const assignee = createTasks ? resolveAgendaImportAssignee(directory, preparedRow, defaultAssignee) : null;
 
       if (createTasks && !assignee) {
-        const reason = `Linha ${row.line}: responsável não encontrado para a demanda.`;
+        const reason = `Linha ${preparedRow.line}: responsável não encontrado para a demanda.`;
         unresolvedAssignees.push({
-          line: row.line,
-          assignee: row.assignee_email || row.assignee_username || row.assignee_name || 'não informado',
+          line: preparedRow.line,
+          assignee: preparedRow.assignee_email || preparedRow.assignee_username || preparedRow.assignee_name || 'não informado',
           reason
         });
-        invalidRows.push({ line: row.line, reason });
+        invalidRows.push({ line: preparedRow.line, reason });
       }
 
       if (createTasks && assignee) {
-        const normalizedStatus = normalizeAgendaStatus(row.status);
-        const recurrenceBaseStatus = row.is_daily_recurring
+        const normalizedStatus = normalizeAgendaStatus(preparedRow.status);
+        const recurrenceBaseStatus = preparedRow.is_daily_recurring
           ? getAgendaRecurrenceBaseStatus({ status: normalizedStatus })
           : null;
-        const persistedStatus = row.is_daily_recurring && normalizedStatus === 'done'
+        const persistedStatus = preparedRow.is_daily_recurring && normalizedStatus === 'done'
           ? recurrenceBaseStatus
           : normalizedStatus;
         const duplicateRecordId = validationRow?.duplicate_record_id || null;
@@ -26225,26 +26418,26 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
               assignee.id,
               assignee.name || null,
               assignee.email || null,
-              row.clinic_id || null,
-              row.clinic_name || null,
-              row.demand_type || 'general',
-              row.source_external_id || null,
-              row.patient_name || null,
-              row.patient_phone || null,
-              row.patient_specialty || null,
-              row.patient_dentist || null,
-              row.patient_channel || null,
-              row.patient_has_scheduled ? 1 : 0,
-              row.patient_scheduled_at || null,
-              row.confirmation_status || null,
+              preparedRow.clinic_id || null,
+              preparedRow.clinic_name || null,
+              preparedRow.demand_type || 'general',
+              preparedRow.source_external_id || null,
+              preparedRow.patient_name || null,
+              preparedRow.patient_phone || null,
+              preparedRow.patient_specialty || null,
+              preparedRow.patient_dentist || null,
+              preparedRow.patient_channel || null,
+              preparedRow.patient_has_scheduled ? 1 : 0,
+              preparedRow.patient_scheduled_at || null,
+              preparedRow.confirmation_status || null,
               dispatchWhatsapp ? 'agenda_import_whatsapp' : 'agenda_import',
               batchId,
-              buildAgendaImportTaskTitle(row),
-              buildAgendaImportDescription(row) || null,
+              buildAgendaImportTaskTitle(preparedRow),
+              buildAgendaImportDescription(preparedRow) || null,
               persistedStatus,
-              normalizeAgendaPriority(row.priority),
-              row.reminder_at || null,
-              row.due_at || null,
+              normalizeAgendaPriority(preparedRow.priority),
+              preparedRow.reminder_at || null,
+              preparedRow.due_at || null,
               JSON.stringify(rowTags),
               duplicateRecordId
             ]
@@ -26262,31 +26455,31 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
               assignee.id,
               assignee.name || null,
               assignee.email || null,
-              row.clinic_id || null,
-              row.clinic_name || null,
-              row.demand_type || 'general',
-              row.source_external_id || null,
-              row.patient_name || null,
-              row.patient_phone || null,
-              row.patient_specialty || null,
-              row.patient_dentist || null,
-              row.patient_channel || null,
-              row.patient_has_scheduled ? 1 : 0,
-              row.patient_scheduled_at || null,
-              row.confirmation_status || null,
+              preparedRow.clinic_id || null,
+              preparedRow.clinic_name || null,
+              preparedRow.demand_type || 'general',
+              preparedRow.source_external_id || null,
+              preparedRow.patient_name || null,
+              preparedRow.patient_phone || null,
+              preparedRow.patient_specialty || null,
+              preparedRow.patient_dentist || null,
+              preparedRow.patient_channel || null,
+              preparedRow.patient_has_scheduled ? 1 : 0,
+              preparedRow.patient_scheduled_at || null,
+              preparedRow.confirmation_status || null,
               dispatchWhatsapp ? 'agenda_import_whatsapp' : 'agenda_import',
               batchId,
-              buildAgendaImportTaskTitle(row),
-              buildAgendaImportDescription(row) || null,
+              buildAgendaImportTaskTitle(preparedRow),
+              buildAgendaImportDescription(preparedRow) || null,
               persistedStatus,
-              normalizeAgendaPriority(row.priority),
-              row.is_daily_recurring ? 1 : 0,
-              row.is_daily_recurring ? 1 : 1,
+              normalizeAgendaPriority(preparedRow.priority),
+              preparedRow.is_daily_recurring ? 1 : 0,
+              preparedRow.is_daily_recurring ? 1 : 1,
               recurrenceBaseStatus,
-              row.is_daily_recurring ? getSaoPauloParts().dateKey : null,
-              row.is_daily_recurring ? JSON.stringify(normalizeAgendaRecurrenceWeekdays(row.recurrence_weekdays)) : null,
-              row.due_at || null,
-              row.reminder_at || null,
+              preparedRow.is_daily_recurring ? getSaoPauloParts().dateKey : null,
+              preparedRow.is_daily_recurring ? JSON.stringify(normalizeAgendaRecurrenceWeekdays(preparedRow.recurrence_weekdays)) : null,
+              preparedRow.due_at || null,
+              preparedRow.reminder_at || null,
               JSON.stringify(rowTags),
               JSON.stringify([]),
               0
@@ -26296,27 +26489,27 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
         }
       }
 
-      const shouldDispatchRow = dispatchWhatsapp && row.whatsapp_preference !== false;
+      const shouldDispatchRow = dispatchWhatsapp && preparedRow.whatsapp_preference !== false;
       if (!shouldDispatchRow) {
         continue;
       }
 
-      if (!row.patient_name || !row.patient_phone) {
+      if (!preparedRow.patient_name || !preparedRow.patient_phone) {
         whatsappBlocked += 1;
         invalidRows.push({
-          line: row.line,
-          reason: `Linha ${row.line}: paciente e telefone são obrigatórios para envio de confirmação no WhatsApp.`
+          line: preparedRow.line,
+          reason: `Linha ${preparedRow.line}: paciente e telefone são obrigatórios para envio de confirmação no WhatsApp.`
         });
         continue;
       }
 
       const route = await resolveMassCampaignRecipientRoute({
-        patient_name: row.patient_name,
-        patient_phone: row.patient_phone,
-        clinic_name: row.clinic_name || selectedClinic?.clinic_name || '',
-        clinic_id: row.clinic_id || selectedClinic?.clinic_id || null,
-        data_consulta: row.data_consulta || '',
-        hora_consulta: row.hora_consulta || ''
+        patient_name: preparedRow.patient_name,
+        patient_phone: preparedRow.patient_phone,
+        clinic_name: preparedRow.clinic_name || selectedClinic?.clinic_name || '',
+        clinic_id: preparedRow.clinic_id || selectedClinic?.clinic_id || null,
+        data_consulta: preparedRow.data_consulta || '',
+        hora_consulta: preparedRow.hora_consulta || ''
       }, 'confirmacao', req.user, '', { routingCache });
 
       if (!route.resolved || !route.resolved_instance_name) {
@@ -26331,7 +26524,7 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
           createdBy: getActorName(req.user)
         });
         whatsappBlocked += 1;
-        invalidRows.push({ line: row.line, reason: `Linha ${row.line}: ${routingError}` });
+        invalidRows.push({ line: preparedRow.line, reason: `Linha ${preparedRow.line}: ${routingError}` });
         continue;
       }
 
@@ -26402,6 +26595,24 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
         });
       }
     }
+
+    await insertAgendaImportAuditLog({
+      user: req.user,
+      selectedClinic,
+      importSource,
+      importType,
+      agendaDate,
+      batchId,
+      summary: validation.summary,
+      rawText,
+      invalidRows,
+      unresolvedAssignees,
+      whatsappBlocked,
+      whatsappQueued,
+      created,
+      updated,
+      duplicateSkipped
+    });
 
     await insertSecurityAuditLog({
       req,
