@@ -25322,6 +25322,60 @@ function isAgendaVerticalWorksheetRows(rows = []) {
   });
 }
 
+function extractAgendaWorksheetValueStream(rows = []) {
+  const ignoredHeaderTokens = new Set(['valor', 'value', 'campo', 'field']);
+
+  return rows.reduce((values, row) => {
+    const orderedValues = Object.values(row || {})
+      .map((value) => (value === null || typeof value === 'undefined' ? '' : String(value).trim()))
+      .filter(Boolean);
+
+    if (!orderedValues.length) return values;
+
+    const pickedValue = orderedValues[0];
+    const normalizedValue = normalizeAgendaImportLookup(pickedValue);
+
+    if (ignoredHeaderTokens.has(normalizedValue)) return values;
+    if (agendaImportVerticalIgnoredValueTokens.has(normalizedValue)) return values;
+
+    values.push(pickedValue);
+    return values;
+  }, []);
+}
+
+function buildAgendaRowsFromValueStream(values = []) {
+  const streamRows = [];
+
+  for (let index = 0; index < values.length; index += agendaImportTemplateHeaders.length) {
+    const chunk = values.slice(index, index + agendaImportTemplateHeaders.length);
+    if (chunk.length < agendaImportTemplateHeaders.length) break;
+
+    const rowValues = {};
+    agendaImportTemplateHeaders.forEach((header, chunkIndex) => {
+      rowValues[header] = chunk[chunkIndex] || '';
+    });
+
+    if (Object.values(rowValues).some((value) => String(value ?? '').trim() !== '')) {
+      streamRows.push({
+        __line: index + 2,
+        ...rowValues
+      });
+    }
+  }
+
+  return streamRows;
+}
+
+function isAgendaValueStreamWorksheetRows(rows = []) {
+  if (!Array.isArray(rows) || !rows.length) return false;
+  if (isAgendaVerticalWorksheetRows(rows)) return false;
+
+  const hasStructuredHeaders = rows.some((row) => Object.keys(row || {}).some((key) => resolveAgendaImportFieldKey(key)));
+  if (hasStructuredHeaders) return false;
+
+  return extractAgendaWorksheetValueStream(rows).length >= agendaImportTemplateHeaders.length;
+}
+
 function normalizeAgendaVerticalWorksheetRows(rows = []) {
   const shouldUseValueStream = rows.some((row) => {
     const value = getWorksheetRowValue(row, ['valor', 'value', 'dado', 'conteudo', 'conteúdo', 'informacao', 'informação']);
@@ -25334,25 +25388,7 @@ function normalizeAgendaVerticalWorksheetRows(rows = []) {
     .filter((value) => value && !agendaImportVerticalIgnoredValueTokens.has(normalizeAgendaImportLookup(value)));
 
   if (shouldUseValueStream && normalizedValueStream.length >= agendaImportTemplateHeaders.length) {
-    const streamRows = [];
-
-    for (let index = 0; index < normalizedValueStream.length; index += agendaImportTemplateHeaders.length) {
-      const chunk = normalizedValueStream.slice(index, index + agendaImportTemplateHeaders.length);
-      if (chunk.length < agendaImportTemplateHeaders.length) break;
-
-      const values = {};
-      agendaImportTemplateHeaders.forEach((header, chunkIndex) => {
-        values[header] = chunk[chunkIndex] || '';
-      });
-
-      if (Object.values(values).some((value) => String(value ?? '').trim() !== '')) {
-        streamRows.push({
-          __line: index + 2,
-          ...values
-        });
-      }
-    }
-
+    const streamRows = buildAgendaRowsFromValueStream(normalizedValueStream);
     if (streamRows.length) {
       return streamRows;
     }
@@ -25413,6 +25449,9 @@ function normalizeAgendaVerticalWorksheetRows(rows = []) {
 function normalizeAgendaWorksheetRows(rows = []) {
   if (isAgendaVerticalWorksheetRows(rows)) {
     return normalizeAgendaVerticalWorksheetRows(rows);
+  }
+  if (isAgendaValueStreamWorksheetRows(rows)) {
+    return buildAgendaRowsFromValueStream(extractAgendaWorksheetValueStream(rows));
   }
   return rows;
 }
@@ -25611,6 +25650,14 @@ function resolveAgendaImportAssignee(directory, row = {}, defaultAssignee = null
 function buildAgendaImportTemplateBuffer() {
   const workbook = XLSX.utils.book_new();
   const blockCount = 60;
+  const directPasteRows = [['valor']];
+  for (let index = 0; index < blockCount * 12; index += 1) {
+    directPasteRows.push(['']);
+  }
+  const directPasteSheet = XLSX.utils.aoa_to_sheet(directPasteRows);
+  directPasteSheet['!cols'] = [{ wch: 58 }];
+  XLSX.utils.book_append_sheet(workbook, directPasteSheet, 'Colagem Direta');
+
   const verticalRows = [['campo', 'valor']];
 
   for (let index = 0; index < blockCount; index += 1) {
@@ -25624,7 +25671,7 @@ function buildAgendaImportTemplateBuffer() {
 
   const sheet = XLSX.utils.aoa_to_sheet(verticalRows);
   sheet['!cols'] = [{ wch: 28 }, { wch: 58 }];
-  XLSX.utils.book_append_sheet(workbook, sheet, 'Agenda Vertical');
+  XLSX.utils.book_append_sheet(workbook, sheet, 'Referencia Estruturada');
 
   const exampleSheet = XLSX.utils.aoa_to_sheet([
     ['campo', 'valor'],
@@ -25656,14 +25703,14 @@ function buildAgendaImportTemplateBuffer() {
 
   const instructions = XLSX.utils.aoa_to_sheet([
     ['Como usar'],
-    ['1. Use a aba "Agenda Vertical" para colar os dados diretamente na coluna B, um item por linha.'],
-    ['2. O template foi reduzido para os mesmos campos visíveis na agenda externa: ID, Nome Completo, Consulta, Status, Especialidade, Dentista e Canal.'],
-    ['3. O template principal reserva quatro linhas tecnicas entre pacientes para manter a colagem visualmente organizada a partir do segundo paciente.'],
-    ['4. O importador reconstrói cada paciente pela sequência real dos valores colados, mesmo se a visualização da planilha parecer desalinhada.'],
+    ['1. Use a aba "Colagem Direta" como modelo principal e cole tudo apenas na celula A2.'],
+    ['2. Essa aba foi criada para eliminar o desalinhamento visual entre pacientes, porque a agenda copiada nao tem uma quantidade fixa de linhas tecnicas entre blocos.'],
+    ['3. O sistema reconstrói automaticamente cada paciente pela sequência real dos valores colados: ID, Nome Completo, Consulta, Status, Especialidade, Dentista e Canal.'],
+    ['4. A aba "Referencia Estruturada" foi mantida apenas como apoio visual, mas nao deve ser a aba principal de colagem.'],
     ['5. A data da agenda deve ser informada uma única vez no importador do sistema, no campo "Data da agenda".'],
     ['6. No campo "consulta", informe apenas o horário no formato HH:MM, como aparece na agenda externa.'],
     ['7. A unidade continua sendo escolhida no sistema no campo "Unidade da planilha".'],
-    ['8. Use a aba "Exemplo de Colagem" apenas como referência visual de como a coluna B pode ficar após o copiar e colar.']
+    ['8. Use a aba "Exemplo de Colagem" apenas como referência visual de como a sequência copiada pode chegar da agenda externa.']
   ]);
   instructions['!cols'] = [{ wch: 110 }];
   XLSX.utils.book_append_sheet(workbook, instructions, 'Instrucoes');

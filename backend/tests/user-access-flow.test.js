@@ -2315,6 +2315,35 @@ test('agenda import worksheet parser rebuilds patients from pasted value stream 
   assert.equal(rows[1].hora_consulta, '08:45');
 });
 
+test('agenda import worksheet parser accepts direct paste value stream sheet', () => {
+  const rows = serverModule.__testables.parseAgendaImportRowsFromWorksheetRows([
+    { valor: 'WHRV6' },
+    { valor: 'Lidiane Freitas Cardoso' },
+    { valor: '08:15' },
+    { valor: 'A Confirmar' },
+    { valor: 'Reavaliacao' },
+    { valor: 'Follow up' },
+    { valor: 'Fachada' },
+    { valor: 'mode_comment' },
+    { valor: '' },
+    { valor: 'more_horiz' },
+    { valor: 'GSSFE' },
+    { valor: 'Michele Encarnacao De Carvalho' },
+    { valor: '08:45' },
+    { valor: 'Confirmado' },
+    { valor: 'Ortodontia' },
+    { valor: 'Nao Especificado' },
+    { valor: 'Indicacao' }
+  ]);
+
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].source_external_id, 'WHRV6');
+  assert.equal(rows[0].patient_name, 'LIDIANE FREITAS CARDOSO');
+  assert.equal(rows[1].source_external_id, 'GSSFE');
+  assert.equal(rows[1].patient_name, 'MICHELE ENCARNACAO DE CARVALHO');
+  assert.equal(rows[1].hora_consulta, '08:45');
+});
+
 test('agenda import applies one agenda date to vertical rows with consulta hour', () => {
   const parsedRows = serverModule.__testables.parseAgendaImportRowsFromWorksheetRows([
     { campo: 'id_externo', valor: 'GSSFE' },
