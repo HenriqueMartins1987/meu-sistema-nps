@@ -1367,7 +1367,7 @@ export default function AgendaPage() {
       <PageHeader
         eyebrow="Workspace"
         title="Agenda"
-        description="Quadro executivo para organizar tarefas, compromissos, follow-ups e lembretes operacionais com fluxo visual no estilo ClickUp."
+        description=""
         actions={(
           <>
             <button type="button" className="outline-action" onClick={requestNotifications}>Ativar lembretes</button>
