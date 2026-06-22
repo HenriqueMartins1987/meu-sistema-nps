@@ -25251,35 +25251,18 @@ function parseAgendaImportWhatsappPreference(value) {
 const agendaImportTemplateHeaders = [
   'id_externo',
   'nome_paciente',
-  'telefone',
-  'data_consulta',
-  'hora_consulta',
+  'consulta',
+  'status',
   'especialidade',
   'dentista',
-  'status',
-  'canal',
-  'observacao',
-  'colaborador',
-  'email_responsavel',
-  'clinica',
-  'enviar_confirmacao_whatsapp',
-  'prioridade',
-  'status_inicial',
-  'prazo',
-  'hora_prazo',
-  'lembrete_data',
-  'lembrete_hora',
-  'titulo_tarefa',
-  'descricao',
-  'recorrente_diario',
-  'dias_semana',
-  'tags'
+  'canal'
 ];
 
 const agendaImportFieldAliases = {
   id_externo: ['id_externo', 'external_id'],
   nome_paciente: ['nome_paciente', 'nome do paciente', 'paciente', 'patient_name', 'patient'],
   telefone: ['telefone', 'whatsapp', 'celular', 'numero', 'número', 'patient_phone'],
+  consulta: ['consulta', 'horario_consulta', 'horário consulta'],
   data_consulta: ['data_consulta', 'data da consulta', 'data atendimento', 'data', 'appointment_date'],
   hora_consulta: ['hora_consulta', 'horario', 'horário', 'hora da consulta', 'hora', 'appointment_time'],
   especialidade: ['especialidade', 'specialty'],
@@ -25388,6 +25371,28 @@ function normalizeAgendaWorksheetRows(rows = []) {
   return rows;
 }
 
+function applyAgendaImportSelectedDate(rows = [], selectedDate) {
+  const normalizedSelectedDate = normalizeMassCampaignDateValue(selectedDate);
+  if (!normalizedSelectedDate) return rows;
+
+  return rows.map((row) => {
+    if (row.data_consulta) return row;
+    const normalizedHour = normalizeMassCampaignTimeValue(row.hora_consulta || row.consulta || '');
+    const scheduledAt = normalizedHour
+      ? normalizeAgendaImportDateTime(normalizedSelectedDate, normalizedHour, '09:00')
+      : null;
+
+    return {
+      ...row,
+      data_consulta: normalizedSelectedDate,
+      hora_consulta: normalizedHour || row.hora_consulta || '',
+      due_at: row.due_at || scheduledAt,
+      patient_has_scheduled: Boolean(normalizedHour),
+      patient_scheduled_at: scheduledAt
+    };
+  });
+}
+
 function parseAgendaImportRowsFromWorksheetRows(rows = []) {
   const normalizedRows = normalizeAgendaWorksheetRows(rows);
 
@@ -25401,6 +25406,7 @@ function parseAgendaImportRowsFromWorksheetRows(rows = []) {
     const patientPhone = normalizeWhatsAppPhone(
       getAgendaImportRowValue(row, ['telefone', 'whatsapp', 'celular', 'numero', 'número', 'patient_phone'])
     );
+    const consultationValue = getAgendaImportRowValue(row, ['consulta', 'horario_consulta', 'horário consulta']);
     const clinicName = sanitizeFinancialString(
       getAgendaImportRowValue(row, ['clinica', 'clínica', 'unidade', 'clinic', 'clinic_name']),
       180
@@ -25439,7 +25445,7 @@ function parseAgendaImportRowsFromWorksheetRows(rows = []) {
         patient_name: patientName,
         patient_phone: patientPhone,
         data_consulta: normalizeMassCampaignDateValue(getAgendaImportRowValue(row, ['data_consulta', 'data da consulta', 'appointment_date'])),
-        hora_consulta: normalizeMassCampaignTimeValue(getAgendaImportRowValue(row, ['hora_consulta', 'hora da consulta', 'appointment_time'])),
+        hora_consulta: normalizeMassCampaignTimeValue(getAgendaImportRowValue(row, ['hora_consulta', 'hora da consulta', 'appointment_time']) || consultationValue),
         especialidade: getAgendaImportRowValue(row, ['especialidade', 'specialty']),
         dentista: getAgendaImportRowValue(row, ['dentista', 'nome_dentista', 'doctor_name']),
         canal: getAgendaImportRowValue(row, ['canal', 'channel']),
@@ -25469,12 +25475,12 @@ function parseAgendaImportRowsFromWorksheetRows(rows = []) {
       ),
       patient_scheduled_at: normalizeAgendaImportDateTime(
         getAgendaImportRowValue(row, ['data_consulta', 'data da consulta', 'appointment_date']),
-        getAgendaImportRowValue(row, ['hora_consulta', 'hora da consulta', 'appointment_time']),
+        getAgendaImportRowValue(row, ['hora_consulta', 'hora da consulta', 'appointment_time']) || consultationValue,
         '09:00'
       ),
       confirmation_status: patientName || patientPhone ? 'pendente' : null,
       data_consulta: normalizeMassCampaignDateValue(getAgendaImportRowValue(row, ['data_consulta', 'data da consulta', 'appointment_date'])),
-      hora_consulta: normalizeMassCampaignTimeValue(getAgendaImportRowValue(row, ['hora_consulta', 'hora da consulta', 'appointment_time'])),
+      hora_consulta: normalizeMassCampaignTimeValue(getAgendaImportRowValue(row, ['hora_consulta', 'hora da consulta', 'appointment_time']) || consultationValue),
       whatsapp_preference: parseAgendaImportWhatsappPreference(
         getAgendaImportRowValue(row, ['enviar_confirmacao_whatsapp', 'enviar_whatsapp', 'confirmacao_whatsapp', 'dispatch_whatsapp'])
       ),
@@ -25485,17 +25491,17 @@ function parseAgendaImportRowsFromWorksheetRows(rows = []) {
   });
 }
 
-function parseAgendaImportRowsFromUpload(filePath, originalName = '') {
+function parseAgendaImportRowsFromUpload(filePath, originalName = '', selectedDate = '') {
   const extension = String(path.extname(originalName || filePath || '')).trim().toLowerCase();
   if (['.xlsx', '.xls'].includes(extension)) {
     const workbook = readWorkbookFileSafely(filePath);
     const firstSheetName = workbook.SheetNames[0];
     const rows = sheetToSafeJsonRows(workbook.Sheets[firstSheetName] || {});
-    return parseAgendaImportRowsFromWorksheetRows(rows);
+    return applyAgendaImportSelectedDate(parseAgendaImportRowsFromWorksheetRows(rows), selectedDate);
   }
 
   const parsed = parseMassWhatsAppRecipients(decodeUploadedText(fs.readFileSync(filePath)));
-  return (parsed.recipients || []).map((recipient, index) => ({
+  return applyAgendaImportSelectedDate((parsed.recipients || []).map((recipient, index) => ({
     line: index + 1,
     assignee_id: null,
     assignee_name: '',
@@ -25525,7 +25531,7 @@ function parseAgendaImportRowsFromUpload(filePath, originalName = '') {
       hora_consulta: recipient.hora_consulta || '',
     whatsapp_preference: null,
     raw: recipient
-  }));
+  })), selectedDate);
 }
 
 function applyAgendaImportSelectedClinic(rows = [], selectedClinic = null) {
@@ -25561,29 +25567,11 @@ function buildAgendaImportTemplateBuffer() {
   const verticalExample = {
     id_externo: 'CRC-0001',
     nome_paciente: 'Maria Silva',
-    telefone: '5562999999999',
-    data_consulta: '12/06/2026',
-    hora_consulta: '10:00',
+    consulta: '10:00',
+    status: 'A Confirmar',
     especialidade: 'Avaliacao',
     dentista: 'Dr. Henrique',
-    status: 'pendente',
-    canal: 'WhatsApp',
-    observacao: 'Paciente pediu contato para confirmar presenca e concluir o agendamento.',
-    colaborador: 'Ana CRC',
-    email_responsavel: 'ana.crc@empresa.com.br',
-    clinica: 'Garavelo',
-    enviar_confirmacao_whatsapp: 'sim',
-    prioridade: 'alta',
-    status_inicial: 'todo',
-    prazo: '12/06/2026',
-    hora_prazo: '09:30',
-    lembrete_data: '12/06/2026',
-    lembrete_hora: '08:30',
-    titulo_tarefa: 'Agendamento e confirmacao - Maria Silva',
-    descricao: 'Priorizar retorno e registrar status final da confirmacao.',
-    recorrente_diario: 'nao',
-    dias_semana: '',
-    tags: 'CRC,confirmacao,avaliacao'
+    canal: 'Fachada'
   };
   const emptyVerticalRecord = agendaImportTemplateHeaders.reduce((acc, header) => {
     acc[header] = '';
@@ -25604,29 +25592,11 @@ function buildAgendaImportTemplateBuffer() {
     [
       'CRC-0001',
       'Maria Silva',
-      '5562999999999',
-      '12/06/2026',
       '10:00',
+      'A Confirmar',
       'Avaliacao',
       'Dr. Henrique',
-      'pendente',
-      'WhatsApp',
-      'Paciente pediu contato para confirmar presenca e concluir o agendamento.',
-      'Ana CRC',
-      'ana.crc@empresa.com.br',
-      'Garavelo',
-      'sim',
-      'alta',
-      'todo',
-      '12/06/2026',
-      '09:30',
-      '12/06/2026',
-      '08:30',
-      'Agendamento e confirmacao - Maria Silva',
-      'Priorizar retorno e registrar status final da confirmacao.',
-      'nao',
-      '',
-      'CRC,confirmacao,avaliacao'
+      'Fachada'
     ]
   ]);
   exampleSheet['!cols'] = agendaImportTemplateHeaders.map((header) => ({ wch: Math.max(16, header.length + 4) }));
@@ -25635,13 +25605,11 @@ function buildAgendaImportTemplateBuffer() {
   const instructions = XLSX.utils.aoa_to_sheet([
     ['Como usar'],
     ['1. Use a aba "Agenda Vertical" para colar um paciente por bloco, no formato campo/valor, preenchendo a coluna B.'],
-    ['2. O operador CRC pode copiar e colar os dados na vertical, na mesma ordem do template, sem remontar a planilha.'],
-    ['3. A unidade deve ser escolhida no sistema no campo "Unidade da planilha"; ela passa a valer para todos os pacientes importados.'],
-    ['4. Se colaborador e email_responsavel ficarem vazios, o sistema usa o responsável padrão selecionado antes do upload.'],
-    ['5. data_consulta e prazo aceitam DD/MM/AAAA; hora_consulta, hora_prazo e lembrete_hora aceitam HH:MM.'],
-    ['6. enviar_confirmacao_whatsapp = sim enfileira a confirmação do paciente no fluxo operacional já existente.'],
-    ['7. Quando titulo_tarefa e descricao estiverem vazios, o sistema cria automaticamente uma demanda profissional de agendamento e confirmação.'],
-    ['8. A aba "Modelo Horizontal" continua disponivel apenas como referencia e compatibilidade com planilhas antigas.']
+    ['2. O template foi reduzido para os mesmos campos visíveis na agenda externa: ID, Nome Completo, Consulta, Status, Especialidade, Dentista e Canal.'],
+    ['3. A data da agenda deve ser informada uma única vez no importador do sistema, no campo "Data da agenda".'],
+    ['4. No campo "consulta", informe apenas o horário no formato HH:MM, como aparece na agenda externa.'],
+    ['5. A unidade continua sendo escolhida no sistema no campo "Unidade da planilha".'],
+    ['6. A aba "Modelo Horizontal" continua disponivel apenas como referencia e compatibilidade com planilhas antigas.']
   ]);
   instructions['!cols'] = [{ wch: 110 }];
   XLSX.utils.book_append_sheet(workbook, instructions, 'Instrucoes');
@@ -25979,7 +25947,7 @@ app.post('/api/agenda/import/validate', authenticate, upload.single('file'), asy
 
     const importType = normalizeAgendaImportType(req.body?.import_type || req.body?.importType);
     const importedRows = applyAgendaImportSelectedClinic(
-      parseAgendaImportRowsFromUpload(req.file.path, req.file.originalname),
+      parseAgendaImportRowsFromUpload(req.file.path, req.file.originalname, req.body?.agenda_date || req.body?.agendaDate),
       selectedClinic
     );
 
@@ -26038,7 +26006,7 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
       return res.status(400).json({ error: 'Selecione a unidade da planilha antes de importar.' });
     }
     const importedRows = applyAgendaImportSelectedClinic(
-      parseAgendaImportRowsFromUpload(req.file.path, req.file.originalname),
+      parseAgendaImportRowsFromUpload(req.file.path, req.file.originalname, req.body?.agenda_date || req.body?.agendaDate),
       selectedClinic
     );
 
@@ -34076,6 +34044,7 @@ module.exports = {
     buildAgendaVisibilityWhere,
     canImportAgendaWorkbook,
     canReplicateAgendaItems,
+    applyAgendaImportSelectedDate,
     normalizeAgendaRecurrenceWeekdays,
     fillPartnerVideoTemplate,
     partnerVideoContactCoversClinic,

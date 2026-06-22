@@ -110,6 +110,7 @@ const emptyImportDraft = {
   import_type: 'patient_agenda',
   duplicate_strategy: 'ignore',
   clinic_id: '',
+  agenda_date: '',
   default_assigned_user_id: '',
   create_tasks: true,
   dispatch_whatsapp: false,
@@ -1173,6 +1174,10 @@ export default function AgendaPage() {
       setFeedback('Selecione a unidade da planilha antes de validar.');
       return null;
     }
+    if (!importDraft.agenda_date) {
+      setFeedback('Informe a data da agenda antes de validar.');
+      return null;
+    }
 
     setValidatingImport(true);
     setFeedback('');
@@ -1183,6 +1188,7 @@ export default function AgendaPage() {
       formData.append('file', importDraft.file);
       formData.append('import_type', importDraft.import_type);
       formData.append('campaign_clinic_id', importDraft.clinic_id);
+      formData.append('agenda_date', importDraft.agenda_date);
       if (importDraft.default_assigned_user_id) {
         formData.append('default_assigned_user_id', importDraft.default_assigned_user_id);
       }
@@ -1217,6 +1223,10 @@ export default function AgendaPage() {
       setFeedback('Selecione a unidade da planilha antes de importar.');
       return;
     }
+    if (!importDraft.agenda_date) {
+      setFeedback('Informe a data da agenda antes de importar.');
+      return;
+    }
 
     const validation = importValidation || await validateImport();
     if (!validation) {
@@ -1239,6 +1249,7 @@ export default function AgendaPage() {
       formData.append('create_tasks', importDraft.create_tasks ? 'true' : 'false');
       formData.append('dispatch_whatsapp', importDraft.dispatch_whatsapp ? 'true' : 'false');
       formData.append('campaign_clinic_id', importDraft.clinic_id);
+      formData.append('agenda_date', importDraft.agenda_date);
       if (importDraft.default_assigned_user_id) {
         formData.append('default_assigned_user_id', importDraft.default_assigned_user_id);
       }
@@ -2071,6 +2082,16 @@ export default function AgendaPage() {
                     <option key={user.id} value={user.id}>{formatAgendaUserOption(user)}</option>
                   ))}
                 </select>
+              </label>
+              <label>
+                Data da agenda
+                <input
+                  className="field"
+                  type="date"
+                  value={importDraft.agenda_date}
+                  onChange={(event) => updateImportDraft('agenda_date', event.target.value)}
+                />
+                <small>Essa data sera aplicada a todos os pacientes do template vertical.</small>
               </label>
               <label>
                 Duplicidade

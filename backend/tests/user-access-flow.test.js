@@ -2232,18 +2232,15 @@ test('agenda import worksheet parser accepts vertical patient blocks', () => {
   const rows = serverModule.__testables.parseAgendaImportRowsFromWorksheetRows([
     { campo: 'id_externo', valor: 'Q9MC7' },
     { campo: 'nome_paciente', valor: 'Maria Helena Ramos Da Silva' },
-    { campo: 'telefone', valor: '5562999991111' },
-    { campo: 'data_consulta', valor: '12/06/2026' },
-    { campo: 'hora_consulta', valor: '14:00' },
+    { campo: 'consulta', valor: '14:00' },
     { campo: 'status', valor: 'Confirmado' },
     { campo: 'especialidade', valor: 'Primeira Avaliacao' },
     { campo: 'dentista', valor: 'Nao Especificado' },
     { campo: 'canal', valor: 'Internet' },
-    { campo: 'observacao', valor: 'Paciente copiado em bloco vertical.' },
     {},
     { campo: 'id_externo', valor: 'VMC7V' },
     { campo: 'nome_paciente', valor: 'Henrique Sampaio Da Costa' },
-    { campo: 'hora_consulta', valor: '15:00' }
+    { campo: 'consulta', valor: '15:00' }
   ]);
 
   assert.equal(rows.length, 2);
@@ -2253,7 +2250,26 @@ test('agenda import worksheet parser accepts vertical patient blocks', () => {
   assert.equal(rows[0].line, 2);
   assert.equal(rows[1].source_external_id, 'VMC7V');
   assert.equal(rows[1].patient_name, 'HENRIQUE SAMPAIO DA COSTA');
-  assert.equal(rows[1].line, 13);
+  assert.equal(rows[1].line, 10);
+});
+
+test('agenda import applies one agenda date to vertical rows with consulta hour', () => {
+  const parsedRows = serverModule.__testables.parseAgendaImportRowsFromWorksheetRows([
+    { campo: 'id_externo', valor: 'GSSFE' },
+    { campo: 'nome_paciente', valor: 'Michele Encarnacao De Carvalho' },
+    { campo: 'consulta', valor: '08:45' },
+    { campo: 'status', valor: 'Confirmado' },
+    { campo: 'especialidade', valor: 'Ortodontia' },
+    { campo: 'dentista', valor: 'Nao Especificado' },
+    { campo: 'canal', valor: 'Indicacao' }
+  ]);
+  const rows = serverModule.__testables.applyAgendaImportSelectedDate(parsedRows, '2026-06-22');
+
+  assert.equal(rows[0].data_consulta, '22/06/2026');
+  assert.equal(rows[0].hora_consulta, '08:45');
+  assert.equal(rows[0].due_at, '2026-06-22 08:45:00');
+  assert.equal(rows[0].patient_scheduled_at, '2026-06-22 08:45:00');
+  assert.equal(rows[0].patient_has_scheduled, true);
 });
 
 test('responsible user execution stores completion timestamp for recurring agenda item', async () => {
