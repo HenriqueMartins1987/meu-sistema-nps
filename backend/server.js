@@ -25576,12 +25576,20 @@ function parseAgendaImportRowsFromWorksheetRows(rows = []) {
   });
 }
 
+function resolveAgendaImportWorkbookSheetName(workbook) {
+  const sheetNames = Array.isArray(workbook?.SheetNames) ? workbook.SheetNames : [];
+  if (!sheetNames.length) return '';
+
+  const preferredSheet = sheetNames.find((name) => normalizeAgendaImportLookup(name) === normalizeAgendaImportLookup('Dados Organizados'));
+  return preferredSheet || sheetNames[0];
+}
+
 function parseAgendaImportRowsFromUpload(filePath, originalName = '', selectedDate = '') {
   const extension = String(path.extname(originalName || filePath || '')).trim().toLowerCase();
   if (['.xlsx', '.xls'].includes(extension)) {
     const workbook = readWorkbookFileSafely(filePath);
-    const firstSheetName = workbook.SheetNames[0];
-    const rows = sheetToSafeJsonRows(workbook.Sheets[firstSheetName] || {});
+    const targetSheetName = resolveAgendaImportWorkbookSheetName(workbook);
+    const rows = sheetToSafeJsonRows(workbook.Sheets[targetSheetName] || {});
     return applyAgendaImportSelectedDate(parseAgendaImportRowsFromWorksheetRows(rows), selectedDate);
   }
 
@@ -25658,6 +25666,26 @@ function buildAgendaImportTemplateBuffer() {
   directPasteSheet['!cols'] = [{ wch: 58 }];
   XLSX.utils.book_append_sheet(workbook, directPasteSheet, 'Colagem Direta');
 
+  const organizedRows = [agendaImportTemplateHeaders];
+  for (let rowIndex = 0; rowIndex < blockCount; rowIndex += 1) {
+    const baseOffset = rowIndex * agendaImportTemplateHeaders.length;
+    const formulaRow = agendaImportTemplateHeaders.map((_, columnIndex) => ({
+      f: `IFERROR(LET(fonte,'Colagem Direta'!$A$2:$A$720,itens,FILTER(fonte,(fonte<>"")*(fonte<>"mode_comment")*(fonte<>"more_horiz")),INDEX(itens,${baseOffset + columnIndex + 1})),"")`
+    }));
+    organizedRows.push(formulaRow);
+  }
+  const organizedSheet = XLSX.utils.aoa_to_sheet(organizedRows);
+  organizedSheet['!cols'] = [
+    { wch: 18 },
+    { wch: 34 },
+    { wch: 14 },
+    { wch: 18 },
+    { wch: 22 },
+    { wch: 22 },
+    { wch: 18 }
+  ];
+  XLSX.utils.book_append_sheet(workbook, organizedSheet, 'Dados Organizados');
+
   const exampleSheet = XLSX.utils.aoa_to_sheet([
     ['sequencia_real_copiada'],
     ['WHRV6'],
@@ -25687,9 +25715,9 @@ function buildAgendaImportTemplateBuffer() {
   const instructions = XLSX.utils.aoa_to_sheet([
     ['Como usar'],
     ['1. Use a aba "Colagem Direta" como modelo principal e cole tudo apenas na celula A2.'],
-    ['2. Essa aba foi criada para eliminar o desalinhamento visual entre pacientes, porque a agenda copiada nao tem uma quantidade fixa de linhas tecnicas entre blocos.'],
-    ['3. O sistema reconstrói automaticamente cada paciente pela sequência real dos valores colados: ID, Nome Completo, Consulta, Status, Especialidade, Dentista e Canal.'],
-    ['4. Nao use mais um template estruturado por linhas de campo, porque esse formato nao acompanha a variacao real da agenda copiada.'],
+    ['2. A aba "Dados Organizados" lê automaticamente a sequência da colagem e distribui os valores nas colunas corretas por fórmula.'],
+    ['3. Essa estrutura elimina o desalinhamento visual entre pacientes, porque a agenda copiada nao tem uma quantidade fixa de linhas tecnicas entre blocos.'],
+    ['4. O sistema prioriza a aba "Dados Organizados" na importacao, garantindo leitura correta mesmo quando a aba de colagem fica irregular.'],
     ['5. A data da agenda deve ser informada uma única vez no importador do sistema, no campo "Data da agenda".'],
     ['6. No campo "consulta", informe apenas o horário no formato HH:MM, como aparece na agenda externa.'],
     ['7. A unidade continua sendo escolhida no sistema no campo "Unidade da planilha".'],
@@ -34115,6 +34143,7 @@ module.exports = {
     normalizeUploadedOriginalName,
     parseBodyWithSchema,
     parseAgendaImportRowsFromWorksheetRows,
+    resolveAgendaImportWorkbookSheetName,
     persistUploadedFile,
     resolveStoredUploadFilePath,
     dispatchDailyCoordinatorDemandReminders,

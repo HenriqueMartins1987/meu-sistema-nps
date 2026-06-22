@@ -2344,6 +2344,19 @@ test('agenda import worksheet parser accepts direct paste value stream sheet', (
   assert.equal(rows[1].hora_consulta, '08:45');
 });
 
+test('agenda import prefers organized sheet when workbook contains formula output tab', () => {
+  const preferredSheet = serverModule.__testables.resolveAgendaImportWorkbookSheetName({
+    SheetNames: ['Colagem Direta', 'Dados Organizados', 'Exemplo Real']
+  });
+
+  const fallbackSheet = serverModule.__testables.resolveAgendaImportWorkbookSheetName({
+    SheetNames: ['Colagem Direta', 'Exemplo Real']
+  });
+
+  assert.equal(preferredSheet, 'Dados Organizados');
+  assert.equal(fallbackSheet, 'Colagem Direta');
+});
+
 test('agenda import applies one agenda date to vertical rows with consulta hour', () => {
   const parsedRows = serverModule.__testables.parseAgendaImportRowsFromWorksheetRows([
     { campo: 'id_externo', valor: 'GSSFE' },
