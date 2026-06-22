@@ -2263,7 +2263,8 @@ test('agenda import worksheet parser ignores copied interface rows between verti
     { campo: 'dentista', valor: 'Follow up' },
     { campo: 'canal', valor: 'Fachada' },
     { campo: 'ignorar_interface_1', valor: 'mode_comment' },
-    { campo: 'ignorar_interface_2', valor: 'more_horiz' },
+    { campo: 'ignorar_interface_2', valor: '' },
+    { campo: 'ignorar_interface_3', valor: 'more_horiz' },
     { campo: 'id_externo', valor: 'GSSFE' },
     { campo: 'nome_paciente', valor: 'Michele Encarnacao De Carvalho' },
     { campo: 'consulta', valor: '08:45' },
@@ -2291,7 +2292,8 @@ test('agenda import worksheet parser rebuilds patients from pasted value stream 
     { campo: 'dentista', valor: 'Follow up' },
     { campo: 'canal', valor: 'Fachada' },
     { campo: 'ignorar_interface_1', valor: 'mode_comment' },
-    { campo: 'ignorar_interface_2', valor: 'more_horiz' },
+    { campo: 'ignorar_interface_2', valor: '' },
+    { campo: 'ignorar_interface_3', valor: 'more_horiz' },
     { campo: 'id_externo', valor: 'GSSFE' },
     { campo: 'nome_paciente', valor: 'Michele Encarnacao De Carvalho' },
     { campo: 'consulta', valor: '08:45' },
@@ -2300,7 +2302,8 @@ test('agenda import worksheet parser rebuilds patients from pasted value stream 
     { campo: 'dentista', valor: 'Nao Especificado' },
     { campo: 'canal', valor: 'Indicacao' },
     { campo: 'ignorar_interface_1', valor: 'mode_comment' },
-    { campo: 'ignorar_interface_2', valor: 'more_horiz' }
+    { campo: 'ignorar_interface_2', valor: '' },
+    { campo: 'ignorar_interface_3', valor: 'more_horiz' }
   ]);
 
   assert.equal(rows.length, 2);
