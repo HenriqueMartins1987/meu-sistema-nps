@@ -25650,7 +25650,7 @@ function resolveAgendaImportAssignee(directory, row = {}, defaultAssignee = null
 function buildAgendaImportTemplateBuffer() {
   const workbook = XLSX.utils.book_new();
   const blockCount = 60;
-  const directPasteRows = [['valor']];
+  const directPasteRows = [['cole_tudo_na_coluna_a']];
   for (let index = 0; index < blockCount * 12; index += 1) {
     directPasteRows.push(['']);
   }
@@ -25658,59 +25658,42 @@ function buildAgendaImportTemplateBuffer() {
   directPasteSheet['!cols'] = [{ wch: 58 }];
   XLSX.utils.book_append_sheet(workbook, directPasteSheet, 'Colagem Direta');
 
-  const verticalRows = [['campo', 'valor']];
-
-  for (let index = 0; index < blockCount; index += 1) {
-    agendaImportTemplateHeaders.forEach((header) => {
-      verticalRows.push([header, '']);
-    });
-    agendaImportTemplateSpacerRows.forEach((header) => {
-      verticalRows.push([header, '']);
-    });
-  }
-
-  const sheet = XLSX.utils.aoa_to_sheet(verticalRows);
-  sheet['!cols'] = [{ wch: 28 }, { wch: 58 }];
-  XLSX.utils.book_append_sheet(workbook, sheet, 'Referencia Estruturada');
-
   const exampleSheet = XLSX.utils.aoa_to_sheet([
-    ['campo', 'valor'],
-    ['id_externo', 'WHRV6'],
-    ['nome_paciente', 'Lidiane Freitas Cardoso'],
-    ['consulta', '08:15'],
-    ['status', 'A Confirmar'],
-    ['especialidade', 'Reavaliacao'],
-    ['dentista', 'Follow up'],
-    ['canal', 'Fachada'],
-    ['ignorar_interface_1', 'mode_comment'],
-    ['ignorar_interface_2', ''],
-    ['ignorar_interface_3', 'more_horiz'],
-    ['ignorar_interface_4', ''],
-    ['id_externo', 'GSSFE'],
-    ['nome_paciente', 'Michele Encarnacao De Carvalho'],
-    ['consulta', '08:45'],
-    ['status', 'Confirmado'],
-    ['especialidade', 'Ortodontia'],
-    ['dentista', 'Nao Especificado'],
-    ['canal', 'Indicacao'],
-    ['ignorar_interface_1', 'mode_comment'],
-    ['ignorar_interface_2', ''],
-    ['ignorar_interface_3', 'more_horiz'],
-    ['ignorar_interface_4', '']
+    ['sequencia_real_copiada'],
+    ['WHRV6'],
+    ['Lidiane Freitas Cardoso'],
+    ['08:15'],
+    ['A Confirmar'],
+    ['Reavaliacao'],
+    ['Follow up'],
+    ['Fachada'],
+    ['mode_comment'],
+    [''],
+    ['more_horiz'],
+    ['GSSFE'],
+    ['Michele Encarnacao De Carvalho'],
+    ['08:45'],
+    ['Confirmado'],
+    ['Ortodontia'],
+    ['Nao Especificado'],
+    ['Indicacao'],
+    ['mode_comment'],
+    [''],
+    ['more_horiz']
   ]);
-  exampleSheet['!cols'] = [{ wch: 28 }, { wch: 42 }];
-  XLSX.utils.book_append_sheet(workbook, exampleSheet, 'Exemplo de Colagem');
+  exampleSheet['!cols'] = [{ wch: 42 }];
+  XLSX.utils.book_append_sheet(workbook, exampleSheet, 'Exemplo Real');
 
   const instructions = XLSX.utils.aoa_to_sheet([
     ['Como usar'],
     ['1. Use a aba "Colagem Direta" como modelo principal e cole tudo apenas na celula A2.'],
     ['2. Essa aba foi criada para eliminar o desalinhamento visual entre pacientes, porque a agenda copiada nao tem uma quantidade fixa de linhas tecnicas entre blocos.'],
     ['3. O sistema reconstrói automaticamente cada paciente pela sequência real dos valores colados: ID, Nome Completo, Consulta, Status, Especialidade, Dentista e Canal.'],
-    ['4. A aba "Referencia Estruturada" foi mantida apenas como apoio visual, mas nao deve ser a aba principal de colagem.'],
+    ['4. Nao use mais um template estruturado por linhas de campo, porque esse formato nao acompanha a variacao real da agenda copiada.'],
     ['5. A data da agenda deve ser informada uma única vez no importador do sistema, no campo "Data da agenda".'],
     ['6. No campo "consulta", informe apenas o horário no formato HH:MM, como aparece na agenda externa.'],
     ['7. A unidade continua sendo escolhida no sistema no campo "Unidade da planilha".'],
-    ['8. Use a aba "Exemplo de Colagem" apenas como referência visual de como a sequência copiada pode chegar da agenda externa.']
+    ['8. Use a aba "Exemplo Real" apenas como referência visual da sequência efetiva que vem da agenda externa.']
   ]);
   instructions['!cols'] = [{ wch: 110 }];
   XLSX.utils.book_append_sheet(workbook, instructions, 'Instrucoes');
