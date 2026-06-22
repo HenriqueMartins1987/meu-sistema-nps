@@ -25257,6 +25257,11 @@ const agendaImportTemplateHeaders = [
   'dentista',
   'canal'
 ];
+const agendaImportTemplateSpacerRows = [
+  'ignorar_interface_1',
+  'ignorar_interface_2',
+  'ignorar_interface_3'
+];
 
 const agendaImportFieldAliases = {
   id_externo: ['id_externo', 'external_id'],
@@ -25571,8 +25576,9 @@ function buildAgendaImportTemplateBuffer() {
     agendaImportTemplateHeaders.forEach((header) => {
       verticalRows.push([header, '']);
     });
-    verticalRows.push(['', '']);
-    verticalRows.push(['', '']);
+    agendaImportTemplateSpacerRows.forEach((header) => {
+      verticalRows.push([header, '']);
+    });
   }
 
   const sheet = XLSX.utils.aoa_to_sheet(verticalRows);
@@ -25588,8 +25594,9 @@ function buildAgendaImportTemplateBuffer() {
     ['especialidade', 'Reavaliacao'],
     ['dentista', 'Follow up'],
     ['canal', 'Fachada'],
-    ['', 'mode_comment'],
-    ['', 'more_horiz'],
+    ['ignorar_interface_1', 'mode_comment'],
+    ['ignorar_interface_2', ''],
+    ['ignorar_interface_3', 'more_horiz'],
     ['id_externo', 'GSSFE'],
     ['nome_paciente', 'Michele Encarnacao De Carvalho'],
     ['consulta', '08:45'],
@@ -25597,8 +25604,9 @@ function buildAgendaImportTemplateBuffer() {
     ['especialidade', 'Ortodontia'],
     ['dentista', 'Nao Especificado'],
     ['canal', 'Indicacao'],
-    ['', 'mode_comment'],
-    ['', 'more_horiz']
+    ['ignorar_interface_1', 'mode_comment'],
+    ['ignorar_interface_2', ''],
+    ['ignorar_interface_3', 'more_horiz']
   ]);
   exampleSheet['!cols'] = [{ wch: 28 }, { wch: 42 }];
   XLSX.utils.book_append_sheet(workbook, exampleSheet, 'Exemplo de Colagem');
@@ -25607,7 +25615,7 @@ function buildAgendaImportTemplateBuffer() {
     ['Como usar'],
     ['1. Use a aba "Agenda Vertical" para colar os dados diretamente na coluna B, um item por linha.'],
     ['2. O template foi reduzido para os mesmos campos visíveis na agenda externa: ID, Nome Completo, Consulta, Status, Especialidade, Dentista e Canal.'],
-    ['3. O template principal já repete os blocos e reserva duas linhas extras entre pacientes para absorver textos de interface copiados junto, como mode_comment e more_horiz.'],
+    ['3. O template principal já repete os blocos e reserva três linhas técnicas entre pacientes para absorver textos de interface copiados junto, como mode_comment e more_horiz.'],
     ['4. A data da agenda deve ser informada uma única vez no importador do sistema, no campo "Data da agenda".'],
     ['5. No campo "consulta", informe apenas o horário no formato HH:MM, como aparece na agenda externa.'],
     ['6. A unidade continua sendo escolhida no sistema no campo "Unidade da planilha".'],
