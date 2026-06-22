@@ -2253,6 +2253,34 @@ test('agenda import worksheet parser accepts vertical patient blocks', () => {
   assert.equal(rows[1].line, 10);
 });
 
+test('agenda import worksheet parser ignores copied interface rows between vertical patients', () => {
+  const rows = serverModule.__testables.parseAgendaImportRowsFromWorksheetRows([
+    { campo: 'id_externo', valor: 'WHRV6' },
+    { campo: 'nome_paciente', valor: 'Lidiane Freitas Cardoso' },
+    { campo: 'consulta', valor: '08:15' },
+    { campo: 'status', valor: 'A Confirmar' },
+    { campo: 'especialidade', valor: 'Reavaliacao' },
+    { campo: 'dentista', valor: 'Follow up' },
+    { campo: 'canal', valor: 'Fachada' },
+    { campo: '', valor: 'mode_comment' },
+    { campo: '', valor: 'more_horiz' },
+    { campo: 'id_externo', valor: 'GSSFE' },
+    { campo: 'nome_paciente', valor: 'Michele Encarnacao De Carvalho' },
+    { campo: 'consulta', valor: '08:45' },
+    { campo: 'status', valor: 'Confirmado' },
+    { campo: 'especialidade', valor: 'Ortodontia' },
+    { campo: 'dentista', valor: 'Nao Especificado' },
+    { campo: 'canal', valor: 'Indicacao' }
+  ]);
+
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].source_external_id, 'WHRV6');
+  assert.equal(rows[0].patient_name, 'LIDIANE FREITAS CARDOSO');
+  assert.equal(rows[1].source_external_id, 'GSSFE');
+  assert.equal(rows[1].patient_name, 'MICHELE ENCARNACAO DE CARVALHO');
+  assert.equal(rows[1].hora_consulta, '08:45');
+});
+
 test('agenda import applies one agenda date to vertical rows with consulta hour', () => {
   const parsedRows = serverModule.__testables.parseAgendaImportRowsFromWorksheetRows([
     { campo: 'id_externo', valor: 'GSSFE' },

@@ -25564,52 +25564,54 @@ function resolveAgendaImportAssignee(directory, row = {}, defaultAssignee = null
 
 function buildAgendaImportTemplateBuffer() {
   const workbook = XLSX.utils.book_new();
-  const verticalExample = {
-    id_externo: 'CRC-0001',
-    nome_paciente: 'Maria Silva',
-    consulta: '10:00',
-    status: 'A Confirmar',
-    especialidade: 'Avaliacao',
-    dentista: 'Dr. Henrique',
-    canal: 'Fachada'
-  };
-  const emptyVerticalRecord = agendaImportTemplateHeaders.reduce((acc, header) => {
-    acc[header] = '';
-    return acc;
-  }, {});
-  const verticalRows = [
-    ['campo', 'valor'],
-    ...agendaImportTemplateHeaders.map((header) => [header, verticalExample[header] || '']),
-    [],
-    ...agendaImportTemplateHeaders.map((header) => [header, emptyVerticalRecord[header] || ''])
-  ];
+  const blockCount = 60;
+  const verticalRows = [['campo', 'valor']];
+
+  for (let index = 0; index < blockCount; index += 1) {
+    agendaImportTemplateHeaders.forEach((header) => {
+      verticalRows.push([header, '']);
+    });
+    verticalRows.push(['', '']);
+    verticalRows.push(['', '']);
+  }
+
   const sheet = XLSX.utils.aoa_to_sheet(verticalRows);
   sheet['!cols'] = [{ wch: 28 }, { wch: 58 }];
   XLSX.utils.book_append_sheet(workbook, sheet, 'Agenda Vertical');
 
   const exampleSheet = XLSX.utils.aoa_to_sheet([
-    agendaImportTemplateHeaders,
-    [
-      'CRC-0001',
-      'Maria Silva',
-      '10:00',
-      'A Confirmar',
-      'Avaliacao',
-      'Dr. Henrique',
-      'Fachada'
-    ]
+    ['campo', 'valor'],
+    ['id_externo', 'WHRV6'],
+    ['nome_paciente', 'Lidiane Freitas Cardoso'],
+    ['consulta', '08:15'],
+    ['status', 'A Confirmar'],
+    ['especialidade', 'Reavaliacao'],
+    ['dentista', 'Follow up'],
+    ['canal', 'Fachada'],
+    ['', 'mode_comment'],
+    ['', 'more_horiz'],
+    ['id_externo', 'GSSFE'],
+    ['nome_paciente', 'Michele Encarnacao De Carvalho'],
+    ['consulta', '08:45'],
+    ['status', 'Confirmado'],
+    ['especialidade', 'Ortodontia'],
+    ['dentista', 'Nao Especificado'],
+    ['canal', 'Indicacao'],
+    ['', 'mode_comment'],
+    ['', 'more_horiz']
   ]);
-  exampleSheet['!cols'] = agendaImportTemplateHeaders.map((header) => ({ wch: Math.max(16, header.length + 4) }));
-  XLSX.utils.book_append_sheet(workbook, exampleSheet, 'Modelo Horizontal');
+  exampleSheet['!cols'] = [{ wch: 28 }, { wch: 42 }];
+  XLSX.utils.book_append_sheet(workbook, exampleSheet, 'Exemplo de Colagem');
 
   const instructions = XLSX.utils.aoa_to_sheet([
     ['Como usar'],
-    ['1. Use a aba "Agenda Vertical" para colar um paciente por bloco, no formato campo/valor, preenchendo a coluna B.'],
+    ['1. Use a aba "Agenda Vertical" para colar os dados diretamente na coluna B, um item por linha.'],
     ['2. O template foi reduzido para os mesmos campos visíveis na agenda externa: ID, Nome Completo, Consulta, Status, Especialidade, Dentista e Canal.'],
-    ['3. A data da agenda deve ser informada uma única vez no importador do sistema, no campo "Data da agenda".'],
-    ['4. No campo "consulta", informe apenas o horário no formato HH:MM, como aparece na agenda externa.'],
-    ['5. A unidade continua sendo escolhida no sistema no campo "Unidade da planilha".'],
-    ['6. A aba "Modelo Horizontal" continua disponivel apenas como referencia e compatibilidade com planilhas antigas.']
+    ['3. O template principal já repete os blocos e reserva duas linhas extras entre pacientes para absorver textos de interface copiados junto, como mode_comment e more_horiz.'],
+    ['4. A data da agenda deve ser informada uma única vez no importador do sistema, no campo "Data da agenda".'],
+    ['5. No campo "consulta", informe apenas o horário no formato HH:MM, como aparece na agenda externa.'],
+    ['6. A unidade continua sendo escolhida no sistema no campo "Unidade da planilha".'],
+    ['7. Use a aba "Exemplo de Colagem" apenas como referência visual de como a coluna B pode ficar após o copiar e colar.']
   ]);
   instructions['!cols'] = [{ wch: 110 }];
   XLSX.utils.book_append_sheet(workbook, instructions, 'Instrucoes');
