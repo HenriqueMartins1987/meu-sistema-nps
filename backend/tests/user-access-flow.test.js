@@ -2263,8 +2263,7 @@ test('agenda import worksheet parser ignores copied interface rows between verti
     { campo: 'dentista', valor: 'Follow up' },
     { campo: 'canal', valor: 'Fachada' },
     { campo: 'ignorar_interface_1', valor: 'mode_comment' },
-    { campo: 'ignorar_interface_2', valor: '' },
-    { campo: 'ignorar_interface_3', valor: 'more_horiz' },
+    { campo: 'ignorar_interface_2', valor: 'more_horiz' },
     { campo: 'id_externo', valor: 'GSSFE' },
     { campo: 'nome_paciente', valor: 'Michele Encarnacao De Carvalho' },
     { campo: 'consulta', valor: '08:45' },
@@ -2277,6 +2276,37 @@ test('agenda import worksheet parser ignores copied interface rows between verti
   assert.equal(rows.length, 2);
   assert.equal(rows[0].source_external_id, 'WHRV6');
   assert.equal(rows[0].patient_name, 'LIDIANE FREITAS CARDOSO');
+  assert.equal(rows[1].source_external_id, 'GSSFE');
+  assert.equal(rows[1].patient_name, 'MICHELE ENCARNACAO DE CARVALHO');
+  assert.equal(rows[1].hora_consulta, '08:45');
+});
+
+test('agenda import worksheet parser rebuilds patients from pasted value stream even when labels look misaligned', () => {
+  const rows = serverModule.__testables.parseAgendaImportRowsFromWorksheetRows([
+    { campo: 'id_externo', valor: 'WHRV6' },
+    { campo: 'nome_paciente', valor: 'Lidiane Freitas Cardoso' },
+    { campo: 'consulta', valor: '08:15' },
+    { campo: 'status', valor: 'A Confirmar' },
+    { campo: 'especialidade', valor: 'Reavaliacao' },
+    { campo: 'dentista', valor: 'Follow up' },
+    { campo: 'canal', valor: 'Fachada' },
+    { campo: 'ignorar_interface_1', valor: 'mode_comment' },
+    { campo: 'ignorar_interface_2', valor: 'more_horiz' },
+    { campo: 'id_externo', valor: 'GSSFE' },
+    { campo: 'nome_paciente', valor: 'Michele Encarnacao De Carvalho' },
+    { campo: 'consulta', valor: '08:45' },
+    { campo: 'status', valor: 'Confirmado' },
+    { campo: 'especialidade', valor: 'Ortodontia' },
+    { campo: 'dentista', valor: 'Nao Especificado' },
+    { campo: 'canal', valor: 'Indicacao' },
+    { campo: 'ignorar_interface_1', valor: 'mode_comment' },
+    { campo: 'ignorar_interface_2', valor: 'more_horiz' }
+  ]);
+
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].source_external_id, 'WHRV6');
+  assert.equal(rows[0].patient_name, 'LIDIANE FREITAS CARDOSO');
+  assert.equal(rows[0].hora_consulta, '08:15');
   assert.equal(rows[1].source_external_id, 'GSSFE');
   assert.equal(rows[1].patient_name, 'MICHELE ENCARNACAO DE CARVALHO');
   assert.equal(rows[1].hora_consulta, '08:45');

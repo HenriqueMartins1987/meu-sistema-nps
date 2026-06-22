@@ -25259,9 +25259,13 @@ const agendaImportTemplateHeaders = [
 ];
 const agendaImportTemplateSpacerRows = [
   'ignorar_interface_1',
-  'ignorar_interface_2',
-  'ignorar_interface_3'
+  'ignorar_interface_2'
 ];
+
+const agendaImportVerticalIgnoredValueTokens = new Set([
+  'mode.comment',
+  'more.horiz'
+]);
 
 const agendaImportFieldAliases = {
   id_externo: ['id_externo', 'external_id'],
@@ -25317,6 +25321,41 @@ function isAgendaVerticalWorksheetRows(rows = []) {
 }
 
 function normalizeAgendaVerticalWorksheetRows(rows = []) {
+  const shouldUseValueStream = rows.some((row) => {
+    const value = getWorksheetRowValue(row, ['valor', 'value', 'dado', 'conteudo', 'conteúdo', 'informacao', 'informação']);
+    return agendaImportVerticalIgnoredValueTokens.has(normalizeAgendaImportLookup(value));
+  });
+
+  const normalizedValueStream = rows
+    .map((row) => getWorksheetRowValue(row, ['valor', 'value', 'dado', 'conteudo', 'conteúdo', 'informacao', 'informação']))
+    .map((value) => (value === null || typeof value === 'undefined' ? '' : String(value).trim()))
+    .filter((value) => value && !agendaImportVerticalIgnoredValueTokens.has(normalizeAgendaImportLookup(value)));
+
+  if (shouldUseValueStream && normalizedValueStream.length >= agendaImportTemplateHeaders.length) {
+    const streamRows = [];
+
+    for (let index = 0; index < normalizedValueStream.length; index += agendaImportTemplateHeaders.length) {
+      const chunk = normalizedValueStream.slice(index, index + agendaImportTemplateHeaders.length);
+      if (chunk.length < agendaImportTemplateHeaders.length) break;
+
+      const values = {};
+      agendaImportTemplateHeaders.forEach((header, chunkIndex) => {
+        values[header] = chunk[chunkIndex] || '';
+      });
+
+      if (Object.values(values).some((value) => String(value ?? '').trim() !== '')) {
+        streamRows.push({
+          __line: index + 2,
+          ...values
+        });
+      }
+    }
+
+    if (streamRows.length) {
+      return streamRows;
+    }
+  }
+
   const normalizedRows = [];
   let currentRow = null;
 
@@ -25595,8 +25634,7 @@ function buildAgendaImportTemplateBuffer() {
     ['dentista', 'Follow up'],
     ['canal', 'Fachada'],
     ['ignorar_interface_1', 'mode_comment'],
-    ['ignorar_interface_2', ''],
-    ['ignorar_interface_3', 'more_horiz'],
+    ['ignorar_interface_2', 'more_horiz'],
     ['id_externo', 'GSSFE'],
     ['nome_paciente', 'Michele Encarnacao De Carvalho'],
     ['consulta', '08:45'],
@@ -25605,8 +25643,7 @@ function buildAgendaImportTemplateBuffer() {
     ['dentista', 'Nao Especificado'],
     ['canal', 'Indicacao'],
     ['ignorar_interface_1', 'mode_comment'],
-    ['ignorar_interface_2', ''],
-    ['ignorar_interface_3', 'more_horiz']
+    ['ignorar_interface_2', 'more_horiz']
   ]);
   exampleSheet['!cols'] = [{ wch: 28 }, { wch: 42 }];
   XLSX.utils.book_append_sheet(workbook, exampleSheet, 'Exemplo de Colagem');
@@ -25615,11 +25652,12 @@ function buildAgendaImportTemplateBuffer() {
     ['Como usar'],
     ['1. Use a aba "Agenda Vertical" para colar os dados diretamente na coluna B, um item por linha.'],
     ['2. O template foi reduzido para os mesmos campos visíveis na agenda externa: ID, Nome Completo, Consulta, Status, Especialidade, Dentista e Canal.'],
-    ['3. O template principal já repete os blocos e reserva três linhas técnicas entre pacientes para absorver textos de interface copiados junto, como mode_comment e more_horiz.'],
-    ['4. A data da agenda deve ser informada uma única vez no importador do sistema, no campo "Data da agenda".'],
-    ['5. No campo "consulta", informe apenas o horário no formato HH:MM, como aparece na agenda externa.'],
-    ['6. A unidade continua sendo escolhida no sistema no campo "Unidade da planilha".'],
-    ['7. Use a aba "Exemplo de Colagem" apenas como referência visual de como a coluna B pode ficar após o copiar e colar.']
+    ['3. O template principal reserva duas linhas técnicas entre pacientes para refletir os marcadores reais copiados da interface.'],
+    ['4. O importador reconstrói cada paciente pela sequência real dos valores colados, mesmo se a visualização da planilha parecer desalinhada.'],
+    ['5. A data da agenda deve ser informada uma única vez no importador do sistema, no campo "Data da agenda".'],
+    ['6. No campo "consulta", informe apenas o horário no formato HH:MM, como aparece na agenda externa.'],
+    ['7. A unidade continua sendo escolhida no sistema no campo "Unidade da planilha".'],
+    ['8. Use a aba "Exemplo de Colagem" apenas como referência visual de como a coluna B pode ficar após o copiar e colar.']
   ]);
   instructions['!cols'] = [{ wch: 110 }];
   XLSX.utils.book_append_sheet(workbook, instructions, 'Instrucoes');
