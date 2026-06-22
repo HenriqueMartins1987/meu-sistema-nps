@@ -25260,7 +25260,8 @@ const agendaImportTemplateHeaders = [
 const agendaImportTemplateSpacerRows = [
   'ignorar_interface_1',
   'ignorar_interface_2',
-  'ignorar_interface_3'
+  'ignorar_interface_3',
+  'ignorar_interface_4'
 ];
 
 const agendaImportVerticalIgnoredValueTokens = new Set([
@@ -25637,6 +25638,7 @@ function buildAgendaImportTemplateBuffer() {
     ['ignorar_interface_1', 'mode_comment'],
     ['ignorar_interface_2', ''],
     ['ignorar_interface_3', 'more_horiz'],
+    ['ignorar_interface_4', ''],
     ['id_externo', 'GSSFE'],
     ['nome_paciente', 'Michele Encarnacao De Carvalho'],
     ['consulta', '08:45'],
@@ -25646,7 +25648,8 @@ function buildAgendaImportTemplateBuffer() {
     ['canal', 'Indicacao'],
     ['ignorar_interface_1', 'mode_comment'],
     ['ignorar_interface_2', ''],
-    ['ignorar_interface_3', 'more_horiz']
+    ['ignorar_interface_3', 'more_horiz'],
+    ['ignorar_interface_4', '']
   ]);
   exampleSheet['!cols'] = [{ wch: 28 }, { wch: 42 }];
   XLSX.utils.book_append_sheet(workbook, exampleSheet, 'Exemplo de Colagem');
@@ -25655,7 +25658,7 @@ function buildAgendaImportTemplateBuffer() {
     ['Como usar'],
     ['1. Use a aba "Agenda Vertical" para colar os dados diretamente na coluna B, um item por linha.'],
     ['2. O template foi reduzido para os mesmos campos visíveis na agenda externa: ID, Nome Completo, Consulta, Status, Especialidade, Dentista e Canal.'],
-    ['3. O template principal reserva tres linhas tecnicas entre pacientes para refletir a sequencia real copiada da interface: mode_comment, linha vazia e more_horiz.'],
+    ['3. O template principal reserva quatro linhas tecnicas entre pacientes para manter a colagem visualmente organizada a partir do segundo paciente.'],
     ['4. O importador reconstrói cada paciente pela sequência real dos valores colados, mesmo se a visualização da planilha parecer desalinhada.'],
     ['5. A data da agenda deve ser informada uma única vez no importador do sistema, no campo "Data da agenda".'],
     ['6. No campo "consulta", informe apenas o horário no formato HH:MM, como aparece na agenda externa.'],
