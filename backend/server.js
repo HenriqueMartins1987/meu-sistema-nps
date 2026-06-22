@@ -5391,6 +5391,9 @@ async function ensureDatabaseSchema() {
   await ensureColumn('agenda_items', 'completed_at', 'DATETIME NULL');
   await ensureColumn('agenda_items', 'completed_by_user_id', 'INT NULL');
   await ensureColumn('agenda_items', 'completed_by_name', 'VARCHAR(180) NULL');
+  await ensureColumn('agenda_items', 'deleted_by_name', 'VARCHAR(160) NULL');
+  await ensureColumn('agenda_items', 'deleted_by_role', 'VARCHAR(80) NULL');
+  await ensureColumn('agenda_items', 'deletion_reason', 'TEXT NULL');
   await ensureIndex('agenda_items', 'idx_agenda_company_status', 'INDEX idx_agenda_company_status (company_id, status)');
   await ensureIndex('agenda_items', 'idx_agenda_assigned_status', 'INDEX idx_agenda_assigned_status (assigned_user_id, status)');
 
@@ -27328,11 +27331,17 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
 
 app.delete('/api/agenda/items/:id', authenticate, async (req, res) => {
   try {
-    if (!isMasterAdminUser(req.user)) {
-      return res.status(403).json({ error: 'Apenas o Administrador Master pode excluir itens da agenda.' });
-    }
-
-    const [currentRows] = await pool.query('SELECT * FROM agenda_items WHERE id = ? AND deleted_at IS NULL LIMIT 1', [req.params.id]);
+    const visibility = buildAgendaVisibilityWhere(req.user);
+    const deletionReason = sanitizeFinancialString(req.body?.reason || req.query?.reason, 300) || 'Exclusao manual do item da agenda';
+    const [currentRows] = await pool.query(
+      `SELECT *
+         FROM agenda_items
+        WHERE id = ?
+          AND deleted_at IS NULL
+          AND ${visibility.sql}
+        LIMIT 1`,
+      [req.params.id, ...visibility.params]
+    );
     if (!currentRows.length) {
       return res.status(404).json({ error: 'Item da agenda não encontrado.' });
     }
@@ -27340,10 +27349,18 @@ app.delete('/api/agenda/items/:id', authenticate, async (req, res) => {
     const [result] = await pool.query(
       `UPDATE agenda_items
           SET deleted_at = NOW(),
+              deleted_by_name = ?,
+              deleted_by_role = ?,
+              deletion_reason = ?,
               updated_at = NOW()
         WHERE id = ?
           AND deleted_at IS NULL`,
-      [req.params.id]
+      [
+        getActorName(req.user),
+        normalizeAccessRole(req.user?.role) || req.user?.role || null,
+        deletionReason,
+        req.params.id
+      ]
     );
 
     if (!result?.affectedRows) {
@@ -27360,7 +27377,7 @@ app.delete('/api/agenda/items/:id', authenticate, async (req, res) => {
       recordId: req.params.id,
       previousValue: currentRows[0],
       metadata: {
-        reason: sanitizeFinancialString(req.body?.reason || req.query?.reason, 300) || 'Exclusao manual do item da agenda'
+        reason: deletionReason
       },
       origin: 'agenda'
     });

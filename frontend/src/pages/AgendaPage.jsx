@@ -513,6 +513,8 @@ function AgendaCard({ item, currentUserId, onOpen, onStatus, onDragStart }) {
       <div className="agenda-card-secondary-meta">
         {item.demand_type === 'patient' ? <small>{getAgendaDemandTypeLabel(item.demand_type)}</small> : null}
         {item.demand_type === 'patient' ? <small>{getAgendaConfirmationStatusLabel(item.confirmation_status)}</small> : null}
+        {item.patient_specialty ? <small>{item.patient_specialty}</small> : null}
+        {item.patient_channel ? <small>{item.patient_channel}</small> : null}
       </div>
       <div className="agenda-assignee">
         <div>
@@ -555,7 +557,7 @@ function AgendaCard({ item, currentUserId, onOpen, onStatus, onDragStart }) {
 export default function AgendaPage() {
   const currentUser = useMemo(() => readUser(), []);
   const currentUserId = String(currentUser?.id || '');
-  const canDeleteAgendaItem = isMasterAdmin(currentUser);
+  const canDeleteAgendaItem = Boolean(currentUser?.id);
   const canUseAgendaAnalytics = canAccessAgendaAnalytics(currentUser);
   const canUseAgendaImportPanel = canUseAgendaImport(currentUser);
   const canUseAgendaConfirmationPanel = canUseAgendaConfirmationMonitor(currentUser);
@@ -927,6 +929,27 @@ export default function AgendaPage() {
     { label: 'Rotinas recorrentes', value: dashboard?.summary?.recurring || 0, helper: 'voltam automaticamente ao fluxo', tone: 'neutral' }
   ]), [dashboard]);
 
+  const agendaExecutiveHighlights = useMemo(() => ([
+    {
+      label: 'Performance operacional',
+      value: formatAgendaPercent(dashboard?.summary?.completion_rate_period || 0),
+      helper: `${dashboard?.summary?.completed_7d || 0} concluidas nos ultimos 7 dias`,
+      accent: 'performance'
+    },
+    {
+      label: 'Pressao imediata',
+      value: dashboard?.summary?.due_24h || 0,
+      helper: `${dashboard?.summary?.overdue || 0} atrasada(s) na agenda`,
+      accent: 'attention'
+    },
+    {
+      label: 'Fluxo de pacientes',
+      value: formatAgendaPercent(dashboard?.summary?.patient_confirmation_rate || 0),
+      helper: `${dashboard?.summary?.patient_evasion || 0} paciente(s) em evasao no periodo`,
+      accent: 'patients'
+    }
+  ]), [dashboard]);
+
   const confirmationItems = useMemo(() => (
     Array.isArray(confirmationReport?.items) ? confirmationReport.items : []
   ), [confirmationReport]);
@@ -1035,11 +1058,17 @@ export default function AgendaPage() {
     if (!selectedItem?.id) return;
     const confirmed = window.confirm(`Excluir "${selectedItem.title}" da agenda?`);
     if (!confirmed) return;
+    const reason = window.prompt('Motivo da exclusao para auditoria:', 'Exclusao operacional do agendamento');
     setSaving(true);
     try {
-      await api.delete(`/api/agenda/items/${selectedItem.id}`);
+      await api.delete(`/api/agenda/items/${selectedItem.id}`, {
+        data: {
+          reason: reason?.trim() || 'Exclusao operacional do agendamento'
+        }
+      });
       closeEditor();
       await Promise.all([loadItems(), loadDashboard()]);
+      setFeedback('Agendamento excluido com auditoria registrada.');
     } catch (error) {
       setFeedback(getApiErrorMessage(error, 'Não foi possível excluir o item.'));
     } finally {
@@ -1548,6 +1577,16 @@ export default function AgendaPage() {
                   PDF
                 </button>
               </div>
+            </div>
+
+            <div className="agenda-executive-highlight-grid">
+              {agendaExecutiveHighlights.map((item) => (
+                <article key={item.label} className={`agenda-executive-highlight-card ${item.accent}`}>
+                  <span>{item.label}</span>
+                  <strong>{item.value}</strong>
+                  <small>{item.helper}</small>
+                </article>
+              ))}
             </div>
 
             <DashboardGrid className="agenda-intelligence-kpis">
@@ -2295,6 +2334,29 @@ export default function AgendaPage() {
           </div>
         </div>
 
+      <div className="agenda-box-visual-grid">
+        <article className="agenda-box-visual-card backlog">
+          <span>Volume visivel</span>
+          <strong>{stats.total}</strong>
+          <small>{stats.done} concluido(s) no recorte atual</small>
+        </article>
+        <article className="agenda-box-visual-card confirmation">
+          <span>Confirmacoes</span>
+          <strong>{patientWorkflowStats.pending}</strong>
+          <small>{patientWorkflowStats.confirmed} confirmado(s)</small>
+        </article>
+        <article className="agenda-box-visual-card reminders">
+          <span>Lembretes</span>
+          <strong>{stats.reminders}</strong>
+          <small>{patientWorkflowStats.evasion} caso(s) em evasao</small>
+        </article>
+        <article className="agenda-box-visual-card team">
+          <span>Responsaveis</span>
+          <strong>{agendaBoards.length}</strong>
+          <small>boxes organizados por operador</small>
+        </article>
+      </div>
+
       <DashboardGrid className="agenda-kpis">
         <KPICard label="Total" value={stats.total} helper="itens na agenda" tone="neutral" />
         <KPICard label="Abertos" value={stats.open} helper="em acompanhamento" tone="progress" />
@@ -2723,7 +2785,7 @@ export default function AgendaPage() {
 
             <footer className="agenda-editor-footer">
               <div>
-                {canDeleteAgendaItem && selectedItem?.id ? <button type="button" className="outline-action" onClick={deleteItem} disabled={saving}>Excluir item</button> : null}
+                {canDeleteAgendaItem && selectedItem?.id ? <button type="button" className="outline-action" onClick={deleteItem} disabled={saving}>Excluir agendamento</button> : null}
               </div>
               <ActionButtons>
                 <button type="button" className="secondary-action" onClick={closeEditor} disabled={saving}>Cancelar</button>

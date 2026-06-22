@@ -2376,6 +2376,69 @@ test('agenda import applies one agenda date to vertical rows with consulta hour'
   assert.equal(rows[0].patient_has_scheduled, true);
 });
 
+test('crc operator can delete visible agenda item with audit trail', async () => {
+  let deleteParams = null;
+  let auditInserted = false;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1, role: 'crc_operator', company_id: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[{ clinic_id: 7 }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM agenda_items') && sql.includes('WHERE id = ?') && sql.includes('deleted_at IS NULL'),
+      reply: async () => [[{
+        id: 44,
+        title: 'Confirmar paciente premium',
+        assigned_user_id: 88,
+        owner_user_id: 88,
+        clinic_id: 7,
+        deleted_at: null
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE agenda_items') && sql.includes('deleted_by_name'),
+      reply: async (_sql, params) => {
+        deleteParams = params;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO security_audit_logs'),
+      reply: async () => {
+        auditInserted = true;
+        return [{ insertId: 1 }];
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .delete('/api/agenda/items/44')
+    .set('Authorization', `Bearer ${signToken({
+      id: 88,
+      email: 'operador.crc@example.com',
+      role: 'crc_operator',
+      name: 'Operador CRC',
+      permissions: ['home'],
+      clinicIds: [7],
+      mustChangePassword: false
+    })}`)
+    .send({ reason: 'Registro importado em duplicidade' });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.success, true);
+  assert.ok(Array.isArray(deleteParams));
+  assert.equal(deleteParams[0], 'Operador CRC');
+  assert.equal(deleteParams[1], 'crc_operator');
+  assert.equal(deleteParams[2], 'Registro importado em duplicidade');
+  assert.equal(deleteParams[3], '44');
+  assert.equal(auditInserted, true);
+});
+
 test('responsible user execution stores completion timestamp for recurring agenda item', async () => {
   let updateAgendaParams = null;
   let completionLogParams = null;
