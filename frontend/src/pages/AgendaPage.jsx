@@ -440,6 +440,46 @@ function getAgendaImportResultLabel(value = '') {
   return 'Erro';
 }
 
+function getAgendaContactStatusLabel(value = '') {
+  if (value === 'updated') return 'Contato atualizado';
+  if (value === 'found_by_robot') return 'Encontrado pelo robo';
+  if (value === 'review_required') return 'Revisao necessaria';
+  if (value === 'outdated') return 'Desatualizado';
+  if (value === 'not_found') return 'Nao encontrado';
+  if (value === 'access_denied') return 'Acesso negado';
+  if (value === 'clinic_mismatch') return 'Clinica divergente';
+  if (value === 'date_mismatch') return 'Data divergente';
+  if (value === 'error') return 'Erro';
+  return 'Telefone pendente';
+}
+
+function getAgendaContactStatusTone(value = '') {
+  if (['updated', 'found_by_robot'].includes(value)) return 'success';
+  if (['review_required', 'outdated'].includes(value)) return 'warning';
+  if (['access_denied', 'clinic_mismatch', 'date_mismatch', 'error'].includes(value)) return 'danger';
+  return 'neutral';
+}
+
+function getAgendaDateMatchLabel(value = '') {
+  if (value === 'matched') return 'Data validada';
+  if (value === 'not_available') return 'Data nao localizada';
+  if (value === 'mismatch') return 'Data divergente';
+  if (value === 'review_required') return 'Data em revisao';
+  return 'Data nao verificada';
+}
+
+function getAgendaDateMatchTone(value = '') {
+  if (value === 'matched') return 'success';
+  if (['not_available', 'review_required'].includes(value)) return 'warning';
+  if (value === 'mismatch') return 'danger';
+  return 'neutral';
+}
+
+function formatAgendaConfidence(value) {
+  const numeric = Number(value || 0);
+  return Number.isFinite(numeric) && numeric > 0 ? `${Math.round(numeric)}%` : '-';
+}
+
 function matchesAgendaPatientQueue(item = {}, queue = 'all') {
   if (queue === 'all') return true;
   const isPatientDemand = (item.demand_type || 'general') === 'patient' || item.patient_name || item.patient_phone;
@@ -483,7 +523,17 @@ function getAgendaDeadlineState(item = {}) {
   return { label: 'No prazo', tone: 'ok' };
 }
 
-function AgendaCard({ item, currentUserId, onOpen, onStatus, onDragStart }) {
+function AgendaCard({
+  item,
+  currentUserId,
+  onOpen,
+  onStatus,
+  onDragStart,
+  onOpenWhatsApp,
+  onReprocessContact,
+  openingWhatsappId,
+  reprocessingContactId
+}) {
   const tags = Array.isArray(item.tags) ? item.tags : [];
   const deadline = getAgendaDeadlineState(item);
   const ownerFollowUp = item.owner_name && item.owner_user_id && item.assigned_user_id && Number(item.owner_user_id) !== Number(item.assigned_user_id)
@@ -492,20 +542,49 @@ function AgendaCard({ item, currentUserId, onOpen, onStatus, onDragStart }) {
   const executionStamp = formatExecutionStamp(item);
   const canExecute = canExecuteAgendaItem(currentUserId, item);
   const recurrenceSummary = formatAgendaRecurrenceSummary(item);
+  const contactStatusTone = getAgendaContactStatusTone(item.contact_status);
+  const dateMatchTone = getAgendaDateMatchTone(item.appointment_date_match_status);
+  const canOpenWhatsApp = Boolean((item.contact_whatsapp_available || item.patient_phone) && !item.patient_do_not_contact && item.patient_name);
   return (
     <article
       className={`agenda-task-card priority-${item.priority || 'normal'} ${isOverdue(item.due_at) && item.status !== 'done' ? 'overdue' : ''}`}
       draggable
       onDragStart={() => onDragStart(item.id)}
     >
+      <div className="agenda-card-hover-preview" role="presentation">
+        <span className="agenda-preview-kicker">Previa da demanda</span>
+        <strong>{item.patient_name || item.title}</strong>
+        <div className="agenda-preview-grid">
+          <span>Unidade: {item.clinic_name || 'Nao informada'}</span>
+          <span>Consulta: {item.patient_scheduled_at ? formatDateTime(item.patient_scheduled_at) : 'Sem data'}</span>
+          <span>Telefone: {item.contact_phone_masked || 'Pendente'}</span>
+          <span>Status do contato: {getAgendaContactStatusLabel(item.contact_status)}</span>
+          <span>Fonte: {item.contact_source || 'Busca automatica pendente'}</span>
+          <span>Confianca: {formatAgendaConfidence(item.contact_confidence_score)}</span>
+        </div>
+      </div>
       <div className="agenda-card-topline">
         <span className={`agenda-priority priority-${item.priority || 'normal'}`}>{getPriorityLabel(item.priority)}</span>
         <span className={`agenda-deadline-pill ${deadline.tone}`}>{deadline.label}</span>
       </div>
-      <button type="button" className="agenda-task-main" onClick={() => onOpen(item)}>
-        <strong>{item.title}</strong>
-        {item.description ? <p>{item.description}</p> : null}
-      </button>
+      <div className="agenda-card-identity">
+        <div className="agenda-card-title-stack">
+          <span className="agenda-card-type">{item.patient_name ? 'Paciente em agenda' : 'Demanda operacional'}</span>
+          <button type="button" className="agenda-task-main" onClick={() => onOpen(item)}>
+            <strong>{item.title}</strong>
+            {item.description ? <p>{item.description}</p> : null}
+          </button>
+        </div>
+        <div className="agenda-card-highlight">
+          <strong>{item.patient_name || 'Sem paciente'}</strong>
+          <span>{item.patient_scheduled_at ? formatDateTime(item.patient_scheduled_at) : 'Sem consulta vinculada'}</span>
+        </div>
+      </div>
+      <div className="agenda-card-pill-row">
+        <span className={`agenda-inline-pill ${contactStatusTone}`}>{getAgendaContactStatusLabel(item.contact_status)}</span>
+        <span className={`agenda-inline-pill ${dateMatchTone}`}>{getAgendaDateMatchLabel(item.appointment_date_match_status)}</span>
+        {item.confirmation_status ? <span className="agenda-inline-pill neutral">{getAgendaConfirmationStatusLabel(item.confirmation_status)}</span> : null}
+      </div>
       <div className="agenda-card-secondary-meta">
         {recurrenceSummary ? <small>{recurrenceSummary}</small> : null}
         {item.requires_completion ? <small>Execução obrigatória</small> : null}
@@ -515,6 +594,18 @@ function AgendaCard({ item, currentUserId, onOpen, onStatus, onDragStart }) {
         {item.demand_type === 'patient' ? <small>{getAgendaConfirmationStatusLabel(item.confirmation_status)}</small> : null}
         {item.patient_specialty ? <small>{item.patient_specialty}</small> : null}
         {item.patient_channel ? <small>{item.patient_channel}</small> : null}
+      </div>
+      <div className="agenda-contact-grid">
+        <article>
+          <span>Telefone</span>
+          <strong>{item.contact_phone_masked || 'Pendente'}</strong>
+          <small>{item.contact_source || 'Busca automatica pendente'}</small>
+        </article>
+        <article>
+          <span>Ultima validacao</span>
+          <strong>{item.contact_last_checked_at ? formatDateTime(item.contact_last_checked_at) : 'Ainda nao validado'}</strong>
+          <small>Confianca {formatAgendaConfidence(item.contact_confidence_score)}</small>
+        </article>
       </div>
       <div className="agenda-assignee">
         <div>
@@ -537,6 +628,23 @@ function AgendaCard({ item, currentUserId, onOpen, onStatus, onDragStart }) {
         </div>
       ) : null}
       <div className="agenda-card-actions">
+        <button
+          type="button"
+          className="outline-action"
+          onClick={() => onOpenWhatsApp(item)}
+          disabled={!canOpenWhatsApp || openingWhatsappId === item.id}
+          title={!canOpenWhatsApp ? 'Telefone nao disponivel. Execute a busca automatica ou atualize manualmente.' : 'Abrir WhatsApp'}
+        >
+          {openingWhatsappId === item.id ? 'Abrindo...' : 'Abrir WhatsApp'}
+        </button>
+        <button
+          type="button"
+          className="outline-action"
+          onClick={() => onReprocessContact(item)}
+          disabled={reprocessingContactId === item.id}
+        >
+          {reprocessingContactId === item.id ? 'Atualizando...' : 'Atualizar telefone'}
+        </button>
         {item.status !== 'doing' && item.status !== 'done' ? (
           <button type="button" onClick={() => onStatus(item, 'doing')}>Iniciar</button>
         ) : null}
@@ -575,6 +683,8 @@ export default function AgendaPage() {
   const [confirmationSearch, setConfirmationSearch] = useState('');
   const [confirmationStatus, setConfirmationStatus] = useState('all');
   const [confirmationLoading, setConfirmationLoading] = useState(false);
+  const [enrichmentReport, setEnrichmentReport] = useState(null);
+  const [enrichmentLoading, setEnrichmentLoading] = useState(false);
   const [confirmationActiveTab, setConfirmationActiveTab] = useState(canUseAgendaAnalytics ? 'dashboard' : 'monitor');
   const [exportingReport, setExportingReport] = useState('');
   const [importDraft, setImportDraft] = useState(emptyImportDraft);
@@ -587,6 +697,7 @@ export default function AgendaPage() {
   const [replicationSummary, setReplicationSummary] = useState(null);
   const [showAnalyticsPanel, setShowAnalyticsPanel] = useState(false);
   const [showConfirmationPanel, setShowConfirmationPanel] = useState(false);
+  const [showEnrichmentPanel, setShowEnrichmentPanel] = useState(false);
   const [showImportPanel, setShowImportPanel] = useState(false);
   const [showReplicationPanel, setShowReplicationPanel] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -601,6 +712,8 @@ export default function AgendaPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [reminderItem, setReminderItem] = useState(null);
   const [draggingId, setDraggingId] = useState(null);
+  const [openingWhatsappId, setOpeningWhatsappId] = useState(null);
+  const [reprocessingContactId, setReprocessingContactId] = useState(null);
   const notifiedReminderIds = useRef(new Set());
   const titleInputRef = useRef(null);
 
@@ -698,6 +811,68 @@ export default function AgendaPage() {
     }
   };
 
+  const loadEnrichmentReport = async () => {
+    if (!canUseAgendaImportPanel && !canUseAgendaConfirmationPanel) {
+      setEnrichmentReport(null);
+      return;
+    }
+
+    setEnrichmentLoading(true);
+    try {
+      const response = await api.get('/api/agenda/enrichment/overview');
+      setEnrichmentReport(response.data || null);
+    } catch (error) {
+      setEnrichmentReport(null);
+      setFeedback(getApiErrorMessage(error, 'Nao foi possivel carregar o enriquecimento de telefones.'));
+    } finally {
+      setEnrichmentLoading(false);
+    }
+  };
+
+  const runEnrichmentNow = async () => {
+    setEnrichmentLoading(true);
+    setFeedback('');
+    try {
+      const response = await api.post('/api/agenda/enrichment/run');
+      await Promise.all([loadItems(), loadEnrichmentReport()]);
+      setFeedback(response.data?.message || 'Busca de telefones executada com sucesso.');
+    } catch (error) {
+      setFeedback(getApiErrorMessage(error, 'Nao foi possivel executar a busca de telefones.'));
+    } finally {
+      setEnrichmentLoading(false);
+    }
+  };
+
+  const reprocessContact = async (item) => {
+    setReprocessingContactId(item.id);
+    setFeedback('');
+    try {
+      const response = await api.post(`/api/agenda/items/${item.id}/reprocess-contact`);
+      await Promise.all([loadItems(), loadEnrichmentReport()]);
+      setFeedback(response.data?.message || 'Item enviado para nova busca de telefone.');
+    } catch (error) {
+      setFeedback(getApiErrorMessage(error, 'Nao foi possivel atualizar o telefone do paciente.'));
+    } finally {
+      setReprocessingContactId(null);
+    }
+  };
+
+  const openAgendaWhatsApp = async (item) => {
+    setOpeningWhatsappId(item.id);
+    setFeedback('');
+    try {
+      const response = await api.post(`/api/agenda/items/${item.id}/open-whatsapp`);
+      if (response.data?.url) {
+        window.open(response.data.url, '_blank', 'noopener,noreferrer');
+      }
+      setFeedback('WhatsApp preparado com sucesso.');
+    } catch (error) {
+      setFeedback(getApiErrorMessage(error, 'Nao foi possivel abrir o WhatsApp deste agendamento.'));
+    } finally {
+      setOpeningWhatsappId(null);
+    }
+  };
+
   useEffect(() => {
     loadItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -722,6 +897,11 @@ export default function AgendaPage() {
     loadConfirmationReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canUseAgendaConfirmationPanel, canUseAgendaAnalytics, confirmationDays, confirmationStatus]);
+
+  useEffect(() => {
+    loadEnrichmentReport();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canUseAgendaImportPanel, canUseAgendaConfirmationPanel]);
 
   useEffect(() => {
     if (!canUseAgendaConfirmationPanel) return undefined;
@@ -1045,7 +1225,7 @@ export default function AgendaPage() {
         await api.post('/api/agenda/items', payload);
       }
       closeEditor();
-      await Promise.all([loadItems(), loadDashboard()]);
+      await Promise.all([loadItems(), loadDashboard(), loadEnrichmentReport()]);
       setFeedback('Agenda atualizada com sucesso.');
     } catch (error) {
       setFeedback(getApiErrorMessage(error, 'Não foi possível salvar o item da agenda.'));
@@ -1535,6 +1715,21 @@ export default function AgendaPage() {
             </button>
           </article>
           ) : null}
+          {(canUseAgendaImportPanel || canUseAgendaConfirmationPanel) ? (
+          <article className={`agenda-executive-toggle-card ${showEnrichmentPanel ? 'active' : ''}`}>
+            <span>Enriquecimento</span>
+            <strong>Telefones de pacientes</strong>
+            <small>Monitore pendencias, buscas automaticas, revisoes e abertura do WhatsApp por paciente.</small>
+            <div className="agenda-executive-card-actions">
+              <button type="button" className="outline-action" onClick={() => setShowEnrichmentPanel((current) => !current)}>
+                {showEnrichmentPanel ? 'Ocultar painel' : 'Abrir painel'}
+              </button>
+              <button type="button" className="secondary-action" onClick={runEnrichmentNow} disabled={enrichmentLoading}>
+                {enrichmentLoading ? 'Buscando...' : 'Buscar telefones agora'}
+              </button>
+            </div>
+          </article>
+          ) : null}
           {canUseAgendaImportPanel ? (
           <article className={`agenda-executive-toggle-card ${showImportPanel ? 'active' : ''}`}>
             <span>Operação em lote</span>
@@ -1553,7 +1748,7 @@ export default function AgendaPage() {
         </section>
       ) : null}
 
-      {(canUseAgendaAnalytics && showAnalyticsPanel) || (canUseAgendaConfirmationPanel && showConfirmationPanel) || (canUseAgendaImportPanel && showImportPanel) ? (
+      {(canUseAgendaAnalytics && showAnalyticsPanel) || (canUseAgendaConfirmationPanel && showConfirmationPanel) || showEnrichmentPanel || (canUseAgendaImportPanel && showImportPanel) ? (
         <section className="agenda-intelligence-stack">
           {canUseAgendaAnalytics && showAnalyticsPanel ? (
           <SectionContainer className="agenda-intelligence-panel">
@@ -2084,6 +2279,91 @@ export default function AgendaPage() {
           </SectionContainer>
           ) : null}
 
+          {showEnrichmentPanel ? (
+          <SectionContainer className="agenda-intelligence-panel agenda-enrichment-panel">
+            <div className="agenda-intelligence-head">
+              <div>
+                <span className="agenda-panel-kicker">Enriquecimento de telefones</span>
+                <strong>Status do contato por paciente e por agenda</strong>
+                <small>Visualize busca automatica, pendencias, revisoes, fonte do telefone e liberacao para WhatsApp.</small>
+              </div>
+              <div className="agenda-intelligence-actions">
+                <button type="button" className="outline-action" onClick={loadEnrichmentReport} disabled={enrichmentLoading}>
+                  Atualizar painel
+                </button>
+                <button type="button" className="secondary-action" onClick={runEnrichmentNow} disabled={enrichmentLoading}>
+                  {enrichmentLoading ? 'Buscando...' : 'Buscar telefones agora'}
+                </button>
+              </div>
+            </div>
+
+            <div className="agenda-import-summary">
+              <article>
+                <span>Total na fila</span>
+                <strong>{enrichmentReport?.summary?.total || 0}</strong>
+              </article>
+              <article>
+                <span>Pendentes</span>
+                <strong>{enrichmentReport?.summary?.pending || 0}</strong>
+              </article>
+              <article>
+                <span>Em processamento</span>
+                <strong>{enrichmentReport?.summary?.processing || 0}</strong>
+              </article>
+              <article>
+                <span>Encontrados</span>
+                <strong>{enrichmentReport?.summary?.found || 0}</strong>
+              </article>
+              <article>
+                <span>Revisao</span>
+                <strong>{enrichmentReport?.summary?.reviewRequired || 0}</strong>
+              </article>
+              <article>
+                <span>Erros</span>
+                <strong>{enrichmentReport?.summary?.errors || 0}</strong>
+              </article>
+            </div>
+
+            <div className="agenda-import-table-shell">
+              <table className="agenda-import-table">
+                <thead>
+                  <tr>
+                    <th>Paciente</th>
+                    <th>Clinica</th>
+                    <th>Agenda</th>
+                    <th>Telefone</th>
+                    <th>Status</th>
+                    <th>Data</th>
+                    <th>Fonte</th>
+                    <th>Confianca</th>
+                    <th>Metodo</th>
+                    <th>Tentativas</th>
+                    <th>Erro</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(enrichmentReport?.rows || []).slice(0, 120).map((row) => (
+                    <tr key={`enrichment-${row.id}`}>
+                      <td>{row.patient_name || '-'}</td>
+                      <td>{row.clinic_name || '-'}</td>
+                      <td>{row.appointment_label || '-'}</td>
+                      <td>{row.phone_masked || 'Pendente'}</td>
+                      <td>{getAgendaContactStatusLabel(row.contact_status || row.status)}</td>
+                      <td>{getAgendaDateMatchLabel(row.appointment_date_match_status)}</td>
+                      <td>{row.contact_source || row.source || '-'}</td>
+                      <td>{formatAgendaConfidence(row.contact_confidence_score || row.confidence_score)}</td>
+                      <td>{row.match_method || '-'}</td>
+                      <td>{row.attempts || 0}</td>
+                      <td>{row.error_message || '-'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {!enrichmentLoading && !(enrichmentReport?.rows || []).length ? <p className="empty-state">Nenhum item na fila de enriquecimento para os filtros atuais.</p> : null}
+            </div>
+          </SectionContainer>
+          ) : null}
+
           {canUseAgendaImportPanel && showImportPanel ? (
           <SectionContainer className="agenda-import-panel">
             <div className="agenda-intelligence-head">
@@ -2297,6 +2577,10 @@ export default function AgendaPage() {
                 <article>
                   <span>WhatsApp enfileirado</span>
                   <strong>{importSummary.whatsappQueued || 0}</strong>
+                </article>
+                <article>
+                  <span>Busca de telefones</span>
+                  <strong>{importSummary.phoneEnrichmentQueued || 0}</strong>
                 </article>
                 <article>
                   <span>Duplicidades ignoradas</span>
@@ -2527,6 +2811,10 @@ export default function AgendaPage() {
                             onOpen={openEdit}
                             onStatus={updateStatus}
                             onDragStart={setDraggingId}
+                            onOpenWhatsApp={openAgendaWhatsApp}
+                            onReprocessContact={reprocessContact}
+                            openingWhatsappId={openingWhatsappId}
+                            reprocessingContactId={reprocessingContactId}
                           />
                         )) : null}
                         {!loading && !group.columns[column.key]?.length ? <p className="empty-mini">Sem itens nesta etapa.</p> : null}

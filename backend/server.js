@@ -63,6 +63,17 @@ const {
   parseAgendaClipboard
 } = require('./services/agendaImportService');
 const {
+  buildQueueSummary: buildPhoneEnrichmentQueueSummary,
+  buildWhatsAppMessage,
+  buildWhatsAppUrl,
+  deriveContactStatus,
+  getRobotConfig,
+  getRobotConfigStatus,
+  maskPhone,
+  normalizePhone,
+  resolveAppointmentDateMatchStatus
+} = require('./services/patientEnrichmentService');
+const {
   sendComplaintNotification: sendTwilioComplaintNotification,
   sendGenericNotification: sendTwilioGenericNotification,
   sendNpsNotification: sendTwilioNpsNotification,
@@ -5394,8 +5405,151 @@ async function ensureDatabaseSchema() {
   await ensureColumn('agenda_items', 'deleted_by_name', 'VARCHAR(160) NULL');
   await ensureColumn('agenda_items', 'deleted_by_role', 'VARCHAR(80) NULL');
   await ensureColumn('agenda_items', 'deletion_reason', 'TEXT NULL');
+  await ensureColumn('agenda_items', 'contact_status', "VARCHAR(40) NULL DEFAULT 'pending'");
+  await ensureColumn('agenda_items', 'contact_last_checked_at', 'DATETIME NULL');
+  await ensureColumn('agenda_items', 'contact_source', 'VARCHAR(120) NULL');
+  await ensureColumn('agenda_items', 'contact_confidence_score', 'DECIMAL(5,2) NULL');
+  await ensureColumn('agenda_items', 'contact_phone_found', 'VARCHAR(40) NULL');
+  await ensureColumn('agenda_items', 'contact_phone_normalized', 'VARCHAR(40) NULL');
+  await ensureColumn('agenda_items', 'contact_review_required', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn('agenda_items', 'contact_whatsapp_available', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn('agenda_items', 'appointment_date_verified', 'DATETIME NULL');
+  await ensureColumn('agenda_items', 'appointment_date_match_status', "VARCHAR(40) NULL DEFAULT 'not_checked'");
+  await ensureColumn('agenda_items', 'patient_do_not_contact', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureIndex('agenda_items', 'idx_agenda_company_status', 'INDEX idx_agenda_company_status (company_id, status)');
   await ensureIndex('agenda_items', 'idx_agenda_assigned_status', 'INDEX idx_agenda_assigned_status (assigned_user_id, status)');
+  await ensureIndex('agenda_items', 'idx_agenda_contact_status', 'INDEX idx_agenda_contact_status (contact_status, clinic_id)');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS operator_clinics (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      operator_user_id INT NOT NULL,
+      clinic_id INT NOT NULL,
+      active TINYINT(1) NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(160) NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      updated_by VARCHAR(160) NULL,
+      UNIQUE KEY uniq_operator_clinic (operator_user_id, clinic_id),
+      INDEX idx_operator_clinics_operator (operator_user_id, active),
+      INDEX idx_operator_clinics_clinic (clinic_id, active)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS external_clinic_map (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      clinic_id INT NOT NULL,
+      internal_clinic_name VARCHAR(180) NULL,
+      external_clinic_id VARCHAR(120) NULL,
+      external_clinic_name VARCHAR(180) NULL,
+      active TINYINT(1) NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_external_clinic_map (clinic_id),
+      INDEX idx_external_clinic_map_active (active, clinic_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS patient_contact_registry (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      company_id INT NULL,
+      clinic_id INT NULL,
+      patient_name VARCHAR(180) NULL,
+      patient_name_normalized VARCHAR(180) NULL,
+      external_patient_id VARCHAR(120) NULL,
+      cpf VARCHAR(14) NULL,
+      phone VARCHAR(40) NULL,
+      phone_normalized VARCHAR(40) NULL,
+      source VARCHAR(120) NULL,
+      last_validated_at DATETIME NULL,
+      do_not_contact TINYINT(1) NOT NULL DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_patient_contact_registry_name (clinic_id, patient_name_normalized),
+      INDEX idx_patient_contact_registry_lookup (clinic_id, patient_name_normalized),
+      INDEX idx_patient_contact_registry_external (external_patient_id),
+      INDEX idx_patient_contact_registry_phone (phone_normalized)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS phone_enrichment_queue (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      agenda_import_id VARCHAR(120) NULL,
+      agenda_item_id INT NOT NULL,
+      patient_name VARCHAR(180) NULL,
+      patient_name_normalized VARCHAR(180) NULL,
+      external_patient_id VARCHAR(120) NULL,
+      cpf VARCHAR(14) NULL,
+      clinic_id INT NULL,
+      operator_user_id INT NULL,
+      appointment_date DATE NULL,
+      appointment_time VARCHAR(10) NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'pending',
+      confidence_score DECIMAL(5,2) NULL,
+      phone_found VARCHAR(40) NULL,
+      phone_normalized VARCHAR(40) NULL,
+      source VARCHAR(120) NULL,
+      match_method VARCHAR(120) NULL,
+      appointment_date_match_status VARCHAR(40) NOT NULL DEFAULT 'not_checked',
+      attempts INT NOT NULL DEFAULT 0,
+      last_attempt_at DATETIME NULL,
+      error_message VARCHAR(255) NULL,
+      robot_session_id VARCHAR(120) NULL,
+      raw_payload_json LONGTEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_phone_enrichment_item (agenda_item_id),
+      INDEX idx_phone_enrichment_status (status, clinic_id),
+      INDEX idx_phone_enrichment_operator (operator_user_id, status),
+      INDEX idx_phone_enrichment_appointment (appointment_date, appointment_time)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS patient_phone_audit (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      agenda_item_id INT NOT NULL,
+      patient_name VARCHAR(180) NULL,
+      clinic_id INT NULL,
+      operator_user_id INT NULL,
+      phone_old VARCHAR(40) NULL,
+      phone_new VARCHAR(40) NULL,
+      source VARCHAR(120) NULL,
+      confidence_score DECIMAL(5,2) NULL,
+      match_method VARCHAR(120) NULL,
+      appointment_date DATE NULL,
+      appointment_date_match_status VARCHAR(40) NULL,
+      robot_session_id VARCHAR(120) NULL,
+      action VARCHAR(80) NOT NULL,
+      error_message VARCHAR(255) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(160) NULL,
+      INDEX idx_patient_phone_audit_item (agenda_item_id, created_at),
+      INDEX idx_patient_phone_audit_clinic (clinic_id, created_at)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS whatsapp_contact_audit (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      agenda_item_id INT NOT NULL,
+      patient_name VARCHAR(180) NULL,
+      clinic_id INT NULL,
+      operator_user_id INT NULL,
+      phone_used VARCHAR(40) NULL,
+      message_template TEXT NULL,
+      appointment_date DATE NULL,
+      appointment_time VARCHAR(10) NULL,
+      action VARCHAR(80) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(160) NULL,
+      INDEX idx_whatsapp_contact_audit_item (agenda_item_id, created_at),
+      INDEX idx_whatsapp_contact_audit_operator (operator_user_id, created_at)
+    )
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS agenda_item_completion_logs (
@@ -18165,6 +18319,7 @@ async function handleUpdateWhatsAppOperatorClinics(req, res) {
         pool.query('INSERT INTO user_clinics (user_id, clinic_id, can_edit) VALUES (?, ?, 1)', [operatorId, clinicId])
       )));
     }
+    await syncOperatorClinicLinks(operatorId, clinicIds, getActorName(req.user));
 
     await createNotification(
       operatorId,
@@ -23299,6 +23454,7 @@ function serializeAgendaItem(row = {}) {
     patient_specialty: row.patient_specialty || null,
     patient_dentist: row.patient_dentist || null,
     patient_channel: row.patient_channel || null,
+    patient_do_not_contact: normalizeAgendaBoolean(row.patient_do_not_contact, false),
     patient_has_scheduled: normalizeAgendaBoolean(row.patient_has_scheduled, false),
     patient_scheduled_at: row.patient_scheduled_at || null,
     confirmation_status: normalizeAgendaConfirmationStatus(row.confirmation_status, demandType),
@@ -23310,6 +23466,19 @@ function serializeAgendaItem(row = {}) {
     is_evasion: demandType === 'patient' && normalizeAgendaConfirmationStatus(row.confirmation_status, demandType) === 'nao_confirmado',
     source_label: row.source_label || null,
     source_batch_id: row.source_batch_id || null,
+    contact_status: row.contact_status || 'pending',
+    contact_last_checked_at: row.contact_last_checked_at || null,
+    contact_source: row.contact_source || null,
+    contact_confidence_score: row.contact_confidence_score === null || typeof row.contact_confidence_score === 'undefined'
+      ? null
+      : Number(row.contact_confidence_score),
+    contact_phone_found: row.contact_phone_found || null,
+    contact_phone_normalized: row.contact_phone_normalized || null,
+    contact_review_required: normalizeAgendaBoolean(row.contact_review_required, false),
+    contact_whatsapp_available: normalizeAgendaBoolean(row.contact_whatsapp_available, false),
+    contact_phone_masked: maskPhone(row.contact_phone_normalized || row.contact_phone_found || row.patient_phone || ''),
+    appointment_date_verified: row.appointment_date_verified || null,
+    appointment_date_match_status: row.appointment_date_match_status || 'not_checked',
     assignedUser: row.assigned_user_id ? {
       id: row.assigned_user_id,
       name: row.assigned_user_name || null,
@@ -23318,6 +23487,901 @@ function serializeAgendaItem(row = {}) {
     tags: parseAgendaJsonArray(row.tags_json),
     checklist: parseAgendaJsonArray(row.checklist_json)
   };
+}
+
+function formatAgendaAppointmentDateOnly(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toISOString().slice(0, 10);
+}
+
+function formatAgendaAppointmentTimeOnly(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+function formatAgendaAppointmentLabel(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'short',
+    timeStyle: 'short'
+  }).format(date);
+}
+
+function getPhoneEnrichmentClinicIdsFromUser(user) {
+  return getCurrentUserClinicIds(user);
+}
+
+async function syncOperatorClinicLinks(operatorUserId, clinicIds = [], actorName = null) {
+  const normalizedOperatorId = Number(operatorUserId || 0);
+  if (!normalizedOperatorId) return;
+  const normalizedClinicIds = normalizeClinicIds(clinicIds);
+
+  await pool.query('UPDATE operator_clinics SET active = 0, updated_by = ? WHERE operator_user_id = ?', [actorName || null, normalizedOperatorId]);
+
+  for (const clinicId of normalizedClinicIds) {
+    // eslint-disable-next-line no-await-in-loop
+    await pool.query(
+      `INSERT INTO operator_clinics (operator_user_id, clinic_id, active, created_by, updated_by)
+       VALUES (?, ?, 1, ?, ?)
+       ON DUPLICATE KEY UPDATE active = VALUES(active), updated_by = VALUES(updated_by)`,
+      [normalizedOperatorId, clinicId, actorName || null, actorName || null]
+    );
+  }
+}
+
+async function getOperatorClinicLinks(operatorUserId) {
+  const [rows] = await pool.query(
+    `SELECT clinic_id
+       FROM operator_clinics
+      WHERE operator_user_id = ?
+        AND active = 1`,
+    [operatorUserId]
+  );
+  const linked = normalizeClinicIds(rows.map((row) => row.clinic_id));
+  if (linked.length) return linked;
+  return getUserClinicIds(operatorUserId);
+}
+
+async function getExternalClinicMap(clinicId) {
+  const normalizedClinicId = Number(clinicId || 0);
+  if (!normalizedClinicId) return null;
+  const [rows] = await pool.query(
+    `SELECT *
+       FROM external_clinic_map
+      WHERE clinic_id = ?
+        AND active = 1
+      LIMIT 1`,
+    [normalizedClinicId]
+  );
+  return rows[0] || null;
+}
+
+async function insertPatientPhoneAudit(payload = {}) {
+  try {
+    await pool.query(
+      `INSERT INTO patient_phone_audit
+       (agenda_item_id, patient_name, clinic_id, operator_user_id, phone_old, phone_new, source, confidence_score,
+        match_method, appointment_date, appointment_date_match_status, robot_session_id, action, created_by, error_message)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        payload.agendaItemId || null,
+        payload.patientName || null,
+        payload.clinicId || null,
+        payload.operatorUserId || null,
+        payload.phoneOld || null,
+        payload.phoneNew || null,
+        payload.source || null,
+        payload.confidenceScore === null || typeof payload.confidenceScore === 'undefined' ? null : Number(payload.confidenceScore),
+        payload.matchMethod || null,
+        payload.appointmentDate || null,
+        payload.appointmentDateMatchStatus || null,
+        payload.robotSessionId || null,
+        payload.action || 'enrichment_reviewed',
+        payload.createdBy || null,
+        payload.errorMessage || null
+      ]
+    );
+  } catch (error) {
+    console.warn('Não foi possível registrar auditoria de telefone do paciente:', error.message);
+  }
+}
+
+async function insertWhatsappContactAudit(payload = {}) {
+  try {
+    await pool.query(
+      `INSERT INTO whatsapp_contact_audit
+       (agenda_item_id, patient_name, clinic_id, operator_user_id, phone_used, message_template, appointment_date, appointment_time, action, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        payload.agendaItemId || null,
+        payload.patientName || null,
+        payload.clinicId || null,
+        payload.operatorUserId || null,
+        payload.phoneUsed || null,
+        payload.messageTemplate || null,
+        payload.appointmentDate || null,
+        payload.appointmentTime || null,
+        payload.action || 'whatsapp_opened',
+        payload.createdBy || null
+      ]
+    );
+  } catch (error) {
+    console.warn('Não foi possível registrar auditoria do WhatsApp da agenda:', error.message);
+  }
+}
+
+async function upsertPatientContactRegistry({
+  agendaItem = null,
+  phone = '',
+  phoneNormalized = '',
+  source = 'robot_external',
+  lastValidatedAt = null
+} = {}) {
+  if (!agendaItem?.patient_name || !agendaItem?.clinic_id || !phoneNormalized) return;
+  await pool.query(
+    `INSERT INTO patient_contact_registry
+     (company_id, clinic_id, patient_name, patient_name_normalized, external_patient_id, cpf, phone, phone_normalized, source, last_validated_at, do_not_contact)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       phone = VALUES(phone),
+       phone_normalized = VALUES(phone_normalized),
+       source = VALUES(source),
+       last_validated_at = VALUES(last_validated_at),
+       updated_at = CURRENT_TIMESTAMP`,
+    [
+      agendaItem.company_id || null,
+      agendaItem.clinic_id || null,
+      agendaItem.patient_name || null,
+      normalizeText(agendaItem.patient_name),
+      agendaItem.source_external_id || null,
+      agendaItem.patient_cpf || null,
+      phone || null,
+      phoneNormalized || null,
+      source || null,
+      lastValidatedAt || null,
+      normalizeAgendaBoolean(agendaItem.patient_do_not_contact, false) ? 1 : 0
+    ]
+  );
+}
+
+async function enqueueAgendaPhoneEnrichment({
+  agendaItems = [],
+  operatorUserId = null,
+  batchId = null
+} = {}) {
+  let queued = 0;
+
+  for (const item of agendaItems) {
+    const normalizedPhone = normalizePhone(item.contact_phone_normalized || item.patient_phone || '');
+    const shouldQueue = item.demand_type === 'patient'
+      && item.patient_name
+      && item.clinic_id
+      && item.patient_scheduled_at
+      && (!normalizedPhone.valid || item.contact_status === 'outdated');
+
+    if (!shouldQueue) continue;
+
+    // eslint-disable-next-line no-await-in-loop
+    await pool.query(
+      `INSERT INTO phone_enrichment_queue
+       (agenda_import_id, agenda_item_id, patient_name, patient_name_normalized, external_patient_id, cpf, clinic_id,
+        operator_user_id, appointment_date, appointment_time, status, raw_payload_json)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+       ON DUPLICATE KEY UPDATE
+         agenda_import_id = VALUES(agenda_import_id),
+         patient_name = VALUES(patient_name),
+         patient_name_normalized = VALUES(patient_name_normalized),
+         external_patient_id = VALUES(external_patient_id),
+         cpf = VALUES(cpf),
+         clinic_id = VALUES(clinic_id),
+         operator_user_id = VALUES(operator_user_id),
+         appointment_date = VALUES(appointment_date),
+         appointment_time = VALUES(appointment_time),
+         status = CASE
+           WHEN phone_enrichment_queue.status IN ('processing') THEN phone_enrichment_queue.status
+           ELSE 'pending'
+         END,
+         error_message = NULL,
+         raw_payload_json = VALUES(raw_payload_json)`,
+      [
+        batchId || item.source_batch_id || null,
+        item.id,
+        item.patient_name || null,
+        normalizeText(item.patient_name),
+        item.source_external_id || null,
+        item.patient_cpf || null,
+        item.clinic_id || null,
+        operatorUserId || item.assigned_user_id || item.owner_user_id || null,
+        formatAgendaAppointmentDateOnly(item.patient_scheduled_at) || null,
+        formatAgendaAppointmentTimeOnly(item.patient_scheduled_at) || null,
+        JSON.stringify({
+          clinic_name: item.clinic_name || null,
+          patient_name: item.patient_name || null,
+          appointment_label: formatAgendaAppointmentLabel(item.patient_scheduled_at)
+        })
+      ]
+    );
+
+    queued += 1;
+  }
+
+  return queued;
+}
+
+async function findLocalPatientContactCandidate(queueRow = {}) {
+  const candidates = [];
+
+  if (queueRow.external_patient_id) {
+    const [registryByExternal] = await pool.query(
+      `SELECT phone, phone_normalized, source, last_validated_at, external_patient_id
+         FROM patient_contact_registry
+        WHERE clinic_id = ?
+          AND external_patient_id = ?
+          AND phone_normalized IS NOT NULL
+        ORDER BY updated_at DESC
+        LIMIT 1`,
+      [queueRow.clinic_id, queueRow.external_patient_id]
+    );
+    if (registryByExternal[0]) {
+      candidates.push({
+        phone: registryByExternal[0].phone || registryByExternal[0].phone_normalized,
+        phoneNormalized: registryByExternal[0].phone_normalized,
+        source: `base_local:${registryByExternal[0].source || 'registry'}`,
+        confidenceScore: 100,
+        matchMethod: 'external_patient_id + clinic',
+        appointmentDateMatchStatus: 'not_available',
+        lastValidatedAt: registryByExternal[0].last_validated_at || null
+      });
+    }
+  }
+
+  const [registryRows] = await pool.query(
+    `SELECT phone, phone_normalized, source, last_validated_at
+       FROM patient_contact_registry
+      WHERE clinic_id = ?
+        AND patient_name_normalized = ?
+        AND phone_normalized IS NOT NULL
+      ORDER BY updated_at DESC
+      LIMIT 3`,
+    [queueRow.clinic_id, queueRow.patient_name_normalized]
+  );
+
+  registryRows.forEach((row) => {
+    candidates.push({
+      phone: row.phone || row.phone_normalized,
+      phoneNormalized: row.phone_normalized,
+      source: `base_local:${row.source || 'registry'}`,
+      confidenceScore: 96,
+      matchMethod: 'nome normalizado + clinic',
+      appointmentDateMatchStatus: 'not_available',
+      lastValidatedAt: row.last_validated_at || null
+    });
+  });
+
+  const [agendaRows] = await pool.query(
+    `SELECT patient_phone, contact_phone_normalized, contact_source, contact_last_checked_at, source_external_id
+       FROM agenda_items
+      WHERE id <> ?
+        AND clinic_id = ?
+        AND deleted_at IS NULL
+        AND patient_name IS NOT NULL
+        AND LOWER(TRIM(patient_name)) = LOWER(TRIM(?))
+        AND (contact_phone_normalized IS NOT NULL OR patient_phone IS NOT NULL)
+      ORDER BY updated_at DESC
+      LIMIT 3`,
+    [queueRow.agenda_item_id, queueRow.clinic_id, queueRow.patient_name]
+  );
+
+  agendaRows.forEach((row) => {
+    const normalized = normalizePhone(row.contact_phone_normalized || row.patient_phone || '');
+    if (!normalized.valid) return;
+    candidates.push({
+      phone: row.patient_phone || normalized.normalized,
+      phoneNormalized: normalized.normalized,
+      source: row.contact_source || 'agenda_local',
+      confidenceScore: row.source_external_id && queueRow.external_patient_id && row.source_external_id === queueRow.external_patient_id ? 100 : 95,
+      matchMethod: row.source_external_id && queueRow.external_patient_id && row.source_external_id === queueRow.external_patient_id
+        ? 'external_patient_id + clinic'
+        : 'nome normalizado + clinic',
+      appointmentDateMatchStatus: 'not_available',
+      lastValidatedAt: row.contact_last_checked_at || null
+    });
+  });
+
+  return candidates.find((candidate) => normalizePhone(candidate.phoneNormalized || candidate.phone).valid) || null;
+}
+
+function buildPortalRequestConfig(cookieHeader, timeoutMs) {
+  return {
+    timeout: timeoutMs,
+    maxRedirects: 5,
+    validateStatus: () => true,
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Cookie: cookieHeader || ''
+    }
+  };
+}
+
+function mergeSetCookies(existingCookies = '', setCookieHeaders = []) {
+  const jar = new Map();
+  String(existingCookies || '')
+    .split(';')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .forEach((pair) => {
+      const [name, ...valueParts] = pair.split('=');
+      if (name) jar.set(name, valueParts.join('='));
+    });
+  (Array.isArray(setCookieHeaders) ? setCookieHeaders : [setCookieHeaders])
+    .filter(Boolean)
+    .forEach((cookieLine) => {
+      const [pair] = String(cookieLine).split(';');
+      const [name, ...valueParts] = pair.split('=');
+      if (name) jar.set(name.trim(), valueParts.join('=').trim());
+    });
+  return Array.from(jar.entries()).map(([name, value]) => `${name}=${value}`).join('; ');
+}
+
+async function authenticatePatientEnrichmentRobot() {
+  const config = getRobotConfig();
+  if (!getRobotConfigStatus().configured) {
+    return {
+      status: 'external_system_unavailable',
+      errorMessage: 'Falha de autenticação no sistema externo',
+      sessionId: null,
+      cookieHeader: ''
+    };
+  }
+
+  const baseUrl = config.baseUrl.replace(/\/$/, '');
+  const timeoutMs = config.timeoutMs;
+  let cookieHeader = '';
+
+  const level1Path = String(process.env.EXTERNAL_PORTAL_LEVEL1_PATH || '/login').trim();
+  const level2Path = String(process.env.EXTERNAL_PORTAL_LEVEL2_PATH || '/login/secondary').trim();
+  const level1UsernameField = String(process.env.EXTERNAL_PORTAL_LEVEL1_USERNAME_FIELD || 'username').trim();
+  const level1PasswordField = String(process.env.EXTERNAL_PORTAL_LEVEL1_PASSWORD_FIELD || 'password').trim();
+  const level2UsernameField = String(process.env.EXTERNAL_PORTAL_LEVEL2_USERNAME_FIELD || 'username').trim();
+  const level2PasswordField = String(process.env.EXTERNAL_PORTAL_LEVEL2_PASSWORD_FIELD || 'password').trim();
+
+  try {
+    const level1Payload = new URLSearchParams({
+      [level1UsernameField]: config.level1Username,
+      [level1PasswordField]: config.level1Password
+    }).toString();
+
+    const level1Response = await axios.post(
+      `${baseUrl}${level1Path.startsWith('/') ? level1Path : `/${level1Path}`}`,
+      level1Payload,
+      buildPortalRequestConfig(cookieHeader, timeoutMs)
+    );
+
+    cookieHeader = mergeSetCookies(cookieHeader, level1Response.headers?.['set-cookie']);
+    if (level1Response.status >= 400) {
+      return {
+        status: 'login_level_1_failed',
+        errorMessage: 'Falha de autenticação no sistema externo',
+        sessionId: null,
+        cookieHeader: ''
+      };
+    }
+
+    const level2Payload = new URLSearchParams({
+      [level2UsernameField]: config.level2Username,
+      [level2PasswordField]: config.level2Password
+    }).toString();
+
+    const level2Response = await axios.post(
+      `${baseUrl}${level2Path.startsWith('/') ? level2Path : `/${level2Path}`}`,
+      level2Payload,
+      buildPortalRequestConfig(cookieHeader, timeoutMs)
+    );
+
+    cookieHeader = mergeSetCookies(cookieHeader, level2Response.headers?.['set-cookie']);
+    if (level2Response.status >= 400) {
+      return {
+        status: 'login_level_2_failed',
+        errorMessage: 'Falha de autenticação no sistema externo',
+        sessionId: null,
+        cookieHeader: ''
+      };
+    }
+
+    return {
+      status: 'authenticated',
+      errorMessage: null,
+      sessionId: `robot-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+      cookieHeader
+    };
+  } catch (error) {
+    return {
+      status: 'authentication_timeout',
+      errorMessage: 'Falha de autenticação no sistema externo',
+      sessionId: null,
+      cookieHeader: ''
+    };
+  }
+}
+
+async function fetchExternalPortalCandidates(queueRow, clinicMap, authSession) {
+  if (!clinicMap?.external_clinic_id) {
+    return { status: 'clinic_not_mapped', candidates: [] };
+  }
+  if (!authSession?.cookieHeader || authSession.status !== 'authenticated') {
+    return { status: authSession?.status || 'external_system_unavailable', candidates: [] };
+  }
+
+  const searchPath = String(process.env.EXTERNAL_PORTAL_SEARCH_PATH || '/api/patients/search').trim();
+  const queryParam = String(process.env.EXTERNAL_PORTAL_PATIENT_QUERY_PARAM || 'q').trim();
+  const clinicParam = String(process.env.EXTERNAL_PORTAL_CLINIC_QUERY_PARAM || 'clinicId').trim();
+  const dateParam = String(process.env.EXTERNAL_PORTAL_DATE_QUERY_PARAM || 'appointmentDate').trim();
+  const baseUrl = getRobotConfig().baseUrl.replace(/\/$/, '');
+  const query = queueRow.external_patient_id || queueRow.cpf || queueRow.patient_name;
+
+  try {
+    const response = await axios.get(
+      `${baseUrl}${searchPath.startsWith('/') ? searchPath : `/${searchPath}`}`,
+      {
+        timeout: getRobotConfig().timeoutMs,
+        validateStatus: () => true,
+        headers: { Cookie: authSession.cookieHeader || '' },
+        params: {
+          [queryParam]: query,
+          [clinicParam]: clinicMap.external_clinic_id,
+          [dateParam]: queueRow.appointment_date
+        }
+      }
+    );
+
+    if (response.status >= 400) {
+      return { status: 'external_system_unavailable', candidates: [] };
+    }
+
+    const payload = Array.isArray(response.data?.items)
+      ? response.data.items
+      : Array.isArray(response.data)
+        ? response.data
+        : [];
+
+    return {
+      status: 'authenticated',
+      candidates: payload.map((item) => ({
+        externalPatientId: item.externalPatientId || item.id || null,
+        cpf: item.cpf || null,
+        patientName: item.patientName || item.name || '',
+        clinicExternalId: item.clinicExternalId || item.clinic_id || clinicMap.external_clinic_id,
+        appointmentDate: item.appointmentDate || item.date || null,
+        phone: item.phone || item.telefone || item.whatsapp || '',
+        source: 'robot_external'
+      }))
+    };
+  } catch (error) {
+    return { status: 'external_system_unavailable', candidates: [] };
+  }
+}
+
+function resolveExternalCandidate(queueRow, candidates = []) {
+  const normalizedAppointmentDate = formatAgendaAppointmentDateOnly(queueRow.appointment_date);
+  const matchingCandidates = candidates.map((candidate) => {
+    const phone = normalizePhone(candidate.phone || '');
+    const dateMatchStatus = resolveAppointmentDateMatchStatus({
+      appointmentDate: normalizedAppointmentDate,
+      externalDate: candidate.appointmentDate || null,
+      strongIdentity: Boolean(
+        (queueRow.external_patient_id && candidate.externalPatientId && String(queueRow.external_patient_id) === String(candidate.externalPatientId))
+        || (queueRow.cpf && candidate.cpf && String(queueRow.cpf) === String(candidate.cpf))
+      )
+    });
+    const normalizedCandidateName = normalizeText(candidate.patientName);
+    const sameName = normalizedCandidateName && normalizedCandidateName === queueRow.patient_name_normalized;
+    const strongIdentity = Boolean(
+      (queueRow.external_patient_id && candidate.externalPatientId && String(queueRow.external_patient_id) === String(candidate.externalPatientId))
+      || (queueRow.cpf && candidate.cpf && String(queueRow.cpf) === String(candidate.cpf))
+    );
+
+    let confidenceScore = 0;
+    let matchMethod = 'nome aproximado + clinic';
+
+    if (strongIdentity && dateMatchStatus === 'matched') {
+      confidenceScore = 100;
+      matchMethod = queueRow.external_patient_id ? 'external_patient_id + clinic + data' : 'cpf + clinic + data';
+    } else if (sameName && dateMatchStatus === 'matched') {
+      confidenceScore = 97;
+      matchMethod = 'nome normalizado + clinic + data';
+    } else if (strongIdentity && dateMatchStatus === 'not_available') {
+      confidenceScore = 96;
+      matchMethod = queueRow.external_patient_id ? 'external_patient_id + clinic' : 'cpf + clinic';
+    } else if (sameName && dateMatchStatus === 'not_available') {
+      confidenceScore = 84;
+      matchMethod = 'nome normalizado + clinic';
+    } else if (sameName) {
+      confidenceScore = 70;
+    }
+
+    return {
+      ...candidate,
+      phoneNormalized: phone.valid ? phone.normalized : '',
+      phoneValid: phone.valid,
+      dateMatchStatus,
+      confidenceScore,
+      matchMethod
+    };
+  }).filter((candidate) => candidate.phoneValid);
+
+  matchingCandidates.sort((left, right) => right.confidenceScore - left.confidenceScore);
+  return matchingCandidates[0] || null;
+}
+
+async function updateAgendaContactFromResolution(queueRow, resolution = {}, actorName = 'patient-enrichment-bot') {
+  const contactStatus = deriveContactStatus({
+    phoneNormalized: resolution.phoneNormalized || '',
+    reviewRequired: resolution.contactStatus === 'review_required',
+    accessDenied: resolution.contactStatus === 'access_denied',
+    clinicMismatch: resolution.contactStatus === 'clinic_mismatch',
+    dateMatchStatus: resolution.appointmentDateMatchStatus || 'not_checked',
+    foundByRobot: resolution.contactStatus === 'found_by_robot' || resolution.contactStatus === 'updated',
+    lastCheckedAt: resolution.lastCheckedAt || new Date()
+  });
+
+  await pool.query(
+    `UPDATE agenda_items
+        SET patient_phone = COALESCE(?, patient_phone),
+            contact_status = ?,
+            contact_last_checked_at = ?,
+            contact_source = ?,
+            contact_confidence_score = ?,
+            contact_phone_found = ?,
+            contact_phone_normalized = ?,
+            contact_review_required = ?,
+            contact_whatsapp_available = ?,
+            appointment_date_verified = ?,
+            appointment_date_match_status = ?,
+            updated_at = NOW()
+      WHERE id = ?`,
+    [
+      resolution.phone || null,
+      contactStatus,
+      resolution.lastCheckedAt || new Date(),
+      resolution.source || null,
+      resolution.confidenceScore === null || typeof resolution.confidenceScore === 'undefined' ? null : Number(resolution.confidenceScore),
+      resolution.phone || null,
+      resolution.phoneNormalized || null,
+      contactStatus === 'review_required' ? 1 : 0,
+      normalizePhone(resolution.phoneNormalized || resolution.phone || '').valid ? 1 : 0,
+      resolution.appointmentDateMatchStatus === 'matched' ? new Date() : null,
+      resolution.appointmentDateMatchStatus || 'not_checked',
+      queueRow.agenda_item_id
+    ]
+  );
+
+  const queueStatus = (() => {
+    if (contactStatus === 'review_required') return 'review_required';
+    if (contactStatus === 'pending') return 'not_found';
+    if (contactStatus === 'date_mismatch') return 'date_mismatch';
+    if (contactStatus === 'clinic_mismatch') return 'clinic_mismatch';
+    if (contactStatus === 'access_denied') return 'access_denied';
+    if (normalizePhone(resolution.phoneNormalized || resolution.phone || '').valid) return 'contact_updated';
+    return 'error';
+  })();
+
+  await pool.query(
+    `UPDATE phone_enrichment_queue
+        SET status = ?,
+            confidence_score = ?,
+            phone_found = ?,
+            phone_normalized = ?,
+            source = ?,
+            match_method = ?,
+            appointment_date_match_status = ?,
+            last_attempt_at = NOW(),
+            error_message = ?,
+            updated_at = NOW()
+      WHERE id = ?`,
+    [
+      queueStatus,
+      resolution.confidenceScore === null || typeof resolution.confidenceScore === 'undefined' ? null : Number(resolution.confidenceScore),
+      resolution.phone || null,
+      resolution.phoneNormalized || null,
+      resolution.source || null,
+      resolution.matchMethod || null,
+      resolution.appointmentDateMatchStatus || 'not_checked',
+      resolution.errorMessage || null,
+      queueRow.id
+    ]
+  );
+
+  await insertPatientPhoneAudit({
+    agendaItemId: queueRow.agenda_item_id,
+    patientName: queueRow.patient_name,
+    clinicId: queueRow.clinic_id,
+    operatorUserId: queueRow.operator_user_id,
+    phoneOld: queueRow.current_patient_phone || null,
+    phoneNew: resolution.phoneNormalized || resolution.phone || null,
+    source: resolution.source || null,
+    confidenceScore: resolution.confidenceScore || null,
+    matchMethod: resolution.matchMethod || null,
+    appointmentDate: queueRow.appointment_date || null,
+    appointmentDateMatchStatus: resolution.appointmentDateMatchStatus || 'not_checked',
+    robotSessionId: resolution.robotSessionId || null,
+    action: queueStatus,
+    createdBy: actorName,
+    errorMessage: resolution.errorMessage || null
+  });
+}
+
+async function processSinglePhoneEnrichmentQueueItem(queueRow, authSession = null) {
+  const [agendaRows] = await pool.query(
+    `SELECT *
+       FROM agenda_items
+      WHERE id = ?
+        AND deleted_at IS NULL
+      LIMIT 1`,
+    [queueRow.agenda_item_id]
+  );
+  const agendaItem = agendaRows[0];
+  if (!agendaItem) {
+    await pool.query('UPDATE phone_enrichment_queue SET status = ?, error_message = ?, updated_at = NOW() WHERE id = ?', ['error', 'Item da agenda não encontrado.', queueRow.id]);
+    return { status: 'error' };
+  }
+
+  const [operatorRows] = await pool.query(
+    `SELECT id, role, active
+       FROM users
+      WHERE id = ?
+        AND deleted_at IS NULL
+      LIMIT 1`,
+    [queueRow.operator_user_id]
+  );
+  const operator = operatorRows[0];
+  if (!operator || !normalizeAgendaBoolean(operator.active, true)) {
+    await updateAgendaContactFromResolution(queueRow, {
+      contactStatus: 'access_denied',
+      appointmentDateMatchStatus: 'not_checked',
+      errorMessage: 'Operador inválido.'
+    });
+    return { status: 'access_denied' };
+  }
+
+  const operatorClinicIds = await getOperatorClinicLinks(operator.id);
+  if (!operatorClinicIds.includes(Number(queueRow.clinic_id || 0))) {
+    await updateAgendaContactFromResolution(queueRow, {
+      contactStatus: 'access_denied',
+      appointmentDateMatchStatus: 'not_checked',
+      errorMessage: 'Operador sem permissão para a clínica.'
+    });
+    return { status: 'operator_without_clinic_permission' };
+  }
+
+  const clinicMap = await getExternalClinicMap(queueRow.clinic_id);
+  const localCandidate = await findLocalPatientContactCandidate(queueRow);
+  if (localCandidate) {
+    await updateAgendaContactFromResolution(queueRow, {
+      ...localCandidate,
+      source: localCandidate.source,
+      appointmentDateMatchStatus: localCandidate.appointmentDateMatchStatus || 'not_available',
+      contactStatus: localCandidate.confidenceScore >= 95 ? 'updated' : 'review_required',
+      lastCheckedAt: localCandidate.lastValidatedAt || new Date()
+    }, 'patient-enrichment-local');
+
+    await upsertPatientContactRegistry({
+      agendaItem,
+      phone: localCandidate.phone,
+      phoneNormalized: localCandidate.phoneNormalized,
+      source: localCandidate.source,
+      lastValidatedAt: localCandidate.lastValidatedAt || new Date()
+    });
+
+    return { status: 'contact_updated' };
+  }
+
+  if (!clinicMap) {
+    await updateAgendaContactFromResolution(queueRow, {
+      contactStatus: 'review_required',
+      appointmentDateMatchStatus: 'not_checked',
+      errorMessage: 'Clínica sem mapeamento externo.'
+    });
+    await pool.query('UPDATE phone_enrichment_queue SET status = ?, error_message = ?, updated_at = NOW() WHERE id = ?', ['clinic_not_mapped', 'Clínica sem mapeamento externo.', queueRow.id]);
+    return { status: 'clinic_not_mapped' };
+  }
+
+  const externalSearch = await fetchExternalPortalCandidates(queueRow, clinicMap, authSession);
+  if (externalSearch.status !== 'authenticated') {
+    await updateAgendaContactFromResolution(queueRow, {
+      contactStatus: 'pending',
+      appointmentDateMatchStatus: 'not_checked',
+      errorMessage: externalSearch.status === 'clinic_not_mapped' ? 'Clínica sem mapeamento externo.' : 'Falha de autenticação no sistema externo'
+    });
+    await pool.query('UPDATE phone_enrichment_queue SET status = ?, error_message = ?, updated_at = NOW() WHERE id = ?', [externalSearch.status, 'Falha de autenticação no sistema externo', queueRow.id]);
+    return { status: externalSearch.status };
+  }
+
+  const externalCandidate = resolveExternalCandidate(queueRow, externalSearch.candidates || []);
+  if (!externalCandidate) {
+    await updateAgendaContactFromResolution(queueRow, {
+      contactStatus: 'pending',
+      appointmentDateMatchStatus: 'not_available',
+      errorMessage: 'Telefone não localizado.'
+    });
+    await pool.query('UPDATE phone_enrichment_queue SET status = ?, error_message = ?, updated_at = NOW() WHERE id = ?', ['not_found', 'Telefone não localizado.', queueRow.id]);
+    return { status: 'not_found' };
+  }
+
+  const reviewRequired = externalCandidate.confidenceScore < 95 || ['mismatch', 'review_required'].includes(externalCandidate.dateMatchStatus);
+  await updateAgendaContactFromResolution(queueRow, {
+    phone: externalCandidate.phone,
+    phoneNormalized: externalCandidate.phoneNormalized,
+    source: externalCandidate.source,
+    confidenceScore: externalCandidate.confidenceScore,
+    matchMethod: externalCandidate.matchMethod,
+    appointmentDateMatchStatus: externalCandidate.dateMatchStatus,
+    contactStatus: reviewRequired ? 'review_required' : 'updated',
+    lastCheckedAt: new Date(),
+    robotSessionId: authSession?.sessionId || null,
+    errorMessage: reviewRequired ? 'Revisão manual necessária.' : null
+  });
+
+  await upsertPatientContactRegistry({
+    agendaItem,
+    phone: externalCandidate.phone,
+    phoneNormalized: externalCandidate.phoneNormalized,
+    source: externalCandidate.source,
+    lastValidatedAt: new Date()
+  });
+
+  return { status: reviewRequired ? 'review_required' : 'contact_updated' };
+}
+
+async function processPhoneEnrichmentQueue({ limit = 25 } = {}) {
+  const maxItems = Math.max(1, Math.min(200, Number(limit || 25) || 25));
+  const [rows] = await pool.query(
+    `SELECT q.*, a.patient_phone AS current_patient_phone
+       FROM phone_enrichment_queue q
+       INNER JOIN agenda_items a ON a.id = q.agenda_item_id
+      WHERE q.status IN ('pending', 'error', 'review_required', 'not_found', 'external_system_unavailable', 'login_level_1_failed', 'login_level_2_failed')
+      ORDER BY q.updated_at ASC, q.id ASC
+      LIMIT ?`,
+    [maxItems]
+  );
+
+  if (!rows.length) {
+    return { processed: 0, summary: buildPhoneEnrichmentQueueSummary([]), robot: getRobotConfigStatus() };
+  }
+
+  const authSession = await authenticatePatientEnrichmentRobot();
+  const processedStatuses = [];
+
+  for (const row of rows) {
+    // eslint-disable-next-line no-await-in-loop
+    await pool.query(
+      `UPDATE phone_enrichment_queue
+          SET status = 'processing',
+              attempts = attempts + 1,
+              last_attempt_at = NOW(),
+              robot_session_id = ?
+        WHERE id = ?`,
+      [authSession.sessionId || null, row.id]
+    );
+    // eslint-disable-next-line no-await-in-loop
+    const result = await processSinglePhoneEnrichmentQueueItem({
+      ...row,
+      attempts: Number(row.attempts || 0) + 1
+    }, authSession);
+    processedStatuses.push({ status: result.status || 'error' });
+  }
+
+  return {
+    processed: processedStatuses.length,
+    summary: buildPhoneEnrichmentQueueSummary(processedStatuses),
+    robot: {
+      ...getRobotConfigStatus(),
+      lastSessionStatus: authSession.status
+    }
+  };
+}
+
+async function loadPhoneEnrichmentDashboard(filters = {}, user = null) {
+  const where = ['1 = 1'];
+  const params = [];
+
+  if (filters.clinicId) {
+    where.push('q.clinic_id = ?');
+    params.push(Number(filters.clinicId));
+  }
+
+  if (filters.status) {
+    where.push('q.status = ?');
+    params.push(String(filters.status).trim());
+  }
+
+  if (filters.agendaDate) {
+    where.push('q.appointment_date = ?');
+    params.push(filters.agendaDate);
+  }
+
+  if (filters.operatorUserId) {
+    where.push('q.operator_user_id = ?');
+    params.push(Number(filters.operatorUserId));
+  }
+
+  if (isCrcOperatorUser(user)) {
+    const clinicIds = await getPhoneEnrichmentClinicIdsFromUser(user);
+    if (!clinicIds.length) {
+      return {
+        summary: buildPhoneEnrichmentQueueSummary([]),
+        rows: [],
+        robot: getRobotConfigStatus()
+      };
+    }
+    where.push('q.clinic_id IN (?)');
+    params.push(clinicIds);
+  }
+
+  const [rows] = await pool.query(
+    `SELECT q.*,
+            a.clinic_name,
+            a.patient_phone,
+            a.contact_status,
+            a.contact_last_checked_at,
+            a.contact_source,
+            a.contact_confidence_score,
+            a.contact_phone_normalized,
+            a.contact_phone_found,
+            a.contact_whatsapp_available,
+            a.patient_do_not_contact,
+            a.patient_scheduled_at
+       FROM phone_enrichment_queue q
+       INNER JOIN agenda_items a ON a.id = q.agenda_item_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY q.updated_at DESC, q.id DESC
+      LIMIT 300`,
+    params
+  );
+
+  return {
+    summary: buildPhoneEnrichmentQueueSummary(rows),
+    rows: rows.map((row) => ({
+      ...row,
+      phone_masked: maskPhone(row.contact_phone_normalized || row.phone_normalized || row.phone_found || row.patient_phone || ''),
+      appointment_label: formatAgendaAppointmentLabel(row.patient_scheduled_at)
+    })),
+    robot: getRobotConfigStatus()
+  };
+}
+
+const phoneEnrichmentScheduleState = {
+  lastSlot: ''
+};
+
+function listPhoneEnrichmentScheduleSlots() {
+  return String(process.env.PHONE_ENRICHMENT_SCHEDULE || '06:30,11:30,15:30,18:00')
+    .split(',')
+    .map((value) => String(value || '').trim())
+    .filter((value) => /^\d{2}:\d{2}$/.test(value));
+}
+
+async function runScheduledPhoneEnrichmentSweep(now = new Date()) {
+  const status = getRobotConfigStatus();
+  if (!status.autoAfterUpload) {
+    return { skipped: true, reason: 'disabled' };
+  }
+
+  const parts = getSaoPauloParts(now);
+  const currentSlot = `${parts.hour}:${parts.minute}`;
+  const configuredSlots = listPhoneEnrichmentScheduleSlots();
+  const slotKey = `${parts.dateKey}-${currentSlot}`;
+  if (!configuredSlots.includes(currentSlot) || phoneEnrichmentScheduleState.lastSlot === slotKey) {
+    return { skipped: true, reason: 'outside_window' };
+  }
+
+  phoneEnrichmentScheduleState.lastSlot = slotKey;
+  return processPhoneEnrichmentQueue({ limit: 50 });
 }
 
 function getAgendaOwnerId(user = {}) {
@@ -26357,6 +27421,7 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
     let duplicateSkipped = 0;
     let whatsappQueued = 0;
     let whatsappBlocked = 0;
+    const importedAgendaItemIds = [];
 
     for (const [index, row] of importedRows.entries()) {
       const validationRow = validation.rows.find((item) => Number(item.line) === Number(row.line)) || null;
@@ -26445,9 +27510,10 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
               duplicateRecordId
             ]
           );
+          importedAgendaItemIds.push(duplicateRecordId);
           updated += 1;
         } else {
-          await pool.query(
+          const [insertResult] = await pool.query(
             `INSERT INTO agenda_items
              (company_id, owner_user_id, owner_name, assigned_user_id, assigned_user_name, assigned_user_email, clinic_id, clinic_name, demand_type, source_external_id, patient_name, patient_phone, patient_specialty, patient_dentist, patient_channel, patient_has_scheduled, patient_scheduled_at, confirmation_status, source_label, source_batch_id, title, description, status, priority, is_daily_recurring, requires_completion, recurrence_base_status, recurrence_cycle_date, recurrence_weekdays_json, due_at, reminder_at, tags_json, checklist_json, board_order)
              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)`,
@@ -26488,6 +27554,7 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
               0
             ]
           );
+          importedAgendaItemIds.push(insertResult.insertId);
           created += 1;
         }
       }
@@ -26599,6 +27666,28 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
       }
     }
 
+    let phoneEnrichmentQueued = 0;
+    if (importedAgendaItemIds.length) {
+      const [importedAgendaRows] = await pool.query(
+        `SELECT *
+           FROM agenda_items
+          WHERE id IN (?)`,
+        [importedAgendaItemIds]
+      );
+      phoneEnrichmentQueued = await enqueueAgendaPhoneEnrichment({
+        agendaItems: importedAgendaRows.map(serializeAgendaItem),
+        operatorUserId: req.user.id,
+        batchId
+      });
+      if (phoneEnrichmentQueued && getRobotConfigStatus().autoAfterUpload) {
+        setTimeout(() => {
+          processPhoneEnrichmentQueue({ limit: 25 }).catch((error) => {
+            console.warn('Falha ao iniciar enriquecimento automático de telefones:', error.message);
+          });
+        }, 50);
+      }
+    }
+
     await insertAgendaImportAuditLog({
       user: req.user,
       selectedClinic,
@@ -26637,14 +27726,17 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
       },
       metadata: {
         totalRows: importedRows.length,
-        invalidRows: invalidRows.length
+        invalidRows: invalidRows.length,
+        phoneEnrichmentQueued
       },
       origin: 'agenda_import'
     });
 
     return res.json({
       success: true,
-      message: `Importação concluída com ${created} demanda(s) criada(s), ${updated} atualizada(s) e ${whatsappQueued} confirmação(ões) enfileirada(s).`,
+      message: phoneEnrichmentQueued
+        ? 'Agenda importada com sucesso. Busca automática de telefones iniciada.'
+        : `Importação concluída com ${created} demanda(s) criada(s), ${updated} atualizada(s) e ${whatsappQueued} confirmação(ões) enfileirada(s).`,
       batchId,
       importType,
       duplicateStrategy,
@@ -26654,6 +27746,7 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
       duplicateSkipped,
       whatsappQueued,
       whatsappBlocked,
+      phoneEnrichmentQueued,
       invalid: invalidRows.length,
       invalidRows: invalidRows.slice(0, 25),
       unresolvedAssignees: unresolvedAssignees.slice(0, 25)
@@ -26665,6 +27758,213 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
     if (req.file?.path) {
       fs.unlink(req.file.path, () => {});
     }
+  }
+});
+
+app.get('/api/agenda/enrichment/overview', authenticate, async (req, res) => {
+  try {
+    const report = await loadPhoneEnrichmentDashboard({
+      clinicId: req.query.clinic_id || req.query.clinicId || null,
+      operatorUserId: req.query.operator_user_id || req.query.operatorUserId || null,
+      agendaDate: req.query.agenda_date || req.query.agendaDate || null,
+      status: req.query.status || null
+    }, req.user);
+    return res.json(report);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar acompanhamento do enriquecimento de telefones.' });
+  }
+});
+
+app.post('/api/agenda/enrichment/run', authenticate, async (req, res) => {
+  try {
+    if (!canImportAgendaWorkbook(req.user) && !canAccessAgendaDashboard(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não pode executar o enriquecimento de telefones.' });
+    }
+    const result = await processPhoneEnrichmentQueue({ limit: req.body?.limit || req.query?.limit || 25 });
+    return res.json({
+      success: true,
+      message: 'Busca de telefones executada com sucesso.',
+      ...result
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao executar a busca de telefones.' });
+  }
+});
+
+app.post('/api/agenda/items/:id/reprocess-contact', authenticate, async (req, res) => {
+  try {
+    const visibility = buildAgendaVisibilityWhere(req.user);
+    const [rows] = await pool.query(
+      `SELECT *
+         FROM agenda_items
+        WHERE id = ?
+          AND deleted_at IS NULL
+          AND ${visibility.sql}
+        LIMIT 1`,
+      [Number(req.params.id || 0), ...visibility.params]
+    );
+    const item = rows[0];
+    if (!item) {
+      return res.status(404).json({ error: 'Agendamento não encontrado.' });
+    }
+    const queued = await enqueueAgendaPhoneEnrichment({
+      agendaItems: [serializeAgendaItem(item)],
+      operatorUserId: req.user.id,
+      batchId: item.source_batch_id || null
+    });
+    if (queued) {
+      const result = await processPhoneEnrichmentQueue({ limit: 5 });
+      return res.json({
+        success: true,
+        queued,
+        result,
+        message: 'Item enviado para nova busca de telefone.'
+      });
+    }
+    return res.json({
+      success: true,
+      queued: 0,
+      message: 'Este agendamento já possui telefone válido e não exige novo processamento.'
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao reenfileirar busca de telefone.' });
+  }
+});
+
+app.post('/api/agenda/items/:id/open-whatsapp', authenticate, async (req, res) => {
+  try {
+    const visibility = buildAgendaVisibilityWhere(req.user);
+    const [rows] = await pool.query(
+      `SELECT *
+         FROM agenda_items
+        WHERE id = ?
+          AND deleted_at IS NULL
+          AND ${visibility.sql}
+        LIMIT 1`,
+      [Number(req.params.id || 0), ...visibility.params]
+    );
+    const item = rows[0];
+    if (!item) {
+      return res.status(404).json({ error: 'Agendamento não encontrado.' });
+    }
+
+    if (normalizeAgendaBoolean(item.patient_do_not_contact, false)) {
+      await insertWhatsappContactAudit({
+        agendaItemId: item.id,
+        patientName: item.patient_name,
+        clinicId: item.clinic_id,
+        operatorUserId: req.user.id,
+        phoneUsed: null,
+        appointmentDate: formatAgendaAppointmentDateOnly(item.patient_scheduled_at) || null,
+        appointmentTime: formatAgendaAppointmentTimeOnly(item.patient_scheduled_at) || null,
+        action: 'whatsapp_blocked_do_not_contact',
+        createdBy: getActorName(req.user)
+      });
+      return res.status(409).json({ error: 'Paciente marcado como não deseja contato.' });
+    }
+
+    if (isCrcOperatorUser(req.user)) {
+      const clinicIds = await getPhoneEnrichmentClinicIdsFromUser(req.user);
+      if (!clinicIds.includes(Number(item.clinic_id || 0))) {
+        await insertWhatsappContactAudit({
+          agendaItemId: item.id,
+          patientName: item.patient_name,
+          clinicId: item.clinic_id,
+          operatorUserId: req.user.id,
+          phoneUsed: null,
+          appointmentDate: formatAgendaAppointmentDateOnly(item.patient_scheduled_at) || null,
+          appointmentTime: formatAgendaAppointmentTimeOnly(item.patient_scheduled_at) || null,
+          action: 'whatsapp_blocked_no_permission',
+          createdBy: getActorName(req.user)
+        });
+        return res.status(403).json({ error: 'Você não possui permissão para acionar o WhatsApp desta clínica.' });
+      }
+    }
+
+    const normalizedPhone = normalizePhone(item.contact_phone_normalized || item.contact_phone_found || item.patient_phone || '');
+    if (!normalizedPhone.valid) {
+      await insertWhatsappContactAudit({
+        agendaItemId: item.id,
+        patientName: item.patient_name,
+        clinicId: item.clinic_id,
+        operatorUserId: req.user.id,
+        phoneUsed: null,
+        appointmentDate: formatAgendaAppointmentDateOnly(item.patient_scheduled_at) || null,
+        appointmentTime: formatAgendaAppointmentTimeOnly(item.patient_scheduled_at) || null,
+        action: 'whatsapp_blocked_no_phone',
+        createdBy: getActorName(req.user)
+      });
+      return res.status(409).json({ error: 'Telefone não disponível. Execute a busca automática ou atualize manualmente.' });
+    }
+
+    const appointmentDateStatus = item.appointment_date_match_status || 'not_checked';
+    const privilegedWhatsappAccess = ['supervisor_crc', 'crc_leader', 'crc_manager', 'manager', 'admin', 'master_admin'].includes(normalizeAccessRole(req.user?.role));
+    if (appointmentDateStatus === 'mismatch' && !privilegedWhatsappAccess) {
+      await insertWhatsappContactAudit({
+        agendaItemId: item.id,
+        patientName: item.patient_name,
+        clinicId: item.clinic_id,
+        operatorUserId: req.user.id,
+        phoneUsed: normalizedPhone.normalized,
+        appointmentDate: formatAgendaAppointmentDateOnly(item.patient_scheduled_at) || null,
+        appointmentTime: formatAgendaAppointmentTimeOnly(item.patient_scheduled_at) || null,
+        action: 'whatsapp_blocked_clinic_mismatch',
+        createdBy: getActorName(req.user)
+      });
+      return res.status(409).json({ error: 'A data do agendamento exige revisão antes do contato.' });
+    }
+
+    const message = buildWhatsAppMessage(process.env.AGENDA_WHATSAPP_TEMPLATE || '', {
+      patientName: item.patient_name || 'paciente',
+      clinicName: item.clinic_name || 'unidade informada',
+      appointmentDateLabel: formatAgendaAppointmentDateOnly(item.patient_scheduled_at)
+        ? new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short' }).format(new Date(item.patient_scheduled_at))
+        : 'data informada',
+      appointmentTimeLabel: formatAgendaAppointmentTimeOnly(item.patient_scheduled_at) || 'horário informado'
+    });
+    const url = buildWhatsAppUrl(normalizedPhone.normalized, message);
+
+    await insertWhatsappContactAudit({
+      agendaItemId: item.id,
+      patientName: item.patient_name,
+      clinicId: item.clinic_id,
+      operatorUserId: req.user.id,
+      phoneUsed: normalizedPhone.normalized,
+      messageTemplate: message,
+      appointmentDate: formatAgendaAppointmentDateOnly(item.patient_scheduled_at) || null,
+      appointmentTime: formatAgendaAppointmentTimeOnly(item.patient_scheduled_at) || null,
+      action: 'whatsapp_opened',
+      createdBy: getActorName(req.user)
+    });
+
+    await insertSecurityAuditLog({
+      req,
+      user: req.user,
+      module: 'agenda',
+      action: 'agenda_whatsapp_opened',
+      outcome: 'success',
+      recordType: 'agenda_item',
+      recordId: item.id,
+      metadata: {
+        clinicId: item.clinic_id || null,
+        appointmentDateMatchStatus: appointmentDateStatus,
+        contactStatus: item.contact_status || 'pending'
+      },
+      origin: 'agenda_whatsapp'
+    });
+
+    return res.json({
+      success: true,
+      url,
+      phoneMasked: maskPhone(normalizedPhone.normalized),
+      message
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(400).json({ error: error.message || 'Erro ao abrir WhatsApp da agenda.' });
   }
 });
 
@@ -27482,6 +28782,7 @@ app.post('/api/crc/initial-clinic-selection', authenticate, async (req, res) => 
         [req.user.id]
       );
       await connection.commit();
+      await syncOperatorClinicLinks(req.user.id, clinicIds, getActorName(req.user));
     } catch (transactionError) {
       await connection.rollback();
       throw transactionError;
@@ -28556,6 +29857,7 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
           [current.id, clinicId]
         )
       )));
+      await syncOperatorClinicLinks(current.id, normalizedNextClinicIds, getActorName(req.user));
       await syncClinicLeadershipForUser({
         userId: current.id,
         previousRole: current.role,
@@ -28848,6 +30150,7 @@ app.delete('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res
       nextClinicIds: []
     });
     await pool.query('DELETE FROM user_clinics WHERE user_id = ?', [user.id]);
+    await syncOperatorClinicLinks(user.id, [], getActorName(req.user));
 
     res.json({ message: 'Usuário excluído com lastro de auditoria.' });
   } catch (error) {
@@ -34292,6 +35595,7 @@ async function startServer() {
       await runScheduledJob('startup_dental_card_sla', 'a rotina inicial de SLA do Dental Card', runDentalCardSlaNotificationSweep);
       await runScheduledJob('startup_partner_video_reminders', 'a rotina inicial de vídeos dos parceiros', runScheduledPartnerVideoDailyReminders);
       await runScheduledJob('startup_whatsapp_dispatch_queue', 'a fila inicial de disparos WhatsApp', processWhatsAppDispatchQueue);
+      await runScheduledJob('startup_phone_enrichment', 'a rotina inicial de enriquecimento de telefones', runScheduledPhoneEnrichmentSweep);
     })();
   }, 10000);
 
@@ -34312,6 +35616,7 @@ async function startServer() {
     await runPartnerVideoOperationalEscalationSweep();
   }, Math.max(5, Number(process.env.PARTNER_VIDEO_SWEEP_INTERVAL_MINUTES || 15)) * 60 * 1000);
   setManagedInterval('whatsapp_dispatch_queue', 'a fila de disparos WhatsApp', processWhatsAppDispatchQueue, Math.max(3000, Number(process.env.WHATSAPP_DISPATCH_INTERVAL_MS || 5000)));
+  setManagedInterval('phone_enrichment', 'a rotina programada de enriquecimento de telefones', runScheduledPhoneEnrichmentSweep, 60 * 1000);
 
 }
 
