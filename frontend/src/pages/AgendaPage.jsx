@@ -565,11 +565,30 @@ function AgendaCard({
   const dateMatchTone = getAgendaDateMatchTone(item.appointment_date_match_status);
   const canOpenWhatsApp = Boolean((item.contact_whatsapp_available || item.patient_phone) && !item.patient_do_not_contact && item.patient_name);
   const previewPayload = buildAgendaPreviewPayload(item, 'task');
+  const handleCardOpen = (event) => {
+    if (event?.defaultPrevented) return;
+    const target = event?.target;
+    if (target instanceof Element && target.closest('button, a, input, select, textarea, label')) {
+      return;
+    }
+    onOpen(item);
+  };
+
+  const handleCardKeyDown = (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    onOpen(item);
+  };
   return (
     <article
       className={`agenda-task-card priority-${item.priority || 'normal'} ${isOverdue(item.due_at) && item.status !== 'done' ? 'overdue' : ''}`}
       draggable
+      role="button"
+      tabIndex={0}
+      aria-label={`Abrir detalhes de ${item.patient_name || item.title || 'item da agenda'}`}
       onDragStart={() => onDragStart(item.id)}
+      onClick={handleCardOpen}
+      onKeyDown={handleCardKeyDown}
       onMouseEnter={(event) => onPreviewEnter(event, previewPayload)}
       onMouseLeave={onPreviewLeave}
     >
@@ -580,7 +599,11 @@ function AgendaCard({
       <div className="agenda-card-identity">
         <div className="agenda-card-title-stack">
           <span className="agenda-card-type">{item.patient_name ? 'Paciente em agenda' : 'Demanda operacional'}</span>
-          <button type="button" className="agenda-task-main" onClick={() => onOpen(item)}>
+          <button type="button" className="agenda-task-main" onClick={(event) => {
+            event.stopPropagation();
+            onOpen(item);
+          }}
+          >
             <strong>{item.title}</strong>
             {item.description ? <p>{item.description}</p> : null}
           </button>
@@ -664,7 +687,10 @@ function AgendaCard({
         <button
           type="button"
           className="outline-action"
-          onClick={() => onOpenWhatsApp(item)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenWhatsApp(item);
+          }}
           disabled={!canOpenWhatsApp || openingWhatsappId === item.id}
           title={!canOpenWhatsApp ? 'Telefone nao disponivel. Execute a busca automatica ou atualize manualmente.' : 'Abrir WhatsApp'}
         >
@@ -673,20 +699,38 @@ function AgendaCard({
         <button
           type="button"
           className="outline-action"
-          onClick={() => onReprocessContact(item)}
+          onClick={(event) => {
+            event.stopPropagation();
+            onReprocessContact(item);
+          }}
           disabled={reprocessingContactId === item.id}
         >
           {reprocessingContactId === item.id ? 'Atualizando...' : 'Atualizar telefone'}
         </button>
         {item.status !== 'doing' && item.status !== 'done' ? (
-          <button type="button" onClick={() => onStatus(item, 'doing')}>Iniciar</button>
+          <button type="button" onClick={(event) => {
+            event.stopPropagation();
+            onStatus(item, 'doing');
+          }}
+          >
+            Iniciar
+          </button>
         ) : null}
         {item.status !== 'done' ? (
-          <button type="button" onClick={() => onStatus(item, 'done', { markExecuted: true })} disabled={!canExecute}>
+          <button type="button" onClick={(event) => {
+            event.stopPropagation();
+            onStatus(item, 'done', { markExecuted: true });
+          }}
+          disabled={!canExecute}
+          >
             {canExecute ? 'Registrar execução' : 'Aguardando responsável'}
           </button>
         ) : (
-          <button type="button" onClick={() => onStatus(item, item.is_daily_recurring ? (item.recurrence_base_status || 'today') : 'todo')}>
+          <button type="button" onClick={(event) => {
+            event.stopPropagation();
+            onStatus(item, item.is_daily_recurring ? (item.recurrence_base_status || 'today') : 'todo');
+          }}
+          >
             {item.is_daily_recurring ? 'Reabrir ciclo' : 'Reabrir'}
           </button>
         )}
@@ -1280,6 +1324,27 @@ export default function AgendaPage() {
     setEditorOpen(true);
   };
 
+  const openAgendaItemDetails = async (itemOrId) => {
+    const itemId = Number(typeof itemOrId === 'object' ? itemOrId?.id : itemOrId);
+    if (!itemId) return;
+
+    const cachedItem = typeof itemOrId === 'object' && itemOrId?.id
+      ? itemOrId
+      : items.find((row) => Number(row.id) === itemId);
+
+    if (cachedItem) {
+      openEdit(cachedItem);
+      return;
+    }
+
+    try {
+      const response = await api.get(`/api/agenda/items/${itemId}`);
+      openEdit(response.data || null);
+    } catch (error) {
+      setFeedback(getApiErrorMessage(error, 'Nao foi possivel abrir o detalhe do agendamento.'));
+    }
+  };
+
   const closeEditor = () => {
     setEditorOpen(false);
     setSelectedItem(null);
@@ -1700,7 +1765,7 @@ export default function AgendaPage() {
             <small>{formatDateTime(reminderItem.reminder_at)}</small>
           </div>
           <ActionButtons>
-            <button type="button" className="outline-action" onClick={() => openEdit(reminderItem)}>Abrir</button>
+            <button type="button" className="outline-action" onClick={() => openAgendaItemDetails(reminderItem)}>Abrir</button>
             <button type="button" className="secondary-action" onClick={acknowledgeReminder}>Marcar como visto</button>
           </ActionButtons>
         </section>
@@ -2367,6 +2432,12 @@ export default function AgendaPage() {
                       {confirmationItems.slice(0, 150).map((item) => (
                         <tr
                           key={`confirmation-row-${item.agenda_item_id}`}
+                          className={item.agenda_item_id ? 'agenda-confirmation-row-clickable' : ''}
+                          onClick={() => {
+                            if (item.agenda_item_id) {
+                              openAgendaItemDetails(item.agenda_item_id);
+                            }
+                          }}
                           onMouseEnter={(event) => handlePreviewEnter(event, buildAgendaPreviewPayload(item, 'confirmation'))}
                           onMouseLeave={handlePreviewLeave}
                         >
@@ -2374,7 +2445,10 @@ export default function AgendaPage() {
                             <button
                               type="button"
                               className="agenda-confirmation-preview-trigger"
-                              onClick={(event) => handlePreviewPin(event, buildAgendaPreviewPayload(item, 'confirmation'))}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openAgendaItemDetails(item.agenda_item_id || item.id);
+                              }}
                             >
                               {item.patient_name || '-'}
                             </button>
@@ -2389,7 +2463,10 @@ export default function AgendaPage() {
                             <button
                               type="button"
                               className={`agenda-confirmation-badge agenda-inline-pill-button ${getAgendaConfirmationToneClass(item.confirmation_status)}`}
-                              onClick={(event) => handlePreviewPin(event, buildAgendaPreviewPayload(item, 'confirmation'))}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                handlePreviewPin(event, buildAgendaPreviewPayload(item, 'confirmation'));
+                              }}
                             >
                               {item.confirmation_label || '-'}
                             </button>
@@ -2944,7 +3021,7 @@ export default function AgendaPage() {
                             key={item.id}
                             item={item}
                             currentUserId={currentUserId}
-                            onOpen={openEdit}
+                            onOpen={openAgendaItemDetails}
                             onStatus={updateStatus}
                             onDragStart={setDraggingId}
                             onOpenWhatsApp={openAgendaWhatsApp}

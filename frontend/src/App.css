@@ -15808,6 +15808,14 @@ a {
   min-width: 1080px;
 }
 
+.agenda-confirmation-row-clickable {
+  cursor: pointer;
+}
+
+.agenda-confirmation-row-clickable:hover td {
+  background: rgba(239, 246, 255, 0.78);
+}
+
 .agenda-confirmation-badge {
   display: inline-flex;
   align-items: center;
@@ -16213,7 +16221,7 @@ a {
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.98)),
     radial-gradient(circle at top right, rgba(29, 78, 216, 0.08), transparent 42%);
   box-shadow: 0 14px 28px rgba(15, 23, 42, 0.08);
-  cursor: grab;
+  cursor: pointer;
   transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
 }
 
@@ -16221,6 +16229,11 @@ a {
   transform: translateY(-2px);
   border-color: rgba(163, 177, 199, 0.98);
   box-shadow: 0 20px 38px rgba(15, 23, 42, 0.14);
+}
+
+.agenda-task-card:focus-visible {
+  outline: 3px solid rgba(59, 130, 246, 0.45);
+  outline-offset: 2px;
 }
 
 .agenda-task-card.priority-baixa {

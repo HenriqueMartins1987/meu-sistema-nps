@@ -73,6 +73,7 @@ test('buildWhatsAppUrl and message use normalized phone and encoded body', () =>
 
 test('getRobotConfigStatus only reports readiness without exposing secrets', () => {
   const status = getRobotConfigStatus({
+    EXTERNAL_PORTAL_PROVIDER: 'ecuro',
     EXTERNAL_PORTAL_BASE_URL: 'https://portal.externo.test',
     EXTERNAL_PORTAL_LEVEL1_USERNAME: 'nivel1',
     EXTERNAL_PORTAL_LEVEL1_PASSWORD: 'secret',
@@ -84,4 +85,7 @@ test('getRobotConfigStatus only reports readiness without exposing secrets', () 
   assert.equal(status.configured, true);
   assert.equal(Object.prototype.hasOwnProperty.call(status, 'level1Password'), false);
   assert.equal(status.autoAfterUpload, true);
+  assert.equal(status.provider, 'ecuro');
+  assert.equal(status.authApiUrl, 'https://auth.api.portal.externo.test');
+  assert.equal(status.clinicsApiUrl, 'https://clinics.api.portal.externo.test');
 });

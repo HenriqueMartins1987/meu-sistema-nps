@@ -206,13 +206,51 @@ function buildQueueSummary(rows = []) {
   });
 }
 
+function deriveRobotProvider(baseUrl = '', explicitProvider = '') {
+  const normalizedExplicitProvider = String(explicitProvider || '').trim().toLowerCase();
+  if (normalizedExplicitProvider) return normalizedExplicitProvider;
+  return /(^|\/\/)([^/]+\.)?ecuro\.com\.br(\/|$)/i.test(String(baseUrl || '').trim()) ? 'ecuro' : 'generic';
+}
+
+function resolveEcuroApiBaseUrl(baseUrl = '', explicitApiUrl = '', prefix = '') {
+  const normalizedExplicitApiUrl = String(explicitApiUrl || '').trim();
+  if (normalizedExplicitApiUrl) {
+    return normalizedExplicitApiUrl.replace(/\/$/, '');
+  }
+
+  try {
+    const parsedBaseUrl = new URL(String(baseUrl || '').trim());
+    const hostname = parsedBaseUrl.hostname.replace(/^www\./i, '');
+    if (!hostname) return '';
+    return `${parsedBaseUrl.protocol}//${prefix}.api.${hostname}`;
+  } catch (error) {
+    return '';
+  }
+}
+
 function getRobotConfig(env = process.env) {
+  const explicitBaseUrl = String(env.EXTERNAL_PORTAL_BASE_URL || '').trim();
+  const provider = deriveRobotProvider(explicitBaseUrl, env.EXTERNAL_PORTAL_PROVIDER);
+  const baseUrl = explicitBaseUrl || (provider === 'ecuro' ? 'https://ecuro.com.br' : '');
   return {
-    baseUrl: String(env.EXTERNAL_PORTAL_BASE_URL || '').trim(),
+    provider,
+    baseUrl,
+    authApiUrl: resolveEcuroApiBaseUrl(baseUrl, env.EXTERNAL_PORTAL_AUTH_API_URL, 'auth'),
+    clinicsApiUrl: resolveEcuroApiBaseUrl(baseUrl, env.EXTERNAL_PORTAL_CLINICS_API_URL, 'clinics'),
+    patientsApiUrl: resolveEcuroApiBaseUrl(baseUrl, env.EXTERNAL_PORTAL_PATIENTS_API_URL, 'patients'),
     level1Username: String(env.EXTERNAL_PORTAL_LEVEL1_USERNAME || '').trim(),
     level1Password: String(env.EXTERNAL_PORTAL_LEVEL1_PASSWORD || '').trim(),
     level2Username: String(env.EXTERNAL_PORTAL_LEVEL2_USERNAME || '').trim(),
     level2Password: String(env.EXTERNAL_PORTAL_LEVEL2_PASSWORD || '').trim(),
+    level1Path: String(env.EXTERNAL_PORTAL_LEVEL1_PATH || (provider === 'ecuro' ? '/' : '/login')).trim(),
+    level2Path: String(env.EXTERNAL_PORTAL_LEVEL2_PATH || (provider === 'ecuro' ? '/api/v1/login' : '/login/secondary')).trim(),
+    appointmentsPath: String(env.EXTERNAL_PORTAL_APPOINTMENTS_PATH || '/api/v1/appointments').trim(),
+    searchPath: String(env.EXTERNAL_PORTAL_SEARCH_PATH || '/api/patients/search').trim(),
+    queryParam: String(env.EXTERNAL_PORTAL_PATIENT_QUERY_PARAM || 'q').trim(),
+    clinicParam: String(env.EXTERNAL_PORTAL_CLINIC_QUERY_PARAM || 'clinicId').trim(),
+    dateParam: String(env.EXTERNAL_PORTAL_DATE_QUERY_PARAM || 'appointmentDate').trim(),
+    timezoneOffsetMinutes: String(env.EXTERNAL_PORTAL_TIMEZONE_OFFSET_MINUTES || '-180').trim() || '-180',
+    userIp: String(env.EXTERNAL_PORTAL_USER_IP || '127.0.0.1').trim() || '127.0.0.1',
     headless: String(env.ROBOT_HEADLESS || 'true').trim().toLowerCase() !== 'false',
     timeoutMs: Math.max(10000, Number(env.ROBOT_TIMEOUT_MS || 60000) || 60000),
     maxAttempts: Math.max(1, Number(env.ROBOT_MAX_ATTEMPTS || 3) || 3),
@@ -231,11 +269,16 @@ function getRobotConfigStatus(env = process.env) {
       && config.level2Username
       && config.level2Password
     ),
+    provider: config.provider,
+    authApiUrl: config.authApiUrl || '',
+    clinicsApiUrl: config.clinicsApiUrl || '',
+    patientsApiUrl: config.patientsApiUrl || '',
     autoAfterUpload: config.autoAfterUpload,
     timeoutMs: config.timeoutMs,
     maxAttempts: config.maxAttempts,
     headless: config.headless,
-    whatsappOpenMode: config.whatsappOpenMode
+    whatsappOpenMode: config.whatsappOpenMode,
+    timezoneOffsetMinutes: config.timezoneOffsetMinutes
   };
 }
 

@@ -71,6 +71,7 @@ const {
   getRobotConfigStatus,
   maskPhone,
   normalizePhone,
+  normalizeText,
   resolveAppointmentDateMatchStatus
 } = require('./services/patientEnrichmentService');
 const {
@@ -5442,6 +5443,8 @@ async function ensureDatabaseSchema() {
       clinic_id INT NOT NULL,
       internal_clinic_name VARCHAR(180) NULL,
       external_clinic_id VARCHAR(120) NULL,
+      external_context_id VARCHAR(120) NULL,
+      external_clinic_public_id VARCHAR(120) NULL,
       external_clinic_name VARCHAR(180) NULL,
       active TINYINT(1) NOT NULL DEFAULT 1,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -5450,6 +5453,8 @@ async function ensureDatabaseSchema() {
       INDEX idx_external_clinic_map_active (active, clinic_id)
     )
   `);
+  await ensureColumn('external_clinic_map', 'external_context_id', 'VARCHAR(120) NULL');
+  await ensureColumn('external_clinic_map', 'external_clinic_public_id', 'VARCHAR(120) NULL');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS patient_contact_registry (
@@ -23562,6 +23567,58 @@ async function getExternalClinicMap(clinicId) {
   return rows[0] || null;
 }
 
+async function tryAutoMapEcuroClinic(queueRow = {}, agendaItem = {}, authSession = null) {
+  if (getRobotConfig().provider !== 'ecuro') return null;
+  const normalizedClinicId = Number(queueRow.clinic_id || agendaItem.clinic_id || 0);
+  if (!normalizedClinicId) return null;
+
+  const contexts = Array.isArray(authSession?.contexts) ? authSession.contexts : [];
+  if (!contexts.length) return null;
+
+  const normalizedLocalClinicNames = [
+    agendaItem?.clinic_name,
+    queueRow?.clinic_name
+  ].map((value) => normalizeText(value)).filter(Boolean);
+  if (!normalizedLocalClinicNames.length) return null;
+
+  const matches = contexts.filter((context) => {
+    const normalizedContextName = normalizeText(context?.name);
+    if (!normalizedContextName) return false;
+    return normalizedLocalClinicNames.some((localName) => (
+      localName === normalizedContextName
+      || localName.includes(normalizedContextName)
+      || normalizedContextName.includes(localName)
+    ));
+  });
+
+  if (matches.length !== 1) return null;
+
+  const match = matches[0];
+  await pool.query(
+    `INSERT INTO external_clinic_map
+       (clinic_id, internal_clinic_name, external_clinic_id, external_context_id, external_clinic_public_id, external_clinic_name, active)
+     VALUES (?, ?, ?, ?, ?, ?, 1)
+     ON DUPLICATE KEY UPDATE
+       internal_clinic_name = VALUES(internal_clinic_name),
+       external_clinic_id = VALUES(external_clinic_id),
+       external_context_id = VALUES(external_context_id),
+       external_clinic_public_id = VALUES(external_clinic_public_id),
+       external_clinic_name = VALUES(external_clinic_name),
+       active = 1,
+       updated_at = CURRENT_TIMESTAMP`,
+    [
+      normalizedClinicId,
+      agendaItem?.clinic_name || queueRow?.clinic_name || null,
+      match?.clinic || null,
+      match?.id || null,
+      match?.clinicIdPublic || null,
+      match?.name || null
+    ]
+  );
+
+  return getExternalClinicMap(normalizedClinicId);
+}
+
 async function insertPatientPhoneAudit(payload = {}) {
   try {
     await pool.query(
@@ -23809,6 +23866,11 @@ function buildPortalRequestConfig(cookieHeader, timeoutMs) {
   };
 }
 
+function buildBasicAuthorizationHeader(username = '', password = '') {
+  const credentials = `${String(username || '').trim()}:${String(password || '').trim()}`;
+  return `Basic ${Buffer.from(credentials).toString('base64')}`;
+}
+
 function isSuccessfulPortalResponse(response = null) {
   const status = Number(response?.status || 0);
   return status >= 200 && status < 400;
@@ -23825,14 +23887,106 @@ function buildPortalUrl(baseUrl, pathValue = '/') {
   return `${baseUrl}${normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`}`;
 }
 
-async function warmPortalSession(url, cookieHeader, timeoutMs) {
+function normalizeExternalIdentifier(value) {
+  return String(value || '').trim().toLowerCase();
+}
+
+function normalizeExternalDigits(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function normalizeExternalAppointmentTime(value) {
+  if (!value) return '';
+  const rawValue = String(value).trim();
+  const timeMatch = rawValue.match(/\b(\d{1,2}):(\d{2})\b/);
+  if (timeMatch) {
+    return `${String(timeMatch[1]).padStart(2, '0')}:${timeMatch[2]}`;
+  }
+
+  const parsedDate = new Date(value);
+  if (Number.isNaN(parsedDate.getTime())) return '';
+  return `${String(parsedDate.getHours()).padStart(2, '0')}:${String(parsedDate.getMinutes()).padStart(2, '0')}`;
+}
+
+function buildPortalDayWindow(dateValue, timezoneOffsetMinutes = -180) {
+  const normalizedDate = formatAgendaAppointmentDateOnly(dateValue);
+  if (!normalizedDate) {
+    return { startTime: '', endTime: '' };
+  }
+  const fallbackStart = `${normalizedDate}T00:00:00.000Z`;
+  const fallbackEnd = `${normalizedDate}T23:59:59.999Z`;
+
+  const [year, month, day] = normalizedDate.split('-').map((part) => Number(part));
+  if (!year || !month || !day) {
+    return { startTime: fallbackStart, endTime: fallbackEnd };
+  }
+
+  const normalizedOffset = Number(timezoneOffsetMinutes);
+  const offsetMinutes = Number.isFinite(normalizedOffset) ? normalizedOffset : -180;
+  const startUtcMs = Date.UTC(year, month - 1, day, 0, 0, 0, 0) - (offsetMinutes * 60 * 1000);
+  const endUtcMs = Date.UTC(year, month - 1, day + 1, 0, 0, 0, 0) - (offsetMinutes * 60 * 1000) - 1;
+
+  return {
+    startTime: new Date(startUtcMs).toISOString(),
+    endTime: new Date(endUtcMs).toISOString()
+  };
+}
+
+function resolveEcuroContextForClinic(clinicMap = null, authSession = null) {
+  const contexts = Array.isArray(authSession?.contexts) ? authSession.contexts : [];
+  if (!clinicMap || !contexts.length) return null;
+
+  const externalIdCandidates = [
+    clinicMap.external_context_id,
+    clinicMap.external_clinic_public_id,
+    clinicMap.external_clinic_id
+  ].map((value) => normalizeExternalIdentifier(value)).filter(Boolean);
+  const externalNameCandidates = [
+    clinicMap.external_clinic_name,
+    clinicMap.internal_clinic_name
+  ].map((value) => normalizeText(value)).filter(Boolean);
+
+  const resolved = contexts.find((context) => {
+    const contextIds = [
+      context?.id,
+      context?.clinic,
+      context?.clinicIdPublic
+    ].map((value) => normalizeExternalIdentifier(value)).filter(Boolean);
+    const contextNames = [
+      context?.name
+    ].map((value) => normalizeText(value)).filter(Boolean);
+
+    if (externalIdCandidates.length && externalIdCandidates.some((value) => contextIds.includes(value))) {
+      return true;
+    }
+
+    if (externalNameCandidates.length && externalNameCandidates.some((value) => contextNames.includes(value))) {
+      return true;
+    }
+
+    return false;
+  });
+
+  return resolved || null;
+}
+
+function extractPortalPayloadCollection(payload = {}) {
+  if (Array.isArray(payload?.data)) return payload.data;
+  if (Array.isArray(payload?.items)) return payload.items;
+  if (Array.isArray(payload?.appointments)) return payload.appointments;
+  if (Array.isArray(payload)) return payload;
+  return [];
+}
+
+async function warmPortalSession(url, cookieHeader, timeoutMs, extraHeaders = {}) {
   const response = await axios.get(url, {
     timeout: timeoutMs,
     maxRedirects: 5,
     validateStatus: () => true,
     headers: {
       Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      Cookie: cookieHeader || ''
+      Cookie: cookieHeader || '',
+      ...extraHeaders
     }
   });
 
@@ -23876,18 +24030,19 @@ async function authenticatePatientEnrichmentRobot() {
   const baseUrl = config.baseUrl.replace(/\/$/, '');
   const timeoutMs = config.timeoutMs;
   let cookieHeader = '';
-
-  const level1Path = String(process.env.EXTERNAL_PORTAL_LEVEL1_PATH || '/login').trim();
-  const level2Path = String(process.env.EXTERNAL_PORTAL_LEVEL2_PATH || '/login/secondary').trim();
   const level1UsernameField = String(process.env.EXTERNAL_PORTAL_LEVEL1_USERNAME_FIELD || 'username').trim();
   const level1PasswordField = String(process.env.EXTERNAL_PORTAL_LEVEL1_PASSWORD_FIELD || 'password').trim();
   const level2UsernameField = String(process.env.EXTERNAL_PORTAL_LEVEL2_USERNAME_FIELD || 'username').trim();
   const level2PasswordField = String(process.env.EXTERNAL_PORTAL_LEVEL2_PASSWORD_FIELD || 'password').trim();
-  const level1Url = buildPortalUrl(baseUrl, level1Path);
-  const level2Url = buildPortalUrl(baseUrl, level2Path);
+  const level1Url = buildPortalUrl(baseUrl, config.level1Path || '/login');
+  const level2Url = config.provider === 'ecuro'
+    ? buildPortalUrl((config.authApiUrl || '').replace(/\/$/, ''), config.level2Path || '/api/v1/login')
+    : buildPortalUrl(baseUrl, config.level2Path || '/login/secondary');
 
   try {
-    const warmedLevel1 = await warmPortalSession(level1Url, cookieHeader, timeoutMs);
+    const warmedLevel1 = await warmPortalSession(level1Url, cookieHeader, timeoutMs, {
+      Authorization: buildBasicAuthorizationHeader(config.level1Username, config.level1Password)
+    });
     cookieHeader = warmedLevel1.cookieHeader;
     if (isUnauthorizedPortalResponse(warmedLevel1.response)) {
       return {
@@ -23895,6 +24050,45 @@ async function authenticatePatientEnrichmentRobot() {
         errorMessage: 'Falha de autenticação no sistema externo',
         sessionId: null,
         cookieHeader: ''
+      };
+    }
+
+    if (config.provider === 'ecuro') {
+      const level2Response = await axios.post(
+        level2Url,
+        {
+          [level2UsernameField]: config.level2Username,
+          [level2PasswordField]: config.level2Password
+        },
+        {
+          timeout: timeoutMs,
+          validateStatus: () => true,
+          headers: {
+            'Content-Type': 'application/json',
+            'x-timezone-offset-minutes': config.timezoneOffsetMinutes,
+            'x-user-ip': config.userIp
+          }
+        }
+      );
+
+      if (!isSuccessfulPortalResponse(level2Response) || !level2Response.data?.data?.token) {
+        return {
+          status: 'login_level_2_failed',
+          errorMessage: 'Falha de autenticação no sistema externo',
+          sessionId: null,
+          cookieHeader: ''
+        };
+      }
+
+      return {
+        status: 'authenticated',
+        errorMessage: null,
+        sessionId: `robot-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`,
+        cookieHeader,
+        authToken: level2Response.data.data.token,
+        contexts: Array.isArray(level2Response.data.data.user?.contexts) ? level2Response.data.data.user.contexts : [],
+        provider: config.provider,
+        userIp: config.userIp
       };
     }
 
@@ -23967,7 +24161,92 @@ async function authenticatePatientEnrichmentRobot() {
   }
 }
 
-async function fetchExternalPortalCandidates(queueRow, clinicMap, authSession) {
+async function fetchEcuroAppointmentCandidates(queueRow, clinicMap, authSession) {
+  if (!clinicMap) {
+    return { status: 'clinic_not_mapped', candidates: [] };
+  }
+  if (!authSession?.authToken || authSession.status !== 'authenticated') {
+    return { status: authSession?.status || 'external_system_unavailable', candidates: [] };
+  }
+
+  const config = getRobotConfig();
+  const resolvedContext = resolveEcuroContextForClinic(clinicMap, authSession);
+  if (!resolvedContext?.id) {
+    return { status: 'clinic_not_mapped', candidates: [] };
+  }
+
+  if (!authSession.ecuroAppointmentsCache) {
+    authSession.ecuroAppointmentsCache = new Map();
+  }
+
+  const cacheKey = `${resolvedContext.id}:${formatAgendaAppointmentDateOnly(queueRow.appointment_date)}`;
+  if (authSession.ecuroAppointmentsCache.has(cacheKey)) {
+    return {
+      status: 'authenticated',
+      candidates: authSession.ecuroAppointmentsCache.get(cacheKey)
+    };
+  }
+
+  const { startTime, endTime } = buildPortalDayWindow(queueRow.appointment_date, config.timezoneOffsetMinutes);
+  if (!startTime || !endTime) {
+    return { status: 'date_mismatch', candidates: [] };
+  }
+  const appointmentsUrl = buildPortalUrl((config.clinicsApiUrl || '').replace(/\/$/, ''), config.appointmentsPath || '/api/v1/appointments');
+
+  try {
+    const response = await axios.get(appointmentsUrl, {
+      timeout: config.timeoutMs,
+      validateStatus: () => true,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-access-token': authSession.authToken,
+        'x-context-id': resolvedContext.id,
+        'x-timezone-offset-minutes': config.timezoneOffsetMinutes,
+        'x-user-ip': authSession.userIp || config.userIp
+      },
+      params: {
+        startTime,
+        endTime,
+        useOr: true,
+        all: true
+      }
+    });
+
+    if (isUnauthorizedPortalResponse(response)) {
+      return { status: 'session_expired', candidates: [] };
+    }
+    if (!isSuccessfulPortalResponse(response)) {
+      return { status: 'external_system_unavailable', candidates: [] };
+    }
+
+    const payload = extractPortalPayloadCollection(response.data);
+    const candidates = payload.map((item) => ({
+      externalPatientId: item.patientPublicId || item.patientId || null,
+      externalRecordId: item.id || null,
+      cpf: item.patientCpf || item.cpf || null,
+      patientName: item.patientName || '',
+      clinicExternalId: item.clinicId || resolvedContext.clinic || clinicMap.external_clinic_id || null,
+      appointmentDate: item.scheduledStartTime || item.startTime || null,
+      appointmentTime: item.scheduledStartTime || item.startTime || null,
+      phone: item.phoneNumber || item.secondaryPhoneNumber || '',
+      secondaryPhone: item.secondaryPhoneNumber || '',
+      doctorName: item.doctorName || '',
+      speciality: item.speciality || '',
+      source: 'robot_external_ecuro_appointments'
+    }));
+
+    authSession.ecuroAppointmentsCache.set(cacheKey, candidates);
+
+    return {
+      status: 'authenticated',
+      candidates
+    };
+  } catch (error) {
+    return { status: 'external_system_unavailable', candidates: [] };
+  }
+}
+
+async function fetchGenericExternalPortalCandidates(queueRow, clinicMap, authSession) {
   if (!clinicMap?.external_clinic_id) {
     return { status: 'clinic_not_mapped', candidates: [] };
   }
@@ -23975,39 +24254,28 @@ async function fetchExternalPortalCandidates(queueRow, clinicMap, authSession) {
     return { status: authSession?.status || 'external_system_unavailable', candidates: [] };
   }
 
-  const searchPath = String(process.env.EXTERNAL_PORTAL_SEARCH_PATH || '/api/patients/search').trim();
-  const queryParam = String(process.env.EXTERNAL_PORTAL_PATIENT_QUERY_PARAM || 'q').trim();
-  const clinicParam = String(process.env.EXTERNAL_PORTAL_CLINIC_QUERY_PARAM || 'clinicId').trim();
-  const dateParam = String(process.env.EXTERNAL_PORTAL_DATE_QUERY_PARAM || 'appointmentDate').trim();
-  const baseUrl = getRobotConfig().baseUrl.replace(/\/$/, '');
+  const config = getRobotConfig();
+  const baseUrl = config.baseUrl.replace(/\/$/, '');
   const query = queueRow.external_patient_id || queueRow.cpf || queueRow.patient_name;
-  const searchUrl = buildPortalUrl(baseUrl, searchPath);
+  const searchUrl = buildPortalUrl(baseUrl, config.searchPath || '/api/patients/search');
 
   try {
-    const response = await axios.get(
-      searchUrl,
-      {
-        timeout: getRobotConfig().timeoutMs,
-        validateStatus: () => true,
-        headers: { Cookie: authSession.cookieHeader || '' },
-        params: {
-          [queryParam]: query,
-          [clinicParam]: clinicMap.external_clinic_id,
-          [dateParam]: queueRow.appointment_date
-        }
+    const response = await axios.get(searchUrl, {
+      timeout: config.timeoutMs,
+      validateStatus: () => true,
+      headers: { Cookie: authSession.cookieHeader || '' },
+      params: {
+        [config.queryParam || 'q']: query,
+        [config.clinicParam || 'clinicId']: clinicMap.external_clinic_id,
+        [config.dateParam || 'appointmentDate']: queueRow.appointment_date
       }
-    );
+    });
 
     if (!isSuccessfulPortalResponse(response)) {
       return { status: 'external_system_unavailable', candidates: [] };
     }
 
-    const payload = Array.isArray(response.data?.items)
-      ? response.data.items
-      : Array.isArray(response.data)
-        ? response.data
-        : [];
-
+    const payload = extractPortalPayloadCollection(response.data);
     return {
       status: 'authenticated',
       candidates: payload.map((item) => ({
@@ -24025,37 +24293,67 @@ async function fetchExternalPortalCandidates(queueRow, clinicMap, authSession) {
   }
 }
 
+async function fetchExternalPortalCandidates(queueRow, clinicMap, authSession) {
+  const config = getRobotConfig();
+  if (config.provider === 'ecuro') {
+    return fetchEcuroAppointmentCandidates(queueRow, clinicMap, authSession);
+  }
+  return fetchGenericExternalPortalCandidates(queueRow, clinicMap, authSession);
+}
+
 function resolveExternalCandidate(queueRow, candidates = []) {
   const normalizedAppointmentDate = formatAgendaAppointmentDateOnly(queueRow.appointment_date);
+  const normalizedQueueExternalId = normalizeExternalIdentifier(queueRow.external_patient_id);
+  const normalizedQueueCpf = normalizeExternalDigits(queueRow.cpf);
+  const normalizedQueueName = queueRow.patient_name_normalized || normalizeText(queueRow.patient_name || '');
+  const normalizedQueueTime = normalizeExternalAppointmentTime(queueRow.appointment_time || queueRow.patient_scheduled_at);
   const matchingCandidates = candidates.map((candidate) => {
     const phone = normalizePhone(candidate.phone || '');
+    const candidateIds = [
+      candidate.externalPatientId,
+      candidate.externalRecordId,
+      candidate.patientPublicId,
+      candidate.externalAppointmentId
+    ].map((value) => normalizeExternalIdentifier(value)).filter(Boolean);
+    const normalizedCandidateCpf = normalizeExternalDigits(candidate.cpf);
+    const normalizedCandidateTime = normalizeExternalAppointmentTime(candidate.appointmentTime || candidate.appointmentDate);
+    const strongIdentity = Boolean(
+      (normalizedQueueExternalId && candidateIds.includes(normalizedQueueExternalId))
+      || (normalizedQueueCpf && normalizedCandidateCpf && normalizedQueueCpf === normalizedCandidateCpf)
+    );
     const dateMatchStatus = resolveAppointmentDateMatchStatus({
       appointmentDate: normalizedAppointmentDate,
       externalDate: candidate.appointmentDate || null,
-      strongIdentity: Boolean(
-        (queueRow.external_patient_id && candidate.externalPatientId && String(queueRow.external_patient_id) === String(candidate.externalPatientId))
-        || (queueRow.cpf && candidate.cpf && String(queueRow.cpf) === String(candidate.cpf))
-      )
+      strongIdentity
     });
     const normalizedCandidateName = normalizeText(candidate.patientName);
-    const sameName = normalizedCandidateName && normalizedCandidateName === queueRow.patient_name_normalized;
-    const strongIdentity = Boolean(
-      (queueRow.external_patient_id && candidate.externalPatientId && String(queueRow.external_patient_id) === String(candidate.externalPatientId))
-      || (queueRow.cpf && candidate.cpf && String(queueRow.cpf) === String(candidate.cpf))
-    );
+    const sameName = normalizedCandidateName && normalizedCandidateName === normalizedQueueName;
+    const sameTime = Boolean(normalizedQueueTime && normalizedCandidateTime && normalizedQueueTime === normalizedCandidateTime);
 
     let confidenceScore = 0;
     let matchMethod = 'nome aproximado + clinic';
 
-    if (strongIdentity && dateMatchStatus === 'matched') {
+    if (strongIdentity && sameTime && dateMatchStatus === 'matched') {
       confidenceScore = 100;
-      matchMethod = queueRow.external_patient_id ? 'external_patient_id + clinic + data' : 'cpf + clinic + data';
+      matchMethod = normalizedQueueExternalId ? 'external_patient_id + clinic + data + hora' : 'cpf + clinic + data + hora';
+    } else if (strongIdentity && dateMatchStatus === 'matched') {
+      confidenceScore = 99;
+      matchMethod = normalizedQueueExternalId ? 'external_patient_id + clinic + data' : 'cpf + clinic + data';
+    } else if (sameName && sameTime && dateMatchStatus === 'matched') {
+      confidenceScore = 99;
+      matchMethod = 'nome normalizado + hora + clinic + data';
     } else if (sameName && dateMatchStatus === 'matched') {
-      confidenceScore = 97;
+      confidenceScore = 96;
       matchMethod = 'nome normalizado + clinic + data';
     } else if (strongIdentity && dateMatchStatus === 'not_available') {
-      confidenceScore = 96;
-      matchMethod = queueRow.external_patient_id ? 'external_patient_id + clinic' : 'cpf + clinic';
+      confidenceScore = 95;
+      matchMethod = normalizedQueueExternalId ? 'external_patient_id + clinic' : 'cpf + clinic';
+    } else if (sameName && sameTime && dateMatchStatus === 'not_available') {
+      confidenceScore = 88;
+      matchMethod = 'nome normalizado + hora + clinic';
+    } else if (sameName && sameTime) {
+      confidenceScore = 82;
+      matchMethod = 'nome normalizado + hora + clinic';
     } else if (sameName && dateMatchStatus === 'not_available') {
       confidenceScore = 84;
       matchMethod = 'nome normalizado + clinic';
@@ -24069,12 +24367,31 @@ function resolveExternalCandidate(queueRow, candidates = []) {
       phoneValid: phone.valid,
       dateMatchStatus,
       confidenceScore,
-      matchMethod
+      matchMethod,
+      strongIdentity,
+      sameName,
+      sameTime
     };
-  }).filter((candidate) => candidate.phoneValid);
+  }).filter((candidate) => candidate.phoneValid && (candidate.strongIdentity || candidate.sameName));
 
   matchingCandidates.sort((left, right) => right.confidenceScore - left.confidenceScore);
-  return matchingCandidates[0] || null;
+  const bestCandidate = matchingCandidates[0] || null;
+  if (!bestCandidate) {
+    return null;
+  }
+
+  const ambiguousMatches = matchingCandidates.filter((candidate) => candidate.confidenceScore === bestCandidate.confidenceScore && candidate.confidenceScore >= 95);
+  if (ambiguousMatches.length > 1) {
+    return {
+      ...bestCandidate,
+      reviewRequired: true,
+      duplicate: true,
+      dateMatchStatus: bestCandidate.dateMatchStatus === 'matched' ? 'review_required' : bestCandidate.dateMatchStatus,
+      errorMessage: 'Mais de um paciente compatível encontrado no portal externo.'
+    };
+  }
+
+  return bestCandidate;
 }
 
 async function updateAgendaContactFromResolution(queueRow, resolution = {}, actorName = 'patient-enrichment-bot') {
@@ -24217,7 +24534,7 @@ async function processSinglePhoneEnrichmentQueueItem(queueRow, authSession = nul
     return { status: 'operator_without_clinic_permission' };
   }
 
-  const clinicMap = await getExternalClinicMap(queueRow.clinic_id);
+  let clinicMap = await getExternalClinicMap(queueRow.clinic_id);
   const localCandidate = await findLocalPatientContactCandidate(queueRow);
   if (localCandidate) {
     await updateAgendaContactFromResolution(queueRow, {
@@ -24239,6 +24556,10 @@ async function processSinglePhoneEnrichmentQueueItem(queueRow, authSession = nul
     return { status: 'contact_updated' };
   }
 
+  if (!clinicMap && authSession?.status === 'authenticated') {
+    clinicMap = await tryAutoMapEcuroClinic(queueRow, agendaItem, authSession);
+  }
+
   if (!clinicMap) {
     await updateAgendaContactFromResolution(queueRow, {
       contactStatus: 'review_required',
@@ -24251,12 +24572,25 @@ async function processSinglePhoneEnrichmentQueueItem(queueRow, authSession = nul
 
   const externalSearch = await fetchExternalPortalCandidates(queueRow, clinicMap, authSession);
   if (externalSearch.status !== 'authenticated') {
+    const isDateMismatch = externalSearch.status === 'date_mismatch';
+    const searchErrorMessage = externalSearch.status === 'clinic_not_mapped'
+      ? 'Clínica sem mapeamento externo.'
+      : isDateMismatch
+        ? 'Data do agendamento não informada para consulta no portal externo.'
+        : 'Falha de autenticação no sistema externo';
     await updateAgendaContactFromResolution(queueRow, {
-      contactStatus: 'pending',
-      appointmentDateMatchStatus: 'not_checked',
-      errorMessage: externalSearch.status === 'clinic_not_mapped' ? 'Clínica sem mapeamento externo.' : 'Falha de autenticação no sistema externo'
+      contactStatus: isDateMismatch ? 'date_mismatch' : 'pending',
+      appointmentDateMatchStatus: isDateMismatch ? 'mismatch' : 'not_checked',
+      errorMessage: searchErrorMessage
     });
-    await pool.query('UPDATE phone_enrichment_queue SET status = ?, error_message = ?, updated_at = NOW() WHERE id = ?', [externalSearch.status, 'Falha de autenticação no sistema externo', queueRow.id]);
+    await pool.query(
+      'UPDATE phone_enrichment_queue SET status = ?, error_message = ?, updated_at = NOW() WHERE id = ?',
+      [
+        externalSearch.status,
+        searchErrorMessage,
+        queueRow.id
+      ]
+    );
     return { status: externalSearch.status };
   }
 
@@ -24271,7 +24605,11 @@ async function processSinglePhoneEnrichmentQueueItem(queueRow, authSession = nul
     return { status: 'not_found' };
   }
 
-  const reviewRequired = externalCandidate.confidenceScore < 95 || ['mismatch', 'review_required'].includes(externalCandidate.dateMatchStatus);
+  const reviewRequired = Boolean(
+    externalCandidate.reviewRequired
+    || externalCandidate.confidenceScore < 95
+    || ['mismatch', 'review_required'].includes(externalCandidate.dateMatchStatus)
+  );
   await updateAgendaContactFromResolution(queueRow, {
     phone: externalCandidate.phone,
     phoneNormalized: externalCandidate.phoneNormalized,
@@ -24282,7 +24620,7 @@ async function processSinglePhoneEnrichmentQueueItem(queueRow, authSession = nul
     contactStatus: reviewRequired ? 'review_required' : 'updated',
     lastCheckedAt: new Date(),
     robotSessionId: authSession?.sessionId || null,
-    errorMessage: reviewRequired ? 'Revisão manual necessária.' : null
+    errorMessage: reviewRequired ? (externalCandidate.errorMessage || 'Revisão manual necessária.') : null
   });
 
   await upsertPatientContactRegistry({
@@ -28082,6 +28420,31 @@ app.get('/api/agenda/items', authenticate, async (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao carregar agenda.' });
+  }
+});
+
+app.get('/api/agenda/items/:id', authenticate, async (req, res) => {
+  try {
+    const visibility = buildAgendaVisibilityWhere(req.user);
+    const [rows] = await pool.query(
+      `SELECT *
+         FROM agenda_items
+        WHERE id = ?
+          AND deleted_at IS NULL
+          AND ${visibility.sql}
+        LIMIT 1`,
+      [Number(req.params.id || 0), ...visibility.params]
+    );
+
+    const row = rows[0];
+    if (!row) {
+      return res.status(404).json({ error: 'Agendamento não encontrado.' });
+    }
+
+    return res.json(serializeAgendaItem(row));
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao carregar o detalhe do agendamento.' });
   }
 });
 
