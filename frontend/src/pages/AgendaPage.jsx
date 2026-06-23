@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Bar,
   CartesianGrid,
@@ -480,6 +480,22 @@ function formatAgendaConfidence(value) {
   return Number.isFinite(numeric) && numeric > 0 ? `${Math.round(numeric)}%` : '-';
 }
 
+function buildAgendaPreviewPayload(item = {}, source = 'task') {
+  return {
+    source,
+    title: item.patient_name || item.title || 'Demanda',
+    subtitle: item.clinic_name || item.assigned_user_name || 'Sem contexto adicional',
+    lines: [
+      item.patient_scheduled_at || item.due_at ? `Consulta: ${formatDateTime(item.patient_scheduled_at || item.due_at)}` : 'Consulta: Sem data',
+      `Telefone: ${item.contact_phone_masked || item.patient_phone || '-'}`,
+      `Status do contato: ${getAgendaContactStatusLabel(item.contact_status || '')}`,
+      `Data da agenda: ${getAgendaDateMatchLabel(item.appointment_date_match_status || '')}`,
+      `Fonte: ${item.contact_source || item.whatsapp_status_label || 'Aguardando atualização'}`,
+      `Confiança: ${formatAgendaConfidence(item.contact_confidence_score || item.confidence_score)}`
+    ]
+  };
+}
+
 function matchesAgendaPatientQueue(item = {}, queue = 'all') {
   if (queue === 'all') return true;
   const isPatientDemand = (item.demand_type || 'general') === 'patient' || item.patient_name || item.patient_phone;
@@ -531,6 +547,9 @@ function AgendaCard({
   onDragStart,
   onOpenWhatsApp,
   onReprocessContact,
+  onPreviewEnter,
+  onPreviewLeave,
+  onPreviewPin,
   openingWhatsappId,
   reprocessingContactId
 }) {
@@ -545,24 +564,15 @@ function AgendaCard({
   const contactStatusTone = getAgendaContactStatusTone(item.contact_status);
   const dateMatchTone = getAgendaDateMatchTone(item.appointment_date_match_status);
   const canOpenWhatsApp = Boolean((item.contact_whatsapp_available || item.patient_phone) && !item.patient_do_not_contact && item.patient_name);
+  const previewPayload = buildAgendaPreviewPayload(item, 'task');
   return (
     <article
       className={`agenda-task-card priority-${item.priority || 'normal'} ${isOverdue(item.due_at) && item.status !== 'done' ? 'overdue' : ''}`}
       draggable
       onDragStart={() => onDragStart(item.id)}
+      onMouseEnter={(event) => onPreviewEnter(event, previewPayload)}
+      onMouseLeave={onPreviewLeave}
     >
-      <div className="agenda-card-hover-preview" role="presentation">
-        <span className="agenda-preview-kicker">Previa da demanda</span>
-        <strong>{item.patient_name || item.title}</strong>
-        <div className="agenda-preview-grid">
-          <span>Unidade: {item.clinic_name || 'Nao informada'}</span>
-          <span>Consulta: {item.patient_scheduled_at ? formatDateTime(item.patient_scheduled_at) : 'Sem data'}</span>
-          <span>Telefone: {item.contact_phone_masked || 'Pendente'}</span>
-          <span>Status do contato: {getAgendaContactStatusLabel(item.contact_status)}</span>
-          <span>Fonte: {item.contact_source || 'Busca automatica pendente'}</span>
-          <span>Confianca: {formatAgendaConfidence(item.contact_confidence_score)}</span>
-        </div>
-      </div>
       <div className="agenda-card-topline">
         <span className={`agenda-priority priority-${item.priority || 'normal'}`}>{getPriorityLabel(item.priority)}</span>
         <span className={`agenda-deadline-pill ${deadline.tone}`}>{deadline.label}</span>
@@ -581,9 +591,29 @@ function AgendaCard({
         </div>
       </div>
       <div className="agenda-card-pill-row">
-        <span className={`agenda-inline-pill ${contactStatusTone}`}>{getAgendaContactStatusLabel(item.contact_status)}</span>
-        <span className={`agenda-inline-pill ${dateMatchTone}`}>{getAgendaDateMatchLabel(item.appointment_date_match_status)}</span>
-        {item.confirmation_status ? <span className="agenda-inline-pill neutral">{getAgendaConfirmationStatusLabel(item.confirmation_status)}</span> : null}
+        <button
+          type="button"
+          className={`agenda-inline-pill agenda-inline-pill-button ${contactStatusTone}`}
+          onClick={(event) => onPreviewPin(event, previewPayload)}
+        >
+          {getAgendaContactStatusLabel(item.contact_status)}
+        </button>
+        <button
+          type="button"
+          className={`agenda-inline-pill agenda-inline-pill-button ${dateMatchTone}`}
+          onClick={(event) => onPreviewPin(event, previewPayload)}
+        >
+          {getAgendaDateMatchLabel(item.appointment_date_match_status)}
+        </button>
+        {item.confirmation_status ? (
+          <button
+            type="button"
+            className="agenda-inline-pill agenda-inline-pill-button neutral"
+            onClick={(event) => onPreviewPin(event, previewPayload)}
+          >
+            {getAgendaConfirmationStatusLabel(item.confirmation_status)}
+          </button>
+        ) : null}
       </div>
       <div className="agenda-card-secondary-meta">
         {recurrenceSummary ? <small>{recurrenceSummary}</small> : null}
@@ -628,6 +658,9 @@ function AgendaCard({
         </div>
       ) : null}
       <div className="agenda-card-actions">
+        <button type="button" className="outline-action" onClick={(event) => onPreviewPin(event, previewPayload)}>
+          Previa
+        </button>
         <button
           type="button"
           className="outline-action"
@@ -714,8 +747,11 @@ export default function AgendaPage() {
   const [draggingId, setDraggingId] = useState(null);
   const [openingWhatsappId, setOpeningWhatsappId] = useState(null);
   const [reprocessingContactId, setReprocessingContactId] = useState(null);
+  const [previewPopover, setPreviewPopover] = useState(null);
+  const previewPopoverRef = useRef(null);
   const notifiedReminderIds = useRef(new Set());
   const titleInputRef = useRef(null);
+  const previewCloseTimerRef = useRef(null);
 
   const loadItems = async () => {
     setLoading(true);
@@ -873,6 +909,57 @@ export default function AgendaPage() {
     }
   };
 
+  const clearPreviewCloseTimer = useCallback(() => {
+    if (previewCloseTimerRef.current) {
+      window.clearTimeout(previewCloseTimerRef.current);
+      previewCloseTimerRef.current = null;
+    }
+  }, []);
+
+  const schedulePreviewClose = () => {
+    clearPreviewCloseTimer();
+    previewCloseTimerRef.current = window.setTimeout(() => {
+      setPreviewPopover((current) => (current?.pinned ? current : null));
+      previewCloseTimerRef.current = null;
+    }, 140);
+  };
+
+  const openPreviewPopover = (event, payload, pinned = false) => {
+    if (!event?.currentTarget || !payload) return;
+    clearPreviewCloseTimer();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const cardWidth = 320;
+    const viewportWidth = window.innerWidth || 1440;
+    const viewportHeight = window.innerHeight || 900;
+    const preferredRight = rect.right + 14;
+    const preferredLeft = rect.left - cardWidth - 14;
+    const left = preferredRight + cardWidth <= viewportWidth - 16
+      ? preferredRight
+      : Math.max(16, Math.min(preferredLeft, viewportWidth - cardWidth - 16));
+    const estimatedHeight = 232;
+    const top = Math.max(88, Math.min(rect.top - 8, viewportHeight - estimatedHeight - 24));
+
+    setPreviewPopover({
+      pinned,
+      left,
+      top,
+      width: cardWidth,
+      payload
+    });
+  };
+
+  const handlePreviewEnter = (event, payload) => openPreviewPopover(event, payload, false);
+  const handlePreviewPin = (event, payload) => {
+    event.preventDefault();
+    event.stopPropagation();
+    openPreviewPopover(event, payload, true);
+  };
+  const handlePreviewLeave = () => schedulePreviewClose();
+  const closePreviewPopover = useCallback(() => {
+    clearPreviewCloseTimer();
+    setPreviewPopover(null);
+  }, [clearPreviewCloseTimer]);
+
   useEffect(() => {
     loadItems();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -933,6 +1020,35 @@ export default function AgendaPage() {
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
+
+  useEffect(() => () => clearPreviewCloseTimer(), [clearPreviewCloseTimer]);
+
+  useEffect(() => {
+    if (!previewPopover?.payload) return undefined;
+
+    const handleWindowClick = (event) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      if (previewPopoverRef.current?.contains(target)) return;
+      if (target.closest('.agenda-task-card')) return;
+      if (target.closest('.agenda-confirmation-preview-trigger')) return;
+      if (target.closest('.agenda-inline-pill-button')) return;
+      closePreviewPopover();
+    };
+
+    const handleWindowKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        closePreviewPopover();
+      }
+    };
+
+    window.addEventListener('click', handleWindowClick);
+    window.addEventListener('keydown', handleWindowKeyDown);
+    return () => {
+      window.removeEventListener('click', handleWindowClick);
+      window.removeEventListener('keydown', handleWindowKeyDown);
+    };
+  }, [closePreviewPopover, previewPopover?.payload]);
 
   useEffect(() => {
     const evaluateReminders = () => {
@@ -2249,9 +2365,19 @@ export default function AgendaPage() {
                     </thead>
                     <tbody>
                       {confirmationItems.slice(0, 150).map((item) => (
-                        <tr key={`confirmation-row-${item.agenda_item_id}`}>
+                        <tr
+                          key={`confirmation-row-${item.agenda_item_id}`}
+                          onMouseEnter={(event) => handlePreviewEnter(event, buildAgendaPreviewPayload(item, 'confirmation'))}
+                          onMouseLeave={handlePreviewLeave}
+                        >
                           <td>
-                            <strong>{item.patient_name || '-'}</strong>
+                            <button
+                              type="button"
+                              className="agenda-confirmation-preview-trigger"
+                              onClick={(event) => handlePreviewPin(event, buildAgendaPreviewPayload(item, 'confirmation'))}
+                            >
+                              {item.patient_name || '-'}
+                            </button>
                             <small>{item.patient_phone || '-'}</small>
                           </td>
                           <td>{item.clinic_name || '-'}</td>
@@ -2260,9 +2386,13 @@ export default function AgendaPage() {
                           <td>{formatAgendaDashboardDate(item.whatsapp_sent_at)}</td>
                           <td>{item.whatsapp_status_label || '-'}</td>
                           <td>
-                            <span className={`agenda-confirmation-badge ${getAgendaConfirmationToneClass(item.confirmation_status)}`}>
+                            <button
+                              type="button"
+                              className={`agenda-confirmation-badge agenda-inline-pill-button ${getAgendaConfirmationToneClass(item.confirmation_status)}`}
+                              onClick={(event) => handlePreviewPin(event, buildAgendaPreviewPayload(item, 'confirmation'))}
+                            >
                               {item.confirmation_label || '-'}
-                            </span>
+                            </button>
                             {item.chatbot_decision_label && item.chatbot_decision_label !== '-' ? <small>{item.chatbot_decision_label}</small> : null}
                           </td>
                           <td>{formatAgendaDashboardDate(item.last_response_at)}</td>
@@ -2322,6 +2452,12 @@ export default function AgendaPage() {
                 <span>Erros</span>
                 <strong>{enrichmentReport?.summary?.errors || 0}</strong>
               </article>
+            </div>
+
+            <div className="agenda-card-secondary-meta">
+              <small>{enrichmentReport?.robot?.configured ? 'Robo configurado' : 'Robo pendente de configuracao'}</small>
+              <small>{enrichmentReport?.robot?.autoAfterUpload ? 'Busca automatica ativa' : 'Busca automatica desativada'}</small>
+              <small>{enrichmentReport?.robot?.whatsappOpenMode === 'web' ? 'WhatsApp Web habilitado' : 'WhatsApp com modo customizado'}</small>
             </div>
 
             <div className="agenda-import-table-shell">
@@ -2813,6 +2949,9 @@ export default function AgendaPage() {
                             onDragStart={setDraggingId}
                             onOpenWhatsApp={openAgendaWhatsApp}
                             onReprocessContact={reprocessContact}
+                            onPreviewEnter={handlePreviewEnter}
+                            onPreviewLeave={handlePreviewLeave}
+                            onPreviewPin={handlePreviewPin}
                             openingWhatsappId={openingWhatsappId}
                             reprocessingContactId={reprocessingContactId}
                           />
@@ -3082,6 +3221,34 @@ export default function AgendaPage() {
             </footer>
           </aside>
         </section>
+      ) : null}
+
+      {previewPopover?.payload ? (
+        <div
+          ref={previewPopoverRef}
+          className={`agenda-preview-popover ${previewPopover.pinned ? 'pinned' : ''}`}
+          style={{
+            top: `${previewPopover.top}px`,
+            left: `${previewPopover.left}px`,
+            width: `${previewPopover.width}px`
+          }}
+          onMouseEnter={clearPreviewCloseTimer}
+          onMouseLeave={handlePreviewLeave}
+        >
+          <div className="agenda-preview-popover-head">
+            <div>
+              <span>{previewPopover.payload.source === 'confirmation' ? 'Previa da confirmacao' : 'Previa da demanda'}</span>
+              <strong>{previewPopover.payload.title}</strong>
+              <small>{previewPopover.payload.subtitle}</small>
+            </div>
+            <button type="button" className="ghost-action" onClick={closePreviewPopover}>Fechar</button>
+          </div>
+          <div className="agenda-preview-popover-body">
+            {previewPopover.payload.lines.map((line) => (
+              <span key={`${previewPopover.payload.title}-${line}`}>{line}</span>
+            ))}
+          </div>
+        </div>
       ) : null}
     </main>
   );

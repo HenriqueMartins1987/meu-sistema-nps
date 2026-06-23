@@ -23809,6 +23809,39 @@ function buildPortalRequestConfig(cookieHeader, timeoutMs) {
   };
 }
 
+function isSuccessfulPortalResponse(response = null) {
+  const status = Number(response?.status || 0);
+  return status >= 200 && status < 400;
+}
+
+function isUnauthorizedPortalResponse(response = null) {
+  const status = Number(response?.status || 0);
+  return status === 401 || status === 403;
+}
+
+function buildPortalUrl(baseUrl, pathValue = '/') {
+  const normalizedPath = String(pathValue || '/').trim();
+  if (!normalizedPath) return baseUrl;
+  return `${baseUrl}${normalizedPath.startsWith('/') ? normalizedPath : `/${normalizedPath}`}`;
+}
+
+async function warmPortalSession(url, cookieHeader, timeoutMs) {
+  const response = await axios.get(url, {
+    timeout: timeoutMs,
+    maxRedirects: 5,
+    validateStatus: () => true,
+    headers: {
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      Cookie: cookieHeader || ''
+    }
+  });
+
+  return {
+    response,
+    cookieHeader: mergeSetCookies(cookieHeader, response.headers?.['set-cookie'])
+  };
+}
+
 function mergeSetCookies(existingCookies = '', setCookieHeaders = []) {
   const jar = new Map();
   String(existingCookies || '')
@@ -23850,23 +23883,47 @@ async function authenticatePatientEnrichmentRobot() {
   const level1PasswordField = String(process.env.EXTERNAL_PORTAL_LEVEL1_PASSWORD_FIELD || 'password').trim();
   const level2UsernameField = String(process.env.EXTERNAL_PORTAL_LEVEL2_USERNAME_FIELD || 'username').trim();
   const level2PasswordField = String(process.env.EXTERNAL_PORTAL_LEVEL2_PASSWORD_FIELD || 'password').trim();
+  const level1Url = buildPortalUrl(baseUrl, level1Path);
+  const level2Url = buildPortalUrl(baseUrl, level2Path);
 
   try {
+    const warmedLevel1 = await warmPortalSession(level1Url, cookieHeader, timeoutMs);
+    cookieHeader = warmedLevel1.cookieHeader;
+    if (isUnauthorizedPortalResponse(warmedLevel1.response)) {
+      return {
+        status: 'login_level_1_failed',
+        errorMessage: 'Falha de autenticação no sistema externo',
+        sessionId: null,
+        cookieHeader: ''
+      };
+    }
+
     const level1Payload = new URLSearchParams({
       [level1UsernameField]: config.level1Username,
       [level1PasswordField]: config.level1Password
     }).toString();
 
     const level1Response = await axios.post(
-      `${baseUrl}${level1Path.startsWith('/') ? level1Path : `/${level1Path}`}`,
+      level1Url,
       level1Payload,
       buildPortalRequestConfig(cookieHeader, timeoutMs)
     );
 
     cookieHeader = mergeSetCookies(cookieHeader, level1Response.headers?.['set-cookie']);
-    if (level1Response.status >= 400) {
+    if (!isSuccessfulPortalResponse(level1Response)) {
       return {
         status: 'login_level_1_failed',
+        errorMessage: 'Falha de autenticação no sistema externo',
+        sessionId: null,
+        cookieHeader: ''
+      };
+    }
+
+    const warmedLevel2 = await warmPortalSession(level2Url, cookieHeader, timeoutMs);
+    cookieHeader = warmedLevel2.cookieHeader;
+    if (isUnauthorizedPortalResponse(warmedLevel2.response)) {
+      return {
+        status: 'login_level_2_failed',
         errorMessage: 'Falha de autenticação no sistema externo',
         sessionId: null,
         cookieHeader: ''
@@ -23879,13 +23936,13 @@ async function authenticatePatientEnrichmentRobot() {
     }).toString();
 
     const level2Response = await axios.post(
-      `${baseUrl}${level2Path.startsWith('/') ? level2Path : `/${level2Path}`}`,
+      level2Url,
       level2Payload,
       buildPortalRequestConfig(cookieHeader, timeoutMs)
     );
 
     cookieHeader = mergeSetCookies(cookieHeader, level2Response.headers?.['set-cookie']);
-    if (level2Response.status >= 400) {
+    if (!isSuccessfulPortalResponse(level2Response)) {
       return {
         status: 'login_level_2_failed',
         errorMessage: 'Falha de autenticação no sistema externo',
@@ -23902,7 +23959,7 @@ async function authenticatePatientEnrichmentRobot() {
     };
   } catch (error) {
     return {
-      status: 'authentication_timeout',
+      status: error?.code === 'ECONNABORTED' ? 'authentication_timeout' : 'external_system_unavailable',
       errorMessage: 'Falha de autenticação no sistema externo',
       sessionId: null,
       cookieHeader: ''
@@ -23924,10 +23981,11 @@ async function fetchExternalPortalCandidates(queueRow, clinicMap, authSession) {
   const dateParam = String(process.env.EXTERNAL_PORTAL_DATE_QUERY_PARAM || 'appointmentDate').trim();
   const baseUrl = getRobotConfig().baseUrl.replace(/\/$/, '');
   const query = queueRow.external_patient_id || queueRow.cpf || queueRow.patient_name;
+  const searchUrl = buildPortalUrl(baseUrl, searchPath);
 
   try {
     const response = await axios.get(
-      `${baseUrl}${searchPath.startsWith('/') ? searchPath : `/${searchPath}`}`,
+      searchUrl,
       {
         timeout: getRobotConfig().timeoutMs,
         validateStatus: () => true,
@@ -23940,7 +23998,7 @@ async function fetchExternalPortalCandidates(queueRow, clinicMap, authSession) {
       }
     );
 
-    if (response.status >= 400) {
+    if (!isSuccessfulPortalResponse(response)) {
       return { status: 'external_system_unavailable', candidates: [] };
     }
 
@@ -24240,6 +24298,16 @@ async function processSinglePhoneEnrichmentQueueItem(queueRow, authSession = nul
 
 async function processPhoneEnrichmentQueue({ limit = 25 } = {}) {
   const maxItems = Math.max(1, Math.min(200, Number(limit || 25) || 25));
+  const robotStatus = getRobotConfigStatus();
+  if (!robotStatus.configured) {
+    return {
+      processed: 0,
+      summary: buildPhoneEnrichmentQueueSummary([]),
+      robot: robotStatus,
+      blockedReason: 'robot_not_configured'
+    };
+  }
+
   const [rows] = await pool.query(
     `SELECT q.*, a.patient_phone AS current_patient_phone
        FROM phone_enrichment_queue q
@@ -24251,7 +24319,12 @@ async function processPhoneEnrichmentQueue({ limit = 25 } = {}) {
   );
 
   if (!rows.length) {
-    return { processed: 0, summary: buildPhoneEnrichmentQueueSummary([]), robot: getRobotConfigStatus() };
+    return {
+      processed: 0,
+      summary: buildPhoneEnrichmentQueueSummary([]),
+      robot: robotStatus,
+      blockedReason: 'empty_queue'
+    };
   }
 
   const authSession = await authenticatePatientEnrichmentRobot();
@@ -24280,7 +24353,7 @@ async function processPhoneEnrichmentQueue({ limit = 25 } = {}) {
     processed: processedStatuses.length,
     summary: buildPhoneEnrichmentQueueSummary(processedStatuses),
     robot: {
-      ...getRobotConfigStatus(),
+      ...robotStatus,
       lastSessionStatus: authSession.status
     }
   };
@@ -27782,9 +27855,14 @@ app.post('/api/agenda/enrichment/run', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Seu perfil não pode executar o enriquecimento de telefones.' });
     }
     const result = await processPhoneEnrichmentQueue({ limit: req.body?.limit || req.query?.limit || 25 });
+    const message = result.blockedReason === 'robot_not_configured'
+      ? 'O robô de telefones ainda não está configurado no ambiente.'
+      : result.blockedReason === 'empty_queue'
+        ? 'Não há pacientes pendentes na fila de enriquecimento.'
+        : 'Busca de telefones executada com sucesso.';
     return res.json({
       success: true,
-      message: 'Busca de telefones executada com sucesso.',
+      message,
       ...result
     });
   } catch (error) {
