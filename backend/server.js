@@ -127,7 +127,7 @@ const approvalEmail = process.env.APPROVAL_EMAIL || 'henrique.martins@grcconsult
 const masterAdminEmail = (process.env.MASTER_ADMIN_EMAIL || 'henrique.martins@grcconsultoria.net.br').toLowerCase();
 const masterAdminWhatsapp = normalizeBrazilPhone(process.env.MASTER_ADMIN_WHATSAPP || '');
 const defaultAdminEmail = masterAdminEmail;
-const defaultAdminPassword = process.env.MASTER_ADMIN_PASSWORD || process.env.DEFAULT_ADMIN_PASSWORD || 'Zyck1987#';
+const configuredDefaultAdminPassword = String(process.env.MASTER_ADMIN_PASSWORD || process.env.DEFAULT_ADMIN_PASSWORD || '').trim();
 // Numeros fixos que recebem apenas alertas de RECLAMACAO. Altere aqui se a regra de escalonamento mudar.
 const fixedComplaintWhatsAppRecipients = ['5562996807670', '556299669966'];
 // Twilio nao envia para ID de grupo do WhatsApp. Use esta lista como broadcast oficial para os participantes do grupo.
@@ -5787,31 +5787,50 @@ async function syncClinicCatalog() {
 }
 
 async function ensureDefaultAdminUser() {
-  const passwordHash = await bcrypt.hash(defaultAdminPassword, 10);
+  const [existingRows] = await pool.query(
+    'SELECT id, password FROM users WHERE LOWER(email) = ? LIMIT 1',
+    [masterAdminEmail]
+  );
+
+  const existingUser = Array.isArray(existingRows) ? existingRows[0] : null;
+  const passwordHash = configuredDefaultAdminPassword
+    ? await bcrypt.hash(configuredDefaultAdminPassword, 10)
+    : (existingUser?.password || await bcrypt.hash(generateTemporaryPassword(), 10));
+  const mustChangePassword = configuredDefaultAdminPassword ? 0 : 1;
+
+  if (!configuredDefaultAdminPassword) {
+    console.warn('[security] MASTER_ADMIN_PASSWORD/DEFAULT_ADMIN_PASSWORD não configurado. A senha atual do administrador master sera preservada quando ja existir.');
+  }
 
   await pool.query(
     `INSERT INTO users
-     (name, email, password, role, position, phone, whatsapp, department, permissions, active)
-     VALUES (?, ?, ?, 'master_admin', 'Administrador Master', '+5562999999999', '+5562999999999', 'Administração', ?, 1)
+     (name, email, password, role, position, phone, whatsapp, department, permissions, active, must_change_password)
+     VALUES (?, ?, ?, 'master_admin', 'Administrador Master', '+5562999999999', '+5562999999999', 'Administração', ?, 1, ?)
      ON DUPLICATE KEY UPDATE
        name = VALUES(name),
-       password = VALUES(password),
+       password = IF(? <> '', VALUES(password), password),
        role = 'master_admin',
        position = VALUES(position),
        permissions = VALUES(permissions),
+       must_change_password = IF(? <> '', VALUES(must_change_password), must_change_password),
        active = 1`,
     [
       'Henrique Martins',
       masterAdminEmail,
       passwordHash,
-      JSON.stringify(Object.keys(screenPermissions))
+      JSON.stringify(Object.keys(screenPermissions)),
+      mustChangePassword,
+      configuredDefaultAdminPassword,
+      configuredDefaultAdminPassword
     ]
   );
 
-  await pool.query(
-    'UPDATE users SET must_change_password = 0 WHERE LOWER(email) = ?',
-    [masterAdminEmail]
-  );
+  if (configuredDefaultAdminPassword) {
+    await pool.query(
+      'UPDATE users SET must_change_password = 0 WHERE LOWER(email) = ?',
+      [masterAdminEmail]
+    );
+  }
 
   await pool.query(
     "UPDATE users SET role = 'admin', position = COALESCE(NULLIF(position, 'Administrador master'), 'Administrador') WHERE role = 'master_admin' AND LOWER(email) <> ?",
