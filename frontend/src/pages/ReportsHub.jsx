@@ -22,7 +22,7 @@ function buildReportGroups(user) {
       title: 'Relatorios de Reclamacoes',
       description: 'Acompanhamento semanal, dashboards operacionais e BI da voz do cliente.',
       items: [
-        { label: 'Relatorio semanal', path: '/gestao/relatorio-semanal', visible: canOpenWeeklyComplaintReport(user) && hasPermission(user, 'complaints_management'), meta: 'rotina semanal' },
+        { label: 'Relatorio semanal e mensal', path: '/gestao/relatorio-semanal', visible: canOpenWeeklyComplaintReport(user) && hasPermission(user, 'complaints_management'), meta: 'rotina operacional' },
         { label: 'Dashboard de Reclamacoes', path: '/dashboard', visible: hasPermission(user, 'complaints_dashboard'), meta: 'visao executiva' },
         { label: 'BI de Reclamacoes', path: '/bi', visible: hasPermission(user, 'complaints_dashboard'), meta: 'analise gerencial' },
         { label: 'Painel de Gestao', path: '/gestao', visible: hasPermission(user, 'complaints_management'), meta: 'fila operacional' }

@@ -82,7 +82,6 @@ const defaultRoleActionPermissions = {
   admin: actionPermissions.map((permission) => permission.value),
   sac_operator: [
     'complaints_view_all',
-    'complaints_close',
     'complaints_change_unit',
     'complaints_edit_patient_phone',
     'complaints_reassign',
@@ -96,7 +95,6 @@ const defaultRoleActionPermissions = {
   ],
   supervisor_crc: [
     'complaints_view_all',
-    'complaints_close',
     'complaints_reactivate',
     'complaints_change_unit',
     'complaints_edit_patient_phone',
@@ -131,7 +129,7 @@ const defaultRoleActionPermissions = {
 const authorityRules = [
   { area: 'Protocolos', action: 'Visualizar todas as demandas', actionPermission: 'complaints_view_all', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'viewer'], note: 'Gerente e coordenador dependem das clinicas vinculadas e/ou atribuicao da demanda.' },
   { area: 'Protocolos', action: 'Cadastrar protocolo', permission: 'complaints_register', roles: ['master_admin', 'admin', 'sac_operator'], note: 'Liberado por permissao de tela de cadastro.' },
-  { area: 'Protocolos', action: 'Fechar protocolo', actionPermission: 'complaints_close', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator'], note: 'Coordenador, gerente e marketing nao finalizam protocolo.' },
+  { area: 'Protocolos', action: 'Fechar protocolo', actionPermission: 'complaints_close', roles: ['master_admin', 'admin'], note: 'Fechamento final fica restrito a administradores.' },
   { area: 'Protocolos', action: 'Reabilitar protocolo finalizado/cancelado', actionPermission: 'complaints_reactivate', roles: ['master_admin', 'supervisor_crc'], note: 'Exige justificativa operacional.' },
   { area: 'Protocolos', action: 'Alterar unidade cadastrada', actionPermission: 'complaints_change_unit', roles: ['master_admin', 'supervisor_crc', 'sac_operator', 'viewer'], note: 'Marketing segue a mesma alçada operacional do Operador de SAC para corrigir unidade na ficha.' },
   { area: 'Protocolos', action: 'Alterar telefone do paciente', actionPermission: 'complaints_edit_patient_phone', roles: ['master_admin', 'supervisor_crc', 'sac_operator', 'viewer'], note: 'Marketing segue a mesma alçada operacional do Operador de SAC para corrigir telefone na ficha.' },
@@ -145,7 +143,7 @@ const authorityRules = [
   { area: 'NPS', action: 'Gerir registros NPS', permission: 'nps_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'manager', 'coordinator', 'viewer'], note: 'Controle principal por permissao de tela.' },
   { area: 'NPS', action: 'Finalizar NPS', actionPermission: 'nps_finish', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator'], note: 'Botao de finalizar fica restrito a perfis operacionais.' },
   { area: 'Excluidos', action: 'Visualizar aba excluidos', actionPermission: 'deleted_view', roles: ['master_admin'], note: 'Exclusivo do Administrador Master.' },
-  { area: 'Relatorios', action: 'Relatorio semanal de reclamacoes', permission: 'complaints_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'manager'], note: 'Depende tambem de acesso ao painel de gestao de reclamacoes.' },
+  { area: 'Relatorios', action: 'Relatorio semanal e mensal de reclamacoes', permission: 'complaints_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'manager'], note: 'Depende tambem de acesso ao painel de gestao de reclamacoes.' },
   { area: 'Financeiro CRC', action: 'Dashboard executivo', permission: 'financial_dashboard', roles: ['master_admin', 'admin'], note: 'Visao de diretoria.' },
   { area: 'Financeiro CRC', action: 'Unidade x campanha', permission: 'financial_campaigns', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Analise por unidade/campanha.' },
   { area: 'Financeiro CRC', action: 'Gestao financeira e lancamentos', permission: 'financial_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'manager'], note: 'Permite lancar/editar dados conforme perfil.' },
@@ -167,7 +165,7 @@ const routeControls = [
   { area: 'Protocolos', type: 'Caminho', title: 'Novo protocolo', path: '/cadastro', permission: 'complaints_register', note: 'Cadastro de nova reclamacao/demanda.' },
   { area: 'Protocolos', type: 'Caminho', title: 'Painel de gestao de reclamacoes', path: '/gestao', permission: 'complaints_management', note: 'Lista, filtros e abas de reclamacoes.' },
   { area: 'Protocolos', type: 'Caminho', title: 'Ficha executiva do protocolo', path: '/gestao/:id', permission: 'complaints_management', note: 'Abertura da demanda, evidencias e tratativas.' },
-  { area: 'Protocolos', type: 'Caminho', title: 'Relatorio semanal', path: '/gestao/relatorio-semanal', permission: 'complaints_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'manager'], note: 'Relatorio semanal das reclamacoes.' },
+  { area: 'Protocolos', type: 'Caminho', title: 'Relatorio semanal e mensal', path: '/gestao/relatorio-semanal', permission: 'complaints_management', roles: ['master_admin', 'admin', 'supervisor_crc', 'sac_operator', 'manager'], note: 'Relatorios semanal e mensal das reclamacoes.' },
   { area: 'Dashboards', type: 'Caminho', title: 'Dashboard de reclamacoes', path: '/dashboard', permission: 'complaints_dashboard', note: 'Indicadores gerenciais de reclamacoes.' },
   { area: 'Dashboards', type: 'Caminho', title: 'BI de reclamacoes', path: '/bi', permission: 'complaints_dashboard', note: 'Analises complementares.' },
   { area: 'NPS', type: 'Caminho', title: 'Painel de gestao NPS', path: '/gestao-nps', permission: 'nps_management', note: 'Gestao dos registros NPS.' },

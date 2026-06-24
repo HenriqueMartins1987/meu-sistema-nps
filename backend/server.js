@@ -919,6 +919,8 @@ const partnerVideoContactSeeds = [
   ['SENADOR CANEDO', 'GABRIEL LOPES', '5517981119054']
 ];
 const closedComplaintStatuses = new Set(['resolvida', 'cancelada', 'finalizada', 'finalizado', 'fechada', 'fechado', 'encerrada', 'encerrado']);
+const complaintAttendanceFollowUpStatus = 'aguardando_comparecimento_conclusao_atendimento';
+const complaintAttendanceFollowUpLabel = 'Tratativa Realizada - Aguardando Comparecimento/Conclusão do Atendimento';
 const complaintStatusLabels = {
   aberta: 'Aberta',
   em_analise_sac: 'Em análise pelo SAC',
@@ -931,6 +933,7 @@ const complaintStatusLabels = {
   escalonada_administracao: 'Escalonada à Administração',
   retornada_sac_auditoria: 'Retornada ao SAC para Auditoria',
   devolvida_complementacao: 'Devolvida para Complementação',
+  [complaintAttendanceFollowUpStatus]: complaintAttendanceFollowUpLabel,
   resolvida: 'Resolvida',
   encerrada: 'Encerrada',
   reaberta: 'Reaberta',
@@ -954,6 +957,10 @@ function normalizeComplaintStatusForStorage(status) {
     escalonada_a_administracao: 'escalonada_administracao',
     retornada_ao_sac_para_auditoria: 'retornada_sac_auditoria',
     devolvida_para_complementacao: 'devolvida_complementacao',
+    tratativa_realizada_aguardando_comparecimento_conclusao_do_atendimento: complaintAttendanceFollowUpStatus,
+    tratativa_realizada_aguardando_comparecimento_conclusao_atendimento: complaintAttendanceFollowUpStatus,
+    aguardando_comparecimento_conclusao_do_atendimento: complaintAttendanceFollowUpStatus,
+    aguardando_comparecimento_conclusao_atendimento: complaintAttendanceFollowUpStatus,
     fechada: 'encerrada',
     fechado: 'encerrada',
     finalizada: 'encerrada',
@@ -1789,7 +1796,6 @@ function defaultActionPermissionsForRole(role) {
   if (role === 'sac_operator') {
     return [
       'complaints_view_all',
-      'complaints_close',
       'complaints_change_unit',
       'complaints_edit_patient_phone',
       'complaints_reassign',
@@ -1806,7 +1812,6 @@ function defaultActionPermissionsForRole(role) {
   if (role === 'supervisor_crc') {
     return [
       'complaints_view_all',
-      'complaints_close',
       'complaints_reactivate',
       'complaints_change_unit',
       'complaints_edit_patient_phone',
@@ -1927,7 +1932,7 @@ function canAddTreatment(user) {
 
 function canCloseComplaint(user) {
   const normalizedRole = normalizeAccessRole(user?.role);
-  return (['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedRole) || isMasterAdminUser(user)) && hasActionPermission(user, 'complaints_close');
+  return (['admin', 'master_admin'].includes(normalizedRole) || isMasterAdminUser(user)) && hasActionPermission(user, 'complaints_close');
 }
 
 function canSupervisorApprove(user) {
@@ -32687,6 +32692,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       first_attendance,
       forward_to_role,
       reassign_forward,
+      mark_waiting_attendance,
       sac_audit_status,
       sac_audit_comment
     } = req.body;
@@ -32712,10 +32718,13 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
     const complaint = rows[0];
     const cleanedComment = typeof operator_comment === 'string' ? operator_comment.trim() : '';
     const hasCommentChange = Boolean(cleanedComment) && cleanedComment !== String(complaint.operator_comment || '').trim();
+    const previousStatus = normalizeComplaintStatusForStorage(complaint.status || 'aberta');
     const nextPriority = priority ? normalizePriority(priority) : normalizePriority(complaint.priority);
-    const nextStatus = normalizeComplaintStatusForStorage(
-      status || (cleanedComment && canAddTreatment(req.user) ? 'em_andamento' : complaint.status || 'aberta')
-    );
+    const requestedStatus = mark_waiting_attendance
+      ? complaintAttendanceFollowUpStatus
+      : status || (cleanedComment && canAddTreatment(req.user) ? 'em_andamento' : complaint.status || 'aberta');
+    const nextStatus = normalizeComplaintStatusForStorage(requestedStatus);
+    const shouldMarkWaitingAttendance = Boolean(mark_waiting_attendance) || nextStatus === complaintAttendanceFollowUpStatus;
     const actorName = getActorName(req.user);
     let assignmentNotificationResult = null;
     const logEntries = [];
@@ -32888,7 +32897,43 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
             complaint,
             treatmentRole === 'coordinator' ? 'coordinator_assigned_at' : 'manager_assigned_at'
           ),
-          reason: 'Tratativa registrada pela gestão; encerramento final permanece com SAC.'
+          reason: 'Tratativa registrada pela gestao; auditoria retorna ao SAC antes do fechamento administrativo.'
+        });
+      }
+    }
+
+    if (shouldMarkWaitingAttendance) {
+      const hasCurrentOrPendingTreatment = Boolean(complaint.treatment_at) || (cleanedComment && canAddTreatment(req.user));
+      const hasCurrentOrPendingPatientFlow = Boolean(complaint.patient_contacted_at)
+        || Boolean(complaint.first_attendance_at)
+        || Boolean(patient_contacted)
+        || Boolean(first_attendance);
+
+      if (!canAddTreatment(req.user)) {
+        return res.status(403).json({
+          error: 'Seu perfil não pode posicionar a demanda em aguardando comparecimento/conclusão do atendimento.'
+        });
+      }
+
+      if (!hasCurrentOrPendingTreatment) {
+        return res.status(409).json({
+          error: 'Registre a tratativa antes de enviar a demanda para aguardando comparecimento/conclusão do atendimento.'
+        });
+      }
+
+      if (!hasCurrentOrPendingPatientFlow) {
+        return res.status(409).json({
+          error: 'Registre o contato com o paciente ou o primeiro atendimento antes de aguardar comparecimento/conclusão do atendimento.'
+        });
+      }
+
+      if (nextStatus !== previousStatus) {
+        logEntries.push({
+          action: 'awaiting_attendance_followup',
+          message: `Demanda posicionada em ${complaintAttendanceFollowUpLabel}.`,
+          previousStatus,
+          newStatus: complaintAttendanceFollowUpStatus,
+          reason: 'Aguardando comparecimento do paciente ou conclusão do atendimento.'
         });
       }
     }
@@ -32920,7 +32965,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
 
     if (sac_accept) {
       if (!canCloseComplaint(req.user)) {
-        return res.status(403).json({ error: 'Somente o Operador de SAC pode registrar este aceite.' });
+        return res.status(403).json({ error: 'Somente administradores podem registrar o aceite final deste protocolo.' });
       }
 
       updates.push('sac_approval_at = COALESCE(sac_approval_at, NOW())');
@@ -33121,7 +33166,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         || (supervisor_accept && canSupervisorApprove(req.user));
 
       if (!canCloseComplaint(req.user)) {
-        return res.status(403).json({ error: 'Somente Administrador, Administrador Master, Supervisor do CRC ou Operador de SAC podem fechar uma reclamacao.' });
+        return res.status(403).json({ error: 'Somente Administrador ou Administrador Master podem fechar uma reclamacao.' });
       }
 
       if (!isMasterRequest && !hasClosingTreatment) {
@@ -33132,7 +33177,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
 
       if (!isMasterRequest && normalizePriority(nextPriority) === 'alta' && !hasSupervisorApproval) {
         return res.status(409).json({
-          error: 'Reclamacoes de prioridade alta exigem aceite do Supervisor do CRC antes do fechamento pelo SAC.'
+          error: 'Reclamacoes de prioridade alta exigem aceite do Supervisor do CRC antes do fechamento administrativo.'
         });
       }
 
@@ -33161,7 +33206,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
     );
 
     await Promise.all(logEntries.map((entry) => (
-      insertComplaintLog(id, entry.action, entry.message, req.user)
+      insertComplaintLog(id, entry.action, entry.message, req.user, entry)
     )));
 
     if ((first_attendance || reassign_forward) && ['coordinator', 'manager'].includes(String(forward_to_role || '').toLowerCase())) {

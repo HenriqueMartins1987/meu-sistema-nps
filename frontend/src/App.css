@@ -2799,6 +2799,12 @@ a {
   border-color: rgba(208, 140, 49, 0.24);
 }
 
+.status-pill.aguardando_comparecimento_conclusao_atendimento {
+  background: rgba(33, 108, 173, 0.12);
+  color: #1f5e97;
+  border-color: rgba(33, 108, 173, 0.22);
+}
+
 .status-pill.resolvida,
 .status-pill.fechada {
   background: rgba(11, 111, 95, 0.12);
@@ -3637,6 +3643,7 @@ a {
 
 .deadline-card.aberta,
 .deadline-card.em_andamento,
+.deadline-card.aguardando_comparecimento_conclusao_atendimento,
 .deadline-card.resolvida,
 .deadline-card.stage {
   border-color: rgba(212, 167, 100, 0.24);
@@ -3649,6 +3656,10 @@ a {
 .deadline-card.em_andamento,
 .deadline-card.stage {
   background: linear-gradient(180deg, rgba(74, 52, 29, 0.96), rgba(97, 69, 39, 0.94));
+}
+
+.deadline-card.aguardando_comparecimento_conclusao_atendimento {
+  background: linear-gradient(180deg, rgba(24, 50, 85, 0.96), rgba(30, 63, 106, 0.94));
 }
 
 .deadline-card.resolvida {

@@ -70,7 +70,7 @@ function buildMenuSections(user) {
       items: [
         { key: 'new-protocol', label: 'Novo Protocolo', icon: 'complaints', path: '/cadastro', visible: hasPermission(user, 'complaints_register') },
         { key: 'complaints-panel', label: 'Painel de Reclamacoes', icon: 'complaints', path: '/gestao', exact: true, visible: hasPermission(user, 'complaints_management') },
-        { key: 'weekly-report', label: 'Relatorio Semanal', icon: 'reports', path: '/gestao/relatorio-semanal', visible: canOpenWeeklyComplaintReport(user) && hasPermission(user, 'complaints_management') },
+        { key: 'weekly-report', label: 'Relatorio Semanal e Mensal', icon: 'reports', path: '/gestao/relatorio-semanal', visible: canOpenWeeklyComplaintReport(user) && hasPermission(user, 'complaints_management') },
         { key: 'complaints-dashboard', label: 'Dashboard de Reclamacoes', icon: 'dashboard', path: '/dashboard', visible: hasPermission(user, 'complaints_dashboard') }
       ]
     },

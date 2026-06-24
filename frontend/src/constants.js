@@ -42,6 +42,9 @@ export const channels = [
   { value: 'outros', label: 'Outros' }
 ];
 
+export const complaintAttendanceFollowUpStatus = 'aguardando_comparecimento_conclusao_atendimento';
+export const complaintAttendanceFollowUpLabel = 'Tratativa Realizada - Aguardando Comparecimento/Conclusão do Atendimento';
+
 export const statusOptions = [
   { value: 'aberta', label: 'Aberta' },
   { value: 'em_analise_sac', label: 'Em análise pelo SAC' },
@@ -54,6 +57,7 @@ export const statusOptions = [
   { value: 'escalonada_administracao', label: 'Escalonada à Administração' },
   { value: 'retornada_sac_auditoria', label: 'Retornada ao SAC para Auditoria' },
   { value: 'devolvida_complementacao', label: 'Devolvida para Complementação' },
+  { value: complaintAttendanceFollowUpStatus, label: complaintAttendanceFollowUpLabel },
   { value: 'em_andamento', label: 'Em andamento' },
   { value: 'resolvida', label: 'Resolvida' },
   { value: 'encerrada', label: 'Encerrada' },
@@ -198,7 +202,6 @@ export function defaultActionPermissionsForRole(role) {
   if (role === 'sac_operator') {
     return [
       'complaints_view_all',
-      'complaints_close',
       'complaints_change_unit',
       'complaints_edit_patient_phone',
       'complaints_reassign',
@@ -215,7 +218,6 @@ export function defaultActionPermissionsForRole(role) {
   if (role === 'supervisor_crc') {
     return [
       'complaints_view_all',
-      'complaints_close',
       'complaints_reactivate',
       'complaints_change_unit',
       'complaints_edit_patient_phone',

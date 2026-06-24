@@ -2,6 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from './api';
 import {
+  complaintAttendanceFollowUpLabel,
+  complaintAttendanceFollowUpStatus,
   complaintTypes,
   isMasterAdmin,
   normalizeRoleValue,
@@ -229,6 +231,19 @@ function buildEscalationInfo(item) {
     };
   }
 
+  if (status === complaintAttendanceFollowUpStatus) {
+    return {
+      state: 'warning',
+      label: complaintAttendanceFollowUpLabel,
+      owner: item.assigned_responsible_name || item.forwarded_to_label || 'Operação da unidade',
+      detail: item.patient_contacted_at
+        ? `Acompanhamento desde ${formatShortDate(item.patient_contacted_at)}`
+        : 'Aguardando comparecimento ou conclusão do atendimento',
+      dueAt: item.patient_contacted_at || item.first_attendance_at || item.treatment_at,
+      role: 'followup'
+    };
+  }
+
   if (level === 'admin' || status === 'escalonada_administracao') {
     return {
       state: 'overdue',
@@ -300,6 +315,14 @@ function buildOperationalStage(item) {
       owner: 'protocolo encerrado',
       label: 'Fechada pelo SAC',
       since: item.closed_at || item.updated_at || item.created_at
+    };
+  }
+
+  if (item.status === complaintAttendanceFollowUpStatus) {
+    return {
+      owner: item.assigned_responsible_name || item.forwarded_to_label || 'Operação da unidade',
+      label: complaintAttendanceFollowUpLabel,
+      since: item.patient_contacted_at || item.first_attendance_at || item.treatment_at || item.updated_at || item.created_at
     };
   }
 
@@ -950,7 +973,7 @@ function DashboardManagement() {
         <div className="heading-actions">
           {isWeeklyComplaintReportAllowed(currentUser) && (
             <button className="outline-action" onClick={() => navigate('/gestao/relatorio-semanal')}>
-              Relatorio semanal
+              Relatorio semanal e mensal
             </button>
           )}
           <button className="outline-action" onClick={() => navigate('/dashboard')}>

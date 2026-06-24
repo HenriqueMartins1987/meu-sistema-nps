@@ -1,7 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import api, { apiBaseUrl } from './api';
-import { hasActionPermission, isAdmin as isAdminUser, isMasterAdmin, normalizeRoleValue, priorityOptions, readUser, statusLabels } from './constants';
+import {
+  complaintAttendanceFollowUpLabel,
+  complaintAttendanceFollowUpStatus,
+  hasActionPermission,
+  isAdmin as isAdminUser,
+  isMasterAdmin,
+  normalizeRoleValue,
+  priorityOptions,
+  readUser,
+  statusLabels
+} from './constants';
 
 const maxUploadSizeBytes = 10 * 1024 * 1024;
 const detailTablePageSize = 10;
@@ -314,11 +324,12 @@ function buildComplaintNextAction({
 }) {
   if (!complaint) return 'Validar o protocolo e definir o próximo responsável.';
   if (complaint.status === 'resolvida') return 'Protocolo finalizado. Validar apenas se toda a devolutiva foi registrada.';
+  if (complaint.status === complaintAttendanceFollowUpStatus) return 'Acompanhar o comparecimento do paciente ou a conclusão do atendimento antes do fechamento.';
   if (!hasFirstAttendance) return 'Registrar o primeiro atendimento e encaminhar a demanda para o responsável da tratativa.';
   if (!hasTreatment) return 'Salvar uma tratativa com evidência objetiva para liberar o avanço do fluxo.';
   if (isHighPriority && !hasSupervisorApproval) return 'Registrar o aceite do Supervisor do CRC antes do fechamento.';
   if (!hasPatientContact) return 'Registrar o contato com o paciente e documentar o retorno dado.';
-  return 'Conferir se a tratativa está completa e, estando tudo validado, seguir para o fechamento do protocolo.';
+  return 'Conferir se a tratativa está completa e, estando tudo validado, seguir para o fechamento administrativo do protocolo.';
 }
 
 function buildComplaintExecutiveSummary(complaint, options = {}) {
@@ -373,8 +384,16 @@ function buildOperationalStage(complaint) {
   if (complaint.status === 'resolvida') {
     return {
       owner: 'Protocolo encerrado',
-      label: 'Fechada pelo SAC',
+      label: 'Fechada pela administração',
       since: complaint.closed_at || complaint.updated_at || complaint.created_at
+    };
+  }
+
+  if (complaint.status === complaintAttendanceFollowUpStatus) {
+    return {
+      owner: complaint.assigned_responsible_name || complaint.forwarded_to_label || 'Operação da unidade',
+      label: complaintAttendanceFollowUpLabel,
+      since: complaint.patient_contacted_at || complaint.first_attendance_at || complaint.treatment_at || complaint.updated_at || complaint.created_at
     };
   }
 
@@ -436,7 +455,7 @@ function buildOperationalStage(complaint) {
 
   return {
     owner: 'Operador de SAC',
-    label: 'Aguardando fechamento do protocolo',
+    label: 'Aguardando fechamento administrativo',
     since: complaint.patient_contacted_at
   };
 }
@@ -503,7 +522,7 @@ function ComplaintDetail() {
       ? Boolean(complaintAccess[key])
       : fallback
   );
-  const canOperationalClose = accessFlag('canCloseComplaint', (isMasterUser || ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_close'));
+  const canOperationalClose = accessFlag('canCloseComplaint', (isMasterUser || ['admin', 'master_admin'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_close'));
   const canFormalTreatment = accessFlag('canAddTreatment', (treatmentRoles.includes(normalizedUserRole) || isAdmin) && hasActionPermission(user, 'treatment_register'));
   const canRecordTreatment = accessFlag('canRecordTreatment', Boolean(user?.role) && normalizedUserRole !== 'viewer' && hasActionPermission(user, 'treatment_register'));
   const canAttachEvidence = accessFlag('canAttachEvidence', (evidenceRoles.includes(normalizedUserRole) || isAdmin) && hasActionPermission(user, 'evidence_attach'));
@@ -542,10 +561,16 @@ function ComplaintDetail() {
     && !hasPatientContact
     && hasTreatment;
   const hasFirstAttendance = Boolean(complaint?.first_attendance_at);
+  const canMarkAwaitingAttendance = canRecordTreatment
+    && complaint?.status !== 'resolvida'
+    && complaint?.status !== complaintAttendanceFollowUpStatus
+    && hasTreatment
+    && (hasPatientContact || hasFirstAttendance)
+    && !isDeletedRecord;
   const closeBlockedReason = isMasterUser
     ? ''
     : !canOperationalClose
-    ? 'Apenas Administrador, Administrador Master, Supervisor do CRC ou Operador de SAC podem fechar este protocolo.'
+    ? 'Apenas Administrador ou Administrador Master podem fechar este protocolo.'
     : !hasClosingTreatment
       ? 'Registre a tratativa do Coordenador, Gerente ou Operador de SAC para liberar o fechamento.'
       : isHighPriority && !hasSupervisorApproval
@@ -745,6 +770,34 @@ function ComplaintDetail() {
     setForwardModalMode('contact');
     setForwardToRole('');
     setShowForwardModal(true);
+  };
+
+  const handleMarkAwaitingAttendance = async () => {
+    if (!canMarkAwaitingAttendance) {
+      return;
+    }
+
+    setSaving(true);
+    setFeedback('');
+
+    try {
+      const payload = {
+        status: complaintAttendanceFollowUpStatus,
+        mark_waiting_attendance: true
+      };
+
+      if (pendingTreatmentComment) {
+        payload.operator_comment = pendingTreatmentComment;
+      }
+
+      await api.patch(`/complaints/${id}`, payload);
+      setFeedback('Demanda posicionada em aguardando comparecimento/conclusão do atendimento.');
+      await loadComplaint();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Erro ao atualizar o acompanhamento da demanda.');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleOpenReassignForward = () => {
@@ -1343,7 +1396,13 @@ function ComplaintDetail() {
         <article className={`deadline-card ${complaint.status || 'aberta'}`}>
           <span>Status</span>
           <strong>{statusLabels[complaint.status] || 'Aberta'}</strong>
-          <p>{complaint.status === 'resolvida' ? 'Protocolo encerrado.' : 'Em controle operacional.'}</p>
+          <p>
+            {complaint.status === 'resolvida'
+              ? 'Protocolo encerrado.'
+              : complaint.status === complaintAttendanceFollowUpStatus
+                ? 'Tratativa concluída e demanda aguardando comparecimento ou conclusão do atendimento.'
+                : 'Em controle operacional.'}
+          </p>
         </article>
         <article className="deadline-card stage">
           <span>Parada com</span>
@@ -1908,9 +1967,9 @@ function ComplaintDetail() {
               <p>{hasSupervisorApproval ? `${complaint.supervisor_approval_by || 'Supervisor'} · ${formatDate(complaint.supervisor_approval_at)}` : 'Exigido para prioridade alta.'}</p>
             </div>
             <div className={`approval-card ${hasSacApproval ? 'done' : 'pending'}`}>
-              <span>Aceite SAC</span>
+              <span>Aceite final</span>
               <strong>{hasSacApproval ? 'Concluído' : 'Pendente'}</strong>
-              <p>{hasSacApproval ? `${complaint.sac_approval_by || 'SAC'} · ${formatDate(complaint.sac_approval_at)}` : 'Gerado no fechamento pelo Operador de SAC.'}</p>
+              <p>{hasSacApproval ? `${complaint.sac_approval_by || 'Administração'} · ${formatDate(complaint.sac_approval_at)}` : 'Gerado no fechamento administrativo do protocolo.'}</p>
             </div>
           </div>
 
@@ -1945,9 +2004,14 @@ function ComplaintDetail() {
                 Registrar aceite CRC
               </button>
             )}
-            {canOperationalClose && complaint.status !== 'resolvida' && (
+            {canMarkPatientContact && complaint.status !== 'resolvida' && (
               <button className="outline-action" onClick={handlePatientContact} disabled={saving || !canMarkPatientContact || isDeletedRecord}>
                 {hasPatientContact ? 'Contato já registrado' : 'Registrar contato com paciente'}
+              </button>
+            )}
+            {canMarkAwaitingAttendance && (
+              <button className="outline-action" onClick={handleMarkAwaitingAttendance} disabled={saving || !canMarkAwaitingAttendance}>
+                Marcar aguardando comparecimento/conclusão
               </button>
             )}
             {canReassignForward && complaint.status !== 'resolvida' && !isDeletedRecord && (

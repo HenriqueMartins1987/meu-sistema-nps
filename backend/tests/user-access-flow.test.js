@@ -2767,6 +2767,90 @@ test('SAC operator can save formal treatment even with empty saved action permis
   assert.equal(treatmentLogParams[3], 'Operador SAC');
 });
 
+test('sac operator can move complaint to waiting attendance follow-up after treatment and contact', async () => {
+  let updateComplaintSql = '';
+  let updateComplaintParams = null;
+  let statusLogParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{
+        must_change_password: 0,
+        token_version: 1,
+        active: 1,
+        role: 'Operador de SAC',
+        permissions: JSON.stringify(['complaints_management']),
+        action_permissions: null
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes('WHERE c.id = ?'),
+      reply: async () => [[{
+        id: 48,
+        protocol: 'GRC-2026-000048',
+        clinic_id: 1,
+        patient_name: 'Paciente Acompanhamento',
+        patient_phone: '+5562999999999',
+        status: 'em_andamento',
+        priority: 'media',
+        operator_comment: 'Paciente em tratativa.',
+        treatment_at: new Date('2026-05-10T12:00:00.000Z'),
+        treatment_by_role: 'manager',
+        patient_contacted_at: new Date('2026-05-11T09:00:00.000Z'),
+        first_attendance_at: new Date('2026-05-11T09:00:00.000Z'),
+        attachment_url: null,
+        deleted_at: null,
+        created_at: new Date('2026-05-09T12:00:00.000Z'),
+        updated_at: new Date('2026-05-11T09:30:00.000Z')
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_evidences') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_logs') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE complaints') && sql.includes('status = ?'),
+      reply: async (sql, params) => {
+        updateComplaintSql = sql;
+        updateComplaintParams = params;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO complaint_logs'),
+      reply: async (_sql, params) => {
+        statusLogParams = params;
+        return [{ insertId: 7 }];
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/complaints/48')
+    .set('Authorization', `Bearer ${signToken({
+      id: 9,
+      email: 'sac@example.com',
+      role: 'Operador de SAC',
+      name: 'Operador SAC',
+      permissions: ['complaints_management'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({ mark_waiting_attendance: true });
+
+  assert.equal(response.status, 200);
+  assert.match(updateComplaintSql, /status = \?/);
+  assert.equal(updateComplaintParams[0], 'aguardando_comparecimento_conclusao_atendimento');
+  assert.equal(statusLogParams[1], 'awaiting_attendance_followup');
+  assert.equal(statusLogParams[5], 'em_andamento');
+  assert.equal(statusLogParams[6], 'aguardando_comparecimento_conclusao_atendimento');
+});
+
 test('complaint detail exposes normalized SAC access when role is stored as label', async () => {
   pool.query = buildQueryStub([
     {
@@ -2826,7 +2910,7 @@ test('complaint detail exposes normalized SAC access when role is stored as labe
   assert.equal(response.body.access.canAddTreatment, true);
   assert.equal(response.body.access.canChangeComplaintUnit, true);
   assert.equal(response.body.access.canEditPatientPhone, true);
-  assert.equal(response.body.access.canCloseComplaint, true);
+  assert.equal(response.body.access.canCloseComplaint, false);
   assert.equal(response.body.access.canMarkPatientContact, true);
   assert.equal(response.body.access.canReassignComplaint, true);
 });
@@ -2865,7 +2949,7 @@ test('uploaded file route serves persisted database fallback when disk file is m
   assert.equal(response.text, 'arquivo persistido');
 });
 
-test('sac operator can close complaint when manager treatment exists in immutable history', async () => {
+test('sac operator cannot close complaint even when manager treatment exists in immutable history', async () => {
   let updateComplaintSql = '';
   let updateComplaintParams = null;
   let closeLogParams = null;
@@ -2951,12 +3035,11 @@ test('sac operator can close complaint when manager treatment exists in immutabl
     })}`)
     .send({ status: 'resolvida' });
 
-  assert.equal(response.status, 200);
-  assert.match(updateComplaintSql, /closed_at = NOW\(\)/);
-  assert.equal(updateComplaintParams[0], 'resolvida');
-  assert.ok(updateComplaintParams.includes('sac_operator'));
-  assert.equal(closeLogParams[1], 'closed');
-  assert.equal(closeLogParams[3], 'Operador SAC');
+  assert.equal(response.status, 403);
+  assert.equal(response.body.error, 'Somente Administrador ou Administrador Master podem fechar uma reclamacao.');
+  assert.equal(updateComplaintSql, '');
+  assert.equal(updateComplaintParams, null);
+  assert.equal(closeLogParams, null);
 });
 
 test('CRC operator exports visible agenda tasks in Excel without e-mail dependency', async () => {
