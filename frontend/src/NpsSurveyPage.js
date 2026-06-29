@@ -34,7 +34,9 @@ const initialForm = {
   detractor_feedback: '',
   source: '',
   whatsapp_conversation_id: '',
-  whatsapp_nps_invite_id: ''
+  whatsapp_nps_invite_id: '',
+  nps_invite_id: '',
+  invite_token: ''
 };
 
 function parseVcardContact(content) {
@@ -80,8 +82,9 @@ function NpsSurveyPage() {
     const source = params.get('source') || '';
     const conversationId = params.get('conversation_id') || '';
     const inviteId = params.get('invite_id') || '';
+    const inviteToken = params.get('token') || '';
 
-    if (!clinicId && !patientName && !patientPhone && !source && !conversationId && !inviteId) return;
+    if (!clinicId && !patientName && !patientPhone && !source && !conversationId && !inviteId && !inviteToken) return;
 
     setForm((prev) => ({
       ...prev,
@@ -90,7 +93,9 @@ function NpsSurveyPage() {
       patient_phone: patientPhone ? formatBrazilPhoneInput(patientPhone) : prev.patient_phone,
       source: source || prev.source,
       whatsapp_conversation_id: conversationId || prev.whatsapp_conversation_id,
-      whatsapp_nps_invite_id: inviteId || prev.whatsapp_nps_invite_id
+      whatsapp_nps_invite_id: inviteId || prev.whatsapp_nps_invite_id,
+      nps_invite_id: inviteId || prev.nps_invite_id,
+      invite_token: inviteToken || prev.invite_token
     }));
   }, []);
 
@@ -269,6 +274,8 @@ function NpsSurveyPage() {
         source: form.source,
         whatsapp_conversation_id: form.whatsapp_conversation_id,
         whatsapp_nps_invite_id: form.whatsapp_nps_invite_id,
+        nps_invite_id: form.nps_invite_id,
+        token: form.invite_token,
         comment: ''
       });
 

@@ -1941,6 +1941,127 @@ a {
   text-transform: uppercase;
 }
 
+.nps-automation-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.nps-automation-hero {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.nps-automation-status-card {
+  border: 1px solid rgba(11, 111, 95, 0.14);
+  border-radius: 14px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(244, 250, 248, 0.96));
+  padding: 18px;
+  display: grid;
+  gap: 6px;
+  box-shadow: 0 16px 36px rgba(11, 111, 95, 0.08);
+}
+
+.nps-automation-status-card span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.nps-automation-status-card strong {
+  color: var(--ink);
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+.nps-automation-status-card p {
+  margin: 0;
+  color: var(--muted);
+}
+
+.nps-automation-warning {
+  border: 1px solid rgba(217, 119, 6, 0.24);
+  border-radius: 12px;
+  background: linear-gradient(135deg, rgba(255, 247, 237, 0.98), rgba(255, 251, 235, 0.96));
+  color: #9a3412;
+  padding: 14px 16px;
+  line-height: 1.5;
+}
+
+.nps-automation-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.nps-automation-jobs {
+  display: grid;
+  gap: 14px;
+}
+
+.panel-heading.compact {
+  margin-bottom: 0;
+}
+
+.nps-automation-job-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.nps-automation-job-card {
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 14px;
+  background: #ffffff;
+  padding: 16px;
+  display: grid;
+  gap: 8px;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.05);
+}
+
+.nps-automation-job-card.completed,
+.nps-automation-job-card.sent {
+  border-color: rgba(22, 163, 74, 0.2);
+  background: linear-gradient(145deg, rgba(240, 253, 244, 0.96), rgba(255, 255, 255, 0.98));
+}
+
+.nps-automation-job-card.failed,
+.nps-automation-job-card.partial,
+.nps-automation-job-card.manual_action_required {
+  border-color: rgba(220, 38, 38, 0.18);
+  background: linear-gradient(145deg, rgba(254, 242, 242, 0.98), rgba(255, 255, 255, 0.98));
+}
+
+.nps-automation-job-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.nps-automation-job-head strong {
+  color: var(--ink);
+  font-size: 15px;
+}
+
+.nps-automation-job-head span {
+  border-radius: 999px;
+  background: rgba(11, 111, 95, 0.08);
+  color: #0b6f5f;
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  padding: 6px 10px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.nps-automation-job-card p,
+.nps-automation-job-card small {
+  margin: 0;
+  color: var(--muted);
+}
+
 .weekly-report-panel {
   display: grid;
   gap: 20px;
@@ -6131,6 +6252,12 @@ a {
 
   .register-heading img {
     max-width: 220px;
+  }
+
+  .nps-automation-hero,
+  .nps-automation-metrics,
+  .nps-automation-job-grid {
+    grid-template-columns: 1fr;
   }
 
   .topbar,

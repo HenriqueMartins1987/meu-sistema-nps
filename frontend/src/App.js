@@ -92,6 +92,7 @@ function App() {
       <Route path="/marketing" element={<MarketingIntake />} />
       <Route path="/registro-marketing" element={<MarketingIntake />} />
       <Route path="/pesquisa-nps" element={<NpsSurveyPage />} />
+      <Route path="/nps" element={<NpsSurveyPage />} />
       <Route path="/public/dental-card" element={<PublicDentalCardForm />} />
       <Route path="/public/dental-card/:unidadeSlug" element={<PublicDentalCardForm />} />
       <Route element={<ProtectedRoute />}>

@@ -1679,6 +1679,8 @@ test('CRC operator first access loads active clinics for initial selection', asy
 
 test('CRC operator saves initial clinic selection once and receives refreshed session', async () => {
   const insertedLinks = [];
+  const operatorClinicWrites = [];
+  let operatorClinicResetParams = null;
   let deleteParams = null;
   let completedUpdateParams = null;
   let transactionStarted = false;
@@ -1766,6 +1768,20 @@ test('CRC operator saves initial clinic selection once and receives refreshed se
         token_version: 1,
         crc_clinic_selection_completed_at: '2026-06-17 10:00:00'
       }]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE operator_clinics SET active = 0'),
+      reply: async (_sql, params) => {
+        operatorClinicResetParams = params;
+        return [{ affectedRows: 2 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO operator_clinics'),
+      reply: async (_sql, params) => {
+        operatorClinicWrites.push(params);
+        return [{ insertId: operatorClinicWrites.length }];
+      }
     }
   ]);
 
@@ -1791,6 +1807,11 @@ test('CRC operator saves initial clinic selection once and receives refreshed se
   assert.equal(connectionReleased, true);
   assert.deepEqual(deleteParams, [88]);
   assert.deepEqual(insertedLinks, [[88, 7], [88, 9]]);
+  assert.deepEqual(operatorClinicResetParams, ['Paula CRC', 88]);
+  assert.deepEqual(operatorClinicWrites, [
+    [88, 7, 'Paula CRC', 'Paula CRC'],
+    [88, 9, 'Paula CRC', 'Paula CRC']
+  ]);
   assert.deepEqual(completedUpdateParams, [88]);
   assert.deepEqual(response.body.clinicIds, [7, 9]);
   assert.deepEqual(response.body.user.clinicIds, [7, 9]);

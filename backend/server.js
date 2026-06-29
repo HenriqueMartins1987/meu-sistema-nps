@@ -75,6 +75,25 @@ const {
   resolveAppointmentDateMatchStatus
 } = require('./services/patientEnrichmentService');
 const {
+  buildNpsInviteIdempotencyKey,
+  buildNpsInviteMessage,
+  buildNpsInvitePublicUrl,
+  buildNpsInviteToken,
+  callEcuroRobotCheckCompleted,
+  callEcuroRobotLoginTest,
+  computeRetryState,
+  createEcuroRobotApiClient,
+  getEcuroRobotClientConfig,
+  getNpsAutomationConfig,
+  interpretEcuroCompletionStatus,
+  isWithinDispatchWindow,
+  sanitizeRobotError,
+  sendNpsInviteViaWhatsApp
+} = require('./services/ecuroCompletionService');
+const {
+  getEcuroRobotConfigStatus
+} = require('./services/ecuroRobotService');
+const {
   sendComplaintNotification: sendTwilioComplaintNotification,
   sendGenericNotification: sendTwilioGenericNotification,
   sendNpsNotification: sendTwilioNpsNotification,
@@ -835,7 +854,7 @@ let whatsappSettingsCache = null;
 const WHATSAPP_SERVICE_DEFAULT_BASE_URL = 'http://2.24.101.6:3005';
 const WHATSAPP_NOTIFICATION_INSTANCE_NAME = 'reclamacoes';
 const WHATSAPP_NOTIFICATION_SENDER_PHONE = normalizeWhatsAppPhone(process.env.WHATSAPP_NOTIFICATION_SENDER_PHONE || '+55 62 9680-7670');
-const WHATSAPP_NPS_INSTANCE_NAME = String(process.env.WHATSAPP_NPS_INSTANCE_NAME || 'nps').trim() || 'nps';
+const WHATSAPP_NPS_INSTANCE_NAME = String(process.env.NPS_WHATSAPP_SESSION_ID || process.env.WHATSAPP_NPS_INSTANCE_NAME || 'nps').trim() || 'nps';
 const WHATSAPP_NPS_DISPLAY_NAME = String(process.env.WHATSAPP_NPS_DISPLAY_NAME || 'NPS').trim() || 'NPS';
 const WHATSAPP_NPS_SENDER_PHONE = normalizeWhatsAppPhone(process.env.WHATSAPP_NPS_SENDER_PHONE || process.env.WHATSAPP_NOTIFICATION_SENDER_PHONE || '556296807670');
 const WHATSAPP_CONFIRMATION_APPOINTMENT_INSTANCE_NAME = 'confirmacao-agendamento';
@@ -5560,6 +5579,89 @@ async function ensureDatabaseSchema() {
       INDEX idx_whatsapp_contact_audit_operator (operator_user_id, created_at)
     )
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ecuro_robot_jobs (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      job_type VARCHAR(80) NOT NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      appointment_date DATE NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'pending',
+      total_checked INT NOT NULL DEFAULT 0,
+      total_completed INT NOT NULL DEFAULT 0,
+      total_failed INT NOT NULL DEFAULT 0,
+      error_message TEXT NULL,
+      artifacts_json LONGTEXT NULL,
+      started_at DATETIME NULL,
+      finished_at DATETIME NULL,
+      created_by VARCHAR(180) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_ecuro_robot_jobs_status (status, created_at),
+      INDEX idx_ecuro_robot_jobs_clinic (clinic_id, appointment_date)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ecuro_patient_completion_status (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      job_id BIGINT NOT NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      patient_name VARCHAR(180) NULL,
+      patient_phone VARCHAR(40) NULL,
+      appointment_date DATE NULL,
+      appointment_time VARCHAR(20) NULL,
+      external_patient_id VARCHAR(120) NULL,
+      external_status VARCHAR(120) NULL,
+      completion_status VARCHAR(40) NOT NULL DEFAULT 'not_found',
+      matched_by VARCHAR(40) NULL,
+      confidence_score DECIMAL(5,2) NULL,
+      agenda_item_id INT NULL,
+      raw_payload_json LONGTEXT NULL,
+      checked_at DATETIME NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_ecuro_completion_job (job_id),
+      INDEX idx_ecuro_completion_status (completion_status, clinic_id),
+      INDEX idx_ecuro_completion_lookup (clinic_id, appointment_date, patient_name)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS nps_invites (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      token VARCHAR(160) NOT NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      patient_name VARCHAR(180) NULL,
+      patient_phone VARCHAR(40) NULL,
+      appointment_id INT NULL,
+      ecuro_completion_id BIGINT NULL,
+      source VARCHAR(80) NOT NULL DEFAULT 'ecuro_robot',
+      session_id VARCHAR(120) NOT NULL DEFAULT 'nps',
+      status VARCHAR(40) NOT NULL DEFAULT 'pending',
+      public_url TEXT NULL,
+      provider_message_id VARCHAR(180) NULL,
+      idempotency_key VARCHAR(180) NOT NULL,
+      error_message TEXT NULL,
+      attempts INT NOT NULL DEFAULT 0,
+      last_attempt_at DATETIME NULL,
+      next_attempt_at DATETIME NULL,
+      sent_at DATETIME NULL,
+      responded_at DATETIME NULL,
+      created_by VARCHAR(180) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_nps_invites_token (token),
+      UNIQUE KEY uniq_nps_invites_idempotency (idempotency_key),
+      INDEX idx_nps_invites_status (status, session_id, next_attempt_at),
+      INDEX idx_nps_invites_phone_day (patient_phone, created_at),
+      INDEX idx_nps_invites_completion (ecuro_completion_id)
+    )
+  `);
+  await ensureColumn('nps_invites', 'clinic_name', 'VARCHAR(180) NULL');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS agenda_item_completion_logs (
@@ -12773,6 +12875,1029 @@ function buildNpsComplaintDescription(nps) {
   return notes.join('\n\n');
 }
 
+let ecuroNpsInviteDispatchRunning = false;
+const ecuroNpsAutomationScheduleState = {
+  lastSlot: ''
+};
+
+function canViewEcuroNpsAutomation(user) {
+  return hasScreenPermission(user, 'nps_management') || isAdminUser(user);
+}
+
+function canExecuteEcuroNpsAutomation(user) {
+  return canViewEcuroNpsAutomation(user)
+    && (isAdminUser(user) || normalizeAccessRole(user?.role) === 'supervisor_crc');
+}
+
+function normalizeEcuroAutomationDate(value, fallback = '') {
+  const normalized = getSaoPauloDateKey(value);
+  return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : fallback;
+}
+
+function normalizeEcuroAutomationLimit(value, fallback = 80, max = 300) {
+  const numeric = Number(value || fallback);
+  if (!Number.isFinite(numeric)) return fallback;
+  return Math.max(1, Math.min(max, Math.round(numeric)));
+}
+
+function matchCronSegmentValue(segment, value) {
+  const normalized = String(segment || '*').trim();
+  if (!normalized || normalized === '*') return true;
+
+  return normalized.split(',').some((part) => {
+    const token = String(part || '').trim();
+    if (!token) return false;
+    if (/^\d+$/.test(token)) return Number(token) === value;
+    const rangeMatch = token.match(/^(\d+)-(\d+)$/);
+    if (rangeMatch) {
+      const start = Number(rangeMatch[1]);
+      const end = Number(rangeMatch[2]);
+      return value >= start && value <= end;
+    }
+    return false;
+  });
+}
+
+function matchesEcuroCronInSaoPaulo(expression, now = new Date()) {
+  const parts = String(expression || '').trim().split(/\s+/);
+  if (parts.length !== 5) return false;
+  const saoPaulo = getSaoPauloParts(now);
+  const dayOfMonth = Number(String(saoPaulo.dateKey || '').slice(8, 10) || 0);
+  const month = Number(String(saoPaulo.dateKey || '').slice(5, 7) || 0);
+  return matchCronSegmentValue(parts[0], saoPaulo.minute)
+    && matchCronSegmentValue(parts[1], saoPaulo.hour)
+    && matchCronSegmentValue(parts[2], dayOfMonth)
+    && matchCronSegmentValue(parts[3], month)
+    && matchCronSegmentValue(parts[4], saoPaulo.weekday);
+}
+
+async function ensureEcuroNpsClinicScope(user, requestedClinicId = null) {
+  const normalizedClinicId = Number(requestedClinicId || 0) || null;
+  if (isAdminUser(user)) {
+    return normalizedClinicId ? [normalizedClinicId] : [];
+  }
+
+  const clinicIds = await getCurrentUserClinicIds(user);
+  if (normalizedClinicId && clinicIds.length && !clinicIds.includes(normalizedClinicId)) {
+    const error = new Error('Seu perfil não possui acesso à clínica informada para a automação NPS.');
+    error.statusCode = 403;
+    throw error;
+  }
+
+  if (normalizedClinicId) return [normalizedClinicId];
+  return clinicIds;
+}
+
+async function loadEcuroNpsAutomationCandidates(filters = {}, user = null) {
+  const where = [
+    'a.deleted_at IS NULL',
+    "a.demand_type = 'patient'",
+    'a.requires_completion = 1',
+    'a.clinic_id IS NOT NULL',
+    'a.patient_name IS NOT NULL',
+    "TRIM(a.patient_name) <> ''",
+    'a.patient_scheduled_at IS NOT NULL'
+  ];
+  const params = [];
+  const clinicIds = Array.isArray(filters.clinicIds) ? filters.clinicIds.filter(Boolean) : [];
+  if (user && !isAdminUser(user) && !clinicIds.length) {
+    return [];
+  }
+  if (clinicIds.length) {
+    where.push('a.clinic_id IN (?)');
+    params.push(clinicIds);
+  }
+
+  const appointmentDate = normalizeEcuroAutomationDate(filters.appointmentDate);
+  const dateFrom = normalizeEcuroAutomationDate(filters.dateFrom);
+  const dateTo = normalizeEcuroAutomationDate(filters.dateTo);
+  if (appointmentDate) {
+    where.push('DATE(a.patient_scheduled_at) = ?');
+    params.push(appointmentDate);
+  } else if (dateFrom && dateTo) {
+    where.push('DATE(a.patient_scheduled_at) BETWEEN ? AND ?');
+    params.push(dateFrom, dateTo);
+  } else if (dateFrom) {
+    where.push('DATE(a.patient_scheduled_at) >= ?');
+    params.push(dateFrom);
+  } else if (dateTo) {
+    where.push('DATE(a.patient_scheduled_at) <= ?');
+    params.push(dateTo);
+  } else {
+    where.push('DATE(a.patient_scheduled_at) = ?');
+    params.push(getSaoPauloParts().dateKey);
+  }
+
+  const limit = normalizeEcuroAutomationLimit(filters.limit, 80, 300);
+  const [rows] = await pool.query(
+    `SELECT
+       a.id AS agenda_item_id,
+       a.clinic_id,
+       a.clinic_name,
+       a.patient_name,
+       a.patient_phone,
+       a.source_external_id,
+       a.patient_scheduled_at,
+       a.owner_user_id,
+       a.assigned_user_id
+     FROM agenda_items a
+     WHERE ${where.join(' AND ')}
+     ORDER BY a.clinic_id ASC, a.patient_scheduled_at ASC, a.id ASC
+     LIMIT ?`,
+    [...params, limit]
+  );
+
+  return rows.map((row) => ({
+    agenda_item_id: Number(row.agenda_item_id || 0) || null,
+    clinic_id: Number(row.clinic_id || 0) || null,
+    clinic_name: row.clinic_name || null,
+    patient_name: row.patient_name || null,
+    patient_phone: row.patient_phone || null,
+    external_patient_id: row.source_external_id || null,
+    appointment_date: formatAgendaAppointmentDateOnly(row.patient_scheduled_at) || null,
+    appointment_time: formatAgendaAppointmentTimeOnly(row.patient_scheduled_at) || null,
+    appointment_label: formatAgendaAppointmentLabel(row.patient_scheduled_at) || null,
+    owner_user_id: row.owner_user_id || null,
+    assigned_user_id: row.assigned_user_id || null
+  }));
+}
+
+function groupEcuroNpsCandidates(rows = []) {
+  const groups = new Map();
+  rows.forEach((row) => {
+    const clinicId = Number(row.clinic_id || 0) || 0;
+    const appointmentDate = normalizeEcuroAutomationDate(row.appointment_date, '');
+    if (!clinicId || !appointmentDate) return;
+    const key = `${clinicId}:${appointmentDate}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        clinicId,
+        clinicName: row.clinic_name || null,
+        appointmentDate,
+        patients: []
+      });
+    }
+    groups.get(key).patients.push({
+      agendaItemId: row.agenda_item_id || null,
+      patientName: row.patient_name || '',
+      patientPhone: row.patient_phone || '',
+      clinicName: row.clinic_name || '',
+      appointmentDate,
+      appointmentTime: row.appointment_time || '',
+      externalPatientId: row.external_patient_id || '',
+      rawAgendaRow: row
+    });
+  });
+  return Array.from(groups.values());
+}
+
+async function insertEcuroRobotJobAudit({
+  jobType = 'check_completed',
+  clinicId = null,
+  clinicName = null,
+  appointmentDate = null,
+  status = 'pending',
+  createdBy = null
+} = {}) {
+  const [result] = await pool.query(
+    `INSERT INTO ecuro_robot_jobs
+     (job_type, clinic_id, clinic_name, appointment_date, status, created_by)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      jobType,
+      clinicId || null,
+      clinicName || null,
+      appointmentDate || null,
+      status || 'pending',
+      createdBy || null
+    ]
+  );
+  return Number(result.insertId || 0) || null;
+}
+
+async function updateEcuroRobotJobAudit(jobId, payload = {}) {
+  if (!jobId) return;
+  await pool.query(
+    `UPDATE ecuro_robot_jobs
+        SET status = ?,
+            total_checked = ?,
+            total_completed = ?,
+            total_failed = ?,
+            error_message = ?,
+            artifacts_json = ?,
+            started_at = ?,
+            finished_at = ?,
+            updated_at = NOW()
+      WHERE id = ?`,
+    [
+      payload.status || 'pending',
+      Number(payload.totalChecked || 0),
+      Number(payload.totalCompleted || 0),
+      Number(payload.totalFailed || 0),
+      payload.errorMessage || null,
+      payload.artifactsJson || null,
+      payload.startedAt || null,
+      payload.finishedAt || null,
+      jobId
+    ]
+  );
+}
+
+async function insertEcuroCompletionStatusRow(jobId, row = {}) {
+  const [result] = await pool.query(
+    `INSERT INTO ecuro_patient_completion_status
+     (job_id, clinic_id, clinic_name, patient_name, patient_phone, appointment_date, appointment_time,
+      external_patient_id, external_status, completion_status, matched_by, confidence_score, agenda_item_id,
+      raw_payload_json, checked_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+    [
+      jobId,
+      row.clinic_id || null,
+      row.clinic_name || null,
+      row.patient_name || null,
+      row.patient_phone || null,
+      normalizeEcuroAutomationDate(row.appointment_date, null),
+      row.appointment_time || null,
+      row.external_patient_id || null,
+      row.external_status || null,
+      row.completion_status || 'not_found',
+      row.matched_by || null,
+      row.confidence_score === null || typeof row.confidence_score === 'undefined' ? null : Number(row.confidence_score),
+      row.agenda_item_id || null,
+      row.raw_payload_json || null
+    ]
+  );
+  return Number(result.insertId || 0) || null;
+}
+
+async function loadExistingEcuroNpsDuplicate({ completionId = null, appointmentId = null, patientPhone = '', duplicateBlockHours = 24 } = {}) {
+  const normalizedPhone = normalizePhone(patientPhone || '');
+  const [rows] = await pool.query(
+    `SELECT id, status, sent_at, responded_at, patient_phone
+       FROM nps_invites
+      WHERE (
+        (? IS NOT NULL AND ecuro_completion_id = ?)
+        OR (? IS NOT NULL AND appointment_id = ? AND status IN ('pending', 'queued', 'sent', 'responded'))
+        OR (? <> '' AND patient_phone = ? AND status IN ('pending', 'queued', 'sent', 'responded') AND created_at >= DATE_SUB(NOW(), INTERVAL ? HOUR))
+      )
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    [
+      completionId || null,
+      completionId || null,
+      appointmentId || null,
+      appointmentId || null,
+      normalizedPhone.valid ? normalizedPhone.normalized : '',
+      normalizedPhone.valid ? normalizedPhone.normalized : '',
+      Math.max(1, Number(duplicateBlockHours || 24))
+    ]
+  );
+  return rows[0] || null;
+}
+
+async function insertNpsInviteAuditRow(payload = {}) {
+  const [result] = await pool.query(
+    `INSERT INTO nps_invites
+     (token, clinic_id, clinic_name, patient_name, patient_phone, appointment_id, ecuro_completion_id, source, session_id, status,
+      public_url, idempotency_key, error_message, attempts, last_attempt_at, next_attempt_at, created_by)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      payload.token,
+      payload.clinic_id || null,
+      payload.clinic_name || null,
+      payload.patient_name || null,
+      payload.patient_phone || null,
+      payload.appointment_id || null,
+      payload.ecuro_completion_id || null,
+      payload.source || 'ecuro_robot',
+      payload.session_id || WHATSAPP_NPS_INSTANCE_NAME,
+      payload.status || 'pending',
+      payload.public_url || null,
+      payload.idempotency_key,
+      payload.error_message || null,
+      Number(payload.attempts || 0),
+      payload.last_attempt_at || null,
+      payload.next_attempt_at || null,
+      payload.created_by || null
+    ]
+  );
+  return Number(result.insertId || 0) || null;
+}
+
+async function updateNpsInviteAuditRow(inviteId, payload = {}) {
+  if (!inviteId) return;
+  await pool.query(
+    `UPDATE nps_invites
+        SET status = COALESCE(?, status),
+            public_url = COALESCE(?, public_url),
+            idempotency_key = COALESCE(?, idempotency_key),
+            provider_message_id = COALESCE(?, provider_message_id),
+            error_message = ?,
+            attempts = COALESCE(?, attempts),
+            last_attempt_at = ?,
+            next_attempt_at = ?,
+            sent_at = ?,
+            responded_at = COALESCE(?, responded_at),
+            updated_at = NOW()
+      WHERE id = ?`,
+    [
+      payload.status || null,
+      payload.public_url || null,
+      payload.idempotency_key || null,
+      payload.provider_message_id || null,
+      payload.error_message === undefined ? null : payload.error_message,
+      payload.attempts === undefined ? null : Number(payload.attempts || 0),
+      payload.last_attempt_at || null,
+      payload.next_attempt_at || null,
+      payload.sent_at || null,
+      payload.responded_at || null,
+      inviteId
+    ]
+  );
+}
+
+async function insertWhatsAppServiceHistoryRow({
+  sessionId,
+  patientPhone,
+  messageText,
+  providerMessageId = null,
+  responsePayload = null,
+  createdBy = 'Automação NPS Ecuro'
+} = {}) {
+  try {
+    await pool.query(
+      `INSERT INTO whatsapp_service_message_history
+       (session_id, patient_phone, message_text, status, provider_message_id, response_payload, created_by, sent_at)
+       VALUES (?, ?, ?, 'enviado', ?, ?, ?, NOW())`,
+      [
+        sessionId,
+        patientPhone,
+        messageText,
+        providerMessageId || null,
+        responsePayload ? JSON.stringify(responsePayload) : null,
+        createdBy
+      ]
+    );
+  } catch (error) {
+    console.warn('Não foi possível registrar histórico do whatsapp-service para a automação NPS:', error.message);
+  }
+}
+
+async function createNpsInviteFromEcuroCompletion(completionRow = {}, options = {}) {
+  const npsConfig = getNpsAutomationConfig();
+  const resolvedPhone = normalizePhone(completionRow.patient_phone || '');
+  if (completionRow.completion_status !== 'completed' || !resolvedPhone.valid) {
+    return { created: false, reason: resolvedPhone.valid ? 'not_completed' : 'missing_phone' };
+  }
+
+  const duplicate = await loadExistingEcuroNpsDuplicate({
+    completionId: completionRow.id || null,
+    appointmentId: completionRow.agenda_item_id || null,
+    patientPhone: resolvedPhone.normalized,
+    duplicateBlockHours: npsConfig.duplicateBlockHours
+  });
+  if (duplicate) {
+    return { created: false, reason: 'duplicate', duplicate };
+  }
+
+  const token = buildNpsInviteToken(`${completionRow.id || 'completion'}-${resolvedPhone.normalized}`);
+  const temporaryIdempotencyKey = `nps-pending-${token}`;
+  const inviteId = await insertNpsInviteAuditRow({
+    token,
+    clinic_id: completionRow.clinic_id || null,
+    clinic_name: completionRow.clinic_name || null,
+    patient_name: completionRow.patient_name || null,
+    patient_phone: resolvedPhone.normalized,
+    appointment_id: completionRow.agenda_item_id || null,
+    ecuro_completion_id: completionRow.id || null,
+    source: 'ecuro_robot',
+    session_id: npsConfig.sessionId,
+    status: 'pending',
+    public_url: null,
+    idempotency_key: temporaryIdempotencyKey,
+    created_by: options.createdBy || 'Automação NPS Ecuro'
+  });
+  const idempotencyKey = buildNpsInviteIdempotencyKey({
+    inviteId,
+    phone: resolvedPhone.normalized
+  });
+  const publicUrl = buildNpsInvitePublicUrl({
+    clinicId: completionRow.clinic_id || '',
+    patientName: completionRow.patient_name || '',
+    patientPhone: resolvedPhone.normalized,
+    inviteId,
+    token,
+    source: 'ecuro_robot'
+  });
+  await updateNpsInviteAuditRow(inviteId, {
+    public_url: publicUrl,
+    idempotency_key: idempotencyKey
+  });
+  return {
+    created: true,
+    inviteId,
+    publicUrl,
+    token,
+    idempotencyKey
+  };
+}
+
+async function loadNpsInviteRowById(inviteId) {
+  const [rows] = await pool.query('SELECT * FROM nps_invites WHERE id = ? LIMIT 1', [inviteId]);
+  return rows[0] || null;
+}
+
+async function dispatchSingleEcuroNpsInvite(inviteRow, options = {}) {
+  const npsConfig = getNpsAutomationConfig();
+  const normalizedPhone = normalizePhone(inviteRow.patient_phone || '');
+  if (!normalizedPhone.valid) {
+    await updateNpsInviteAuditRow(inviteRow.id, {
+      status: 'failed',
+      error_message: 'Telefone inválido para envio NPS.',
+      attempts: Number(inviteRow.attempts || 0) + 1,
+      last_attempt_at: toMysqlDateTime(new Date()),
+      next_attempt_at: null
+    });
+    return { inviteId: inviteRow.id, sent: false, status: 'failed', reason: 'invalid_phone' };
+  }
+
+  const sameDayResponse = await pool.query(
+    `SELECT id
+       FROM nps_responses
+      WHERE patient_phone = ?
+        AND DATE(created_at) = CURDATE()
+      ORDER BY id DESC
+      LIMIT 1`,
+    [normalizedPhone.normalized]
+  );
+  if (Array.isArray(sameDayResponse?.[0]) && sameDayResponse[0].length) {
+    await updateNpsInviteAuditRow(inviteRow.id, {
+      status: 'expired',
+      error_message: 'Paciente já possui resposta NPS registrada hoje.',
+      attempts: Number(inviteRow.attempts || 0),
+      last_attempt_at: toMysqlDateTime(new Date()),
+      next_attempt_at: null
+    });
+    return { inviteId: inviteRow.id, sent: false, status: 'expired', reason: 'already_responded_today' };
+  }
+
+  const existingDuplicate = await loadExistingEcuroNpsDuplicate({
+    completionId: null,
+    appointmentId: null,
+    patientPhone: normalizedPhone.normalized,
+    duplicateBlockHours: npsConfig.duplicateBlockHours
+  });
+  if (existingDuplicate && Number(existingDuplicate.id) !== Number(inviteRow.id) && ['sent', 'responded'].includes(String(existingDuplicate.status || '').toLowerCase())) {
+    await updateNpsInviteAuditRow(inviteRow.id, {
+      status: 'expired',
+      error_message: 'Bloqueado por duplicidade de envio NPS na janela configurada.',
+      attempts: Number(inviteRow.attempts || 0),
+      last_attempt_at: toMysqlDateTime(new Date()),
+      next_attempt_at: null
+    });
+    return { inviteId: inviteRow.id, sent: false, status: 'expired', reason: 'duplicate_window' };
+  }
+
+  const link = inviteRow.public_url || buildNpsInvitePublicUrl({
+    clinicId: inviteRow.clinic_id || '',
+    patientName: inviteRow.patient_name || '',
+    patientPhone: normalizedPhone.normalized,
+    inviteId: inviteRow.id,
+    token: inviteRow.token,
+    source: inviteRow.source || 'ecuro_robot'
+  });
+  const clinicName = inviteRow.clinic_name || 'sua unidade';
+  const messageText = buildNpsInviteMessage({
+    patientName: inviteRow.patient_name || 'paciente',
+    clinicName,
+    link
+  });
+  const now = new Date();
+
+  if (npsConfig.dryRun || options.dryRun) {
+    return {
+      inviteId: inviteRow.id,
+      sent: false,
+      status: 'pending',
+      reason: 'dry_run',
+      preview: {
+        number: normalizedPhone.normalized,
+        sessionId: inviteRow.session_id || npsConfig.sessionId,
+        messageText,
+        link
+      }
+    };
+  }
+
+  await updateNpsInviteAuditRow(inviteRow.id, {
+    status: 'queued',
+    public_url: link,
+    attempts: Number(inviteRow.attempts || 0) + 1,
+    last_attempt_at: toMysqlDateTime(now),
+    next_attempt_at: null
+  });
+
+  try {
+    const providerResult = await sendNpsInviteViaWhatsApp({
+      sessionId: inviteRow.session_id || npsConfig.sessionId,
+      number: normalizedPhone.normalized,
+      message: messageText,
+      idempotencyKey: inviteRow.idempotency_key
+    });
+    await updateNpsInviteAuditRow(inviteRow.id, {
+      status: 'sent',
+      provider_message_id: providerResult.messageId || null,
+      error_message: null,
+      attempts: Number(inviteRow.attempts || 0) + 1,
+      last_attempt_at: toMysqlDateTime(now),
+      next_attempt_at: null,
+      sent_at: toMysqlDateTime(now)
+    });
+    await insertWhatsAppServiceHistoryRow({
+      sessionId: inviteRow.session_id || npsConfig.sessionId,
+      patientPhone: normalizedPhone.normalized,
+      messageText,
+      providerMessageId: providerResult.messageId || null,
+      responsePayload: {
+        provider: 'whatsapp_service',
+        origin: 'nps',
+        type: 'nps_invite',
+        session_id: inviteRow.session_id || npsConfig.sessionId,
+        invite_id: inviteRow.id,
+        raw: providerResult.raw || providerResult
+      },
+      createdBy: options.createdBy || 'Automação NPS Ecuro'
+    });
+    return {
+      inviteId: inviteRow.id,
+      sent: true,
+      status: 'sent',
+      providerMessageId: providerResult.messageId || null
+    };
+  } catch (error) {
+    const retryState = computeRetryState({
+      attempts: Number(inviteRow.attempts || 0) + 1,
+      maxAttempts: Math.max(1, Number(process.env.ROBOT_MAX_ATTEMPTS || 3)),
+      delaySeconds: Math.max(15, Number(npsConfig.dispatchIntervalSeconds || 45)),
+      now
+    });
+    await updateNpsInviteAuditRow(inviteRow.id, {
+      status: retryState.status === 'failed' ? 'failed' : 'pending',
+      error_message: sanitizeRobotError(error),
+      attempts: retryState.attempts,
+      last_attempt_at: toMysqlDateTime(now),
+      next_attempt_at: retryState.nextAttemptAt ? toMysqlDateTime(retryState.nextAttemptAt) : null
+    });
+    return {
+      inviteId: inviteRow.id,
+      sent: false,
+      status: retryState.status === 'failed' ? 'failed' : 'pending',
+      reason: 'provider_error',
+      error: sanitizeRobotError(error)
+    };
+  }
+}
+
+async function processPendingEcuroNpsInvites(options = {}) {
+  if (ecuroNpsInviteDispatchRunning) {
+    return { skipped: true, reason: 'already_running' };
+  }
+
+  const npsConfig = getNpsAutomationConfig();
+  if (!npsConfig.dispatchEnabled && !options.force) {
+    return { skipped: true, reason: 'dispatch_disabled' };
+  }
+
+  if (!isWithinDispatchWindow(new Date(), npsConfig) && !options.ignoreWindow) {
+    return { skipped: true, reason: 'outside_dispatch_window' };
+  }
+
+  if (!isWhatsAppServiceProviderConfigured() && !options.force) {
+    return { skipped: true, reason: 'whatsapp_service_not_configured' };
+  }
+
+  ecuroNpsInviteDispatchRunning = true;
+  try {
+    let sessionStatusPayload = null;
+    let sessionStatus = 'desconectado';
+    if (isWhatsAppServiceProviderConfigured()) {
+      sessionStatusPayload = await whatsappVpsService.getSessionStatus(npsConfig.sessionId).catch(() => null);
+      sessionStatus = mapWhatsAppServiceStatus(sessionStatusPayload, 'desconectado');
+    }
+    if (!isWhatsAppConnectedStatus(sessionStatus) && !options.force) {
+      return {
+        skipped: true,
+        reason: 'session_not_connected',
+        sessionId: npsConfig.sessionId,
+        sessionStatus,
+        sessionStatusPayload
+      };
+    }
+
+    const [dailyRows] = await pool.query(
+      `SELECT COUNT(*) AS total
+         FROM nps_invites
+        WHERE session_id = ?
+          AND status = 'sent'
+          AND DATE(sent_at) = CURDATE()`,
+      [npsConfig.sessionId]
+    );
+    if (Number(dailyRows[0]?.total || 0) >= Number(npsConfig.maxDailyPerSession || 300) && !options.force) {
+      return { skipped: true, reason: 'daily_limit_reached', sessionId: npsConfig.sessionId };
+    }
+
+    const statuses = options.includeFailed ? ['pending', 'failed'] : ['pending'];
+    const [rows] = await pool.query(
+      `SELECT *
+         FROM nps_invites
+        WHERE session_id = ?
+          AND status IN (?)
+          AND (next_attempt_at IS NULL OR next_attempt_at <= NOW())
+        ORDER BY created_at ASC, id ASC
+        LIMIT ?`,
+      [
+        npsConfig.sessionId,
+        statuses,
+        normalizeEcuroAutomationLimit(options.limit, 1, 25)
+      ]
+    );
+
+    const results = [];
+    for (const row of rows) {
+      // eslint-disable-next-line no-await-in-loop
+      results.push(await dispatchSingleEcuroNpsInvite(row, {
+        dryRun: options.dryRun,
+        createdBy: options.createdBy || 'Automação NPS Ecuro'
+      }));
+      if (!options.processAll) break;
+    }
+
+    return {
+      skipped: false,
+      sessionId: npsConfig.sessionId,
+      sessionStatus,
+      processed: results.length,
+      sent: results.filter((item) => item.sent).length,
+      failed: results.filter((item) => item.status === 'failed').length,
+      pending: results.filter((item) => item.status === 'pending').length,
+      dryRun: Boolean(options.dryRun || npsConfig.dryRun),
+      results
+    };
+  } finally {
+    ecuroNpsInviteDispatchRunning = false;
+  }
+}
+
+async function loadEcuroRobotHealthSnapshot() {
+  const clientConfig = getEcuroRobotClientConfig();
+  const robotConfigStatus = getEcuroRobotConfigStatus();
+  const snapshot = {
+    ...robotConfigStatus,
+    serviceUrl: clientConfig.baseUrl,
+    serviceApiKeyConfigured: Boolean(clientConfig.apiKey),
+    serviceReachable: false,
+    serviceStatus: 'offline',
+    health: null
+  };
+
+  if (!clientConfig.apiKey) {
+    snapshot.serviceStatus = 'api_key_missing';
+    return snapshot;
+  }
+
+  try {
+    const client = createEcuroRobotApiClient();
+    const response = await client.get('/health');
+    snapshot.serviceReachable = true;
+    snapshot.serviceStatus = 'online';
+    snapshot.health = response.data || null;
+  } catch (error) {
+    snapshot.serviceStatus = 'unreachable';
+    snapshot.error = sanitizeRobotError(error);
+  }
+
+  return snapshot;
+}
+
+async function runEcuroNpsAutomation(options = {}) {
+  const actor = options.user || null;
+  const actorName = options.createdBy || getActorName(actor) || 'Automação NPS Ecuro';
+  const clinicIds = Array.isArray(options.clinicIds) ? options.clinicIds.filter(Boolean) : [];
+  const candidates = await loadEcuroNpsAutomationCandidates({
+    clinicIds,
+    appointmentDate: options.appointmentDate,
+    dateFrom: options.dateFrom,
+    dateTo: options.dateTo,
+    limit: options.limit
+  }, actor);
+  const grouped = groupEcuroNpsCandidates(candidates);
+
+  const summary = {
+    candidateCount: candidates.length,
+    groups: grouped.length,
+    jobs: [],
+    completionRowsInserted: 0,
+    completed: 0,
+    notCompleted: 0,
+    notFound: 0,
+    ambiguous: 0,
+    errors: 0,
+    inviteCreated: 0,
+    duplicates: 0,
+    missingPhone: 0,
+    wouldSend: 0
+  };
+
+  for (const group of grouped) {
+    const jobId = await insertEcuroRobotJobAudit({
+      jobType: 'check_completed',
+      clinicId: group.clinicId,
+      clinicName: group.clinicName,
+      appointmentDate: group.appointmentDate,
+      status: 'running',
+      createdBy: actorName
+    });
+    const startedAt = new Date();
+    let robotResult = null;
+    try {
+      // eslint-disable-next-line no-await-in-loop
+      robotResult = await callEcuroRobotCheckCompleted({
+        clinicId: group.clinicId,
+        clinicName: group.clinicName,
+        appointmentDate: group.appointmentDate,
+        patients: group.patients
+      });
+      const job = robotResult?.job || robotResult;
+      const jobResults = Array.isArray(job?.results) ? job.results : [];
+      const totalChecked = Number(job?.totalChecked || job?.total_checked || jobResults.length || 0);
+      const totalCompleted = Number(job?.totalCompleted || job?.total_completed || 0);
+      const totalFailed = Number(job?.totalFailed || job?.total_failed || 0);
+      await updateEcuroRobotJobAudit(jobId, {
+        status: job?.status || 'completed',
+        totalChecked,
+        totalCompleted,
+        totalFailed,
+        errorMessage: job?.errorMessage || job?.error_message || null,
+        artifactsJson: JSON.stringify(job?.artifacts || []),
+        startedAt: toMysqlDateTime(startedAt),
+        finishedAt: toMysqlDateTime(new Date())
+      });
+
+      for (const result of jobResults) {
+        const completionStatus = interpretEcuroCompletionStatus(result.completionStatus || result.completion_status || result.externalStatus || result.external_status);
+        const agendaItemId = result.agendaItemId || result.agenda_item_id || result.rawAgendaRow?.agenda_item_id || null;
+        const insertedId = await insertEcuroCompletionStatusRow(jobId, {
+          clinic_id: group.clinicId,
+          clinic_name: group.clinicName,
+          patient_name: result.patientName || result.patient_name || null,
+          patient_phone: result.patientPhone || result.patient_phone || null,
+          appointment_date: result.appointmentDate || result.appointment_date || group.appointmentDate,
+          appointment_time: result.appointmentTime || result.appointment_time || null,
+          external_patient_id: result.externalPatientId || result.external_patient_id || null,
+          external_status: result.externalStatus || result.external_status || null,
+          completion_status: completionStatus,
+          matched_by: result.matchedBy || result.matched_by || null,
+          confidence_score: result.confidenceScore === undefined ? null : Number(result.confidenceScore || 0),
+          agenda_item_id: agendaItemId,
+          raw_payload_json: result.rawPayloadJson || result.raw_payload_json || JSON.stringify(result)
+        });
+        summary.completionRowsInserted += 1;
+        if (completionStatus === 'completed') summary.completed += 1;
+        else if (completionStatus === 'not_completed') summary.notCompleted += 1;
+        else if (completionStatus === 'not_found') summary.notFound += 1;
+        else if (completionStatus === 'ambiguous') summary.ambiguous += 1;
+        else summary.errors += 1;
+
+        if (completionStatus !== 'completed') {
+          continue;
+        }
+
+        const inviteCreation = await createNpsInviteFromEcuroCompletion({
+          id: insertedId,
+          clinic_id: group.clinicId,
+          clinic_name: group.clinicName,
+          patient_name: result.patientName || result.patient_name || null,
+          patient_phone: result.patientPhone || result.patient_phone || null,
+          agenda_item_id: agendaItemId,
+          completion_status: completionStatus
+        }, {
+          createdBy: actorName
+        });
+
+        if (inviteCreation.created) {
+          summary.inviteCreated += 1;
+          if (getNpsAutomationConfig().dryRun || options.dryRun) {
+            summary.wouldSend += 1;
+          }
+        } else if (inviteCreation.reason === 'duplicate') {
+          summary.duplicates += 1;
+        } else if (inviteCreation.reason === 'missing_phone') {
+          summary.missingPhone += 1;
+        }
+      }
+    } catch (error) {
+      await updateEcuroRobotJobAudit(jobId, {
+        status: 'failed',
+        totalChecked: 0,
+        totalCompleted: 0,
+        totalFailed: group.patients.length,
+        errorMessage: sanitizeRobotError(error),
+        artifactsJson: null,
+        startedAt: toMysqlDateTime(startedAt),
+        finishedAt: toMysqlDateTime(new Date())
+      });
+      summary.errors += group.patients.length;
+    }
+
+    summary.jobs.push({
+      id: jobId,
+      clinic_id: group.clinicId,
+      clinic_name: group.clinicName,
+      appointment_date: group.appointmentDate,
+      patient_count: group.patients.length,
+      status: robotResult?.job?.status || robotResult?.status || 'failed'
+    });
+  }
+
+  const dispatchResult = await processPendingEcuroNpsInvites({
+    dryRun: options.dryRun,
+    createdBy: actorName,
+    processAll: false,
+    limit: 1
+  });
+
+  return {
+    ...summary,
+    dispatch: dispatchResult
+  };
+}
+
+async function loadEcuroNpsAutomationOverview(filters = {}, user = null) {
+  const clinicIds = await ensureEcuroNpsClinicScope(user, filters.clinicId || null);
+  if (user && !isAdminUser(user) && !clinicIds.length) {
+    const robotSnapshot = await loadEcuroRobotHealthSnapshot();
+    const npsConfig = getNpsAutomationConfig();
+    return {
+      robot: {
+        ...robotSnapshot,
+        cron: npsConfig.cron,
+        dryRun: npsConfig.dryRun,
+        dispatchEnabled: npsConfig.dispatchEnabled,
+        dispatchWindowStart: npsConfig.dispatchWindowStart,
+        dispatchWindowEnd: npsConfig.dispatchWindowEnd,
+        sessionId: npsConfig.sessionId,
+        sessionStatus: 'desconectado',
+        sessionConnected: false,
+        sessionStatusPayload: null
+      },
+      summary: {
+        jobsTotal: 0,
+        jobsRunning: 0,
+        jobsFailed: 0,
+        lastExecutionAt: null,
+        totalChecked: 0,
+        totalCompleted: 0,
+        totalNotCompleted: 0,
+        totalNotFound: 0,
+        totalAmbiguous: 0,
+        totalError: 0,
+        patientsWithoutPhone: 0,
+        pendingInvites: 0,
+        queuedInvites: 0,
+        sentInvites: 0,
+        respondedInvites: 0,
+        failedInvites: 0,
+        expiredInvites: 0,
+        lastSentAt: null
+      },
+      recentJobs: []
+    };
+  }
+  const clinicFilterSql = clinicIds.length ? 'AND clinic_id IN (?)' : '';
+  const clinicFilterParams = clinicIds.length ? [clinicIds] : [];
+  const robotSnapshot = await loadEcuroRobotHealthSnapshot();
+  const npsConfig = getNpsAutomationConfig();
+  let sessionStatusPayload = null;
+  let sessionStatus = 'desconectado';
+  if (isWhatsAppServiceProviderConfigured()) {
+    sessionStatusPayload = await whatsappVpsService.getSessionStatus(npsConfig.sessionId).catch(() => null);
+    sessionStatus = mapWhatsAppServiceStatus(sessionStatusPayload, 'desconectado');
+  }
+
+  const [jobSummaryRows] = await pool.query(
+    `SELECT
+       COUNT(*) AS total_jobs,
+       SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running_jobs,
+       SUM(CASE WHEN status IN ('failed', 'partial', 'manual_action_required') THEN 1 ELSE 0 END) AS failed_jobs,
+       MAX(finished_at) AS last_finished_at
+     FROM ecuro_robot_jobs
+     WHERE 1 = 1 ${clinicFilterSql}`,
+    clinicFilterParams
+  );
+  const [completionSummaryRows] = await pool.query(
+    `SELECT
+       COUNT(*) AS total_checked,
+       SUM(CASE WHEN completion_status = 'completed' THEN 1 ELSE 0 END) AS total_completed,
+       SUM(CASE WHEN completion_status = 'not_completed' THEN 1 ELSE 0 END) AS total_not_completed,
+       SUM(CASE WHEN completion_status = 'not_found' THEN 1 ELSE 0 END) AS total_not_found,
+       SUM(CASE WHEN completion_status = 'ambiguous' THEN 1 ELSE 0 END) AS total_ambiguous,
+       SUM(CASE WHEN completion_status = 'error' THEN 1 ELSE 0 END) AS total_error,
+       SUM(CASE WHEN patient_phone IS NULL OR TRIM(patient_phone) = '' THEN 1 ELSE 0 END) AS patients_without_phone
+     FROM ecuro_patient_completion_status
+     WHERE checked_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+       ${clinicFilterSql}`,
+    clinicFilterParams
+  );
+  const [inviteSummaryRows] = await pool.query(
+    `SELECT
+       SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_invites,
+       SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END) AS queued_invites,
+       SUM(CASE WHEN status = 'sent' THEN 1 ELSE 0 END) AS sent_invites,
+       SUM(CASE WHEN status = 'responded' THEN 1 ELSE 0 END) AS responded_invites,
+       SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_invites,
+       SUM(CASE WHEN status = 'expired' THEN 1 ELSE 0 END) AS expired_invites,
+       MAX(sent_at) AS last_sent_at
+     FROM nps_invites
+     WHERE 1 = 1 ${clinicFilterSql}`,
+    clinicFilterParams
+  );
+  const [recentJobs] = await pool.query(
+    `SELECT *
+       FROM ecuro_robot_jobs
+      WHERE 1 = 1 ${clinicFilterSql}
+      ORDER BY created_at DESC, id DESC
+      LIMIT 12`,
+    clinicFilterParams
+  );
+
+  return {
+    robot: {
+      ...robotSnapshot,
+      cron: npsConfig.cron,
+      dryRun: npsConfig.dryRun,
+      dispatchEnabled: npsConfig.dispatchEnabled,
+      dispatchWindowStart: npsConfig.dispatchWindowStart,
+      dispatchWindowEnd: npsConfig.dispatchWindowEnd,
+      sessionId: npsConfig.sessionId,
+      sessionStatus,
+      sessionConnected: isWhatsAppConnectedStatus(sessionStatus),
+      sessionStatusPayload
+    },
+    summary: {
+      jobsTotal: Number(jobSummaryRows[0]?.total_jobs || 0),
+      jobsRunning: Number(jobSummaryRows[0]?.running_jobs || 0),
+      jobsFailed: Number(jobSummaryRows[0]?.failed_jobs || 0),
+      lastExecutionAt: jobSummaryRows[0]?.last_finished_at || null,
+      totalChecked: Number(completionSummaryRows[0]?.total_checked || 0),
+      totalCompleted: Number(completionSummaryRows[0]?.total_completed || 0),
+      totalNotCompleted: Number(completionSummaryRows[0]?.total_not_completed || 0),
+      totalNotFound: Number(completionSummaryRows[0]?.total_not_found || 0),
+      totalAmbiguous: Number(completionSummaryRows[0]?.total_ambiguous || 0),
+      totalError: Number(completionSummaryRows[0]?.total_error || 0),
+      patientsWithoutPhone: Number(completionSummaryRows[0]?.patients_without_phone || 0),
+      pendingInvites: Number(inviteSummaryRows[0]?.pending_invites || 0),
+      queuedInvites: Number(inviteSummaryRows[0]?.queued_invites || 0),
+      sentInvites: Number(inviteSummaryRows[0]?.sent_invites || 0),
+      respondedInvites: Number(inviteSummaryRows[0]?.responded_invites || 0),
+      failedInvites: Number(inviteSummaryRows[0]?.failed_invites || 0),
+      expiredInvites: Number(inviteSummaryRows[0]?.expired_invites || 0),
+      lastSentAt: inviteSummaryRows[0]?.last_sent_at || null
+    },
+    recentJobs
+  };
+}
+
+async function reprocessFailedEcuroNpsInvites(options = {}) {
+  const npsConfig = getNpsAutomationConfig();
+  const clinicIds = Array.isArray(options.clinicIds) ? options.clinicIds.filter(Boolean) : [];
+  const where = ["status = 'failed'", 'session_id = ?'];
+  const params = [npsConfig.sessionId];
+  if (clinicIds.length) {
+    where.push('clinic_id IN (?)');
+    params.push(clinicIds);
+  }
+  const [result] = await pool.query(
+    `UPDATE nps_invites
+        SET status = 'pending',
+            error_message = NULL,
+            next_attempt_at = NOW(),
+            updated_at = NOW()
+      WHERE ${where.join(' AND ')}`,
+    params
+  );
+  const dispatch = await processPendingEcuroNpsInvites({
+    includeFailed: true,
+    createdBy: options.createdBy || 'Reprocessamento NPS Ecuro',
+    dryRun: options.dryRun,
+    processAll: false,
+    limit: 1
+  });
+  return {
+    updated: Number(result.affectedRows || 0),
+    dispatch
+  };
+}
+
 async function getNpsRows(query = {}, user = null) {
   const where = [];
   const params = [];
@@ -13750,7 +14875,7 @@ async function sendWhatsAppNpsInviteForConversation(conversation, actor = {}) {
     patient_name: conversation.patient_name || '',
     patient_phone: formatPhoneForNpsLink(patientPhone)
   });
-  const inviteLink = `${frontendUrl}/pesquisa-nps?${params.toString()}`;
+  const inviteLink = `${getNpsAutomationConfig().publicUrl}?${params.toString()}`;
   const messageText = [
     `Olá, ${conversation.patient_name || 'paciente'}!`,
     'Seu atendimento no Grupo Sorria foi finalizado.',
@@ -15850,6 +16975,18 @@ async function processWhatsAppDispatchQueue() {
 
         try {
           if (useServiceProvider) {
+            const isNpsMessage = String(item.message_type || '').toLowerCase().startsWith('nps');
+            const responsePayload = isNpsMessage
+              ? {
+                  provider: 'whatsapp_service',
+                  origin: 'nps',
+                  type: 'nps_invite',
+                  session_id: item.instance_name,
+                  message_type: item.message_type || null,
+                  queue_id: item.id || null,
+                  raw: providerResponse.raw || providerResponse
+                }
+              : (providerResponse.raw || providerResponse);
             await pool.query(
               `INSERT INTO whatsapp_service_message_history
                (session_id, patient_phone, message_text, status, provider_message_id, response_payload, created_by, sent_at)
@@ -15859,7 +16996,7 @@ async function processWhatsAppDispatchQueue() {
                 item.recipient_phone,
                 item.message_text,
                 providerMessageId,
-                JSON.stringify(providerResponse.raw || providerResponse),
+                JSON.stringify(responsePayload),
                 item.operator_name || 'Fila WhatsApp CRC'
               ]
             );
@@ -20577,7 +21714,7 @@ async function handleMassWhatsAppCampaignSend(req, res) {
           fallbackPhone: WHATSAPP_NOTIFICATION_SENDER_PHONE
         });
     const antiBan = getWhatsAppAntiBanConfig();
-    const publicNpsLink = `${frontendUrl}/pesquisa-nps`;
+    const publicNpsLink = getNpsAutomationConfig().publicUrl;
     const confirmationFlow = campaignType === 'confirmacao'
       ? await getWhatsAppChatbotFlowByTriggerType({ triggerType: 'confirmacao de consulta' })
       : null;
@@ -24819,6 +25956,27 @@ async function runScheduledPhoneEnrichmentSweep(now = new Date()) {
   return processPhoneEnrichmentQueue({ limit: 50 });
 }
 
+async function runScheduledEcuroNpsAutomationSweep(now = new Date()) {
+  const config = getNpsAutomationConfig();
+  const saoPaulo = getSaoPauloParts(now);
+  const slotKey = `${saoPaulo.dateKey}-${String(saoPaulo.hour).padStart(2, '0')}:${String(saoPaulo.minute).padStart(2, '0')}`;
+
+  if (!matchesEcuroCronInSaoPaulo(config.cron, now)) {
+    return { skipped: true, reason: 'outside_cron_window' };
+  }
+
+  if (ecuroNpsAutomationScheduleState.lastSlot === slotKey) {
+    return { skipped: true, reason: 'already_processed' };
+  }
+
+  ecuroNpsAutomationScheduleState.lastSlot = slotKey;
+  return runEcuroNpsAutomation({
+    createdBy: 'Sistema - Robô Ecuro',
+    appointmentDate: saoPaulo.dateKey,
+    dryRun: config.dryRun
+  });
+}
+
 function getAgendaOwnerId(user = {}) {
   return Number(user?.id || 0) || 0;
 }
@@ -28039,7 +29197,7 @@ app.post('/api/agenda/import', authenticate, upload.single('file'), async (req, 
         clinica: route.clinic_name || '',
         data_consulta: route.data_consulta || '',
         hora_consulta: route.hora_consulta || '',
-        link_nps: `${frontendUrl}/pesquisa-nps`
+        link_nps: getNpsAutomationConfig().publicUrl
       }).trim();
 
       const queued = await queueManagedWhatsAppMessage({
@@ -31335,7 +32493,9 @@ app.post('/nps/public', async (req, res) => {
       detractor_feedback,
       source,
       whatsapp_conversation_id,
-      whatsapp_nps_invite_id
+      whatsapp_nps_invite_id,
+      nps_invite_id,
+      token
     } = req.body;
     const numericScore = Number(score);
 
@@ -31351,6 +32511,8 @@ app.post('/nps/public', async (req, res) => {
     const normalizedReferralPhone = referral_phone ? normalizeBrazilPhone(referral_phone) : '';
     const whatsappConversationId = Number(whatsapp_conversation_id || req.body.conversation_id || 0) || null;
     const whatsappNpsInviteId = Number(whatsapp_nps_invite_id || req.body.invite_id || 0) || null;
+    const ecuroNpsInviteId = Number(nps_invite_id || req.body.invite_id || 0) || null;
+    const ecuroNpsInviteToken = String(token || req.body.invite_token || req.query?.token || '').trim() || null;
     const npsProfile = inferNpsProfile(numericScore);
     const requestIp = getRequestIp(req);
 
@@ -31441,7 +32603,11 @@ app.post('/nps/public', async (req, res) => {
         improvement_comment || null,
         normalizedReasons.length ? JSON.stringify(normalizedReasons) : null,
         detractor_feedback || null,
-        source === 'whatsapp_atendimento' ? 'whatsapp_atendimento' : 'link_publico',
+        source === 'whatsapp_atendimento'
+          ? 'whatsapp_atendimento'
+          : source === 'ecuro_robot'
+            ? 'ecuro_robot'
+            : 'link_publico',
         requestIp || null,
         whatsappConversationId,
         whatsappNpsInviteId
@@ -31498,6 +32664,22 @@ app.post('/nps/public', async (req, res) => {
                 nps_response_id = ?
           WHERE id = ?`,
         [npsInsert.insertId, whatsappNpsInviteId]
+      );
+    }
+    if (ecuroNpsInviteId || ecuroNpsInviteToken) {
+      await pool.query(
+        `UPDATE nps_invites
+            SET status = 'responded',
+                responded_at = NOW(),
+                updated_at = NOW()
+          WHERE (? IS NOT NULL AND id = ?)
+             OR (? IS NOT NULL AND token = ?)`,
+        [
+          ecuroNpsInviteId || null,
+          ecuroNpsInviteId || null,
+          ecuroNpsInviteToken || null,
+          ecuroNpsInviteToken || null
+        ]
       );
     }
     await insertNpsLog(npsInsert.insertId, 'created', `Pesquisa de satisfação registrada no protocolo ${protocol}.`, {
@@ -31669,7 +32851,7 @@ app.post('/nps/bulk-dispatch', authenticate, upload.single('file'), async (req, 
   }
 
   try {
-    const publicNpsLink = `${frontendUrl}/pesquisa-nps`;
+    const publicNpsLink = getNpsAutomationConfig().publicUrl;
     const npsInstance = await getNpsWhatsAppInstance(req.user);
     const npsSessionId = npsInstance?.instance_name || WHATSAPP_NPS_INSTANCE_NAME;
     const recipients = req.file?.path
@@ -31731,6 +32913,113 @@ app.post('/nps/bulk-dispatch', authenticate, upload.single('file'), async (req, 
     if (req.file?.path) {
       fs.unlink(req.file.path, () => {});
     }
+  }
+});
+
+app.get('/nps/automation/overview', authenticate, async (req, res) => {
+  try {
+    if (!canViewEcuroNpsAutomation(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não possui acesso ao painel do robô Ecuro / NPS automática.' });
+    }
+
+    const overview = await loadEcuroNpsAutomationOverview({
+      clinicId: req.query?.clinicId || req.query?.clinic_id || null
+    }, req.user);
+    return res.json(overview);
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao carregar o painel do robô Ecuro / NPS automática.'
+    });
+  }
+});
+
+app.post('/nps/automation/test-login', authenticate, async (req, res) => {
+  try {
+    if (!canExecuteEcuroNpsAutomation(req.user)) {
+      return res.status(403).json({ error: 'Apenas Supervisor do CRC, Administrador e Administrador Master podem testar o login do robô Ecuro.' });
+    }
+
+    const payload = await callEcuroRobotLoginTest({});
+    return res.json({
+      success: Boolean(payload?.success),
+      message: payload?.success
+        ? 'Login do robô Ecuro validado com sucesso.'
+        : (payload?.message || 'Não foi possível validar o login do robô Ecuro.'),
+      payload
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(502).json({
+      error: sanitizeRobotError(error) || 'Erro ao testar o login do robô Ecuro.'
+    });
+  }
+});
+
+app.post('/nps/automation/run', authenticate, async (req, res) => {
+  try {
+    if (!canExecuteEcuroNpsAutomation(req.user)) {
+      return res.status(403).json({ error: 'Apenas Supervisor do CRC, Administrador e Administrador Master podem executar o robô Ecuro / NPS automática.' });
+    }
+
+    const clinicIds = await ensureEcuroNpsClinicScope(req.user, req.body?.clinicId || req.body?.clinic_id || null);
+    if (!isAdminUser(req.user) && !clinicIds.length) {
+      return res.status(403).json({ error: 'Seu perfil não possui clínicas vinculadas para executar a automação NPS.' });
+    }
+    const payload = await runEcuroNpsAutomation({
+      user: req.user,
+      createdBy: getActorName(req.user),
+      clinicIds,
+      appointmentDate: req.body?.appointmentDate || req.body?.appointment_date || req.query?.appointmentDate || null,
+      dateFrom: req.body?.dateFrom || req.body?.date_from || null,
+      dateTo: req.body?.dateTo || req.body?.date_to || null,
+      limit: req.body?.limit || null,
+      dryRun: String(req.body?.dryRun || req.body?.dry_run || '').trim().toLowerCase() === 'true'
+        || getNpsAutomationConfig().dryRun
+    });
+    return res.json({
+      success: true,
+      message: payload.dispatch?.dryRun || getNpsAutomationConfig().dryRun
+        ? 'Robô Ecuro executado em modo dry-run. Nenhuma NPS foi enviada.'
+        : 'Robô Ecuro executado com sucesso.',
+      payload
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao executar o robô Ecuro / NPS automática.'
+    });
+  }
+});
+
+app.post('/nps/automation/reprocess-failures', authenticate, async (req, res) => {
+  try {
+    if (!canExecuteEcuroNpsAutomation(req.user)) {
+      return res.status(403).json({ error: 'Apenas Supervisor do CRC, Administrador e Administrador Master podem reprocessar falhas da automação NPS.' });
+    }
+
+    const clinicIds = await ensureEcuroNpsClinicScope(req.user, req.body?.clinicId || req.body?.clinic_id || null);
+    if (!isAdminUser(req.user) && !clinicIds.length) {
+      return res.status(403).json({ error: 'Seu perfil não possui clínicas vinculadas para reprocessar a automação NPS.' });
+    }
+    const payload = await reprocessFailedEcuroNpsInvites({
+      clinicIds,
+      createdBy: getActorName(req.user),
+      dryRun: String(req.body?.dryRun || req.body?.dry_run || '').trim().toLowerCase() === 'true'
+        || getNpsAutomationConfig().dryRun
+    });
+    return res.json({
+      success: true,
+      message: payload.updated
+        ? `${payload.updated} convite(s) NPS voltaram para a fila de processamento.`
+        : 'Nenhuma falha pendente foi encontrada para reprocessamento.',
+      payload
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao reprocessar falhas da automação NPS.'
+    });
   }
 });
 
@@ -36101,6 +37390,8 @@ async function startServer() {
       await runScheduledJob('startup_partner_video_reminders', 'a rotina inicial de vídeos dos parceiros', runScheduledPartnerVideoDailyReminders);
       await runScheduledJob('startup_whatsapp_dispatch_queue', 'a fila inicial de disparos WhatsApp', processWhatsAppDispatchQueue);
       await runScheduledJob('startup_phone_enrichment', 'a rotina inicial de enriquecimento de telefones', runScheduledPhoneEnrichmentSweep);
+      await runScheduledJob('startup_ecuro_nps_dispatch', 'a fila inicial da NPS automática', () => processPendingEcuroNpsInvites({ processAll: false, limit: 1 }));
+      await runScheduledJob('startup_ecuro_nps_robot', 'a rotina inicial do robô Ecuro para NPS automática', runScheduledEcuroNpsAutomationSweep);
     })();
   }, 10000);
 
@@ -36122,6 +37413,8 @@ async function startServer() {
   }, Math.max(5, Number(process.env.PARTNER_VIDEO_SWEEP_INTERVAL_MINUTES || 15)) * 60 * 1000);
   setManagedInterval('whatsapp_dispatch_queue', 'a fila de disparos WhatsApp', processWhatsAppDispatchQueue, Math.max(3000, Number(process.env.WHATSAPP_DISPATCH_INTERVAL_MS || 5000)));
   setManagedInterval('phone_enrichment', 'a rotina programada de enriquecimento de telefones', runScheduledPhoneEnrichmentSweep, 60 * 1000);
+  setManagedInterval('ecuro_nps_dispatch', 'a fila programada da NPS automática', () => processPendingEcuroNpsInvites({ processAll: false, limit: 1 }), Math.max(15000, Number(getNpsAutomationConfig().dispatchIntervalSeconds || 45) * 1000));
+  setManagedInterval('ecuro_nps_robot', 'a rotina programada do robô Ecuro para NPS automática', runScheduledEcuroNpsAutomationSweep, 60 * 1000);
 
 }
 

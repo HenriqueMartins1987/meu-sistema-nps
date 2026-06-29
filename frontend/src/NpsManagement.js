@@ -136,6 +136,7 @@ function NpsManagement() {
   const canViewDeleted = isMasterAdmin(currentUser);
   const canDeleteRecords = isMasterAdmin(currentUser) || currentUserRole === 'supervisor_crc';
   const canFinishNps = hasActionPermission(currentUser, 'nps_finish');
+  const canManageAutomation = ['admin', 'master_admin', 'supervisor_crc'].includes(currentUserRole) || isMasterAdmin(currentUser);
   const [rows, setRows] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [viewMode, setViewMode] = useState('active');
@@ -158,6 +159,11 @@ function NpsManagement() {
   const [bulkFile, setBulkFile] = useState(null);
   const [feedback, setFeedback] = useState('');
   const [bulkSending, setBulkSending] = useState(false);
+  const [automationOverview, setAutomationOverview] = useState(null);
+  const [automationLoading, setAutomationLoading] = useState(false);
+  const [automationRunning, setAutomationRunning] = useState(false);
+  const [automationTesting, setAutomationTesting] = useState(false);
+  const [automationReprocessing, setAutomationReprocessing] = useState(false);
   const autoOpenNpsRef = useRef(false);
 
   const loadRows = useCallback(async () => {
@@ -180,9 +186,23 @@ function NpsManagement() {
     }
   }, [canViewDeleted]);
 
+  const loadAutomationOverview = useCallback(async () => {
+    setAutomationLoading(true);
+
+    try {
+      const overviewRes = await api.get('/nps/automation/overview');
+      setAutomationOverview(overviewRes.data || null);
+    } catch (error) {
+      setAutomationOverview(null);
+    } finally {
+      setAutomationLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadRows();
-  }, [loadRows]);
+    loadAutomationOverview();
+  }, [loadAutomationOverview, loadRows]);
 
   useEffect(() => {
     autoOpenNpsRef.current = false;
@@ -352,6 +372,66 @@ function NpsManagement() {
       setBulkSending(false);
     }
   };
+
+  const handleRunAutomation = async () => {
+    setAutomationRunning(true);
+    setFeedback('');
+
+    try {
+      const response = await api.post('/nps/automation/run', {});
+      setFeedback(response.data?.message || 'Robô Ecuro executado com sucesso.');
+      await loadAutomationOverview();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível executar o robô Ecuro / NPS automática.');
+    } finally {
+      setAutomationRunning(false);
+    }
+  };
+
+  const handleTestAutomationLogin = async () => {
+    setAutomationTesting(true);
+    setFeedback('');
+
+    try {
+      const response = await api.post('/nps/automation/test-login', {});
+      setFeedback(response.data?.message || 'Login do robô Ecuro validado.');
+      await loadAutomationOverview();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível validar o login do robô Ecuro.');
+    } finally {
+      setAutomationTesting(false);
+    }
+  };
+
+  const handleReprocessAutomationFailures = async () => {
+    setAutomationReprocessing(true);
+    setFeedback('');
+
+    try {
+      const response = await api.post('/nps/automation/reprocess-failures', {});
+      setFeedback(response.data?.message || 'Falhas da automação NPS reprocessadas.');
+      await loadAutomationOverview();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível reprocessar as falhas da automação NPS.');
+    } finally {
+      setAutomationReprocessing(false);
+    }
+  };
+
+  const automationSummary = automationOverview?.summary || {};
+  const automationRobot = automationOverview?.robot || {};
+  const automationJobs = Array.isArray(automationOverview?.recentJobs) ? automationOverview.recentJobs : [];
+  const usesSharedSession = automationRobot.sessionId && automationRobot.sessionId !== 'nps';
+  const robotStatusLabel = automationRobot.serviceStatus === 'online'
+    ? 'Robô online'
+    : automationRobot.serviceStatus === 'unreachable'
+      ? 'Robô indisponível'
+      : automationRobot.serviceStatus === 'api_key_missing'
+        ? 'Chave do robô ausente'
+        : 'Robô aguardando configuração';
+  const sessionStatusLabel = automationRobot.sessionConnected
+    ? 'Sessão conectada'
+    : 'Sessão não conectada';
 
   const openTreatment = (item) => {
     setSelectedNps(item);
@@ -538,6 +618,132 @@ function NpsManagement() {
         </button>
       </section>
 
+      <section className="management-panel nps-automation-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Robô Ecuro / NPS automática</p>
+            <h2>Monitoramento do disparo automático da pesquisa NPS</h2>
+            <p className="base-subtitle">
+              Verificação de pacientes concluídos no Ecuro, fila profissional de convites e envio pela VPS com a sessão configurada.
+            </p>
+          </div>
+          <div className="heading-actions">
+            <button type="button" className="outline-action" onClick={loadAutomationOverview} disabled={automationLoading}>
+              {automationLoading ? 'Atualizando...' : 'Atualizar painel'}
+            </button>
+            <button type="button" className="outline-action" onClick={handleTestAutomationLogin} disabled={!canManageAutomation || automationTesting || automationRunning}>
+              {automationTesting ? 'Testando...' : 'Testar login Ecuro'}
+            </button>
+            <button type="button" className="outline-action" onClick={handleReprocessAutomationFailures} disabled={!canManageAutomation || automationReprocessing || automationRunning}>
+              {automationReprocessing ? 'Reprocessando...' : 'Reprocessar falhas'}
+            </button>
+            <button type="button" className="primary-action" onClick={handleRunAutomation} disabled={!canManageAutomation || automationRunning}>
+              {automationRunning ? 'Executando...' : 'Executar agora'}
+            </button>
+          </div>
+        </div>
+
+        <div className="nps-automation-hero">
+          <article className="nps-automation-status-card">
+            <span>Status do robô</span>
+            <strong>{robotStatusLabel}</strong>
+            <p>{automationRobot.browserMode ? 'Modo browser com Playwright' : 'Modo aguardando serviço externo'}</p>
+          </article>
+          <article className="nps-automation-status-card">
+            <span>Sessão usada</span>
+            <strong>{automationRobot.sessionId || 'nps'}</strong>
+            <p>{sessionStatusLabel}</p>
+          </article>
+          <article className="nps-automation-status-card">
+            <span>Última execução</span>
+            <strong>{automationSummary.lastExecutionAt ? formatDate(automationSummary.lastExecutionAt) : 'Sem execução'}</strong>
+            <p>Cron: {automationRobot.cron || 'não configurado'}</p>
+          </article>
+          <article className="nps-automation-status-card">
+            <span>Último envio</span>
+            <strong>{automationSummary.lastSentAt ? formatDate(automationSummary.lastSentAt) : 'Sem envio'}</strong>
+            <p>{automationRobot.dryRun ? 'Dry-run ativo' : 'Disparo habilitado'}</p>
+          </article>
+        </div>
+
+        {usesSharedSession && (
+          <div className="nps-automation-warning">
+            <strong>Atenção:</strong> a NPS está utilizando temporariamente a sessão <strong>{automationRobot.sessionId}</strong>. Recomenda-se voltar para a sessão dedicada <strong>nps</strong> após a homologação.
+          </div>
+        )}
+
+        <div className="kpi-grid nps-automation-metrics">
+          <article className="kpi-card">
+            <span>Pacientes verificados</span>
+            <strong>{automationSummary.totalChecked || 0}</strong>
+            <p>últimos 7 dias</p>
+          </article>
+          <article className="kpi-card success">
+            <span>Concluídos</span>
+            <strong>{automationSummary.totalCompleted || 0}</strong>
+            <p>atendimentos elegíveis</p>
+          </article>
+          <article className="kpi-card progress">
+            <span>NPS enviadas</span>
+            <strong>{automationSummary.sentInvites || 0}</strong>
+            <p>convites disparados</p>
+          </article>
+          <article className="kpi-card warning">
+            <span>Pendentes</span>
+            <strong>{automationSummary.pendingInvites || 0}</strong>
+            <p>aguardando fila</p>
+          </article>
+          <article className="kpi-card danger">
+            <span>Falhas</span>
+            <strong>{automationSummary.failedInvites || 0}</strong>
+            <p>necessitam revisão</p>
+          </article>
+          <article className="kpi-card">
+            <span>Sem telefone</span>
+            <strong>{automationSummary.patientsWithoutPhone || 0}</strong>
+            <p>sem dado de contato</p>
+          </article>
+          <article className="kpi-card">
+            <span>Ambíguos</span>
+            <strong>{automationSummary.totalAmbiguous || 0}</strong>
+            <p>revisão manual</p>
+          </article>
+          <article className="kpi-card">
+            <span>Respondidas</span>
+            <strong>{automationSummary.respondedInvites || 0}</strong>
+            <p>pesquisas concluídas</p>
+          </article>
+        </div>
+
+        <div className="nps-automation-jobs">
+          <div className="panel-heading compact">
+            <div>
+              <p className="eyebrow">Histórico recente</p>
+              <h3>Jobs do Ecuro</h3>
+            </div>
+          </div>
+
+          {automationJobs.length ? (
+            <div className="nps-automation-job-grid">
+              {automationJobs.map((job) => (
+                <article className={`nps-automation-job-card ${String(job.status || '').toLowerCase()}`} key={job.id}>
+                  <div className="nps-automation-job-head">
+                    <strong>{job.clinic_name || 'Clínica não informada'}</strong>
+                    <span>{String(job.status || 'pending').replace(/_/g, ' ')}</span>
+                  </div>
+                  <p>Data da agenda: {job.appointment_date || 'não informada'}</p>
+                  <small>
+                    Verificados: {job.total_checked || 0} · Concluídos: {job.total_completed || 0} · Falhas: {job.total_failed || 0}
+                  </small>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <p className="empty-state">Ainda não há jobs Ecuro registrados para este painel.</p>
+          )}
+        </div>
+      </section>
+
       <section className="management-panel bulk-dispatch-panel">
         <div className="panel-heading">
           <div>
@@ -574,7 +780,7 @@ function NpsManagement() {
                   ? 'Pesquisas NPS finalizadas'
                   : 'Lista de respostas NPS'}
             </h2>
-            <p className="base-subtitle">O sistema prioriza a sessão dedicada <strong>nps</strong> na VPS quando ela estiver cadastrada e conectada.</p>
+            <p className="base-subtitle">O envio usa a sessão configurada no backend para NPS e pode ser alternado entre <strong>reclamacoes</strong> e <strong>nps</strong> apenas por variável de ambiente.</p>
           </div>
 
           <div className="patient-tabs" role="tablist" aria-label="Visões da gestão NPS">
