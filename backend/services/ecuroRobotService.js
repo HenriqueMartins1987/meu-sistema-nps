@@ -93,6 +93,21 @@ const ELIGIBILITY_TO_COMPLETION_STATUS = {
   error: 'error'
 };
 
+const ECURO_PATIENT_TABLE_COLUMNS = [
+  { field: 'patientFirstName', label: 'PRIMEIRO NOME' },
+  { field: 'patientLastName', label: 'SOBRENOME' },
+  { field: 'document', label: 'CPF' },
+  { field: 'externalPatientId', label: 'ID' },
+  { field: 'patientPhone', label: 'NUMERO DE TELEFONE' },
+  { field: 'birthDate', label: 'DATA DE NASCIMENTO' },
+  { field: 'registrationDate', label: 'DATA DE CADASTRO' },
+  { field: 'lastConsultationDate', label: 'ULTIMA CONSULTA' },
+  { field: 'nextConsultationDate', label: 'PROXIMA CONSULTA' }
+];
+
+const ECURO_PATIENT_FIELD_ORDER = ECURO_PATIENT_TABLE_COLUMNS.map((column) => column.field);
+const ECURO_PATIENT_HEADER_TEXTS = ECURO_PATIENT_TABLE_COLUMNS.map((column) => column.label);
+
 function onlyDigits(value) {
   return String(value ?? '').replace(/\D/g, '');
 }
@@ -160,6 +175,7 @@ function getEcuroRobotConfig(env = process.env) {
   const profileDir = path.resolve(String(env.ECURO_BROWSER_PROFILE_DIR || path.join(process.cwd(), 'runtime', 'ecuro-profile')).trim());
   const screenshotDir = path.resolve(String(env.ECURO_ROBOT_SCREENSHOT_DIR || path.join(process.cwd(), 'runtime', 'ecuro-screenshots')).trim());
   const htmlDir = path.resolve(String(env.ECURO_ROBOT_HTML_DIR || path.join(process.cwd(), 'runtime', 'ecuro-html')).trim());
+  const debugDir = path.resolve(String(env.ECURO_ROBOT_DEBUG_DIR || path.join(process.cwd(), 'runtime', 'ecuro-debug')).trim());
   const apiKey = String(env.ECURO_ROBOT_API_KEY || '').trim();
 
   return {
@@ -176,6 +192,7 @@ function getEcuroRobotConfig(env = process.env) {
     profileDir,
     screenshotDir,
     htmlDir,
+    debugDir,
     apiKey,
     host: String(env.ECURO_ROBOT_HOST || '127.0.0.1').trim() || '127.0.0.1',
     port: Math.max(1, Number(env.ECURO_ROBOT_PORT || 3010) || 3010),
@@ -197,7 +214,8 @@ function getEcuroRobotConfig(env = process.env) {
     vncEnabled: toBoolean(env.ECURO_ROBOT_VNC_ENABLED, false),
     vncHost: String(env.ECURO_ROBOT_VNC_HOST || '127.0.0.1').trim() || '127.0.0.1',
     vncPort: Math.max(1, Number(env.ECURO_ROBOT_VNC_PORT || 6080) || 6080),
-    captureIntervalSeconds: Math.max(1, Number(env.ECURO_ROBOT_CAPTURE_INTERVAL_SECONDS || 5) || 5)
+    captureIntervalSeconds: Math.max(1, Number(env.ECURO_ROBOT_CAPTURE_INTERVAL_SECONDS || 5) || 5),
+    debugCapture: toBoolean(env.ECURO_ROBOT_DEBUG_CAPTURE, false)
   };
 }
 
@@ -222,6 +240,7 @@ function getEcuroRobotConfigStatus(env = process.env) {
     profileDir: config.profileDir,
     screenshotDir: config.screenshotDir,
     htmlDir: config.htmlDir,
+    debugDir: config.debugDir,
     apiKeyConfigured: Boolean(config.apiKey),
     maxPagesPerRun: config.maxPagesPerRun,
     maxPatientsPerRun: config.maxPatientsPerRun,
@@ -237,7 +256,8 @@ function getEcuroRobotConfigStatus(env = process.env) {
     vncEnabled: config.vncEnabled,
     vncHost: config.vncHost,
     vncPort: config.vncPort,
-    captureIntervalSeconds: config.captureIntervalSeconds
+    captureIntervalSeconds: config.captureIntervalSeconds,
+    debugCapture: config.debugCapture
   };
 }
 
@@ -509,6 +529,51 @@ async function saveRobotArtifacts(page, config, jobId, reason = 'error') {
   return artifacts;
 }
 
+function saveRobotDebugArtifacts(config, jobId, reason = 'debug', payload = {}) {
+  ensureDir(config.debugDir);
+  const baseName = `${buildArtifactBaseName(jobId)}-${reason}`;
+  const jsonPath = path.join(config.debugDir, `${baseName}.json`);
+  const textPath = path.join(config.debugDir, `${baseName}.txt`);
+  const artifacts = [];
+
+  try {
+    fs.writeFileSync(jsonPath, JSON.stringify(payload, null, 2), 'utf8');
+    artifacts.push({ id: `${jobId}-${reason}-debug-json`, type: 'debug_json', path: jsonPath, step: reason, createdAt: new Date().toISOString() });
+  } catch (_error) {
+    // Ignore debug persistence issues.
+  }
+
+  try {
+    const bodyText = String(payload.bodyText || '').trim();
+    const candidateRows = Array.isArray(payload.candidateRowTexts) ? payload.candidateRowTexts : [];
+    const textPayload = [
+      `reason=${reason}`,
+      `currentUrl=${payload.currentUrl || ''}`,
+      `clinicName=${payload.clinicName || ''}`,
+      `targetDate=${payload.targetDate || ''}`,
+      `candidateElementsCount=${payload.candidateElementsCount || 0}`,
+      '',
+      'candidateRowTexts:',
+      ...candidateRows.slice(0, 10),
+      '',
+      'bodyText:',
+      bodyText
+    ].join('\n');
+    fs.writeFileSync(textPath, textPayload, 'utf8');
+    artifacts.push({ id: `${jobId}-${reason}-debug-text`, type: 'debug_text', path: textPath, step: reason, createdAt: new Date().toISOString() });
+  } catch (_error) {
+    // Ignore debug persistence issues.
+  }
+
+  return artifacts;
+}
+
+async function capturePatientExtractionArtifacts(page, config, jobId, reason = 'debug', diagnostics = {}) {
+  const artifacts = await saveRobotArtifacts(page, config, jobId, reason);
+  const debugArtifacts = saveRobotDebugArtifacts(config, jobId, reason, diagnostics);
+  return [...artifacts, ...debugArtifacts];
+}
+
 async function firstVisibleLocator(page, selectors = []) {
   for (const selector of selectors) {
     const locator = page.locator(selector).first();
@@ -649,6 +714,13 @@ function getYesterdaySaoPauloDateKey(date = new Date()) {
   return shiftDateKey(getDateKeyInSaoPaulo(date), -1);
 }
 
+function formatDateKeyToBrazilian(dateKey = '') {
+  const normalized = normalizeBrazilianDate(dateKey);
+  if (!normalized) return '';
+  const [year, month, day] = normalized.split('-');
+  return `${day}/${month}/${year}`;
+}
+
 function normalizeBrazilianDate(value) {
   const raw = String(value || '').trim();
   if (!raw || raw === '-' || raw.toLowerCase() === 'null') return '';
@@ -670,6 +742,194 @@ function normalizeBrazilianDate(value) {
   }
 
   return '';
+}
+
+function resolveEcuroTargetDate(payload = {}, now = new Date()) {
+  const explicitTargetDate = normalizeBrazilianDate(payload.targetDate || '');
+  if (explicitTargetDate) return explicitTargetDate;
+
+  const appointmentDate = normalizeBrazilianDate(payload.appointmentDate || '');
+  if (appointmentDate) return appointmentDate;
+
+  const targetDateMode = normalizeText(payload.targetDateMode || '');
+  if (!targetDateMode || targetDateMode === 'yesterday') {
+    return getYesterdaySaoPauloDateKey(now);
+  }
+
+  if (targetDateMode === 'today') {
+    return getDateKeyInSaoPaulo(now);
+  }
+
+  return getYesterdaySaoPauloDateKey(now);
+}
+
+function isEligibleByLastConsultationDate(lastConsultationDate = '', targetDate = '') {
+  const normalizedLastConsultationDate = normalizeBrazilianDate(lastConsultationDate || '');
+  const normalizedTargetDate = normalizeBrazilianDate(targetDate || '');
+
+  if (!normalizedLastConsultationDate) return 'missing_last_consultation';
+  if (!normalizedTargetDate) return 'out_of_date';
+  if (normalizedLastConsultationDate === normalizedTargetDate) return 'eligible';
+  return 'out_of_date';
+}
+
+function normalizeEcuroCellText(value = '') {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function isEcuroPaginationSummaryLine(value = '') {
+  return /^\s*(itens?|items?)\s*\d+\s*-\s*\d+\s*(de|of)\s*\d+/i.test(String(value || '').trim());
+}
+
+function isEcuroDateToken(value = '') {
+  return value === '-' || Boolean(normalizeBrazilianDate(value));
+}
+
+function isEcuroDocumentToken(value = '') {
+  const trimmed = String(value || '').trim();
+  return trimmed === '-' || /^\d{3}\.\d{3}\.\d{3}-\d{2}$/.test(trimmed) || /^\d{11}$/.test(onlyDigits(trimmed));
+}
+
+function isEcuroExternalIdToken(value = '') {
+  const trimmed = String(value || '').trim();
+  if (!trimmed || trimmed === '-') return false;
+  return /^[A-Z0-9]{4,8}$/i.test(trimmed);
+}
+
+function isEcuroPhoneToken(value = '') {
+  const trimmed = String(value || '').trim();
+  if (!trimmed || trimmed === '-') return true;
+  const digits = onlyDigits(trimmed);
+  return /^\+?\d/.test(trimmed) && digits.length >= 10 && digits.length <= 15;
+}
+
+function isEcuroHeaderToken(value = '') {
+  const normalizedValue = normalizeHeaderLabel(value);
+  if (!normalizedValue) return false;
+  return ECURO_PATIENT_HEADER_TEXTS.some((label) => normalizedValue === normalizeHeaderLabel(label));
+}
+
+function filterEcuroCandidateTokens(tokens = []) {
+  return tokens
+    .map((token) => normalizeEcuroCellText(token))
+    .filter((token) => (
+      token
+      && !isEcuroHeaderToken(token)
+      && !isEcuroPaginationSummaryLine(token)
+      && !isLikelyClinicName(token)
+      && !['proxima pagina', 'pagina seguinte', 'previous page', 'next page', 'rows per page', 'linhas por pagina'].includes(normalizeText(token))
+    ));
+}
+
+function repairEcuroCandidateRow(row = []) {
+  const cleanedRow = filterEcuroCandidateTokens(row);
+  if (cleanedRow.length === ECURO_PATIENT_FIELD_ORDER.length) {
+    return cleanedRow;
+  }
+
+  if (
+    cleanedRow.length === ECURO_PATIENT_FIELD_ORDER.length - 1
+    && isEcuroDocumentToken(cleanedRow[2])
+    && isEcuroExternalIdToken(cleanedRow[3])
+    && isEcuroDateToken(cleanedRow[4])
+    && isEcuroDateToken(cleanedRow[5])
+    && isEcuroDateToken(cleanedRow[6])
+    && isEcuroDateToken(cleanedRow[7])
+  ) {
+    return [
+      cleanedRow[0],
+      cleanedRow[1],
+      cleanedRow[2],
+      cleanedRow[3],
+      '-',
+      cleanedRow[4],
+      cleanedRow[5],
+      cleanedRow[6],
+      cleanedRow[7]
+    ];
+  }
+
+  return cleanedRow;
+}
+
+function looksLikeEcuroPatientRow(row = []) {
+  if (!Array.isArray(row) || row.length !== ECURO_PATIENT_FIELD_ORDER.length) return false;
+  if (!row[0] || !row[1]) return false;
+  if (!isEcuroDocumentToken(row[2])) return false;
+  if (!isEcuroExternalIdToken(row[3])) return false;
+  if (!isEcuroPhoneToken(row[4])) return false;
+  if (!isEcuroDateToken(row[5])) return false;
+  if (!isEcuroDateToken(row[6])) return false;
+  if (!isEcuroDateToken(row[7])) return false;
+  if (!isEcuroDateToken(row[8])) return false;
+  return true;
+}
+
+function extractEcuroPatientRowFromTokenWindow(tokens = []) {
+  const cleanedTokens = filterEcuroCandidateTokens(tokens);
+  const maxOffset = Math.max(0, Math.min(3, cleanedTokens.length - (ECURO_PATIENT_FIELD_ORDER.length - 1)));
+
+  for (let start = 0; start <= maxOffset; start += 1) {
+    for (const rowLength of [ECURO_PATIENT_FIELD_ORDER.length, ECURO_PATIENT_FIELD_ORDER.length - 1]) {
+      const candidate = repairEcuroCandidateRow(cleanedTokens.slice(start, start + rowLength));
+      if (!looksLikeEcuroPatientRow(candidate)) continue;
+      return {
+        row: candidate,
+        start,
+        end: start + rowLength - 1
+      };
+    }
+  }
+
+  return null;
+}
+
+function buildEcuroPatientTableFromCandidateRows(candidateRows = []) {
+  const headers = ECURO_PATIENT_TABLE_COLUMNS.map((column) => column.label);
+  const headerIndexes = resolvePatientTableHeaderIndexes(headers);
+  const rows = [];
+  const seenRows = new Set();
+
+  candidateRows.forEach((candidateRow) => {
+    const row = repairEcuroCandidateRow(Array.isArray(candidateRow) ? candidateRow : []);
+    if (!looksLikeEcuroPatientRow(row)) return;
+    const rowKey = row.join('|');
+    if (seenRows.has(rowKey)) return;
+    seenRows.add(rowKey);
+    rows.push(row);
+  });
+
+  return {
+    headers,
+    headerIndexes,
+    rows
+  };
+}
+
+function extractEcuroPatientRowsFromText(text = '') {
+  const lines = String(text || '')
+    .split(/\r?\n/)
+    .map((line) => normalizeEcuroCellText(line))
+    .filter(Boolean);
+
+  const lastHeaderIndex = lines.reduce((lastIndex, line, index) => (isEcuroHeaderToken(line) ? index : lastIndex), -1);
+  const candidateLines = filterEcuroCandidateTokens(lastHeaderIndex >= 0 ? lines.slice(lastHeaderIndex + 1) : lines);
+  const rows = [];
+  const rawCandidateRows = [];
+
+  for (let index = 0; index < candidateLines.length; index += 1) {
+    const match = extractEcuroPatientRowFromTokenWindow(candidateLines.slice(index, index + 14));
+    if (!match) continue;
+    rows.push(match.row);
+    rawCandidateRows.push(match.row.join(' | '));
+    index += match.end;
+  }
+
+  return {
+    rows,
+    candidateLines,
+    rawCandidateRows
+  };
 }
 
 function isLikelyClinicName(value = '') {
@@ -845,6 +1105,201 @@ async function extractPatientTableSnapshot(page, config) {
   throw new Error('Could not locate the Ecuro patient table.');
 }
 
+function chooseBestEcuroPatientTable(candidateTables = []) {
+  return candidateTables
+    .filter((table) => table && Array.isArray(table.rows) && table.rows.length)
+    .sort((left, right) => (right.rows.length - left.rows.length))
+    [0] || null;
+}
+
+async function waitForEcuroPatientsPageReady(page, config) {
+  await page.waitForFunction(() => {
+    const bodyText = String(document.body?.innerText || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toUpperCase();
+    return bodyText.includes('PRIMEIRO NOME') && bodyText.includes('ULTIMA CONSULTA');
+  }, { timeout: Math.min(config.timeoutMs, 15000) }).catch(() => null);
+  await page.waitForTimeout(1000);
+}
+
+async function extractPatientsFromEcuroPatientsPage(page, config, payload = {}) {
+  await waitForEcuroPatientsPageReady(page, config);
+
+  const diagnostics = await page.evaluate((headerTexts) => {
+    const normalizeTextContent = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const normalizeKey = (value) => normalizeTextContent(value)
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase();
+    const isVisible = (element) => {
+      if (!element) return false;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && Number(style.opacity || 1) !== 0
+        && rect.width > 0
+        && rect.height > 0;
+    };
+    const hasHeaderHints = (text) => {
+      const normalized = normalizeKey(text);
+      return normalized.includes('primeiro nome') && normalized.includes('ultima consulta');
+    };
+    const uniqueRows = (rows) => {
+      const seen = new Set();
+      return rows.filter((row) => {
+        const texts = Array.isArray(row) ? row.map((value) => normalizeTextContent(value)).filter(Boolean) : [];
+        if (!texts.length) return false;
+        const key = texts.join('|');
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    };
+
+    const rootCandidates = Array.from(document.querySelectorAll('main, [role="main"], .content, .container, .v-main, body'))
+      .filter((element) => isVisible(element))
+      .map((element) => ({
+        element,
+        area: Math.round(element.getBoundingClientRect().width * element.getBoundingClientRect().height),
+        text: normalizeTextContent(element.innerText)
+      }))
+      .filter((item) => hasHeaderHints(item.text))
+      .sort((left, right) => left.area - right.area || left.text.length - right.text.length);
+
+    const root = rootCandidates[0]?.element || document.body;
+    const rawRootText = String(root?.innerText || document.body?.innerText || '');
+    const rootText = normalizeTextContent(rawRootText);
+    const currentUrl = window.location.href;
+
+    const discoveredHeaders = Array.from(root.querySelectorAll('th, td, div, span, strong, p, h1, h2, h3'))
+      .map((element) => normalizeTextContent(element.innerText))
+      .filter(Boolean)
+      .filter((value, index, list) => list.indexOf(value) === index)
+      .filter((value) => headerTexts.some((label) => normalizeKey(value).includes(normalizeKey(label))))
+      .slice(0, 20);
+
+    const semanticRowSelectors = [
+      'table tbody tr',
+      'table tr',
+      '[role="rowgroup"] [role="row"]',
+      '[role="grid"] [role="row"]',
+      '[role="table"] [role="row"]',
+      '.mat-mdc-row',
+      '.mat-row',
+      '.cdk-row',
+      '.v-data-table__tr',
+      '.ag-row'
+    ];
+    const cellSelectors = ['td', '[role="cell"]', '[role="gridcell"]', '.mat-mdc-cell', '.mat-cell', '.v-data-table__td', '.ag-cell'];
+    const semanticRows = [];
+
+    semanticRowSelectors.forEach((selector) => {
+      root.querySelectorAll(selector).forEach((row) => {
+        if (!isVisible(row)) return;
+        let cells = [];
+        cellSelectors.forEach((cellSelector) => {
+          if (cells.length) return;
+          cells = Array.from(row.querySelectorAll(cellSelector));
+        });
+        if (!cells.length) {
+          cells = Array.from(row.children || []);
+        }
+        const texts = cells
+          .map((cell) => normalizeTextContent(cell.innerText))
+          .filter((value) => value || value === '-');
+        if (texts.length) semanticRows.push(texts);
+      });
+    });
+
+    const leafElements = Array.from(root.querySelectorAll('td, th, div, span, p, strong, small, a'))
+      .filter((element) => isVisible(element))
+      .filter((element) => {
+        const text = normalizeTextContent(element.innerText);
+        if (!text) return false;
+        return !Array.from(element.children || []).some((child) => isVisible(child) && normalizeTextContent(child.innerText));
+      })
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          text: normalizeTextContent(element.innerText),
+          top: Math.round(rect.top),
+          left: Math.round(rect.left)
+        };
+      });
+
+    const groupedRows = [];
+    const sortedLeafElements = leafElements.sort((left, right) => left.top - right.top || left.left - right.left);
+    sortedLeafElements.forEach((item) => {
+      const previousGroup = groupedRows[groupedRows.length - 1];
+      if (previousGroup && Math.abs(previousGroup.top - item.top) <= 6) {
+        previousGroup.items.push(item);
+        previousGroup.top = Math.min(previousGroup.top, item.top);
+        return;
+      }
+      groupedRows.push({ top: item.top, items: [item] });
+    });
+
+    const visualRows = groupedRows
+      .map((group) => group.items.sort((left, right) => left.left - right.left).map((item) => item.text))
+      .filter((texts) => texts.length);
+
+    const paginationMatch = rootText.match(/(Itens?\s*\d+\s*-\s*\d+\s*de\s*\d+|Items?\s*\d+\s*-\s*\d+\s*of\s*\d+)/i);
+    const clinicNameMatch = rootText.match(/[A-Z0-9]{4,}\s*-\s+.+?\s+-\s+.+?\s+-\s+.+/);
+
+    return {
+      currentUrl,
+      bodyText: rawRootText,
+      headerTexts: discoveredHeaders,
+      semanticRows: uniqueRows(semanticRows),
+      visualRows: uniqueRows(visualRows),
+      candidateElementsCount: leafElements.length,
+      clinicNameCandidate: clinicNameMatch ? normalizeTextContent(clinicNameMatch[0]) : '',
+      paginationSummary: paginationMatch ? normalizeTextContent(paginationMatch[0]) : '',
+      rootPreview: rawRootText.split(/\r?\n/).slice(0, 80).map((line) => normalizeTextContent(line)).filter(Boolean).slice(0, 80)
+    };
+  }, ECURO_PATIENT_HEADER_TEXTS);
+
+  const textStrategy = extractEcuroPatientRowsFromText(diagnostics.bodyText || '');
+  const candidateTables = [
+    buildEcuroPatientTableFromCandidateRows(diagnostics.semanticRows || []),
+    buildEcuroPatientTableFromCandidateRows(diagnostics.visualRows || []),
+    buildEcuroPatientTableFromCandidateRows(textStrategy.rows || [])
+  ];
+
+  const fallbackTable = await extractPatientTableSnapshot(page, config).catch(() => null);
+  if (fallbackTable) {
+    candidateTables.push({
+      headers: fallbackTable.headers || ECURO_PATIENT_TABLE_COLUMNS.map((column) => column.label),
+      headerIndexes: fallbackTable.headerIndexes || resolvePatientTableHeaderIndexes(fallbackTable.headers || []),
+      rows: Array.isArray(fallbackTable.rows) ? fallbackTable.rows : []
+    });
+  }
+
+  const table = chooseBestEcuroPatientTable(candidateTables) || buildEcuroPatientTableFromCandidateRows([]);
+  const candidateRowTexts = [
+    ...(diagnostics.semanticRows || []).map((row) => row.join(' | ')),
+    ...(diagnostics.visualRows || []).map((row) => row.join(' | ')),
+    ...(textStrategy.rawCandidateRows || [])
+  ].slice(0, 10);
+
+  return {
+    table,
+    diagnostics: {
+      ...diagnostics,
+      targetDate: formatDateKeyToBrazilian(resolveEcuroTargetDate(payload)),
+      textStrategyCandidateLines: (textStrategy.candidateLines || []).slice(0, 40),
+      textStrategyRows: (textStrategy.rows || []).slice(0, 10),
+      semanticRowCount: Array.isArray(diagnostics.semanticRows) ? diagnostics.semanticRows.length : 0,
+      visualRowCount: Array.isArray(diagnostics.visualRows) ? diagnostics.visualRows.length : 0,
+      textRowCount: Array.isArray(textStrategy.rows) ? textStrategy.rows.length : 0,
+      extractedRowCount: Array.isArray(table.rows) ? table.rows.length : 0,
+      candidateRowTexts
+    }
+  };
+}
+
 function safeRowValue(row = [], index = -1) {
   if (!Array.isArray(row) || index < 0 || index >= row.length) return '';
   return String(row[index] || '').trim();
@@ -872,13 +1327,9 @@ function buildPatientDirectoryRecord(row = [], context = {}) {
     return null;
   }
 
-  let eligibilityStatus = 'eligible';
+  let eligibilityStatus = isEligibleByLastConsultationDate(lastConsultationDate, context.targetDate);
   if (context.forceClinicMismatch) {
     eligibilityStatus = 'clinic_mismatch';
-  } else if (!lastConsultationDate) {
-    eligibilityStatus = 'missing_last_consultation';
-  } else if (context.targetDate && lastConsultationDate !== context.targetDate) {
-    eligibilityStatus = 'out_of_date';
   } else if (!normalizedPhone.valid) {
     eligibilityStatus = 'invalid_phone';
   }
@@ -1025,13 +1476,20 @@ function shouldStopWhenOlderThanTarget(pageResults = [], targetDate = '') {
 }
 
 async function collectPatientDirectoryRows(page, config, payload = {}) {
-  const targetDate = normalizeBrazilianDate(payload.appointmentDate || payload.targetDate || '') || getYesterdaySaoPauloDateKey();
+  const targetDate = resolveEcuroTargetDate(payload);
   const expectedClinicName = String(payload.externalClinicName || payload.clinicName || '').trim();
   const clinicSelection = await ensureClinicSelection(page, config, expectedClinicName);
   const clinicName = clinicSelection.clinicName || expectedClinicName || '';
   const results = [];
   let pagesVisited = 0;
   let totalRowsRead = 0;
+  let diagnostics = {
+    currentUrl: page.url(),
+    clinicName,
+    targetDate: formatDateKeyToBrazilian(targetDate),
+    candidateElementsCount: 0,
+    candidateRowTexts: []
+  };
 
   if (payload.search) {
     await applyFilters(page, config, { search: payload.search, appointmentDate: payload.appointmentDate });
@@ -1044,6 +1502,11 @@ async function collectPatientDirectoryRows(page, config, payload = {}) {
       targetDate,
       pagesVisited: 0,
       totalRowsRead: 0,
+      diagnostics: {
+        ...diagnostics,
+        clinicName,
+        clinicMatched: false
+      },
       results: [{
         patientName: '',
         patientFirstName: '',
@@ -1073,12 +1536,19 @@ async function collectPatientDirectoryRows(page, config, payload = {}) {
   }
 
   while (pagesVisited < config.maxPagesPerRun && results.length < config.maxPatientsPerRun) {
-    const table = await extractPatientTableSnapshot(page, config);
+    const extractedPage = await extractPatientsFromEcuroPatientsPage(page, config, payload);
+    const table = extractedPage.table || buildEcuroPatientTableFromCandidateRows([]);
     const pageResults = mapPatientDirectoryRows(table, {
       headerIndexes: table.headerIndexes,
       clinicName,
       targetDate
     });
+    diagnostics = {
+      ...diagnostics,
+      ...(extractedPage.diagnostics || {}),
+      clinicName,
+      targetDate: formatDateKeyToBrazilian(targetDate)
+    };
 
     totalRowsRead += pageResults.length;
     for (const item of pageResults) {
@@ -1100,6 +1570,7 @@ async function collectPatientDirectoryRows(page, config, payload = {}) {
     targetDate,
     pagesVisited,
     totalRowsRead,
+    diagnostics,
     results
   };
 }
@@ -1521,6 +1992,20 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
     logRobotJobEvent(job.id, { level: 'info', step: 'collect_patients', action: 'collecting', currentStep: 'collect_patients', currentUrl: page.url(), message: 'Lendo a tabela de pacientes para montar a elegibilidade NPS.' });
     const collection = await collectPatientDirectoryRows(page, config, payload);
     const extractedRows = collection.results || [];
+    const shouldCaptureDiagnostics = Boolean(config.debugCapture || !extractedRows.length);
+    if (shouldCaptureDiagnostics) {
+      const artifacts = await capturePatientExtractionArtifacts(page, config, job.id, !extractedRows.length ? 'empty-extraction' : 'debug-capture', {
+        ...(collection.diagnostics || {}),
+        currentUrl: page.url(),
+        clinicName: collection.clinicName || payload.clinicName || '',
+        targetDate: formatDateKeyToBrazilian(collection.targetDate || resolveEcuroTargetDate(payload)),
+        candidateRowTexts: Array.isArray(collection.diagnostics?.candidateRowTexts) ? collection.diagnostics.candidateRowTexts : [],
+        bodyText: collection.diagnostics?.bodyText || ''
+      });
+      if (artifacts.length) {
+        jobStore.addArtifacts(job.id, artifacts);
+      }
+    }
     logRobotJobEvent(job.id, {
       level: collection.clinicMatched === false ? 'warning' : 'info',
       step: 'collect_patients',
@@ -1537,6 +2022,25 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
         targetDate: collection.targetDate || ''
       }
     });
+    let collectionErrorMessage = null;
+    if (!extractedRows.length) {
+      collectionErrorMessage = 'Robo autenticou no Ecuro, mas nao conseguiu extrair linhas da tabela de pacientes. Verifique seletores/estrutura DOM.';
+      logRobotJobEvent(job.id, {
+        level: 'warning',
+        step: 'collect_patients',
+        action: 'empty_extraction',
+        currentStep: 'collect_patients',
+        currentUrl: page.url(),
+        totalRowsRead: Number(collection.totalRowsRead || 0),
+        eligibleFound: 0,
+        message: collectionErrorMessage,
+        metadata: {
+          clinicName: collection.clinicName || '',
+          targetDate: collection.targetDate || '',
+          candidateElementsCount: Number(collection.diagnostics?.candidateElementsCount || 0)
+        }
+      });
+    }
     const matchedResults = Array.isArray(payload.patients) && payload.patients.length
       ? matchCompletionRows(payload.patients || [], extractedRows)
       : matchCompletionRows([], extractedRows);
@@ -1552,14 +2056,16 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
       message: `Processamento concluído com ${summary.totalEligible || 0} elegíveis e ${summary.totalFailed || 0} falhas.`
     });
     return {
-      status: collection.clinicMatched === false ? 'partial' : 'completed',
+      status: collection.clinicMatched === false || !extractedRows.length ? 'partial' : 'completed',
       extractedRows,
       results: matchedResults,
       artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
       pagesVisited: collection.pagesVisited || 0,
       totalRowsRead: collection.totalRowsRead || 0,
       targetDate: collection.targetDate || getYesterdaySaoPauloDateKey(),
-      clinicName: collection.clinicName || payload.clinicName || ''
+      clinicName: collection.clinicName || payload.clinicName || '',
+      diagnostics: collection.diagnostics || null,
+      errorMessage: collectionErrorMessage
     };
   } catch (error) {
     const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'error');
@@ -1703,8 +2209,10 @@ async function runCheckCompletedJob(payload = {}, config = getEcuroRobotConfig()
     results: result.results || [],
     pagesVisited: result.pagesVisited || 0,
     totalRowsRead: result.totalRowsRead || 0,
+    totalRead: result.totalRowsRead || 0,
     targetDate: result.targetDate || payload.appointmentDate || getYesterdaySaoPauloDateKey(),
     detectedClinicName: result.clinicName || payload.clinicName || '',
+    diagnostics: result.diagnostics || null,
     ...summary
   });
   jobStore.resetRuntime();
@@ -1815,16 +2323,20 @@ module.exports = {
   buildJobId,
   buildPatientDirectoryRecord,
   detectManualActionRequired,
+  extractEcuroPatientRowsFromText,
+  extractPatientsFromEcuroPatientsPage,
   getRobotLiveState,
   getRobotVncStatus,
   getEcuroRobotConfig,
   getEcuroRobotConfigStatus,
   getYesterdaySaoPauloDateKey,
+  isEligibleByLastConsultationDate,
   jobStore,
   mapPatientDirectoryRows,
   matchCompletionRows,
   normalizeBrazilianDate,
   normalizeEcuroCompletionStatus,
+  resolveEcuroTargetDate,
   retryRobotJob,
   runCheckCompletedBatch,
   runCheckCompletedJob,

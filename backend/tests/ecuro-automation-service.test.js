@@ -13,11 +13,14 @@ const {
   matchesCronExpression
 } = require('../services/ecuroCompletionService');
 const {
+  extractEcuroPatientRowsFromText,
   getEcuroRobotConfigStatus,
+  isEligibleByLastConsultationDate,
   matchCompletionRows,
   mapPatientDirectoryRows,
   normalizeBrazilianDate,
   normalizeEcuroCompletionStatus,
+  resolveEcuroTargetDate,
   summarizeCompletionResults
 } = require('../services/ecuroRobotService');
 
@@ -153,6 +156,63 @@ test('mapPatientDirectoryRows flags yesterday patients as eligible and invalid p
   assert.equal(rows[2].eligibilityStatus, 'out_of_date');
 });
 
+test('extractEcuroPatientRowsFromText parses the Ecuro patients page text layout', () => {
+  const extracted = extractEcuroPatientRowsFromText([
+    'PRIMEIRO NOME',
+    'SOBRENOME',
+    'CPF',
+    'ID',
+    'NUMERO DE TELEFONE',
+    'DATA DE NASCIMENTO',
+    'DATA DE CADASTRO',
+    'ULTIMA CONSULTA',
+    'PROXIMA CONSULTA',
+    'George',
+    'Marques De Fre...',
+    '008.597.431-52',
+    'DPAWQ',
+    '+5577998433088',
+    '27/02/1984',
+    '29/06/2026',
+    '29/06/2026',
+    '29/12/2026',
+    'Pablyne',
+    'Martins Dos Sa...',
+    '702.886.011-65',
+    'B05FF',
+    '+5562994296004',
+    '12/01/1998',
+    '27/06/2026',
+    '-',
+    '-'
+  ].join('\n'));
+
+  assert.equal(extracted.rows.length, 2);
+  assert.deepEqual(extracted.rows[0], [
+    'George',
+    'Marques De Fre...',
+    '008.597.431-52',
+    'DPAWQ',
+    '+5577998433088',
+    '27/02/1984',
+    '29/06/2026',
+    '29/06/2026',
+    '29/12/2026'
+  ]);
+  assert.equal(extracted.rows[1][7], '-');
+});
+
+test('isEligibleByLastConsultationDate uses the previous day as the NPS rule', () => {
+  assert.equal(isEligibleByLastConsultationDate('29/06/2026', '2026-06-29'), 'eligible');
+  assert.equal(isEligibleByLastConsultationDate('-', '2026-06-29'), 'missing_last_consultation');
+  assert.equal(isEligibleByLastConsultationDate('30/06/2026', '2026-06-29'), 'out_of_date');
+});
+
+test('resolveEcuroTargetDate honors explicit target date and yesterday mode', () => {
+  assert.equal(resolveEcuroTargetDate({ targetDate: '29/06/2026' }, new Date('2026-06-30T12:00:00Z')), '2026-06-29');
+  assert.equal(resolveEcuroTargetDate({ targetDateMode: 'yesterday' }, new Date('2026-06-30T12:00:00Z')), '2026-06-29');
+});
+
 test('computeRetryState stops after max attempts and handles manual action', () => {
   assert.equal(computeRetryState({ attempts: 3, maxAttempts: 3 }).status, 'failed');
   assert.equal(computeRetryState({ attempts: 1, manualActionRequired: true }).status, 'manual_action_required');
@@ -197,4 +257,5 @@ test('getEcuroRobotConfigStatus exposes safe mapping and visual defaults', () =>
   assert.equal(status.mappingMaxPages, 10);
   assert.equal(status.visualMode, false);
   assert.equal(status.vncEnabled, false);
+  assert.equal(status.debugCapture, false);
 });
