@@ -194,7 +194,8 @@ const routeControls = [
   { area: 'Painel Gerencial', type: 'Caminho', title: 'Gestao de usuarios', path: '/admin', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Administracao de usuarios.' },
   { area: 'Painel Gerencial', type: 'Caminho', title: 'Centro Master do Sistema', path: '/admin/controle-master', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Controle completo de autorizacoes.' },
   { area: 'Painel Gerencial', type: 'Caminho', title: 'Configurações > WhatsApp', path: '/home/whatsapp-management/instances', permission: 'whatsapp_management', roles: ['master_admin'], masterOnly: true, note: 'Sessões do whatsapp-service, QR Code, status e mensagens de teste em tela única.' },
-  { area: 'Painel Gerencial', type: 'Caminho', title: 'Monitoria Master', path: '/admin/monitoria', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Monitoramento operacional.' }
+  { area: 'Painel Gerencial', type: 'Caminho', title: 'Monitoria Master', path: '/admin/monitoria', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Monitoramento operacional.' },
+  { area: 'Painel Gerencial', type: 'Caminho', title: 'Monitor Master do Robo Ecuro', path: '/admin/robot-master', permission: 'admin_panel', roles: ['master_admin'], masterOnly: true, note: 'Jobs, logs, mapeamento e artefatos do robo Ecuro.' }
 ];
 
 const actionControls = authorityRules.map((rule) => ({
@@ -1348,6 +1349,7 @@ function MasterControlCenter() {
                 </div>
                 <div className="master-action-grid">
                   <button className="outline-action" onClick={() => navigate('/admin/monitoria')}>Monitoria Master</button>
+                  <button className="outline-action" onClick={() => navigate('/admin/robot-master')}>Robo Ecuro Master</button>
                   <button className="outline-action" onClick={() => navigate('/home/financial-intelligence')}>Dashboard Financeiro</button>
                   <button className="outline-action" onClick={() => navigate('/home/financial-intelligence/manage')}>Gestao Financeira</button>
                   <button className="outline-action danger-action" onClick={clearFinancialTests} disabled={clearingTests}>{clearingTests ? 'Limpando...' : 'Limpar testes financeiros'}</button>

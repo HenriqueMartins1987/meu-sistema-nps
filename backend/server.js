@@ -79,8 +79,17 @@ const {
   buildNpsInviteMessage,
   buildNpsInvitePublicUrl,
   buildNpsInviteToken,
+  callEcuroRobotArtifact,
+  callEcuroRobotArtifactByPath,
   callEcuroRobotCheckCompleted,
+  callEcuroRobotJobDetail,
+  callEcuroRobotJobs,
   callEcuroRobotLoginTest,
+  callEcuroRobotLiveState,
+  callEcuroRobotMappingRun,
+  callEcuroRobotVncStart,
+  callEcuroRobotVncStatus,
+  callEcuroRobotVncStop,
   computeRetryState,
   createEcuroRobotApiClient,
   getEcuroRobotClientConfig,
@@ -5593,8 +5602,18 @@ async function ensureDatabaseSchema() {
       total_checked INT NOT NULL DEFAULT 0,
       total_completed INT NOT NULL DEFAULT 0,
       total_failed INT NOT NULL DEFAULT 0,
+      total_eligible INT NOT NULL DEFAULT 0,
+      total_sent INT NOT NULL DEFAULT 0,
+      total_routes INT NOT NULL DEFAULT 0,
+      total_pages INT NOT NULL DEFAULT 0,
       error_message TEXT NULL,
       artifacts_json LONGTEXT NULL,
+      payload_json LONGTEXT NULL,
+      result_json LONGTEXT NULL,
+      current_step VARCHAR(120) NULL,
+      current_url TEXT NULL,
+      robot_job_key VARCHAR(120) NULL,
+      triggered_by_user_id INT NULL,
       started_at DATETIME NULL,
       finished_at DATETIME NULL,
       created_by VARCHAR(180) NULL,
@@ -5604,6 +5623,16 @@ async function ensureDatabaseSchema() {
       INDEX idx_ecuro_robot_jobs_clinic (clinic_id, appointment_date)
     )
   `);
+  await ensureColumn('ecuro_robot_jobs', 'triggered_by_user_id', 'INT NULL');
+  await ensureColumn('ecuro_robot_jobs', 'total_eligible', 'INT NOT NULL DEFAULT 0');
+  await ensureColumn('ecuro_robot_jobs', 'total_sent', 'INT NOT NULL DEFAULT 0');
+  await ensureColumn('ecuro_robot_jobs', 'total_routes', 'INT NOT NULL DEFAULT 0');
+  await ensureColumn('ecuro_robot_jobs', 'total_pages', 'INT NOT NULL DEFAULT 0');
+  await ensureColumn('ecuro_robot_jobs', 'payload_json', 'LONGTEXT NULL');
+  await ensureColumn('ecuro_robot_jobs', 'result_json', 'LONGTEXT NULL');
+  await ensureColumn('ecuro_robot_jobs', 'current_step', 'VARCHAR(120) NULL');
+  await ensureColumn('ecuro_robot_jobs', 'current_url', 'TEXT NULL');
+  await ensureColumn('ecuro_robot_jobs', 'robot_job_key', 'VARCHAR(120) NULL');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ecuro_patient_completion_status (
@@ -5692,6 +5721,86 @@ async function ensureDatabaseSchema() {
       INDEX idx_nps_whatsapp_inbound_phone (patient_phone, created_at)
     )
   `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ecuro_robot_logs (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      job_id BIGINT NULL,
+      job_type VARCHAR(80) NULL,
+      level VARCHAR(20) NOT NULL DEFAULT 'info',
+      step VARCHAR(120) NULL,
+      message TEXT NULL,
+      url TEXT NULL,
+      metadata_json LONGTEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_ecuro_robot_logs_job (job_id, created_at),
+      INDEX idx_ecuro_robot_logs_type (job_type, created_at),
+      INDEX idx_ecuro_robot_logs_level (level, created_at)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ecuro_robot_mapping_jobs (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      status VARCHAR(40) NOT NULL DEFAULT 'pending',
+      robot_job_id BIGINT NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      started_at DATETIME NULL,
+      finished_at DATETIME NULL,
+      total_pages INT NOT NULL DEFAULT 0,
+      total_routes INT NOT NULL DEFAULT 0,
+      total_errors INT NOT NULL DEFAULT 0,
+      error_message TEXT NULL,
+      payload_json LONGTEXT NULL,
+      result_json LONGTEXT NULL,
+      created_by VARCHAR(180) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_ecuro_robot_mapping_jobs_status (status, created_at)
+    )
+  `);
+  await ensureColumn('ecuro_robot_mapping_jobs', 'robot_job_id', 'BIGINT NULL');
+  await ensureColumn('ecuro_robot_mapping_jobs', 'payload_json', 'LONGTEXT NULL');
+  await ensureColumn('ecuro_robot_mapping_jobs', 'result_json', 'LONGTEXT NULL');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ecuro_robot_mapped_pages (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      job_id BIGINT NOT NULL,
+      url TEXT NULL,
+      title VARCHAR(255) NULL,
+      menu_label VARCHAR(255) NULL,
+      page_type VARCHAR(80) NULL,
+      table_headers_json LONGTEXT NULL,
+      filters_json LONGTEXT NULL,
+      buttons_json LONGTEXT NULL,
+      routes_json LONGTEXT NULL,
+      screenshot_path TEXT NULL,
+      html_path TEXT NULL,
+      risk_level VARCHAR(40) NULL,
+      captured_at DATETIME NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_ecuro_robot_mapped_pages_job (job_id, created_at)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS ecuro_robot_artifacts (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      job_id BIGINT NULL,
+      robot_job_key VARCHAR(120) NULL,
+      robot_artifact_key VARCHAR(160) NULL,
+      artifact_type VARCHAR(40) NOT NULL,
+      file_path TEXT NULL,
+      url TEXT NULL,
+      step VARCHAR(120) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      INDEX idx_ecuro_robot_artifacts_job (job_id, created_at),
+      INDEX idx_ecuro_robot_artifacts_robot_key (robot_job_key, created_at)
+    )
+  `);
+  await ensureColumn('ecuro_robot_artifacts', 'robot_artifact_key', 'VARCHAR(160) NULL');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS agenda_item_completion_logs (
@@ -12909,6 +13018,63 @@ let ecuroNpsInviteDispatchRunning = false;
 const ecuroNpsAutomationScheduleState = {
   lastSlot: ''
 };
+const ecuroMappingScheduleState = {
+  lastSlot: ''
+};
+const ecuroRobotMasterAuditState = new Map();
+
+function maskCpfValue(value = '') {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.length <= 4) return `***${digits.slice(-2)}`;
+  return `${digits.slice(0, 3)}.***.***-${digits.slice(-2)}`;
+}
+
+function maskRobotSensitiveValue(value = '', type = 'phone') {
+  if (!value) return '';
+  if (type === 'document') return maskCpfValue(value);
+  return maskPhone(value);
+}
+
+function safeJsonParse(value, fallback = null) {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value);
+  } catch (_error) {
+    return fallback;
+  }
+}
+
+function formatSecondsDuration(startAt, endAt) {
+  const start = startAt ? new Date(startAt) : null;
+  const end = endAt ? new Date(endAt) : null;
+  if (!start || !end || Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  return Math.max(0, Math.round((end.getTime() - start.getTime()) / 1000));
+}
+
+function shouldAuditMasterRobotAccess(user = {}, routeKey = '') {
+  const auditKey = `${user?.id || user?.email || 'anonymous'}:${routeKey}`;
+  const now = Date.now();
+  const last = Number(ecuroRobotMasterAuditState.get(auditKey) || 0);
+  if (now - last < 10 * 60 * 1000) {
+    return false;
+  }
+  ecuroRobotMasterAuditState.set(auditKey, now);
+  return true;
+}
+
+async function auditEcuroRobotMasterAccess(req, action = 'view_monitor', metadata = {}) {
+  if (!shouldAuditMasterRobotAccess(req.user, action)) return;
+  await insertSecurityAuditLog({
+    req,
+    user: req.user,
+    module: 'ecuro_robot_master',
+    action,
+    outcome: 'success',
+    metadata,
+    origin: 'api'
+  });
+}
 
 function canViewEcuroNpsAutomation(user) {
   return hasScreenPermission(user, 'nps_management') || isAdminUser(user);
@@ -12965,6 +13131,70 @@ function matchesEcuroCronInSaoPaulo(expression, now = new Date()) {
     && matchCronSegmentValue(parts[2], dayOfMonth)
     && matchCronSegmentValue(parts[3], month)
     && matchCronSegmentValue(parts[4], saoPaulo.weekday);
+}
+
+function findNextEcuroCronOccurrence(expression, fromDate = new Date(), limitMinutes = 60 * 24 * 14) {
+  const base = new Date(fromDate.getTime());
+  base.setSeconds(0, 0);
+  for (let offset = 1; offset <= limitMinutes; offset += 1) {
+    const candidate = new Date(base.getTime() + offset * 60 * 1000);
+    if (matchesEcuroCronInSaoPaulo(expression, candidate)) {
+      return candidate.toISOString();
+    }
+  }
+  return null;
+}
+
+function getEcuroMappingConfig(env = process.env) {
+  return {
+    enabled: String(env.ECURO_MAPPING_ENABLED || 'false').trim().toLowerCase() === 'true',
+    cron: String(env.ECURO_MAPPING_CRON || '0 2 * * *').trim() || '0 2 * * *',
+    maxPages: Math.max(1, Number(env.ECURO_MAPPING_MAX_PAGES || 10) || 10),
+    maxDepth: Math.max(1, Number(env.ECURO_MAPPING_MAX_DEPTH || 3) || 3),
+    captureScreenshots: String(env.ECURO_MAPPING_CAPTURE_SCREENSHOTS || 'true').trim().toLowerCase() !== 'false',
+    captureHtml: String(env.ECURO_MAPPING_CAPTURE_HTML || 'true').trim().toLowerCase() !== 'false',
+    readOnly: String(env.ECURO_MAPPING_READ_ONLY || 'true').trim().toLowerCase() !== 'false'
+  };
+}
+
+function buildEcuroRobotMasterConfigSnapshot() {
+  const npsConfig = getNpsAutomationConfig();
+  const robotConfig = getEcuroRobotConfigStatus();
+  const mappingConfig = getEcuroMappingConfig();
+  return {
+    nps: {
+      dryRun: npsConfig.dryRun,
+      dispatchEnabled: npsConfig.dispatchEnabled,
+      cron: npsConfig.cron,
+      nextExecutionAt: findNextEcuroCronOccurrence(npsConfig.cron),
+      dispatchWindowStart: npsConfig.dispatchWindowStart,
+      dispatchWindowEnd: npsConfig.dispatchWindowEnd,
+      sessionId: npsConfig.sessionId,
+      dispatchIntervalSeconds: npsConfig.dispatchIntervalSeconds,
+      maxDailyPerSession: npsConfig.maxDailyPerSession,
+      duplicateBlockHours: npsConfig.duplicateBlockHours
+    },
+    robot: {
+      mode: robotConfig.mode,
+      browserMode: robotConfig.browserMode,
+      headless: robotConfig.headless,
+      baseUrl: robotConfig.baseUrl,
+      timeoutMs: robotConfig.timeoutMs,
+      maxAttempts: robotConfig.maxAttempts,
+      maxPagesPerRun: robotConfig.maxPagesPerRun,
+      maxPatientsPerRun: robotConfig.maxPatientsPerRun,
+      stopWhenOlderThanTarget: robotConfig.stopWhenOlderThanTarget,
+      visualMode: robotConfig.visualMode,
+      vncEnabled: robotConfig.vncEnabled,
+      vncHost: robotConfig.vncHost,
+      vncPort: robotConfig.vncPort,
+      captureIntervalSeconds: robotConfig.captureIntervalSeconds
+    },
+    mapping: {
+      ...mappingConfig,
+      nextExecutionAt: findNextEcuroCronOccurrence(mappingConfig.cron)
+    }
+  };
 }
 
 async function ensureEcuroNpsClinicScope(user, requestedClinicId = null) {
@@ -13053,19 +13283,25 @@ async function insertEcuroRobotJobAudit({
   clinicName = null,
   appointmentDate = null,
   status = 'pending',
-  createdBy = null
+  createdBy = null,
+  triggeredByUserId = null,
+  payloadJson = null,
+  robotJobKey = null
 } = {}) {
   const [result] = await pool.query(
     `INSERT INTO ecuro_robot_jobs
-     (job_type, clinic_id, clinic_name, appointment_date, status, created_by)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+     (job_type, clinic_id, clinic_name, appointment_date, status, created_by, triggered_by_user_id, payload_json, robot_job_key)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       jobType,
       clinicId || null,
       clinicName || null,
       appointmentDate || null,
       status || 'pending',
-      createdBy || null
+      createdBy || null,
+      triggeredByUserId || null,
+      payloadJson || null,
+      robotJobKey || null
     ]
   );
   return Number(result.insertId || 0) || null;
@@ -13079,8 +13315,17 @@ async function updateEcuroRobotJobAudit(jobId, payload = {}) {
             total_checked = ?,
             total_completed = ?,
             total_failed = ?,
+            total_eligible = ?,
+            total_sent = ?,
+            total_routes = ?,
+            total_pages = ?,
             error_message = ?,
             artifacts_json = ?,
+            payload_json = COALESCE(?, payload_json),
+            result_json = ?,
+            current_step = ?,
+            current_url = ?,
+            robot_job_key = COALESCE(?, robot_job_key),
             started_at = ?,
             finished_at = ?,
             updated_at = NOW()
@@ -13090,11 +13335,154 @@ async function updateEcuroRobotJobAudit(jobId, payload = {}) {
       Number(payload.totalChecked || 0),
       Number(payload.totalCompleted || 0),
       Number(payload.totalFailed || 0),
+      Number(payload.totalEligible || 0),
+      Number(payload.totalSent || 0),
+      Number(payload.totalRoutes || 0),
+      Number(payload.totalPages || 0),
       payload.errorMessage || null,
       payload.artifactsJson || null,
+      payload.payloadJson || null,
+      payload.resultJson || null,
+      payload.currentStep || null,
+      payload.currentUrl || null,
+      payload.robotJobKey || null,
       payload.startedAt || null,
       payload.finishedAt || null,
       jobId
+    ]
+  );
+}
+
+async function replaceEcuroRobotLogs(jobId, jobType, logs = []) {
+  if (!jobId) return;
+  await pool.query('DELETE FROM ecuro_robot_logs WHERE job_id = ?', [jobId]);
+  for (const entry of Array.isArray(logs) ? logs : []) {
+    // eslint-disable-next-line no-await-in-loop
+    await pool.query(
+      `INSERT INTO ecuro_robot_logs
+       (job_id, job_type, level, step, message, url, metadata_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        jobId,
+        jobType || null,
+        entry.level || 'info',
+        entry.step || null,
+        entry.message || null,
+        entry.url || null,
+        entry.metadata ? JSON.stringify(entry.metadata) : null,
+        entry.createdAt ? toMysqlDateTime(entry.createdAt) : toMysqlDateTime(new Date())
+      ]
+    );
+  }
+}
+
+async function replaceEcuroRobotArtifacts(jobId, robotJobKey = null, artifacts = []) {
+  if (!jobId) return;
+  await pool.query('DELETE FROM ecuro_robot_artifacts WHERE job_id = ?', [jobId]);
+  for (const artifact of Array.isArray(artifacts) ? artifacts : []) {
+    // eslint-disable-next-line no-await-in-loop
+    await pool.query(
+      `INSERT INTO ecuro_robot_artifacts
+       (job_id, robot_job_key, robot_artifact_key, artifact_type, file_path, url, step, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        jobId,
+        robotJobKey || null,
+        artifact.id || null,
+        artifact.type || 'artifact',
+        artifact.path || null,
+        artifact.url || null,
+        artifact.step || null,
+        artifact.createdAt ? toMysqlDateTime(artifact.createdAt) : toMysqlDateTime(new Date())
+      ]
+    );
+  }
+}
+
+async function replaceEcuroRobotMappedPages(jobId, pages = []) {
+  if (!jobId) return;
+  await pool.query('DELETE FROM ecuro_robot_mapped_pages WHERE job_id = ?', [jobId]);
+  for (const page of Array.isArray(pages) ? pages : []) {
+    // eslint-disable-next-line no-await-in-loop
+    await pool.query(
+      `INSERT INTO ecuro_robot_mapped_pages
+       (job_id, url, title, menu_label, page_type, table_headers_json, filters_json, buttons_json, routes_json, screenshot_path, html_path, risk_level, captured_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        jobId,
+        page.url || null,
+        page.title || null,
+        page.menuLabel || page.menu_label || null,
+        page.pageType || page.page_type || null,
+        JSON.stringify(Array.isArray(page.tableHeaders) ? page.tableHeaders : (page.table_headers || [])),
+        JSON.stringify(Array.isArray(page.filters) ? page.filters : []),
+        JSON.stringify(Array.isArray(page.buttons) ? page.buttons : []),
+        JSON.stringify(Array.isArray(page.routes) ? page.routes : []),
+        page.screenshotPath || page.screenshot_path || null,
+        page.htmlPath || page.html_path || null,
+        page.riskLevel || page.risk_level || null,
+        page.capturedAt ? toMysqlDateTime(page.capturedAt) : toMysqlDateTime(new Date())
+      ]
+    );
+  }
+}
+
+async function insertEcuroRobotMappingAudit({
+  robotJobId = null,
+  clinicId = null,
+  clinicName = null,
+  status = 'pending',
+  createdBy = null,
+  payloadJson = null
+} = {}) {
+  const [result] = await pool.query(
+    `INSERT INTO ecuro_robot_mapping_jobs
+     (robot_job_id, status, clinic_id, clinic_name, payload_json, created_by)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      robotJobId || null,
+      status || 'pending',
+      clinicId || null,
+      clinicName || null,
+      payloadJson || null,
+      createdBy || null
+    ]
+  );
+  return Number(result.insertId || 0) || null;
+}
+
+async function updateEcuroRobotMappingAudit(mappingJobId, payload = {}) {
+  if (!mappingJobId) return;
+  await pool.query(
+    `UPDATE ecuro_robot_mapping_jobs
+        SET robot_job_id = COALESCE(?, robot_job_id),
+            status = COALESCE(?, status),
+            clinic_id = COALESCE(?, clinic_id),
+            clinic_name = COALESCE(?, clinic_name),
+            started_at = ?,
+            finished_at = ?,
+            total_pages = ?,
+            total_routes = ?,
+            total_errors = ?,
+            error_message = ?,
+            payload_json = COALESCE(?, payload_json),
+            result_json = ?,
+            updated_at = NOW()
+      WHERE id = ?`,
+    [
+      payload.robotJobId || null,
+      payload.status || null,
+      payload.clinicId || null,
+      payload.clinicName || null,
+      payload.startedAt || null,
+      payload.finishedAt || null,
+      Number(payload.totalPages || 0),
+      Number(payload.totalRoutes || 0),
+      Number(payload.totalErrors || 0),
+      payload.errorMessage || null,
+      payload.payloadJson || null,
+      payload.resultJson || null,
+      mappingJobId
     ]
   );
 }
@@ -13913,43 +14301,57 @@ async function runEcuroNpsAutomation(options = {}) {
   };
 
   for (const group of grouped) {
+    const robotPayload = {
+      clinicId: group.clinicId,
+      clinicName: group.clinicName,
+      externalClinicName: group.externalClinicName || group.clinicName,
+      externalClinicId: group.externalClinicId || null,
+      externalContextId: group.externalContextId || null,
+      externalClinicPublicId: group.externalClinicPublicId || null,
+      appointmentDate: group.appointmentDate,
+      patients: group.patients
+    };
     const jobId = await insertEcuroRobotJobAudit({
-      jobType: 'check_completed',
+      jobType: 'nps_last_consultation',
       clinicId: group.clinicId,
       clinicName: group.clinicName,
       appointmentDate: group.appointmentDate,
       status: 'running',
-      createdBy: actorName
+      createdBy: actorName,
+      triggeredByUserId: actor?.id || null,
+      payloadJson: JSON.stringify(robotPayload)
     });
     const startedAt = new Date();
     let robotResult = null;
     try {
       // eslint-disable-next-line no-await-in-loop
-      robotResult = await callEcuroRobotCheckCompleted({
-        clinicId: group.clinicId,
-        clinicName: group.clinicName,
-        externalClinicName: group.externalClinicName || group.clinicName,
-        externalClinicId: group.externalClinicId || null,
-        externalContextId: group.externalContextId || null,
-        externalClinicPublicId: group.externalClinicPublicId || null,
-        appointmentDate: group.appointmentDate,
-        patients: group.patients
-      });
+      robotResult = await callEcuroRobotCheckCompleted(robotPayload);
       const job = robotResult?.job || robotResult;
       const jobResults = Array.isArray(job?.results) ? job.results : [];
       const totalChecked = Number(job?.totalChecked || job?.total_checked || jobResults.length || 0);
       const totalCompleted = Number(job?.totalCompleted || job?.total_completed || 0);
       const totalFailed = Number(job?.totalFailed || job?.total_failed || 0);
+      const totalEligible = Number(job?.totalEligible || job?.total_eligible || 0);
+      const robotArtifacts = Array.isArray(job?.artifacts) ? job.artifacts : [];
+      const robotLogs = Array.isArray(job?.logs) ? job.logs : [];
       await updateEcuroRobotJobAudit(jobId, {
         status: job?.status || 'completed',
         totalChecked,
         totalCompleted,
         totalFailed,
+        totalEligible,
+        totalSent: 0,
         errorMessage: job?.errorMessage || job?.error_message || null,
-        artifactsJson: JSON.stringify(job?.artifacts || []),
+        artifactsJson: JSON.stringify(robotArtifacts),
+        resultJson: JSON.stringify(job || robotResult || {}),
+        currentStep: job?.currentStep || job?.current_step || null,
+        currentUrl: job?.currentUrl || job?.current_url || null,
+        robotJobKey: job?.id || null,
         startedAt: toMysqlDateTime(startedAt),
         finishedAt: toMysqlDateTime(new Date())
       });
+      await replaceEcuroRobotLogs(jobId, 'nps_last_consultation', robotLogs);
+      await replaceEcuroRobotArtifacts(jobId, job?.id || null, robotArtifacts);
 
       for (const result of jobResults) {
         const completionStatus = interpretEcuroCompletionStatus(result.completionStatus || result.completion_status || result.externalStatus || result.external_status);
@@ -14024,6 +14426,9 @@ async function runEcuroNpsAutomation(options = {}) {
         totalFailed: group.patients.length,
         errorMessage: sanitizeRobotError(error),
         artifactsJson: null,
+        resultJson: JSON.stringify({
+          error: sanitizeRobotError(error)
+        }),
         startedAt: toMysqlDateTime(startedAt),
         finishedAt: toMysqlDateTime(new Date())
       });
@@ -14235,6 +14640,705 @@ async function reprocessFailedEcuroNpsInvites(options = {}) {
     updated: Number(result.affectedRows || 0),
     dispatch
   };
+}
+
+function normalizeMasterBoolean(value) {
+  return ['1', 'true', 'yes', 'sim', 'on'].includes(String(value || '').trim().toLowerCase());
+}
+
+function sanitizeRobotDataForMasterView(value, { revealSensitive = false, key = '' } = {}) {
+  if (value === null || typeof value === 'undefined') return value;
+  if (revealSensitive) return value;
+
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeRobotDataForMasterView(item, { revealSensitive, key }));
+  }
+
+  if (typeof value === 'object') {
+    return Object.entries(value).reduce((accumulator, [entryKey, entryValue]) => {
+      accumulator[entryKey] = sanitizeRobotDataForMasterView(entryValue, {
+        revealSensitive,
+        key: entryKey
+      });
+      return accumulator;
+    }, {});
+  }
+
+  if (typeof value === 'string') {
+    const normalizedKey = normalizeText(key || '');
+    if (/(phone|telefone|whatsapp|contact)/.test(normalizedKey)) {
+      return maskPhone(value);
+    }
+    if (/(cpf|document|documento)/.test(normalizedKey)) {
+      return maskCpfValue(value);
+    }
+  }
+
+  return value;
+}
+
+function buildEcuroRobotArtifactProxyUrl(artifactId) {
+  return `/admin/robot/master/artifacts/${artifactId}/file`;
+}
+
+function mapEcuroRobotArtifactRow(row = {}) {
+  return {
+    id: row.id,
+    job_id: row.job_id || null,
+    robot_job_key: row.robot_job_key || null,
+    robot_artifact_key: row.robot_artifact_key || null,
+    artifact_type: row.artifact_type || 'artifact',
+    step: row.step || null,
+    file_path: row.file_path || null,
+    file_name: row.file_path ? path.basename(row.file_path) : null,
+    created_at: row.created_at || null,
+    file_url: buildEcuroRobotArtifactProxyUrl(row.id)
+  };
+}
+
+function mapEcuroRobotJobRow(row = {}, { revealSensitive = false } = {}) {
+  return {
+    id: row.id,
+    robot_job_key: row.robot_job_key || null,
+    job_type: row.job_type || 'nps_last_consultation',
+    clinic_id: row.clinic_id || null,
+    clinic_name: row.clinic_name || null,
+    appointment_date: row.appointment_date || null,
+    status: row.status || 'pending',
+    total_checked: Number(row.total_checked || 0),
+    total_completed: Number(row.total_completed || 0),
+    total_failed: Number(row.total_failed || 0),
+    total_eligible: Number(row.total_eligible || 0),
+    total_sent: Number(row.total_sent || 0),
+    total_routes: Number(row.total_routes || 0),
+    total_pages: Number(row.total_pages || 0),
+    error_message: row.error_message || null,
+    current_step: row.current_step || null,
+    current_url: row.current_url || null,
+    created_by: row.created_by || null,
+    triggered_by_user_id: row.triggered_by_user_id || null,
+    triggered_by_name: row.triggered_by_name || null,
+    triggered_by_email: row.triggered_by_email || null,
+    started_at: row.started_at || null,
+    finished_at: row.finished_at || null,
+    created_at: row.created_at || null,
+    updated_at: row.updated_at || null,
+    duration_seconds: row.duration_seconds === null || typeof row.duration_seconds === 'undefined'
+      ? formatSecondsDuration(row.started_at, row.finished_at)
+      : Number(row.duration_seconds || 0),
+    log_count: Number(row.log_count || 0),
+    artifact_count: Number(row.artifact_count || 0),
+    completion_count: Number(row.completion_count || 0),
+    invite_count: Number(row.invite_count || 0),
+    invite_sent_count: Number(row.invite_sent_count || 0),
+    invite_responded_count: Number(row.invite_responded_count || 0),
+    payload: sanitizeRobotDataForMasterView(safeJsonParse(row.payload_json, null), { revealSensitive }),
+    result: sanitizeRobotDataForMasterView(safeJsonParse(row.result_json, null), { revealSensitive })
+  };
+}
+
+async function loadEcuroRobotMasterOverview() {
+  const [automationOverview, mappingSummaryRows, mappedPageRows, logErrorRows, todayRows, latestMappingRows] = await Promise.all([
+    loadEcuroNpsAutomationOverview({}, null),
+    pool.query(
+      `SELECT
+         COUNT(*) AS total_jobs,
+         SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running_jobs,
+         SUM(total_pages) AS total_pages,
+         SUM(total_routes) AS total_routes,
+         SUM(total_errors) AS total_errors,
+         MAX(finished_at) AS last_finished_at
+       FROM ecuro_robot_mapping_jobs`
+    ),
+    pool.query('SELECT COUNT(*) AS total_pages FROM ecuro_robot_mapped_pages'),
+    pool.query("SELECT COUNT(*) AS total_errors FROM ecuro_robot_logs WHERE level = 'error'"),
+    pool.query(
+      `SELECT
+         SUM(CASE WHEN DATE(checked_at) = CURRENT_DATE THEN 1 ELSE 0 END) AS patients_read_today,
+         SUM(CASE WHEN DATE(checked_at) = CURRENT_DATE AND eligibility_status = 'eligible' THEN 1 ELSE 0 END) AS eligible_today,
+         SUM(CASE WHEN DATE(created_at) = CURRENT_DATE THEN 1 ELSE 0 END) AS invites_today,
+         SUM(CASE WHEN DATE(responded_at) = CURRENT_DATE THEN 1 ELSE 0 END) AS responses_today
+       FROM (
+         SELECT checked_at, eligibility_status, NULL AS created_at, NULL AS responded_at
+           FROM ecuro_patient_completion_status
+         UNION ALL
+         SELECT NULL AS checked_at, NULL AS eligibility_status, created_at, responded_at
+           FROM nps_invites
+       ) combined`
+    ),
+    pool.query(
+      `SELECT *
+         FROM ecuro_robot_mapping_jobs
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1`
+    )
+  ]);
+
+  let liveState = null;
+  let vncStatus = null;
+  try {
+    const payload = await callEcuroRobotLiveState();
+    liveState = payload?.live || null;
+  } catch (_error) {
+    liveState = null;
+  }
+
+  try {
+    const payload = await callEcuroRobotVncStatus();
+    vncStatus = payload?.status || null;
+  } catch (_error) {
+    vncStatus = null;
+  }
+
+  const mappingConfig = getEcuroMappingConfig();
+  const configSnapshot = buildEcuroRobotMasterConfigSnapshot();
+  const mappingSummary = mappingSummaryRows[0][0] || {};
+  const todaySummary = todayRows[0][0] || {};
+  const latestMappingJob = latestMappingRows[0][0] || null;
+
+  let robotStatus = 'offline';
+  if (liveState?.status === 'running') {
+    robotStatus = 'executando';
+  } else if (liveState?.status === 'manual_action_required') {
+    robotStatus = 'aguardando_acao_manual';
+  } else if (automationOverview?.robot?.serviceReachable) {
+    robotStatus = Number(automationOverview?.summary?.jobsFailed || 0) > 0 ? 'erro' : 'online';
+  }
+
+  return {
+    status: robotStatus,
+    alert: 'Atenção: a NPS está utilizando temporariamente a sessão de Reclamações. Recomenda-se migrar para uma sessão exclusiva `nps` após homologação.',
+    config: configSnapshot,
+    live: liveState,
+    vnc: vncStatus,
+    nps: automationOverview,
+    mapping: {
+      enabled: mappingConfig.enabled,
+      cron: mappingConfig.cron,
+      nextExecutionAt: findNextEcuroCronOccurrence(mappingConfig.cron),
+      lastExecutionAt: mappingSummary.last_finished_at || null,
+      latestJob: latestMappingJob ? {
+        id: latestMappingJob.id,
+        status: latestMappingJob.status,
+        finished_at: latestMappingJob.finished_at,
+        total_pages: Number(latestMappingJob.total_pages || 0),
+        total_routes: Number(latestMappingJob.total_routes || 0),
+        total_errors: Number(latestMappingJob.total_errors || 0)
+      } : null,
+      summary: {
+        totalJobs: Number(mappingSummary.total_jobs || 0),
+        runningJobs: Number(mappingSummary.running_jobs || 0),
+        totalPages: Number(mappingSummary.total_pages || 0),
+        totalRoutes: Number(mappingSummary.total_routes || 0),
+        totalErrors: Number(mappingSummary.total_errors || 0),
+        mappedPagesStored: Number(mappedPageRows[0][0]?.total_pages || 0)
+      }
+    },
+    cards: {
+      lastNpsExecutionAt: automationOverview?.summary?.lastExecutionAt || null,
+      nextNpsExecutionAt: configSnapshot.nps.nextExecutionAt || null,
+      lastMappingExecutionAt: mappingSummary.last_finished_at || null,
+      nextMappingExecutionAt: findNextEcuroCronOccurrence(mappingConfig.cron),
+      patientsReadToday: Number(todaySummary.patients_read_today || 0),
+      eligibleToday: Number(todaySummary.eligible_today || 0),
+      invitesToday: Number(todaySummary.invites_today || 0),
+      responsesToday: Number(todaySummary.responses_today || 0),
+      failuresTotal: Number(automationOverview?.summary?.failedInvites || 0) + Number(logErrorRows[0][0]?.total_errors || 0),
+      patientsWithoutPhone: Number(automationOverview?.summary?.patientsWithoutPhone || 0),
+      duplicateBlocked: Number(automationOverview?.summary?.totalDuplicate || 0),
+      mappedPagesTotal: Number(mappedPageRows[0][0]?.total_pages || 0),
+      routesTotal: Number(mappingSummary.total_routes || 0),
+      navigationErrorsTotal: Number(logErrorRows[0][0]?.total_errors || 0),
+      whatsappSessionId: automationOverview?.robot?.sessionId || configSnapshot.nps.sessionId
+    }
+  };
+}
+
+async function loadEcuroRobotMasterJobs(filters = {}) {
+  const where = ['1 = 1'];
+  const params = [];
+
+  if (filters.jobType) {
+    where.push('j.job_type = ?');
+    params.push(filters.jobType);
+  }
+  if (filters.status) {
+    where.push('j.status = ?');
+    params.push(filters.status);
+  }
+  if (filters.clinicId) {
+    where.push('j.clinic_id = ?');
+    params.push(Number(filters.clinicId));
+  }
+  if (filters.dateFrom) {
+    where.push('DATE(j.created_at) >= ?');
+    params.push(filters.dateFrom);
+  }
+  if (filters.dateTo) {
+    where.push('DATE(j.created_at) <= ?');
+    params.push(filters.dateTo);
+  }
+
+  const limit = Math.max(1, Math.min(100, Number(filters.limit || 40) || 40));
+  params.push(limit);
+
+  const [rows] = await pool.query(
+    `SELECT
+       j.*,
+       u.name AS triggered_by_name,
+       u.email AS triggered_by_email,
+       TIMESTAMPDIFF(SECOND, j.started_at, COALESCE(j.finished_at, NOW())) AS duration_seconds,
+       (SELECT COUNT(*) FROM ecuro_robot_logs l WHERE l.job_id = j.id) AS log_count,
+       (SELECT COUNT(*) FROM ecuro_robot_artifacts a WHERE a.job_id = j.id) AS artifact_count,
+       (SELECT COUNT(*) FROM ecuro_patient_completion_status c WHERE c.job_id = j.id) AS completion_count,
+       (SELECT COUNT(*) FROM nps_invites i INNER JOIN ecuro_patient_completion_status c2 ON c2.id = i.ecuro_completion_id WHERE c2.job_id = j.id) AS invite_count,
+       (SELECT COUNT(*) FROM nps_invites i INNER JOIN ecuro_patient_completion_status c3 ON c3.id = i.ecuro_completion_id WHERE c3.job_id = j.id AND i.status IN ('sent', 'responded')) AS invite_sent_count,
+       (SELECT COUNT(*) FROM nps_invites i INNER JOIN ecuro_patient_completion_status c4 ON c4.id = i.ecuro_completion_id WHERE c4.job_id = j.id AND i.status = 'responded') AS invite_responded_count
+     FROM ecuro_robot_jobs j
+     LEFT JOIN users u ON u.id = j.triggered_by_user_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY j.created_at DESC, j.id DESC
+     LIMIT ?`,
+    params
+  );
+
+  return rows.map((row) => mapEcuroRobotJobRow(row));
+}
+
+async function loadEcuroRobotMasterLogs(filters = {}) {
+  const where = ['1 = 1'];
+  const params = [];
+
+  if (filters.jobId) {
+    where.push('l.job_id = ?');
+    params.push(Number(filters.jobId));
+  }
+  if (filters.jobType) {
+    where.push('COALESCE(j.job_type, l.job_type) = ?');
+    params.push(filters.jobType);
+  }
+  if (filters.level) {
+    where.push('l.level = ?');
+    params.push(filters.level);
+  }
+  if (filters.status) {
+    where.push('j.status = ?');
+    params.push(filters.status);
+  }
+  if (filters.clinicId) {
+    where.push('j.clinic_id = ?');
+    params.push(Number(filters.clinicId));
+  }
+  if (filters.url) {
+    where.push('l.url LIKE ?');
+    params.push(`%${filters.url}%`);
+  }
+  if (filters.date) {
+    where.push('DATE(l.created_at) = ?');
+    params.push(filters.date);
+  }
+
+  const limit = Math.max(1, Math.min(500, Number(filters.limit || 200) || 200));
+  params.push(limit);
+
+  const [rows] = await pool.query(
+    `SELECT
+       l.*,
+       j.status AS job_status,
+       j.clinic_id,
+       j.clinic_name,
+       j.robot_job_key
+     FROM ecuro_robot_logs l
+     LEFT JOIN ecuro_robot_jobs j ON j.id = l.job_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY l.created_at DESC, l.id DESC
+     LIMIT ?`,
+    params
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    job_id: row.job_id || null,
+    job_type: row.job_type || row.job_type || null,
+    job_status: row.job_status || null,
+    clinic_id: row.clinic_id || null,
+    clinic_name: row.clinic_name || null,
+    level: row.level || 'info',
+    step: row.step || null,
+    message: row.message || null,
+    url: row.url || null,
+    metadata: sanitizeRobotDataForMasterView(safeJsonParse(row.metadata_json, null), { revealSensitive: false }),
+    created_at: row.created_at || null
+  }));
+}
+
+async function loadEcuroRobotMasterArtifacts(filters = {}) {
+  const where = ['1 = 1'];
+  const params = [];
+
+  if (filters.jobId) {
+    where.push('a.job_id = ?');
+    params.push(Number(filters.jobId));
+  }
+  if (filters.artifactType) {
+    where.push('a.artifact_type = ?');
+    params.push(filters.artifactType);
+  }
+
+  const limit = Math.max(1, Math.min(200, Number(filters.limit || 120) || 120));
+  params.push(limit);
+
+  const [rows] = await pool.query(
+    `SELECT
+       a.*,
+       j.job_type,
+       j.status AS job_status,
+       j.clinic_name
+     FROM ecuro_robot_artifacts a
+     LEFT JOIN ecuro_robot_jobs j ON j.id = a.job_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY a.created_at DESC, a.id DESC
+     LIMIT ?`,
+    params
+  );
+
+  return rows.map((row) => ({
+    ...mapEcuroRobotArtifactRow(row),
+    job_type: row.job_type || null,
+    job_status: row.job_status || null,
+    clinic_name: row.clinic_name || null
+  }));
+}
+
+async function loadEcuroRobotMasterMappingOverview() {
+  const [summaryRows, recentRows] = await Promise.all([
+    pool.query(
+      `SELECT
+         COUNT(*) AS total_jobs,
+         SUM(CASE WHEN status = 'running' THEN 1 ELSE 0 END) AS running_jobs,
+         SUM(total_pages) AS total_pages,
+         SUM(total_routes) AS total_routes,
+         SUM(total_errors) AS total_errors,
+         MAX(finished_at) AS last_finished_at
+       FROM ecuro_robot_mapping_jobs`
+    ),
+    pool.query(
+      `SELECT *
+         FROM ecuro_robot_mapping_jobs
+        ORDER BY created_at DESC, id DESC
+        LIMIT 20`
+    )
+  ]);
+
+  return {
+    config: getEcuroMappingConfig(),
+    summary: {
+      totalJobs: Number(summaryRows[0][0]?.total_jobs || 0),
+      runningJobs: Number(summaryRows[0][0]?.running_jobs || 0),
+      totalPages: Number(summaryRows[0][0]?.total_pages || 0),
+      totalRoutes: Number(summaryRows[0][0]?.total_routes || 0),
+      totalErrors: Number(summaryRows[0][0]?.total_errors || 0),
+      lastExecutionAt: summaryRows[0][0]?.last_finished_at || null
+    },
+    jobs: recentRows[0] || []
+  };
+}
+
+async function loadEcuroRobotMasterMappingPages(filters = {}) {
+  const where = ['1 = 1'];
+  const params = [];
+
+  if (filters.jobId) {
+    where.push('p.job_id = ?');
+    params.push(Number(filters.jobId));
+  }
+  if (filters.pageType) {
+    where.push('p.page_type = ?');
+    params.push(filters.pageType);
+  }
+  if (filters.riskLevel) {
+    where.push('p.risk_level = ?');
+    params.push(filters.riskLevel);
+  }
+
+  const limit = Math.max(1, Math.min(200, Number(filters.limit || 100) || 100));
+  params.push(limit);
+
+  const [rows] = await pool.query(
+    `SELECT p.*, j.clinic_name, j.status AS job_status
+       FROM ecuro_robot_mapped_pages p
+       LEFT JOIN ecuro_robot_jobs j ON j.id = p.job_id
+      WHERE ${where.join(' AND ')}
+      ORDER BY p.captured_at DESC, p.id DESC
+      LIMIT ?`,
+    params
+  );
+
+  return rows.map((row) => ({
+    id: row.id,
+    job_id: row.job_id,
+    clinic_name: row.clinic_name || null,
+    job_status: row.job_status || null,
+    url: row.url || null,
+    title: row.title || null,
+    menu_label: row.menu_label || null,
+    page_type: row.page_type || null,
+    table_headers: safeJsonParse(row.table_headers_json, []),
+    filters: safeJsonParse(row.filters_json, []),
+    buttons: safeJsonParse(row.buttons_json, []),
+    routes: safeJsonParse(row.routes_json, []),
+    screenshot_path: row.screenshot_path || null,
+    html_path: row.html_path || null,
+    risk_level: row.risk_level || null,
+    captured_at: row.captured_at || null
+  }));
+}
+
+async function loadEcuroRobotMasterJobDetail(jobId, { revealSensitive = false } = {}) {
+  const [jobRows] = await pool.query(
+    `SELECT
+       j.*,
+       u.name AS triggered_by_name,
+       u.email AS triggered_by_email,
+       TIMESTAMPDIFF(SECOND, j.started_at, COALESCE(j.finished_at, NOW())) AS duration_seconds,
+       (SELECT COUNT(*) FROM ecuro_robot_logs l WHERE l.job_id = j.id) AS log_count,
+       (SELECT COUNT(*) FROM ecuro_robot_artifacts a WHERE a.job_id = j.id) AS artifact_count,
+       (SELECT COUNT(*) FROM ecuro_patient_completion_status c WHERE c.job_id = j.id) AS completion_count,
+       (SELECT COUNT(*) FROM nps_invites i INNER JOIN ecuro_patient_completion_status c2 ON c2.id = i.ecuro_completion_id WHERE c2.job_id = j.id) AS invite_count
+     FROM ecuro_robot_jobs j
+     LEFT JOIN users u ON u.id = j.triggered_by_user_id
+     WHERE j.id = ?
+     LIMIT 1`,
+    [Number(jobId)]
+  );
+
+  if (!jobRows.length) {
+    const error = new Error('Job do robô Ecuro não encontrado.');
+    error.statusCode = 404;
+    throw error;
+  }
+
+  const job = mapEcuroRobotJobRow(jobRows[0], { revealSensitive });
+  const [completionRows, inviteRows, responseRows, logRows, artifactRows, mappedPageRows] = await Promise.all([
+    pool.query(
+      `SELECT *
+         FROM ecuro_patient_completion_status
+        WHERE job_id = ?
+        ORDER BY created_at ASC, id ASC
+        LIMIT 300`,
+      [Number(jobId)]
+    ),
+    pool.query(
+      `SELECT i.*, c.patient_name AS completion_patient_name, c.patient_phone AS completion_patient_phone, c.patient_document AS completion_patient_document
+         FROM nps_invites i
+         INNER JOIN ecuro_patient_completion_status c ON c.id = i.ecuro_completion_id
+        WHERE c.job_id = ?
+        ORDER BY i.created_at DESC, i.id DESC
+        LIMIT 300`,
+      [Number(jobId)]
+    ),
+    pool.query(
+      `SELECT r.*
+         FROM nps_responses r
+         INNER JOIN nps_invites i ON i.id = r.ecuro_nps_invite_id
+         INNER JOIN ecuro_patient_completion_status c ON c.id = i.ecuro_completion_id
+        WHERE c.job_id = ?
+        ORDER BY r.created_at DESC, r.id DESC
+        LIMIT 300`,
+      [Number(jobId)]
+    ).catch(() => [[]]),
+    pool.query(
+      `SELECT *
+         FROM ecuro_robot_logs
+        WHERE job_id = ?
+        ORDER BY created_at ASC, id ASC`,
+      [Number(jobId)]
+    ),
+    pool.query(
+      `SELECT *
+         FROM ecuro_robot_artifacts
+        WHERE job_id = ?
+        ORDER BY created_at ASC, id ASC`,
+      [Number(jobId)]
+    ),
+    pool.query(
+      `SELECT *
+         FROM ecuro_robot_mapped_pages
+        WHERE job_id = ?
+        ORDER BY captured_at DESC, id DESC
+        LIMIT 200`,
+      [Number(jobId)]
+    )
+  ]);
+
+  let liveJob = null;
+  if (job.robot_job_key) {
+    try {
+      const payload = await callEcuroRobotJobDetail(job.robot_job_key);
+      liveJob = sanitizeRobotDataForMasterView(payload?.job || null, { revealSensitive });
+    } catch (_error) {
+      liveJob = null;
+    }
+  }
+
+  return {
+    job,
+    live_job: liveJob,
+    completions: (completionRows[0] || []).map((row) => ({
+      ...row,
+      patient_phone: revealSensitive ? row.patient_phone : maskPhone(row.patient_phone || ''),
+      patient_document: revealSensitive ? row.patient_document : maskCpfValue(row.patient_document || ''),
+      raw_payload: sanitizeRobotDataForMasterView(safeJsonParse(row.raw_payload_json, null), { revealSensitive })
+    })),
+    invites: (inviteRows[0] || []).map((row) => ({
+      ...row,
+      patient_phone: revealSensitive ? row.patient_phone : maskPhone(row.patient_phone || row.completion_patient_phone || ''),
+      completion_patient_phone: revealSensitive ? row.completion_patient_phone : maskPhone(row.completion_patient_phone || ''),
+      completion_patient_document: revealSensitive ? row.completion_patient_document : maskCpfValue(row.completion_patient_document || '')
+    })),
+    responses: (responseRows[0] || []).map((row) => sanitizeRobotDataForMasterView(row, { revealSensitive })),
+    logs: (logRows[0] || []).map((row) => ({
+      ...row,
+      metadata: sanitizeRobotDataForMasterView(safeJsonParse(row.metadata_json, null), { revealSensitive })
+    })),
+    artifacts: (artifactRows[0] || []).map((row) => mapEcuroRobotArtifactRow(row)),
+    mapped_pages: (mappedPageRows[0] || []).map((row) => ({
+      ...row,
+      table_headers: safeJsonParse(row.table_headers_json, []),
+      filters: safeJsonParse(row.filters_json, []),
+      buttons: safeJsonParse(row.buttons_json, []),
+      routes: safeJsonParse(row.routes_json, [])
+    }))
+  };
+}
+
+async function runEcuroRobotMappingAutomation(options = {}) {
+  const actorName = options.createdBy || getActorName(options.user) || 'Sistema - Mapeamento Ecuro';
+  const clinicId = Number(options.clinicId || options.clinic_id || 0) || null;
+  const clinic = clinicId ? await getActiveClinicById(clinicId) : null;
+  const mappingConfig = getEcuroMappingConfig();
+  const payload = {
+    jobType: 'ecuro_mapping',
+    clinicId,
+    clinicName: options.clinicName || clinic?.name || '',
+    startUrl: options.startUrl || null,
+    maxPages: Math.max(1, Number(options.maxPages || mappingConfig.maxPages || 10) || 10),
+    maxDepth: Math.max(1, Number(options.maxDepth || mappingConfig.maxDepth || 3) || 3),
+    readOnly: mappingConfig.readOnly
+  };
+  const payloadJson = JSON.stringify(payload);
+  const startedAt = new Date();
+
+  const robotJobAuditId = await insertEcuroRobotJobAudit({
+    jobType: 'ecuro_mapping',
+    clinicId,
+    clinicName: payload.clinicName || null,
+    status: 'running',
+    createdBy: actorName,
+    triggeredByUserId: options.user?.id || null,
+    payloadJson
+  });
+  const mappingJobId = await insertEcuroRobotMappingAudit({
+    robotJobId: robotJobAuditId,
+    clinicId,
+    clinicName: payload.clinicName || null,
+    status: 'running',
+    createdBy: actorName,
+    payloadJson
+  });
+
+  try {
+    const robotResponse = await callEcuroRobotMappingRun(payload);
+    const job = robotResponse?.job || robotResponse;
+    const artifacts = Array.isArray(job?.artifacts) ? job.artifacts : [];
+    const logs = Array.isArray(job?.logs) ? job.logs : [];
+    const mappedPages = Array.isArray(job?.mappedPages) ? job.mappedPages : [];
+
+    await updateEcuroRobotJobAudit(robotJobAuditId, {
+      status: job?.status || 'completed',
+      totalChecked: Number(job?.totalPages || 0),
+      totalCompleted: Number(job?.totalPages || 0),
+      totalFailed: Number(job?.totalErrors || 0),
+      totalRoutes: Number(job?.totalRoutes || 0),
+      totalPages: Number(job?.totalPages || 0),
+      errorMessage: job?.errorMessage || null,
+      artifactsJson: JSON.stringify(artifacts),
+      resultJson: JSON.stringify(job || robotResponse || {}),
+      currentStep: job?.currentStep || job?.current_step || 'mapping_page',
+      currentUrl: job?.currentUrl || job?.current_url || null,
+      robotJobKey: job?.id || null,
+      startedAt: toMysqlDateTime(startedAt),
+      finishedAt: toMysqlDateTime(new Date())
+    });
+    await replaceEcuroRobotLogs(robotJobAuditId, 'ecuro_mapping', logs);
+    await replaceEcuroRobotArtifacts(robotJobAuditId, job?.id || null, artifacts);
+    await replaceEcuroRobotMappedPages(robotJobAuditId, mappedPages);
+    await updateEcuroRobotMappingAudit(mappingJobId, {
+      robotJobId: robotJobAuditId,
+      status: job?.status || 'completed',
+      clinicId,
+      clinicName: payload.clinicName || null,
+      startedAt: toMysqlDateTime(startedAt),
+      finishedAt: toMysqlDateTime(new Date()),
+      totalPages: Number(job?.totalPages || 0),
+      totalRoutes: Number(job?.totalRoutes || 0),
+      totalErrors: Number(job?.totalErrors || 0),
+      errorMessage: job?.errorMessage || null,
+      resultJson: JSON.stringify(job || robotResponse || {})
+    });
+
+    return {
+      success: true,
+      audit_job_id: robotJobAuditId,
+      mapping_job_id: mappingJobId,
+      job
+    };
+  } catch (error) {
+    const sanitizedError = sanitizeRobotError(error);
+    await updateEcuroRobotJobAudit(robotJobAuditId, {
+      status: 'failed',
+      totalFailed: 1,
+      errorMessage: sanitizedError,
+      resultJson: JSON.stringify({ error: sanitizedError }),
+      startedAt: toMysqlDateTime(startedAt),
+      finishedAt: toMysqlDateTime(new Date())
+    });
+    await updateEcuroRobotMappingAudit(mappingJobId, {
+      robotJobId: robotJobAuditId,
+      status: 'failed',
+      clinicId,
+      clinicName: payload.clinicName || null,
+      startedAt: toMysqlDateTime(startedAt),
+      finishedAt: toMysqlDateTime(new Date()),
+      totalErrors: 1,
+      errorMessage: sanitizedError,
+      resultJson: JSON.stringify({ error: sanitizedError })
+    });
+    throw error;
+  }
+}
+
+async function runScheduledEcuroMappingSweep(now = new Date()) {
+  const config = getEcuroMappingConfig();
+  if (!config.enabled) {
+    return { skipped: true, reason: 'disabled' };
+  }
+
+  const saoPaulo = getSaoPauloParts(now);
+  const slotKey = `${saoPaulo.dateKey}-${String(saoPaulo.hour).padStart(2, '0')}:${String(saoPaulo.minute).padStart(2, '0')}`;
+
+  if (!matchesEcuroCronInSaoPaulo(config.cron, now)) {
+    return { skipped: true, reason: 'outside_cron_window' };
+  }
+
+  if (ecuroMappingScheduleState.lastSlot === slotKey) {
+    return { skipped: true, reason: 'already_processed' };
+  }
+
+  ecuroMappingScheduleState.lastSlot = slotKey;
+  return runEcuroRobotMappingAutomation({
+    createdBy: 'Sistema - Mapeamento Noturno Ecuro'
+  });
 }
 
 async function getNpsRows(query = {}, user = null) {
@@ -14644,6 +15748,14 @@ function requireMasterAdmin(req, res, next) {
   }
 
   return sendAuthorizationError(req, res, 403, 'AUTH_FORBIDDEN_MASTER', 'Acesso restrito ao Administrador Master');
+}
+
+function requireEcuroRobotMaster(req, res, next) {
+  if (isMasterAdminUser(req.user)) {
+    return next();
+  }
+
+  return sendAuthorizationError(req, res, 403, 'AUTH_FORBIDDEN_ECURO_MASTER', 'Área restrita ao Administrador Master.');
 }
 
 function requireFinancialView(req, res, next) {
@@ -33413,6 +34525,318 @@ app.post('/nps/automation/reprocess-failures', authenticate, async (req, res) =>
   }
 });
 
+app.get('/admin/robot/master/overview', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'view_overview');
+    const payload = await loadEcuroRobotMasterOverview();
+    return res.json(payload);
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao carregar o Monitor Master do Robô Ecuro.'
+    });
+  }
+});
+
+app.get('/admin/robot/master/jobs', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'view_jobs', { filters: req.query || {} });
+    const jobs = await loadEcuroRobotMasterJobs(req.query || {});
+    return res.json({ jobs });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao carregar os jobs do robô Ecuro.'
+    });
+  }
+});
+
+app.get('/admin/robot/master/jobs/:id', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    const revealSensitive = normalizeMasterBoolean(req.query?.reveal);
+    await auditEcuroRobotMasterAccess(
+      req,
+      revealSensitive ? 'view_job_detail_sensitive' : 'view_job_detail',
+      { jobId: Number(req.params.id), revealSensitive }
+    );
+    const payload = await loadEcuroRobotMasterJobDetail(req.params.id, { revealSensitive });
+    return res.json(payload);
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao carregar o detalhe do job do robô Ecuro.'
+    });
+  }
+});
+
+app.get('/admin/robot/master/logs', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'view_logs', { filters: req.query || {} });
+    const logs = await loadEcuroRobotMasterLogs(req.query || {});
+    return res.json({ logs });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao carregar os logs do robô Ecuro.'
+    });
+  }
+});
+
+app.get('/admin/robot/master/artifacts', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'view_artifacts', { filters: req.query || {} });
+    const artifacts = await loadEcuroRobotMasterArtifacts(req.query || {});
+    return res.json({ artifacts });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao carregar os artefatos do robô Ecuro.'
+    });
+  }
+});
+
+app.get('/admin/robot/master/artifacts/:id/file', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    const artifactId = Number(req.params.id || 0) || 0;
+    const [rows] = await pool.query('SELECT * FROM ecuro_robot_artifacts WHERE id = ? LIMIT 1', [artifactId]);
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Artefato do robô Ecuro não encontrado.' });
+    }
+
+    await auditEcuroRobotMasterAccess(req, 'open_artifact', { artifactId });
+
+    const artifact = rows[0];
+    let payload = null;
+    try {
+      if (artifact.robot_job_key && artifact.robot_artifact_key) {
+        payload = await callEcuroRobotArtifact(artifact.robot_job_key, artifact.robot_artifact_key);
+      } else if (artifact.file_path) {
+        payload = await callEcuroRobotArtifactByPath(artifact.file_path);
+      }
+    } catch (error) {
+      if (artifact.file_path) {
+        payload = await callEcuroRobotArtifactByPath(artifact.file_path);
+      } else {
+        throw error;
+      }
+    }
+
+    if (!payload?.data) {
+      return res.status(404).json({ error: 'Conteúdo do artefato não está mais disponível no robô.' });
+    }
+
+    res.setHeader('Content-Type', payload.headers?.['content-type'] || 'application/octet-stream');
+    if (payload.headers?.['content-disposition']) {
+      res.setHeader('Content-Disposition', payload.headers['content-disposition']);
+    }
+    return res.send(Buffer.from(payload.data));
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 502).json({
+      error: error.statusCode ? error.message : 'Erro ao abrir o artefato solicitado.'
+    });
+  }
+});
+
+app.get('/admin/robot/master/mapping', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'view_mapping');
+    const payload = await loadEcuroRobotMasterMappingOverview();
+    return res.json(payload);
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao carregar o resumo de mapeamento do Ecuro.'
+    });
+  }
+});
+
+app.get('/admin/robot/master/mapping/pages', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'view_mapping_pages', { filters: req.query || {} });
+    const pages = await loadEcuroRobotMasterMappingPages(req.query || {});
+    return res.json({ pages });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao carregar as páginas mapeadas do Ecuro.'
+    });
+  }
+});
+
+app.post('/admin/robot/master/run-nps-dry-run', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'run_nps_dry_run');
+    const clinicIds = await ensureEcuroNpsClinicScope(req.user, req.body?.clinicId || req.body?.clinic_id || null);
+    const payload = await runEcuroNpsAutomation({
+      user: req.user,
+      createdBy: getActorName(req.user),
+      clinicIds,
+      appointmentDate: req.body?.appointmentDate || req.body?.appointment_date || null,
+      dateFrom: req.body?.dateFrom || req.body?.date_from || null,
+      dateTo: req.body?.dateTo || req.body?.date_to || null,
+      limit: req.body?.limit || null,
+      dryRun: true
+    });
+    return res.json({
+      success: true,
+      message: 'Dry-run do robô Ecuro executado com sucesso.',
+      payload
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao executar o dry-run do robô Ecuro.'
+    });
+  }
+});
+
+app.post('/admin/robot/master/run-nps-send', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'run_nps_send');
+    const clinicIds = await ensureEcuroNpsClinicScope(req.user, req.body?.clinicId || req.body?.clinic_id || null);
+    const payload = await runEcuroNpsAutomation({
+      user: req.user,
+      createdBy: getActorName(req.user),
+      clinicIds,
+      appointmentDate: req.body?.appointmentDate || req.body?.appointment_date || null,
+      dateFrom: req.body?.dateFrom || req.body?.date_from || null,
+      dateTo: req.body?.dateTo || req.body?.date_to || null,
+      limit: req.body?.limit || null,
+      dryRun: false
+    });
+    return res.json({
+      success: true,
+      message: getNpsAutomationConfig().dispatchEnabled
+        ? 'Execução controlada da NPS automática concluída.'
+        : 'Execução concluída, mas o envio automático continua desabilitado por configuração.',
+      payload
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao executar o envio controlado da NPS automática.'
+    });
+  }
+});
+
+app.post('/admin/robot/master/run-mapping', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'run_mapping');
+    const payload = await runEcuroRobotMappingAutomation({
+      user: req.user,
+      createdBy: getActorName(req.user),
+      clinicId: req.body?.clinicId || req.body?.clinic_id || null,
+      clinicName: req.body?.clinicName || req.body?.clinic_name || null,
+      startUrl: req.body?.startUrl || req.body?.start_url || null,
+      maxPages: req.body?.maxPages || req.body?.max_pages || null,
+      maxDepth: req.body?.maxDepth || req.body?.max_depth || null
+    });
+    return res.json({
+      success: true,
+      message: 'Mapeamento do Ecuro executado com sucesso.',
+      payload
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao executar o mapeamento do Ecuro.'
+    });
+  }
+});
+
+app.post('/admin/robot/master/reprocess-job', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    const jobId = Number(req.body?.jobId || req.body?.job_id || 0) || 0;
+    const [rows] = await pool.query('SELECT * FROM ecuro_robot_jobs WHERE id = ? LIMIT 1', [jobId]);
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Job do robô Ecuro não encontrado para reprocessamento.' });
+    }
+
+    await auditEcuroRobotMasterAccess(req, 'reprocess_job', { jobId });
+
+    const job = rows[0];
+    const payload = safeJsonParse(job.payload_json, {}) || {};
+
+    if (job.job_type === 'ecuro_mapping') {
+      const result = await runEcuroRobotMappingAutomation({
+        user: req.user,
+        createdBy: getActorName(req.user),
+        clinicId: payload.clinicId || job.clinic_id || null,
+        clinicName: payload.clinicName || job.clinic_name || null,
+        startUrl: payload.startUrl || null,
+        maxPages: payload.maxPages || null,
+        maxDepth: payload.maxDepth || null
+      });
+      return res.json({ success: true, message: 'Job de mapeamento reprocessado com sucesso.', payload: result });
+    }
+
+    if (['nps_last_consultation', 'check_completed'].includes(job.job_type)) {
+      const clinicIds = await ensureEcuroNpsClinicScope(req.user, payload.clinicId || job.clinic_id || null);
+      const result = await runEcuroNpsAutomation({
+        user: req.user,
+        createdBy: getActorName(req.user),
+        clinicIds,
+        appointmentDate: payload.appointmentDate || job.appointment_date || null,
+        limit: req.body?.limit || payload.limit || null,
+        dryRun: normalizeMasterBoolean(req.body?.dryRun)
+      });
+      return res.json({ success: true, message: 'Job NPS reprocessado com sucesso.', payload: result });
+    }
+
+    if (job.job_type === 'login_test' || job.job_type === 'diagnostic') {
+      const result = await callEcuroRobotLoginTest({});
+      return res.json({ success: true, message: 'Diagnóstico do robô Ecuro reexecutado.', payload: result });
+    }
+
+    return res.status(400).json({ error: 'Tipo de job não suportado para reprocessamento.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao reprocessar o job do robô Ecuro.'
+    });
+  }
+});
+
+app.get('/admin/robot/master/vnc-status', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'view_vnc_status');
+    const payload = await callEcuroRobotVncStatus();
+    return res.json(payload);
+  } catch (error) {
+    console.error(error);
+    return res.status(502).json({
+      error: sanitizeRobotError(error) || 'Erro ao consultar o status visual do robô Ecuro.'
+    });
+  }
+});
+
+app.post('/admin/robot/master/vnc/start', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'start_vnc');
+    const payload = await callEcuroRobotVncStart({});
+    return res.json(payload);
+  } catch (error) {
+    console.error(error);
+    return res.status(502).json({
+      error: sanitizeRobotError(error) || 'Erro ao iniciar a visualização segura do robô Ecuro.'
+    });
+  }
+});
+
+app.post('/admin/robot/master/vnc/stop', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'stop_vnc');
+    const payload = await callEcuroRobotVncStop({});
+    return res.json(payload);
+  } catch (error) {
+    console.error(error);
+    return res.status(502).json({
+      error: sanitizeRobotError(error) || 'Erro ao encerrar a visualização segura do robô Ecuro.'
+    });
+  }
+});
+
 app.post('/reports/coordinator-delays/dispatch', authenticate, async (req, res) => {
   try {
     if (!isAdminUser(req.user) && normalizeAccessRole(req.user?.role) !== 'supervisor_crc') {
@@ -37782,6 +39206,7 @@ async function startServer() {
       await runScheduledJob('startup_phone_enrichment', 'a rotina inicial de enriquecimento de telefones', runScheduledPhoneEnrichmentSweep);
       await runScheduledJob('startup_ecuro_nps_dispatch', 'a fila inicial da NPS automática', () => processPendingEcuroNpsInvites({ processAll: false, limit: 1 }));
       await runScheduledJob('startup_ecuro_nps_robot', 'a rotina inicial do robô Ecuro para NPS automática', runScheduledEcuroNpsAutomationSweep);
+      await runScheduledJob('startup_ecuro_mapping', 'a rotina inicial de mapeamento noturno do Ecuro', runScheduledEcuroMappingSweep);
     })();
   }, 10000);
 
@@ -37805,6 +39230,7 @@ async function startServer() {
   setManagedInterval('phone_enrichment', 'a rotina programada de enriquecimento de telefones', runScheduledPhoneEnrichmentSweep, 60 * 1000);
   setManagedInterval('ecuro_nps_dispatch', 'a fila programada da NPS automática', () => processPendingEcuroNpsInvites({ processAll: false, limit: 1 }), Math.max(15000, Number(getNpsAutomationConfig().dispatchIntervalSeconds || 45) * 1000));
   setManagedInterval('ecuro_nps_robot', 'a rotina programada do robô Ecuro para NPS automática', runScheduledEcuroNpsAutomationSweep, 60 * 1000);
+  setManagedInterval('ecuro_mapping', 'a rotina programada de mapeamento noturno do Ecuro', runScheduledEcuroMappingSweep, 60 * 1000);
 
 }
 

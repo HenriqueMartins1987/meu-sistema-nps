@@ -18,6 +18,7 @@ import NpsDashboard from './NpsDashboard';
 import AdminPanel from './AdminPanel';
 import MasterControlCenter from './MasterControlCenter';
 import MasterMonitoring from './MasterMonitoring';
+import RobotMasterMonitor from './RobotMasterMonitor';
 import PatientManagement from './PatientManagementPage';
 import CrmWorkspace from './CrmWorkspace';
 import FinancialCampaignUnitDashboard from './pages/FinancialCampaignUnitDashboard';
@@ -121,6 +122,7 @@ function App() {
           <Route path="/dental-card" element={<DentalCard />} />
         </Route>
         <Route path="/gestao/:id" element={<ComplaintDetail />} />
+        <Route path="/admin/robot-master" element={<RobotMasterMonitor />} />
         <Route element={<PermissionRoute permission="complaints_register" />}>
           <Route path="/cadastro" element={<Cadastro />} />
         </Route>

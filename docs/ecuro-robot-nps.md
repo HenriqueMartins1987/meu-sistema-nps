@@ -43,12 +43,24 @@ Camadas:
 - `ECURO_ROBOT_SERVICE_TIMEOUT_MS=60000`
 - `ECURO_ROBOT_CRON=0 19 * * 1-6`
 - `ECURO_ROBOT_DRY_RUN=true`
+- `ECURO_ROBOT_VISUAL_MODE=false`
+- `ECURO_ROBOT_VNC_ENABLED=false`
+- `ECURO_ROBOT_VNC_HOST=127.0.0.1`
+- `ECURO_ROBOT_VNC_PORT=6080`
+- `ECURO_ROBOT_CAPTURE_INTERVAL_SECONDS=5`
 - `ECURO_MAX_PAGES_PER_RUN=20`
 - `ECURO_MAX_PATIENTS_PER_RUN=1000`
 - `ECURO_STOP_WHEN_OLDER_THAN_TARGET=true`
+- `ECURO_MAPPING_ENABLED=false`
+- `ECURO_MAPPING_CRON=0 2 * * *`
+- `ECURO_MAPPING_MAX_PAGES=10`
+- `ECURO_MAPPING_MAX_DEPTH=3`
+- `ECURO_MAPPING_CAPTURE_SCREENSHOTS=true`
+- `ECURO_MAPPING_CAPTURE_HTML=true`
+- `ECURO_MAPPING_READ_ONLY=true`
 - `NPS_WHATSAPP_SESSION_ID=reclamacoes`
 - `NPS_PUBLIC_URL=https://meu-sistema-nps-three.vercel.app/nps`
-- `NPS_DISPATCH_ENABLED=true`
+- `NPS_DISPATCH_ENABLED=false`
 - `NPS_DISPATCH_WINDOW_START=08:00`
 - `NPS_DISPATCH_WINDOW_END=18:00`
 - `NPS_DISPATCH_INTERVAL_SECONDS=45`
@@ -68,9 +80,14 @@ Todos exigem `x-api-key: ECURO_ROBOT_API_KEY`.
 - `POST /ecuro/login-test`
 - `POST /ecuro/check-completed`
 - `POST /ecuro/check-completed/batch`
+- `POST /ecuro/mapping/run`
 - `GET /ecuro/jobs`
 - `GET /ecuro/jobs/:id`
 - `POST /ecuro/jobs/:id/retry`
+- `GET /ecuro/live-state`
+- `GET /ecuro/vnc-status`
+- `POST /ecuro/vnc/start`
+- `POST /ecuro/vnc/stop`
 
 ### Backend principal
 
@@ -80,6 +97,53 @@ Todos exigem `x-api-key: ECURO_ROBOT_API_KEY`.
 - `POST /nps/automation/reprocess-failures`
 - `POST /nps/public`
 - `POST /nps/whatsapp/inbound`
+- `GET /admin/robot/master/overview`
+- `GET /admin/robot/master/jobs`
+- `GET /admin/robot/master/jobs/:id`
+- `GET /admin/robot/master/logs`
+- `GET /admin/robot/master/artifacts`
+- `GET /admin/robot/master/mapping`
+- `GET /admin/robot/master/mapping/pages`
+- `POST /admin/robot/master/run-nps-dry-run`
+- `POST /admin/robot/master/run-nps-send`
+- `POST /admin/robot/master/run-mapping`
+- `POST /admin/robot/master/reprocess-job`
+- `GET /admin/robot/master/vnc-status`
+- `POST /admin/robot/master/vnc/start`
+- `POST /admin/robot/master/vnc/stop`
+
+## Monitor Master do Robo Ecuro
+
+Tela exclusiva:
+
+- rota frontend: `/admin/robot-master`
+- acesso: somente `master_admin`
+- backend: `/admin/robot/master/*`
+
+O monitor mostra:
+
+- status do robo, ultima e proxima execucao;
+- KPIs de leitura, elegibilidade, envio, resposta, falhas e duplicidades;
+- jobs detalhados com payload, logs, artefatos, convites e respostas;
+- execucao em tempo real por polling;
+- resumo e inventario do mapeamento noturno;
+- status VNC ou fallback por screenshot/HTML.
+
+## Estado inicial seguro
+
+Configurar inicialmente:
+
+- `ECURO_ROBOT_DRY_RUN=true`
+- `NPS_DISPATCH_ENABLED=false`
+- `ECURO_MAPPING_ENABLED=false`
+- `ECURO_MAPPING_MAX_PAGES=10`
+- `ECURO_ROBOT_VNC_ENABLED=false`
+
+Somente apos homologacao:
+
+- ativar `NPS_DISPATCH_ENABLED=true`
+- reduzir ou remover limites conservadores do mapeamento
+- habilitar VNC apenas se houver reverse proxy seguro e autenticado
 
 ## Webhook inbound do WhatsApp
 

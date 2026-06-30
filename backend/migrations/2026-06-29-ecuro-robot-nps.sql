@@ -8,8 +8,18 @@ CREATE TABLE IF NOT EXISTS ecuro_robot_jobs (
   total_checked INT NOT NULL DEFAULT 0,
   total_completed INT NOT NULL DEFAULT 0,
   total_failed INT NOT NULL DEFAULT 0,
+  total_eligible INT NOT NULL DEFAULT 0,
+  total_sent INT NOT NULL DEFAULT 0,
+  total_routes INT NOT NULL DEFAULT 0,
+  total_pages INT NOT NULL DEFAULT 0,
   error_message TEXT NULL,
   artifacts_json LONGTEXT NULL,
+  payload_json LONGTEXT NULL,
+  result_json LONGTEXT NULL,
+  current_step VARCHAR(120) NULL,
+  current_url TEXT NULL,
+  robot_job_key VARCHAR(120) NULL,
+  triggered_by_user_id INT NULL,
   started_at DATETIME NULL,
   finished_at DATETIME NULL,
   created_by VARCHAR(180) NULL,
@@ -93,6 +103,74 @@ CREATE TABLE IF NOT EXISTS nps_whatsapp_inbound_events (
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   UNIQUE KEY uniq_nps_whatsapp_inbound_message (message_id),
   INDEX idx_nps_whatsapp_inbound_phone (patient_phone, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS ecuro_robot_logs (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  job_id BIGINT NULL,
+  job_type VARCHAR(80) NULL,
+  level VARCHAR(20) NOT NULL DEFAULT 'info',
+  step VARCHAR(120) NULL,
+  message TEXT NULL,
+  url TEXT NULL,
+  metadata_json LONGTEXT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_ecuro_robot_logs_job (job_id, created_at),
+  INDEX idx_ecuro_robot_logs_type (job_type, created_at),
+  INDEX idx_ecuro_robot_logs_level (level, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS ecuro_robot_mapping_jobs (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  status VARCHAR(40) NOT NULL DEFAULT 'pending',
+  robot_job_id BIGINT NULL,
+  clinic_id INT NULL,
+  clinic_name VARCHAR(180) NULL,
+  started_at DATETIME NULL,
+  finished_at DATETIME NULL,
+  total_pages INT NOT NULL DEFAULT 0,
+  total_routes INT NOT NULL DEFAULT 0,
+  total_errors INT NOT NULL DEFAULT 0,
+  error_message TEXT NULL,
+  payload_json LONGTEXT NULL,
+  result_json LONGTEXT NULL,
+  created_by VARCHAR(180) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_ecuro_robot_mapping_jobs_status (status, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS ecuro_robot_mapped_pages (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  job_id BIGINT NOT NULL,
+  url TEXT NULL,
+  title VARCHAR(255) NULL,
+  menu_label VARCHAR(255) NULL,
+  page_type VARCHAR(80) NULL,
+  table_headers_json LONGTEXT NULL,
+  filters_json LONGTEXT NULL,
+  buttons_json LONGTEXT NULL,
+  routes_json LONGTEXT NULL,
+  screenshot_path TEXT NULL,
+  html_path TEXT NULL,
+  risk_level VARCHAR(40) NULL,
+  captured_at DATETIME NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_ecuro_robot_mapped_pages_job (job_id, created_at)
+);
+
+CREATE TABLE IF NOT EXISTS ecuro_robot_artifacts (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  job_id BIGINT NULL,
+  robot_job_key VARCHAR(120) NULL,
+  robot_artifact_key VARCHAR(160) NULL,
+  artifact_type VARCHAR(40) NOT NULL,
+  file_path TEXT NULL,
+  url TEXT NULL,
+  step VARCHAR(120) NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_ecuro_robot_artifacts_job (job_id, created_at),
+  INDEX idx_ecuro_robot_artifacts_robot_key (robot_job_key, created_at)
 );
 
 ALTER TABLE nps_responses

@@ -185,7 +185,19 @@ function getEcuroRobotConfig(env = process.env) {
     manualActionPattern: /captcha|two[\s-]?factor|2fa|verifica[cç][aã]o|c[oó]digo/i,
     maxPagesPerRun: Math.max(1, Number(env.ECURO_MAX_PAGES_PER_RUN || 20) || 20),
     maxPatientsPerRun: Math.max(1, Number(env.ECURO_MAX_PATIENTS_PER_RUN || 1000) || 1000),
-    stopWhenOlderThanTarget: toBoolean(env.ECURO_STOP_WHEN_OLDER_THAN_TARGET, true)
+    stopWhenOlderThanTarget: toBoolean(env.ECURO_STOP_WHEN_OLDER_THAN_TARGET, true),
+    mappingEnabled: toBoolean(env.ECURO_MAPPING_ENABLED, false),
+    mappingCron: String(env.ECURO_MAPPING_CRON || '0 2 * * *').trim() || '0 2 * * *',
+    mappingMaxPages: Math.max(1, Number(env.ECURO_MAPPING_MAX_PAGES || 10) || 10),
+    mappingMaxDepth: Math.max(1, Number(env.ECURO_MAPPING_MAX_DEPTH || 3) || 3),
+    mappingCaptureScreenshots: toBoolean(env.ECURO_MAPPING_CAPTURE_SCREENSHOTS, true),
+    mappingCaptureHtml: toBoolean(env.ECURO_MAPPING_CAPTURE_HTML, true),
+    mappingReadOnly: toBoolean(env.ECURO_MAPPING_READ_ONLY, true),
+    visualMode: toBoolean(env.ECURO_ROBOT_VISUAL_MODE, false),
+    vncEnabled: toBoolean(env.ECURO_ROBOT_VNC_ENABLED, false),
+    vncHost: String(env.ECURO_ROBOT_VNC_HOST || '127.0.0.1').trim() || '127.0.0.1',
+    vncPort: Math.max(1, Number(env.ECURO_ROBOT_VNC_PORT || 6080) || 6080),
+    captureIntervalSeconds: Math.max(1, Number(env.ECURO_ROBOT_CAPTURE_INTERVAL_SECONDS || 5) || 5)
   };
 }
 
@@ -213,7 +225,19 @@ function getEcuroRobotConfigStatus(env = process.env) {
     apiKeyConfigured: Boolean(config.apiKey),
     maxPagesPerRun: config.maxPagesPerRun,
     maxPatientsPerRun: config.maxPatientsPerRun,
-    stopWhenOlderThanTarget: config.stopWhenOlderThanTarget
+    stopWhenOlderThanTarget: config.stopWhenOlderThanTarget,
+    mappingEnabled: config.mappingEnabled,
+    mappingCron: config.mappingCron,
+    mappingMaxPages: config.mappingMaxPages,
+    mappingMaxDepth: config.mappingMaxDepth,
+    mappingCaptureScreenshots: config.mappingCaptureScreenshots,
+    mappingCaptureHtml: config.mappingCaptureHtml,
+    mappingReadOnly: config.mappingReadOnly,
+    visualMode: config.visualMode,
+    vncEnabled: config.vncEnabled,
+    vncHost: config.vncHost,
+    vncPort: config.vncPort,
+    captureIntervalSeconds: config.captureIntervalSeconds
   };
 }
 
@@ -251,6 +275,23 @@ async function loadPlaywright() {
 class EcuroRobotJobStore {
   constructor() {
     this.jobs = new Map();
+    this.runtime = {
+      status: 'idle',
+      currentJobId: null,
+      currentJobType: null,
+      currentStep: 'idle',
+      currentUrl: '',
+      clinicName: '',
+      action: 'idle',
+      pageProgress: {
+        current: 0,
+        total: 0
+      },
+      recordsRead: 0,
+      eligibleFound: 0,
+      recentEvents: [],
+      updatedAt: new Date().toISOString()
+    };
   }
 
   create(payload = {}) {
@@ -279,6 +320,16 @@ class EcuroRobotJobStore {
       finishedAt: null,
       errorMessage: null,
       artifacts: [],
+      logs: [],
+      currentStep: 'pending',
+      currentUrl: '',
+      action: 'pending',
+      pageProgress: {
+        current: 0,
+        total: 0
+      },
+      totalRowsRead: 0,
+      eligibleFound: 0,
       payload
     };
     this.jobs.set(job.id, job);
@@ -305,9 +356,127 @@ class EcuroRobotJobStore {
     return Array.from(this.jobs.values())
       .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime());
   }
+
+  setRuntime(patch = {}) {
+    const recentEvents = Array.isArray(patch.recentEvents) ? patch.recentEvents.slice(-25) : this.runtime.recentEvents;
+    this.runtime = {
+      ...this.runtime,
+      ...patch,
+      recentEvents,
+      updatedAt: new Date().toISOString()
+    };
+    return this.runtime;
+  }
+
+  resetRuntime() {
+    return this.setRuntime({
+      status: 'idle',
+      currentJobId: null,
+      currentJobType: null,
+      currentStep: 'idle',
+      currentUrl: '',
+      clinicName: '',
+      action: 'idle',
+      pageProgress: { current: 0, total: 0 },
+      recordsRead: 0,
+      eligibleFound: 0
+    });
+  }
+
+  addLog(jobId, entry = {}) {
+    const job = this.jobs.get(jobId);
+    if (!job) return null;
+    const nextEntry = {
+      id: `${jobId}-log-${job.logs.length + 1}`,
+      level: entry.level || 'info',
+      step: entry.step || job.currentStep || 'processing',
+      message: entry.message || '',
+      url: entry.url || job.currentUrl || '',
+      metadata: entry.metadata || null,
+      createdAt: new Date().toISOString()
+    };
+    const nextLogs = [...(job.logs || []), nextEntry].slice(-250);
+    this.update(jobId, { logs: nextLogs });
+    const runtimeEvents = [...(this.runtime.recentEvents || []), {
+      jobId,
+      jobType: job.jobType,
+      ...nextEntry
+    }].slice(-25);
+    this.setRuntime({
+      currentJobId: jobId,
+      currentJobType: job.jobType,
+      currentStep: nextEntry.step,
+      currentUrl: nextEntry.url || this.runtime.currentUrl,
+      clinicName: job.clinicName || this.runtime.clinicName,
+      action: entry.action || this.runtime.action || nextEntry.step,
+      recentEvents: runtimeEvents
+    });
+    return nextEntry;
+  }
+
+  addArtifacts(jobId, artifacts = []) {
+    const job = this.jobs.get(jobId);
+    if (!job || !Array.isArray(artifacts) || !artifacts.length) return job;
+    const currentArtifacts = Array.isArray(job.artifacts) ? job.artifacts : [];
+    const nextArtifacts = [...currentArtifacts, ...artifacts.map((artifact, index) => ({
+      id: artifact.id || `${jobId}-artifact-${currentArtifacts.length + index + 1}`,
+      ...artifact
+    }))];
+    return this.update(jobId, { artifacts: nextArtifacts });
+  }
+
+  getRuntime() {
+    return {
+      ...this.runtime,
+      recentEvents: Array.isArray(this.runtime.recentEvents) ? this.runtime.recentEvents.slice(-25) : []
+    };
+  }
 }
 
 const jobStore = new EcuroRobotJobStore();
+
+function updateRobotJobStep(jobId, patch = {}) {
+  const current = jobStore.get(jobId);
+  if (!current) return null;
+  const next = jobStore.update(jobId, {
+    currentStep: patch.currentStep || current.currentStep,
+    currentUrl: patch.currentUrl === undefined ? current.currentUrl : patch.currentUrl,
+    action: patch.action || current.action,
+    pageProgress: patch.pageProgress || current.pageProgress,
+    totalRowsRead: patch.totalRowsRead === undefined ? current.totalRowsRead : patch.totalRowsRead,
+    eligibleFound: patch.eligibleFound === undefined ? current.eligibleFound : patch.eligibleFound
+  });
+  jobStore.setRuntime({
+    status: patch.status || next.status || 'running',
+    currentJobId: jobId,
+    currentJobType: next.jobType,
+    currentStep: next.currentStep || 'processing',
+    currentUrl: next.currentUrl || '',
+    clinicName: next.clinicName || '',
+    action: next.action || next.currentStep || 'processing',
+    pageProgress: next.pageProgress || { current: 0, total: 0 },
+    recordsRead: Number(next.totalRowsRead || 0),
+    eligibleFound: Number(next.eligibleFound || 0)
+  });
+  return next;
+}
+
+function logRobotJobEvent(jobId, entry = {}) {
+  const current = jobStore.get(jobId);
+  if (!current) return null;
+  if (entry.currentStep || entry.currentUrl || entry.action || entry.pageProgress || entry.totalRowsRead !== undefined || entry.eligibleFound !== undefined) {
+    updateRobotJobStep(jobId, {
+      currentStep: entry.currentStep,
+      currentUrl: entry.currentUrl,
+      action: entry.action,
+      pageProgress: entry.pageProgress,
+      totalRowsRead: entry.totalRowsRead,
+      eligibleFound: entry.eligibleFound,
+      status: entry.status || current.status || 'running'
+    });
+  }
+  return jobStore.addLog(jobId, entry);
+}
 
 function buildManualActionError(message = 'Manual action required in Ecuro.') {
   const error = new Error(message);
@@ -325,14 +494,14 @@ async function saveRobotArtifacts(page, config, jobId, reason = 'error') {
 
   try {
     await page.screenshot({ path: screenshotPath, fullPage: true });
-    artifacts.push({ type: 'screenshot', path: screenshotPath });
+    artifacts.push({ id: `${jobId}-${reason}-screenshot`, type: 'screenshot', path: screenshotPath, step: reason, createdAt: new Date().toISOString() });
   } catch (_error) {
     // Ignore artifact persistence issues.
   }
 
   try {
     fs.writeFileSync(htmlPath, await page.content(), 'utf8');
-    artifacts.push({ type: 'html', path: htmlPath });
+    artifacts.push({ id: `${jobId}-${reason}-html`, type: 'html', path: htmlPath, step: reason, createdAt: new Date().toISOString() });
   } catch (_error) {
     // Ignore artifact persistence issues.
   }
@@ -935,6 +1104,265 @@ async function collectPatientDirectoryRows(page, config, payload = {}) {
   };
 }
 
+function resolveEcuroSameOriginUrl(baseUrl = '', href = '') {
+  const raw = String(href || '').trim();
+  if (!raw || raw.startsWith('javascript:') || raw.startsWith('#')) return '';
+  try {
+    const resolved = new URL(raw, baseUrl);
+    const base = new URL(baseUrl);
+    if (resolved.origin !== base.origin) return '';
+    return resolved.toString();
+  } catch (_error) {
+    return '';
+  }
+}
+
+function isWriteActionLabel(value = '') {
+  const normalized = normalizeText(value || '');
+  if (!normalized) return false;
+  return ['salvar', 'editar', 'excluir', 'cancelar', 'confirmar', 'enviar', 'atualizar', 'remover', 'deletar', 'criar', 'gravar'].some((token) => normalized.includes(token));
+}
+
+function inferMappedPageType(snapshot = {}) {
+  if (Array.isArray(snapshot.tableHeaders) && snapshot.tableHeaders.length) return 'table';
+  if (snapshot.hasExportButton) return 'report';
+  if (Array.isArray(snapshot.filters) && snapshot.filters.length) return 'filterable_view';
+  if (Array.isArray(snapshot.buttons) && snapshot.buttons.length) return 'action_panel';
+  return 'page';
+}
+
+async function captureMappingArtifacts(page, config, jobId, step, slug = '') {
+  const artifacts = [];
+  const safeSlug = String(slug || step || 'page').replace(/[^a-z0-9_-]+/gi, '-').toLowerCase();
+  if (config.mappingCaptureScreenshots) {
+    ensureDir(config.screenshotDir);
+    const screenshotPath = path.join(config.screenshotDir, `${buildArtifactBaseName(jobId)}-${safeSlug}.png`);
+    await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => null);
+    if (fs.existsSync(screenshotPath)) {
+      artifacts.push({ id: `${jobId}-${safeSlug}-screenshot`, type: 'screenshot', path: screenshotPath, step, createdAt: new Date().toISOString() });
+    }
+  }
+  if (config.mappingCaptureHtml) {
+    ensureDir(config.htmlDir);
+    const htmlPath = path.join(config.htmlDir, `${buildArtifactBaseName(jobId)}-${safeSlug}.html`);
+    fs.writeFileSync(htmlPath, await page.content(), 'utf8');
+    if (fs.existsSync(htmlPath)) {
+      artifacts.push({ id: `${jobId}-${safeSlug}-html`, type: 'html', path: htmlPath, step, createdAt: new Date().toISOString() });
+    }
+  }
+  return artifacts;
+}
+
+async function extractMappingPageSnapshot(page, config, context = {}) {
+  const currentUrl = page.url();
+  const baseUrl = config.baseUrl;
+  const payload = await page.evaluate(() => {
+    const textOf = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const title = textOf(document.title);
+    const headers = Array.from(document.querySelectorAll('thead th, thead td'))
+      .map((cell) => textOf(cell.innerText))
+      .filter(Boolean)
+      .slice(0, 30);
+    const filters = Array.from(document.querySelectorAll('input, select, textarea'))
+      .map((field) => textOf(field.getAttribute('placeholder')) || textOf(field.getAttribute('name')) || textOf(field.getAttribute('aria-label')))
+      .filter(Boolean)
+      .slice(0, 30);
+    const buttons = Array.from(document.querySelectorAll('button, [role="button"], a'))
+      .map((button) => textOf(button.innerText || button.getAttribute('aria-label') || button.getAttribute('title')))
+      .filter(Boolean)
+      .slice(0, 40);
+    const routes = Array.from(document.querySelectorAll('a[href]'))
+      .map((link) => ({
+        href: String(link.getAttribute('href') || '').trim(),
+        label: textOf(link.innerText || link.getAttribute('aria-label') || link.getAttribute('title'))
+      }))
+      .filter((link) => link.href)
+      .slice(0, 200);
+    const headline = textOf(document.querySelector('main h1, main h2, h1, h2')?.innerText);
+    return {
+      title,
+      headline,
+      headers,
+      filters,
+      buttons,
+      routes
+    };
+  });
+
+  const normalizedRoutes = Array.from(new Map(
+    (payload.routes || [])
+      .map((route) => ({
+        url: resolveEcuroSameOriginUrl(baseUrl, route.href),
+        label: String(route.label || '').trim() || 'Rota interna'
+      }))
+      .filter((route) => route.url)
+      .map((route) => [route.url, route])
+  ).values());
+  const buttons = (payload.buttons || []).slice(0, 30);
+  const filters = (payload.filters || []).slice(0, 30);
+  const tableHeaders = (payload.headers || []).slice(0, 30);
+  const hasExportButton = buttons.some((label) => ['exportar', 'download', 'csv', 'xlsx', 'excel', 'pdf'].some((token) => normalizeText(label).includes(token)));
+  const hasDateFilter = filters.some((label) => ['data', 'periodo', 'período'].some((token) => normalizeText(label).includes(normalizeText(token))));
+  const hasClinicFilter = filters.some((label) => ['clinica', 'clínica', 'unidade'].some((token) => normalizeText(label).includes(normalizeText(token))));
+  const riskLevel = buttons.some((label) => isWriteActionLabel(label)) ? 'write_action' : 'read_only';
+
+  return {
+    url: currentUrl,
+    title: payload.title || payload.headline || currentUrl,
+    menuLabel: context.menuLabel || payload.headline || payload.title || 'Tela Ecuro',
+    pageType: inferMappedPageType({ tableHeaders, buttons, filters, hasExportButton }),
+    tableHeaders,
+    filters,
+    buttons,
+    routes: normalizedRoutes,
+    hasExportButton,
+    hasDateFilter,
+    hasClinicFilter,
+    riskLevel,
+    capturedAt: new Date().toISOString()
+  };
+}
+
+async function executeBrowserMappingJob(job, payload = {}, config = getEcuroRobotConfig()) {
+  const playwright = await loadPlaywright();
+  const maxPages = Math.max(1, Number(payload.maxPages || config.mappingMaxPages || 10) || 10);
+  const maxDepth = Math.max(1, Number(payload.maxDepth || config.mappingMaxDepth || 3) || 3);
+  ensureDir(config.profileDir);
+  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
+    headless: !config.visualMode,
+    viewport: { width: 1440, height: 960 },
+    args: ['--disable-dev-shm-usage', '--no-sandbox'],
+    userAgent: config.userAgent || undefined
+  });
+  const page = context.pages()[0] || await context.newPage();
+  page.setDefaultTimeout(config.timeoutMs);
+  page.setDefaultNavigationTimeout(config.timeoutMs);
+
+  try {
+    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'login', message: 'Login do mapeamento iniciado.' });
+    await performEcuroBrowserLogin(page, config);
+    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'authenticated', message: 'Login do mapeamento concluído.', currentUrl: page.url() });
+
+    const startUrl = resolveEcuroSameOriginUrl(config.baseUrl, payload.startUrl || config.selectors.navigation.completedPagePath || `${config.baseUrl}/dashboard/patients`) || `${config.baseUrl}/dashboard/patients`;
+    const queue = [{ url: startUrl, depth: 0, menuLabel: 'Pacientes' }];
+    const visited = new Set();
+    const pages = [];
+    const discoveredRoutes = new Set();
+    let totalErrors = 0;
+
+    while (queue.length && pages.length < maxPages) {
+      const current = queue.shift();
+      if (!current?.url || visited.has(current.url)) continue;
+      visited.add(current.url);
+      discoveredRoutes.add(current.url);
+
+      logRobotJobEvent(job.id, {
+        level: 'info',
+        step: 'mapping_page',
+        action: 'navigating',
+        currentStep: 'mapping_page',
+        currentUrl: current.url,
+        pageProgress: { current: pages.length + 1, total: maxPages },
+        message: `Mapeando ${current.url}`
+      });
+
+      await page.goto(current.url, { waitUntil: 'domcontentloaded', timeout: config.timeoutMs });
+      await page.waitForTimeout(1200);
+
+      if (await detectManualActionRequired(page, config)) {
+        throw buildManualActionError();
+      }
+
+      const snapshot = await extractMappingPageSnapshot(page, config, current);
+      const artifacts = await captureMappingArtifacts(page, config, job.id, 'mapping_page', `${pages.length + 1}-${current.depth}`);
+      if (artifacts.length) {
+        jobStore.addArtifacts(job.id, artifacts);
+      }
+      const screenshotArtifact = artifacts.find((artifact) => artifact.type === 'screenshot');
+      const htmlArtifact = artifacts.find((artifact) => artifact.type === 'html');
+      pages.push({
+        ...snapshot,
+        screenshotPath: screenshotArtifact?.path || null,
+        htmlPath: htmlArtifact?.path || null,
+        depth: current.depth
+      });
+      updateRobotJobStep(job.id, {
+        currentStep: 'mapping_page',
+        currentUrl: current.url,
+        action: 'capturing',
+        pageProgress: { current: pages.length, total: maxPages },
+        totalRowsRead: pages.length,
+        eligibleFound: 0,
+        status: 'running'
+      });
+      logRobotJobEvent(job.id, {
+        level: snapshot.riskLevel === 'write_action' ? 'warning' : 'info',
+        step: 'mapping_page',
+        action: 'captured',
+        currentUrl: current.url,
+        message: `Tela mapeada com ${snapshot.tableHeaders.length} colunas e ${snapshot.routes.length} rotas internas.`,
+        metadata: {
+          title: snapshot.title,
+          pageType: snapshot.pageType,
+          riskLevel: snapshot.riskLevel
+        }
+      });
+
+      if (current.depth >= maxDepth) {
+        continue;
+      }
+
+      snapshot.routes.forEach((route) => {
+        if (!route?.url || visited.has(route.url) || queue.some((item) => item.url === route.url)) return;
+        discoveredRoutes.add(route.url);
+        queue.push({
+          url: route.url,
+          depth: current.depth + 1,
+          menuLabel: route.label || snapshot.menuLabel || 'Rota interna'
+        });
+      });
+    }
+
+    return {
+      status: 'completed',
+      pages,
+      totalPages: pages.length,
+      totalRoutes: discoveredRoutes.size,
+      totalErrors,
+      artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+      clinicName: await extractCurrentClinicName(page, config).catch(() => payload.clinicName || ''),
+      currentUrl: page.url()
+    };
+  } catch (error) {
+    const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'mapping-error');
+    if (artifacts.length) {
+      jobStore.addArtifacts(job.id, artifacts);
+    }
+    if (error.code === 'manual_action_required') {
+      return {
+        status: 'manual_action_required',
+        pages: [],
+        totalPages: 0,
+        totalRoutes: 0,
+        totalErrors: 1,
+        artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+        errorMessage: error.message
+      };
+    }
+    return {
+      status: 'failed',
+      pages: [],
+      totalPages: 0,
+      totalRoutes: 0,
+      totalErrors: 1,
+      artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+      errorMessage: error.message
+    };
+  } finally {
+    await context.close().catch(() => null);
+  }
+}
+
 function buildMatchCandidates(patient = {}) {
   return {
     externalPatientId: String(patient.externalPatientId || patient.external_patient_id || '').trim().toLowerCase(),
@@ -1085,18 +1513,49 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
   page.setDefaultNavigationTimeout(config.timeoutMs);
 
   try {
+    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'login', currentStep: 'login', message: 'Login do robô Ecuro iniciado.' });
     await performEcuroBrowserLogin(page, config);
+    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'authenticated', currentStep: 'authenticated', currentUrl: page.url(), message: 'Login do robô Ecuro concluído.' });
+    logRobotJobEvent(job.id, { level: 'info', step: 'navigate_patients', action: 'navigating', currentStep: 'navigate_patients', message: 'Navegando para a tela de pacientes do Ecuro.' });
     await navigateToCompletionScreen(page, config);
+    logRobotJobEvent(job.id, { level: 'info', step: 'collect_patients', action: 'collecting', currentStep: 'collect_patients', currentUrl: page.url(), message: 'Lendo a tabela de pacientes para montar a elegibilidade NPS.' });
     const collection = await collectPatientDirectoryRows(page, config, payload);
     const extractedRows = collection.results || [];
+    logRobotJobEvent(job.id, {
+      level: collection.clinicMatched === false ? 'warning' : 'info',
+      step: 'collect_patients',
+      action: 'collected',
+      currentStep: 'collect_patients',
+      currentUrl: page.url(),
+      pageProgress: { current: Number(collection.pagesVisited || 0), total: Number(config.maxPagesPerRun || 0) },
+      totalRowsRead: Number(collection.totalRowsRead || 0),
+      eligibleFound: extractedRows.filter((row) => row.eligibilityStatus === 'eligible').length,
+      message: `Tabela lida com ${collection.totalRowsRead || 0} registros e ${extractedRows.filter((row) => row.eligibilityStatus === 'eligible').length} elegíveis.`,
+      metadata: {
+        clinicName: collection.clinicName || '',
+        clinicMatched: collection.clinicMatched !== false,
+        targetDate: collection.targetDate || ''
+      }
+    });
     const matchedResults = Array.isArray(payload.patients) && payload.patients.length
       ? matchCompletionRows(payload.patients || [], extractedRows)
       : matchCompletionRows([], extractedRows);
+    const summary = summarizeCompletionResults(matchedResults);
+    logRobotJobEvent(job.id, {
+      level: 'info',
+      step: 'finalize',
+      action: 'completed',
+      currentStep: 'finalize',
+      currentUrl: page.url(),
+      totalRowsRead: Number(collection.totalRowsRead || 0),
+      eligibleFound: Number(summary.totalEligible || 0),
+      message: `Processamento concluído com ${summary.totalEligible || 0} elegíveis e ${summary.totalFailed || 0} falhas.`
+    });
     return {
       status: collection.clinicMatched === false ? 'partial' : 'completed',
       extractedRows,
       results: matchedResults,
-      artifacts: [],
+      artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
       pagesVisited: collection.pagesVisited || 0,
       totalRowsRead: collection.totalRowsRead || 0,
       targetDate: collection.targetDate || getYesterdaySaoPauloDateKey(),
@@ -1104,12 +1563,23 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
     };
   } catch (error) {
     const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'error');
+    if (artifacts.length) {
+      jobStore.addArtifacts(job.id, artifacts);
+    }
+    logRobotJobEvent(job.id, {
+      level: 'error',
+      step: error.code === 'manual_action_required' ? 'manual_action_required' : 'error',
+      action: 'failed',
+      currentStep: error.code === 'manual_action_required' ? 'manual_action_required' : 'error',
+      currentUrl: page.url(),
+      message: error.message
+    });
     if (error.code === 'manual_action_required') {
       return {
         status: 'manual_action_required',
         extractedRows: [],
         results: [],
-        artifacts,
+        artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
         errorMessage: error.message
       };
     }
@@ -1134,7 +1604,7 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
           rawPayloadJson: JSON.stringify({ reason: error.message })
         }))
         : [],
-      artifacts,
+      artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
       errorMessage: error.message
     };
   } finally {
@@ -1212,6 +1682,11 @@ async function runCheckCompletedJob(payload = {}, config = getEcuroRobotConfig()
     status: 'running',
     startedAt: new Date().toISOString()
   });
+  updateRobotJobStep(job.id, {
+    currentStep: 'starting',
+    action: 'starting',
+    status: 'running'
+  });
 
   const result = await executeBrowserCompletionCheck(job, payload, config);
   const summary = summarizeCompletionResults(result.results || []);
@@ -1219,7 +1694,7 @@ async function runCheckCompletedJob(payload = {}, config = getEcuroRobotConfig()
     ? 'partial'
     : result.status;
 
-  return jobStore.update(job.id, {
+  const updated = jobStore.update(job.id, {
     status: finalStatus,
     finishedAt: new Date().toISOString(),
     errorMessage: result.errorMessage || null,
@@ -1232,6 +1707,8 @@ async function runCheckCompletedJob(payload = {}, config = getEcuroRobotConfig()
     detectedClinicName: result.clinicName || payload.clinicName || '',
     ...summary
   });
+  jobStore.resetRuntime();
+  return updated;
 }
 
 async function runCheckCompletedBatch(payload = {}, config = getEcuroRobotConfig()) {
@@ -1258,11 +1735,88 @@ async function retryRobotJob(jobId, config = getEcuroRobotConfig()) {
   return runCheckCompletedJob(job.payload || {}, config);
 }
 
+async function runMappingJob(payload = {}, config = getEcuroRobotConfig()) {
+  const job = jobStore.create({
+    jobType: payload.jobType || 'ecuro_mapping',
+    clinicId: payload.clinicId || null,
+    clinicName: payload.clinicName || '',
+    appointmentDate: payload.appointmentDate || '',
+    payload
+  });
+
+  jobStore.update(job.id, {
+    status: 'running',
+    startedAt: new Date().toISOString()
+  });
+  updateRobotJobStep(job.id, {
+    currentStep: 'starting_mapping',
+    action: 'starting_mapping',
+    status: 'running'
+  });
+
+  const result = await executeBrowserMappingJob(job, payload, config);
+  const finalStatus = result.status === 'completed' && Number(result.totalErrors || 0) > 0
+    ? 'partial'
+    : result.status;
+
+  const updated = jobStore.update(job.id, {
+    status: finalStatus,
+    finishedAt: new Date().toISOString(),
+    errorMessage: result.errorMessage || null,
+    artifacts: result.artifacts || [],
+    mappedPages: result.pages || [],
+    totalPages: Number(result.totalPages || 0),
+    totalRoutes: Number(result.totalRoutes || 0),
+    totalErrors: Number(result.totalErrors || 0),
+    detectedClinicName: result.clinicName || payload.clinicName || '',
+    currentUrl: result.currentUrl || ''
+  });
+  jobStore.resetRuntime();
+  return updated;
+}
+
+function getRobotLiveState() {
+  return jobStore.getRuntime();
+}
+
+function getRobotVncStatus(config = getEcuroRobotConfig()) {
+  return {
+    enabled: Boolean(config.vncEnabled),
+    visualMode: Boolean(config.visualMode),
+    host: config.vncHost,
+    port: config.vncPort,
+    captureIntervalSeconds: config.captureIntervalSeconds,
+    mode: config.vncEnabled ? 'novnc' : 'screenshots_only',
+    available: Boolean(config.vncEnabled && config.visualMode),
+    message: config.vncEnabled
+      ? 'Visualização do robô controlada por configuração do ambiente.'
+      : 'VNC desabilitado. O monitor master deve usar screenshots e HTML capturados.'
+  };
+}
+
+async function startRobotVncSession(config = getEcuroRobotConfig()) {
+  return {
+    success: Boolean(config.vncEnabled && config.visualMode),
+    status: config.vncEnabled ? 'configured' : 'disabled',
+    ...getRobotVncStatus(config)
+  };
+}
+
+async function stopRobotVncSession(config = getEcuroRobotConfig()) {
+  return {
+    success: true,
+    status: config.vncEnabled ? 'configured' : 'disabled',
+    ...getRobotVncStatus(config)
+  };
+}
+
 module.exports = {
   buildInviteToken,
   buildJobId,
   buildPatientDirectoryRecord,
   detectManualActionRequired,
+  getRobotLiveState,
+  getRobotVncStatus,
   getEcuroRobotConfig,
   getEcuroRobotConfigStatus,
   getYesterdaySaoPauloDateKey,
@@ -1274,6 +1828,9 @@ module.exports = {
   retryRobotJob,
   runCheckCompletedBatch,
   runCheckCompletedJob,
+  runMappingJob,
   runLoginTest,
+  startRobotVncSession,
+  stopRobotVncSession,
   summarizeCompletionResults
 };

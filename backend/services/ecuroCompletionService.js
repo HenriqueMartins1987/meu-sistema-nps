@@ -209,6 +209,79 @@ async function callEcuroRobotCheckCompleted(payload = {}, env = process.env) {
   return response.data;
 }
 
+async function callEcuroRobotMappingRun(payload = {}, env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.post('/ecuro/mapping/run', payload);
+  return response.data;
+}
+
+async function callEcuroRobotJobs(env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.get('/ecuro/jobs');
+  return response.data;
+}
+
+async function callEcuroRobotJobDetail(jobId, env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.get(`/ecuro/jobs/${encodeURIComponent(jobId)}`);
+  return response.data;
+}
+
+async function callEcuroRobotLiveState(env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.get('/ecuro/live-state');
+  return response.data;
+}
+
+async function callEcuroRobotVncStatus(env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.get('/ecuro/vnc-status');
+  return response.data;
+}
+
+async function callEcuroRobotVncStart(payload = {}, env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.post('/ecuro/vnc/start', payload);
+  return response.data;
+}
+
+async function callEcuroRobotVncStop(payload = {}, env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.post('/ecuro/vnc/stop', payload);
+  return response.data;
+}
+
+async function callEcuroRobotArtifact(jobId, artifactId, env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.get(
+    `/ecuro/jobs/${encodeURIComponent(jobId)}/artifacts/${encodeURIComponent(artifactId)}`,
+    {
+      responseType: 'arraybuffer'
+    }
+  );
+  return {
+    data: response.data,
+    headers: response.headers || {},
+    status: response.status
+  };
+}
+
+async function callEcuroRobotArtifactByPath(filePath, env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.post(
+    '/ecuro/artifacts/open',
+    { path: filePath },
+    {
+      responseType: 'arraybuffer'
+    }
+  );
+  return {
+    data: response.data,
+    headers: response.headers || {},
+    status: response.status
+  };
+}
+
 async function sendNpsInviteViaWhatsApp({ sessionId, number, message, idempotencyKey }) {
   return whatsappProvider.sendText({
     sessionId,
@@ -225,7 +298,16 @@ module.exports = {
   buildNpsInvitePublicUrl,
   buildNpsInviteToken,
   callEcuroRobotCheckCompleted,
+  callEcuroRobotArtifact,
+  callEcuroRobotArtifactByPath,
+  callEcuroRobotJobDetail,
+  callEcuroRobotJobs,
   callEcuroRobotLoginTest,
+  callEcuroRobotLiveState,
+  callEcuroRobotMappingRun,
+  callEcuroRobotVncStart,
+  callEcuroRobotVncStatus,
+  callEcuroRobotVncStop,
   computeRetryState,
   createEcuroRobotApiClient,
   getEcuroRobotClientConfig,

@@ -631,6 +631,11 @@ function NpsManagement() {
             <button type="button" className="outline-action" onClick={loadAutomationOverview} disabled={automationLoading}>
               {automationLoading ? 'Atualizando...' : 'Atualizar painel'}
             </button>
+            {isMasterAdmin(currentUser) && (
+              <button type="button" className="outline-action" onClick={() => navigate('/admin/robot-master')}>
+                Monitor Master
+              </button>
+            )}
             <button type="button" className="outline-action" onClick={handleTestAutomationLogin} disabled={!canManageAutomation || automationTesting || automationRunning}>
               {automationTesting ? 'Testando...' : 'Testar login Ecuro'}
             </button>

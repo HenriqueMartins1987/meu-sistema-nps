@@ -181,6 +181,43 @@ test('instance test route sends directly through whatsapp-service VPS', async (t
   ]);
 });
 
+test('nps whatsapp inbound rejects requests without configured secret and accepts the correct one', async (t) => {
+  const previousSecret = process.env.BACKEND_INBOUND_WEBHOOK_SECRET;
+  process.env.BACKEND_INBOUND_WEBHOOK_SECRET = 'secret-for-test';
+  t.after(() => {
+    if (previousSecret === undefined) delete process.env.BACKEND_INBOUND_WEBHOOK_SECRET;
+    else process.env.BACKEND_INBOUND_WEBHOOK_SECRET = previousSecret;
+  });
+
+  const unauthorized = await request(app)
+    .post('/nps/whatsapp/inbound')
+    .send({
+      sessionId: 'reclamacoes',
+      phone: '+5562999669966',
+      message: '10',
+      messageId: 'msg-1'
+    });
+
+  assert.equal(unauthorized.status, 401);
+  assert.equal(unauthorized.body.error, 'Webhook NPS não autorizado.');
+
+  const authorized = await request(app)
+    .post('/nps/whatsapp/inbound')
+    .set('x-webhook-secret', 'secret-for-test')
+    .send({
+      sessionId: '',
+      phone: '',
+      message: ''
+    });
+
+  assert.equal(authorized.status, 200);
+  assert.equal(authorized.body.success, true);
+  assert.deepEqual(authorized.body.payload, {
+    ignored: true,
+    reason: 'missing_message_fields'
+  });
+});
+
 test('dispatch queue does not retry after VPS accepted a message and history logging fails', async (t) => {
   const previousApiKey = process.env.WHATSAPP_API_KEY;
   process.env.WHATSAPP_API_KEY = previousApiKey || 'test-key';

@@ -13,6 +13,7 @@ const {
   matchesCronExpression
 } = require('../services/ecuroCompletionService');
 const {
+  getEcuroRobotConfigStatus,
   matchCompletionRows,
   mapPatientDirectoryRows,
   normalizeBrazilianDate,
@@ -176,4 +177,24 @@ test('matchesCronExpression supports monday-saturday nightly execution', () => {
 test('buildNpsInviteToken yields long opaque values', () => {
   const token = buildNpsInviteToken('sample');
   assert.equal(token.length, 64);
+});
+
+test('getEcuroRobotConfigStatus exposes safe mapping and visual defaults', () => {
+  const status = getEcuroRobotConfigStatus({
+    EXTERNAL_PORTAL_BASE_URL: 'https://ecuro.com.br',
+    EXTERNAL_PORTAL_LEVEL1_USERNAME: 'user1',
+    EXTERNAL_PORTAL_LEVEL1_PASSWORD: 'secret1',
+    EXTERNAL_PORTAL_LEVEL2_USERNAME: 'user2',
+    EXTERNAL_PORTAL_LEVEL2_PASSWORD: 'secret2',
+    ECURO_ROBOT_API_KEY: 'api-key',
+    ECURO_MAPPING_ENABLED: 'false',
+    ECURO_MAPPING_MAX_PAGES: '10',
+    ECURO_ROBOT_VISUAL_MODE: 'false',
+    ECURO_ROBOT_VNC_ENABLED: 'false'
+  });
+
+  assert.equal(status.mappingEnabled, false);
+  assert.equal(status.mappingMaxPages, 10);
+  assert.equal(status.visualMode, false);
+  assert.equal(status.vncEnabled, false);
 });
