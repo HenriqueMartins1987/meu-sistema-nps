@@ -5134,6 +5134,8 @@ async function ensureDatabaseSchema() {
   await ensureColumn('nps_responses', 'linked_patient_interaction_id', 'INT NULL');
   await ensureColumn('nps_responses', 'whatsapp_conversation_id', 'INT NULL');
   await ensureColumn('nps_responses', 'whatsapp_nps_invite_id', 'INT NULL');
+  await ensureColumn('nps_responses', 'ecuro_nps_invite_id', 'BIGINT NULL');
+  await ensureColumn('nps_responses', 'whatsapp_inbound_message_id', 'VARCHAR(180) NULL');
   await ensureColumn('nps_responses', 'ip_address', 'VARCHAR(120) NULL');
   await ensureColumn('nps_responses', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
 
@@ -5611,14 +5613,19 @@ async function ensureDatabaseSchema() {
       clinic_name VARCHAR(180) NULL,
       patient_name VARCHAR(180) NULL,
       patient_phone VARCHAR(40) NULL,
+      patient_document VARCHAR(40) NULL,
       appointment_date DATE NULL,
       appointment_time VARCHAR(20) NULL,
       external_patient_id VARCHAR(120) NULL,
       external_status VARCHAR(120) NULL,
       completion_status VARCHAR(40) NOT NULL DEFAULT 'not_found',
+      eligibility_status VARCHAR(40) NULL,
       matched_by VARCHAR(40) NULL,
       confidence_score DECIMAL(5,2) NULL,
       agenda_item_id INT NULL,
+      last_consultation_date DATE NULL,
+      next_consultation_date DATE NULL,
+      source VARCHAR(80) NULL,
       raw_payload_json LONGTEXT NULL,
       checked_at DATETIME NULL,
       created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -5639,7 +5646,7 @@ async function ensureDatabaseSchema() {
       patient_phone VARCHAR(40) NULL,
       appointment_id INT NULL,
       ecuro_completion_id BIGINT NULL,
-      source VARCHAR(80) NOT NULL DEFAULT 'ecuro_robot',
+      source VARCHAR(80) NOT NULL DEFAULT 'ecuro_last_consultation',
       session_id VARCHAR(120) NOT NULL DEFAULT 'nps',
       status VARCHAR(40) NOT NULL DEFAULT 'pending',
       public_url TEXT NULL,
@@ -5662,6 +5669,29 @@ async function ensureDatabaseSchema() {
     )
   `);
   await ensureColumn('nps_invites', 'clinic_name', 'VARCHAR(180) NULL');
+  await ensureColumn('ecuro_patient_completion_status', 'patient_document', 'VARCHAR(40) NULL');
+  await ensureColumn('ecuro_patient_completion_status', 'eligibility_status', 'VARCHAR(40) NULL');
+  await ensureColumn('ecuro_patient_completion_status', 'last_consultation_date', 'DATE NULL');
+  await ensureColumn('ecuro_patient_completion_status', 'next_consultation_date', 'DATE NULL');
+  await ensureColumn('ecuro_patient_completion_status', 'source', 'VARCHAR(80) NULL');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS nps_whatsapp_inbound_events (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      message_id VARCHAR(180) NOT NULL,
+      session_id VARCHAR(120) NULL,
+      patient_phone VARCHAR(40) NULL,
+      message_text TEXT NULL,
+      processed_status VARCHAR(40) NOT NULL DEFAULT 'pending',
+      raw_payload_json LONGTEXT NULL,
+      nps_invite_id BIGINT NULL,
+      nps_response_id INT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_nps_whatsapp_inbound_message (message_id),
+      INDEX idx_nps_whatsapp_inbound_phone (patient_phone, created_at)
+    )
+  `);
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS agenda_item_completion_logs (
@@ -12894,6 +12924,12 @@ function normalizeEcuroAutomationDate(value, fallback = '') {
   return /^\d{4}-\d{2}-\d{2}$/.test(normalized) ? normalized : fallback;
 }
 
+function getEcuroAutomationTargetDate(value = null) {
+  const normalized = normalizeEcuroAutomationDate(value, '');
+  if (normalized) return normalized;
+  return addDaysToAgendaDateKey(getSaoPauloParts().dateKey, -1);
+}
+
 function normalizeEcuroAutomationLimit(value, fallback = 80, max = 300) {
   const numeric = Number(value || fallback);
   if (!Number.isFinite(numeric)) return fallback;
@@ -12949,106 +12985,66 @@ async function ensureEcuroNpsClinicScope(user, requestedClinicId = null) {
 }
 
 async function loadEcuroNpsAutomationCandidates(filters = {}, user = null) {
-  const where = [
-    'a.deleted_at IS NULL',
-    "a.demand_type = 'patient'",
-    'a.requires_completion = 1',
-    'a.clinic_id IS NOT NULL',
-    'a.patient_name IS NOT NULL',
-    "TRIM(a.patient_name) <> ''",
-    'a.patient_scheduled_at IS NOT NULL'
-  ];
-  const params = [];
   const clinicIds = Array.isArray(filters.clinicIds) ? filters.clinicIds.filter(Boolean) : [];
   if (user && !isAdminUser(user) && !clinicIds.length) {
     return [];
   }
+  const where = ['c.active = 1'];
+  const params = [];
   if (clinicIds.length) {
-    where.push('a.clinic_id IN (?)');
+    where.push('c.id IN (?)');
     params.push(clinicIds);
   }
 
-  const appointmentDate = normalizeEcuroAutomationDate(filters.appointmentDate);
-  const dateFrom = normalizeEcuroAutomationDate(filters.dateFrom);
-  const dateTo = normalizeEcuroAutomationDate(filters.dateTo);
-  if (appointmentDate) {
-    where.push('DATE(a.patient_scheduled_at) = ?');
-    params.push(appointmentDate);
-  } else if (dateFrom && dateTo) {
-    where.push('DATE(a.patient_scheduled_at) BETWEEN ? AND ?');
-    params.push(dateFrom, dateTo);
-  } else if (dateFrom) {
-    where.push('DATE(a.patient_scheduled_at) >= ?');
-    params.push(dateFrom);
-  } else if (dateTo) {
-    where.push('DATE(a.patient_scheduled_at) <= ?');
-    params.push(dateTo);
-  } else {
-    where.push('DATE(a.patient_scheduled_at) = ?');
-    params.push(getSaoPauloParts().dateKey);
-  }
-
-  const limit = normalizeEcuroAutomationLimit(filters.limit, 80, 300);
+  const appointmentDate = getEcuroAutomationTargetDate(filters.appointmentDate || filters.targetDate || null);
+  const limit = normalizeEcuroAutomationLimit(filters.limit, 30, 120);
   const [rows] = await pool.query(
     `SELECT
-       a.id AS agenda_item_id,
-       a.clinic_id,
-       a.clinic_name,
-       a.patient_name,
-       a.patient_phone,
-       a.source_external_id,
-       a.patient_scheduled_at,
-       a.owner_user_id,
-       a.assigned_user_id
-     FROM agenda_items a
+       c.id AS clinic_id,
+       c.name AS clinic_name,
+       e.external_clinic_id,
+       e.external_context_id,
+       e.external_clinic_public_id,
+       e.external_clinic_name
+     FROM clinics c
+     LEFT JOIN external_clinic_map e
+       ON e.clinic_id = c.id
+      AND e.active = 1
      WHERE ${where.join(' AND ')}
-     ORDER BY a.clinic_id ASC, a.patient_scheduled_at ASC, a.id ASC
+     ORDER BY c.name ASC
      LIMIT ?`,
     [...params, limit]
   );
 
   return rows.map((row) => ({
-    agenda_item_id: Number(row.agenda_item_id || 0) || null,
     clinic_id: Number(row.clinic_id || 0) || null,
     clinic_name: row.clinic_name || null,
-    patient_name: row.patient_name || null,
-    patient_phone: row.patient_phone || null,
-    external_patient_id: row.source_external_id || null,
-    appointment_date: formatAgendaAppointmentDateOnly(row.patient_scheduled_at) || null,
-    appointment_time: formatAgendaAppointmentTimeOnly(row.patient_scheduled_at) || null,
-    appointment_label: formatAgendaAppointmentLabel(row.patient_scheduled_at) || null,
-    owner_user_id: row.owner_user_id || null,
-    assigned_user_id: row.assigned_user_id || null
+    external_clinic_id: row.external_clinic_id || null,
+    external_context_id: row.external_context_id || null,
+    external_clinic_public_id: row.external_clinic_public_id || null,
+    external_clinic_name: row.external_clinic_name || row.clinic_name || null,
+    appointment_date: appointmentDate
   }));
 }
 
 function groupEcuroNpsCandidates(rows = []) {
-  const groups = new Map();
-  rows.forEach((row) => {
-    const clinicId = Number(row.clinic_id || 0) || 0;
-    const appointmentDate = normalizeEcuroAutomationDate(row.appointment_date, '');
-    if (!clinicId || !appointmentDate) return;
-    const key = `${clinicId}:${appointmentDate}`;
-    if (!groups.has(key)) {
-      groups.set(key, {
+  return rows
+    .map((row) => {
+      const clinicId = Number(row.clinic_id || 0) || 0;
+      const appointmentDate = normalizeEcuroAutomationDate(row.appointment_date, '');
+      if (!clinicId || !appointmentDate) return null;
+      return {
         clinicId,
         clinicName: row.clinic_name || null,
+        externalClinicName: row.external_clinic_name || row.clinic_name || null,
+        externalClinicId: row.external_clinic_id || null,
+        externalContextId: row.external_context_id || null,
+        externalClinicPublicId: row.external_clinic_public_id || null,
         appointmentDate,
         patients: []
-      });
-    }
-    groups.get(key).patients.push({
-      agendaItemId: row.agenda_item_id || null,
-      patientName: row.patient_name || '',
-      patientPhone: row.patient_phone || '',
-      clinicName: row.clinic_name || '',
-      appointmentDate,
-      appointmentTime: row.appointment_time || '',
-      externalPatientId: row.external_patient_id || '',
-      rawAgendaRow: row
-    });
-  });
-  return Array.from(groups.values());
+      };
+    })
+    .filter(Boolean);
 }
 
 async function insertEcuroRobotJobAudit({
@@ -13106,24 +13102,29 @@ async function updateEcuroRobotJobAudit(jobId, payload = {}) {
 async function insertEcuroCompletionStatusRow(jobId, row = {}) {
   const [result] = await pool.query(
     `INSERT INTO ecuro_patient_completion_status
-     (job_id, clinic_id, clinic_name, patient_name, patient_phone, appointment_date, appointment_time,
-      external_patient_id, external_status, completion_status, matched_by, confidence_score, agenda_item_id,
-      raw_payload_json, checked_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+     (job_id, clinic_id, clinic_name, patient_name, patient_phone, patient_document, appointment_date, appointment_time,
+      external_patient_id, external_status, completion_status, eligibility_status, matched_by, confidence_score, agenda_item_id,
+      last_consultation_date, next_consultation_date, source, raw_payload_json, checked_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
     [
       jobId,
       row.clinic_id || null,
       row.clinic_name || null,
       row.patient_name || null,
       row.patient_phone || null,
+      row.patient_document || null,
       normalizeEcuroAutomationDate(row.appointment_date, null),
       row.appointment_time || null,
       row.external_patient_id || null,
       row.external_status || null,
       row.completion_status || 'not_found',
+      row.eligibility_status || null,
       row.matched_by || null,
       row.confidence_score === null || typeof row.confidence_score === 'undefined' ? null : Number(row.confidence_score),
       row.agenda_item_id || null,
+      normalizeEcuroAutomationDate(row.last_consultation_date, null),
+      normalizeEcuroAutomationDate(row.next_consultation_date, null),
+      row.source || 'ecuro_last_consultation',
       row.raw_payload_json || null
     ]
   );
@@ -13169,7 +13170,7 @@ async function insertNpsInviteAuditRow(payload = {}) {
       payload.patient_phone || null,
       payload.appointment_id || null,
       payload.ecuro_completion_id || null,
-      payload.source || 'ecuro_robot',
+      payload.source || 'ecuro_last_consultation',
       payload.session_id || WHATSAPP_NPS_INSTANCE_NAME,
       payload.status || 'pending',
       payload.public_url || null,
@@ -13246,6 +13247,7 @@ async function insertWhatsAppServiceHistoryRow({
 async function createNpsInviteFromEcuroCompletion(completionRow = {}, options = {}) {
   const npsConfig = getNpsAutomationConfig();
   const resolvedPhone = normalizePhone(completionRow.patient_phone || '');
+  const inviteSource = String(completionRow.source || 'ecuro_last_consultation').trim() || 'ecuro_last_consultation';
   if (completionRow.completion_status !== 'completed' || !resolvedPhone.valid) {
     return { created: false, reason: resolvedPhone.valid ? 'not_completed' : 'missing_phone' };
   }
@@ -13270,7 +13272,7 @@ async function createNpsInviteFromEcuroCompletion(completionRow = {}, options = 
     patient_phone: resolvedPhone.normalized,
     appointment_id: completionRow.agenda_item_id || null,
     ecuro_completion_id: completionRow.id || null,
-    source: 'ecuro_robot',
+    source: inviteSource,
     session_id: npsConfig.sessionId,
     status: 'pending',
     public_url: null,
@@ -13287,7 +13289,7 @@ async function createNpsInviteFromEcuroCompletion(completionRow = {}, options = 
     patientPhone: resolvedPhone.normalized,
     inviteId,
     token,
-    source: 'ecuro_robot'
+    source: inviteSource
   });
   await updateNpsInviteAuditRow(inviteId, {
     public_url: publicUrl,
@@ -13305,6 +13307,302 @@ async function createNpsInviteFromEcuroCompletion(completionRow = {}, options = 
 async function loadNpsInviteRowById(inviteId) {
   const [rows] = await pool.query('SELECT * FROM nps_invites WHERE id = ? LIMIT 1', [inviteId]);
   return rows[0] || null;
+}
+
+function getNpsInboundWebhookSecret() {
+  return String(process.env.BACKEND_INBOUND_WEBHOOK_SECRET || '').trim();
+}
+
+function buildNpsInboundMessageId({ messageId = '', sessionId = '', phone = '', text = '', receivedAt = '' } = {}) {
+  const explicit = String(messageId || '').trim();
+  if (explicit) return explicit;
+  return `synthetic-${crypto.createHash('sha256').update([
+    String(sessionId || '').trim(),
+    String(phone || '').trim(),
+    String(text || '').trim(),
+    String(receivedAt || '').trim()
+  ].join('|')).digest('hex')}`;
+}
+
+function parseInboundNpsScore(text = '') {
+  const normalized = String(text || '').trim();
+  if (!/^\d{1,2}$/.test(normalized)) return null;
+  const numericScore = Number(normalized);
+  if (!Number.isInteger(numericScore) || numericScore < 0 || numericScore > 10) return null;
+  return numericScore;
+}
+
+function buildInboundNpsComment(text = '', receivedAt = new Date()) {
+  const normalized = String(text || '').trim();
+  if (!normalized) return '';
+  const timestamp = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  }).format(receivedAt);
+  return `[WhatsApp ${timestamp}] ${normalized}`;
+}
+
+async function findLatestNpsInviteByPhone(patientPhone = '', sessionId = '') {
+  const normalizedPhone = normalizeBrazilPhone(patientPhone || '');
+  if (!isCompleteBrazilPhone(normalizedPhone)) return null;
+  const [rows] = await pool.query(
+    `SELECT *
+       FROM nps_invites
+      WHERE patient_phone = ?
+        AND status IN ('pending', 'queued', 'sent', 'responded')
+      ORDER BY CASE WHEN session_id = ? THEN 0 ELSE 1 END, created_at DESC, id DESC
+      LIMIT 1`,
+    [normalizedPhone, String(sessionId || '').trim()]
+  );
+  return rows[0] || null;
+}
+
+async function loadNpsResponseByInvite(inviteId) {
+  if (!inviteId) return null;
+  const [rows] = await pool.query(
+    `SELECT *
+       FROM nps_responses
+      WHERE ecuro_nps_invite_id = ?
+      ORDER BY created_at DESC, id DESC
+      LIMIT 1`,
+    [inviteId]
+  );
+  return rows[0] || null;
+}
+
+async function insertNpsInboundEvent(payload = {}) {
+  try {
+    const [result] = await pool.query(
+      `INSERT INTO nps_whatsapp_inbound_events
+       (message_id, session_id, patient_phone, message_text, processed_status, raw_payload_json, nps_invite_id, nps_response_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        payload.messageId,
+        payload.sessionId || null,
+        payload.patientPhone || null,
+        payload.messageText || null,
+        payload.processedStatus || 'pending',
+        payload.rawPayloadJson || null,
+        payload.npsInviteId || null,
+        payload.npsResponseId || null
+      ]
+    );
+    return {
+      duplicate: false,
+      id: Number(result.insertId || 0) || null
+    };
+  } catch (error) {
+    if (error?.code === 'ER_DUP_ENTRY') {
+      const [rows] = await pool.query(
+        'SELECT * FROM nps_whatsapp_inbound_events WHERE message_id = ? LIMIT 1',
+        [payload.messageId]
+      );
+      return {
+        duplicate: true,
+        id: rows[0]?.id ? Number(rows[0].id) : null,
+        row: rows[0] || null
+      };
+    }
+    throw error;
+  }
+}
+
+async function updateNpsInboundEvent(eventId, payload = {}) {
+  if (!eventId) return;
+  await pool.query(
+    `UPDATE nps_whatsapp_inbound_events
+        SET processed_status = COALESCE(?, processed_status),
+            raw_payload_json = COALESCE(?, raw_payload_json),
+            nps_invite_id = COALESCE(?, nps_invite_id),
+            nps_response_id = COALESCE(?, nps_response_id),
+            updated_at = NOW()
+      WHERE id = ?`,
+    [
+      payload.processedStatus || null,
+      payload.rawPayloadJson || null,
+      payload.npsInviteId || null,
+      payload.npsResponseId || null,
+      eventId
+    ]
+  );
+}
+
+async function appendCommentToNpsResponse(responseRow, commentText, actor = { name: 'WhatsApp NPS', role: 'automacao' }) {
+  if (!responseRow?.id || !commentText) return responseRow;
+  const existingComment = String(responseRow.comment || '').trim();
+  const nextComment = existingComment ? `${existingComment}\n\n${commentText}` : commentText;
+  await pool.query(
+    'UPDATE nps_responses SET comment = ? WHERE id = ?',
+    [nextComment, responseRow.id]
+  );
+  await insertNpsLog(responseRow.id, 'comentario_whatsapp', 'Comentário complementar recebido via WhatsApp.', actor);
+  return {
+    ...responseRow,
+    comment: nextComment
+  };
+}
+
+async function createNpsResponseFromInvite(inviteRow, numericScore, options = {}) {
+  const classification = classifyNpsFeedback(
+    numericScore,
+    numericScore >= 9 ? 'elogio' : numericScore >= 7 ? 'sugestao' : 'reclamacao'
+  );
+  const npsProfile = inferNpsProfile(numericScore);
+  const [insertResult] = await pool.query(
+    `INSERT INTO nps_responses
+     (clinic_id, patient_name, patient_phone, score, comment, feedback_type, nps_profile, source, ecuro_nps_invite_id, whatsapp_inbound_message_id)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      inviteRow.clinic_id || null,
+      inviteRow.patient_name || null,
+      inviteRow.patient_phone || null,
+      numericScore,
+      options.initialComment || null,
+      classification,
+      npsProfile,
+      inviteRow.source || 'ecuro_last_consultation',
+      inviteRow.id,
+      options.whatsappInboundMessageId || null
+    ]
+  );
+  const responseId = Number(insertResult.insertId || 0) || null;
+  const protocol = formatNpsProtocol(responseId);
+  await pool.query(
+    'UPDATE nps_responses SET nps_protocol = ? WHERE id = ?',
+    [protocol, responseId]
+  );
+  await updateNpsInviteAuditRow(inviteRow.id, {
+    status: 'responded',
+    responded_at: toMysqlDateTime(options.receivedAt || new Date())
+  });
+  await insertNpsLog(responseId, 'created', `Resposta NPS recebida via WhatsApp e registrada no protocolo ${protocol}.`, {
+    name: 'WhatsApp NPS',
+    role: 'automacao'
+  });
+  const [rows] = await pool.query('SELECT * FROM nps_responses WHERE id = ? LIMIT 1', [responseId]);
+  return rows[0] || null;
+}
+
+async function processInboundNpsWhatsAppMessage(payload = {}) {
+  const sessionId = String(payload.sessionId || '').trim();
+  const patientPhone = normalizeBrazilPhone(payload.phone || payload.patientPhone || '');
+  const text = String(payload.text || payload.message || '').trim();
+  const receivedAt = payload.receivedAt ? new Date(payload.receivedAt) : new Date();
+
+  if (!sessionId || !isCompleteBrazilPhone(patientPhone) || !text) {
+    return { ignored: true, reason: 'missing_message_fields' };
+  }
+
+  const messageId = buildNpsInboundMessageId({
+    messageId: payload.messageId,
+    sessionId,
+    phone: patientPhone,
+    text,
+    receivedAt: receivedAt.toISOString()
+  });
+
+  const inboundEvent = await insertNpsInboundEvent({
+    messageId,
+    sessionId,
+    patientPhone,
+    messageText: text,
+    processedStatus: 'pending',
+    rawPayloadJson: JSON.stringify(payload.rawPayload || payload)
+  });
+
+  if (inboundEvent.duplicate) {
+    return {
+      ignored: true,
+      duplicate: true,
+      reason: 'duplicate_message',
+      inboundEventId: inboundEvent.id || null
+    };
+  }
+
+  const inviteRow = await findLatestNpsInviteByPhone(patientPhone, sessionId);
+  if (!inviteRow) {
+    await updateNpsInboundEvent(inboundEvent.id, {
+      processedStatus: 'ignored_no_invite'
+    });
+    return {
+      ignored: true,
+      reason: 'invite_not_found',
+      inboundEventId: inboundEvent.id
+    };
+  }
+
+  const numericScore = parseInboundNpsScore(text);
+  const existingResponse = await loadNpsResponseByInvite(inviteRow.id);
+
+  if (numericScore === null) {
+    if (!existingResponse) {
+      await updateNpsInboundEvent(inboundEvent.id, {
+        processedStatus: 'awaiting_score',
+        npsInviteId: inviteRow.id
+      });
+      return {
+        success: true,
+        pendingScore: true,
+        inviteId: inviteRow.id,
+        inboundEventId: inboundEvent.id
+      };
+    }
+
+    const appended = await appendCommentToNpsResponse(
+      existingResponse,
+      buildInboundNpsComment(text, receivedAt)
+    );
+    await updateNpsInboundEvent(inboundEvent.id, {
+      processedStatus: 'comment_recorded',
+      npsInviteId: inviteRow.id,
+      npsResponseId: appended.id
+    });
+    return {
+      success: true,
+      type: 'comment',
+      inviteId: inviteRow.id,
+      responseId: appended.id,
+      inboundEventId: inboundEvent.id
+    };
+  }
+
+  if (existingResponse) {
+    await updateNpsInboundEvent(inboundEvent.id, {
+      processedStatus: 'duplicate_score',
+      npsInviteId: inviteRow.id,
+      npsResponseId: existingResponse.id
+    });
+    return {
+      ignored: true,
+      reason: 'response_already_exists',
+      inviteId: inviteRow.id,
+      responseId: existingResponse.id,
+      inboundEventId: inboundEvent.id
+    };
+  }
+
+  const responseRow = await createNpsResponseFromInvite(inviteRow, numericScore, {
+    whatsappInboundMessageId: messageId,
+    receivedAt
+  });
+  await updateNpsInboundEvent(inboundEvent.id, {
+    processedStatus: 'responded',
+    npsInviteId: inviteRow.id,
+    npsResponseId: responseRow?.id || null
+  });
+
+  return {
+    success: true,
+    type: 'score',
+    inviteId: inviteRow.id,
+    responseId: responseRow?.id || null,
+    score: numericScore,
+    inboundEventId: inboundEvent.id
+  };
 }
 
 async function dispatchSingleEcuroNpsInvite(inviteRow, options = {}) {
@@ -13364,7 +13662,7 @@ async function dispatchSingleEcuroNpsInvite(inviteRow, options = {}) {
     patientPhone: normalizedPhone.normalized,
     inviteId: inviteRow.id,
     token: inviteRow.token,
-    source: inviteRow.source || 'ecuro_robot'
+    source: inviteRow.source || 'ecuro_last_consultation'
   });
   const clinicName = inviteRow.clinic_name || 'sua unidade';
   const messageText = buildNpsInviteMessage({
@@ -13583,11 +13881,10 @@ async function runEcuroNpsAutomation(options = {}) {
   const actor = options.user || null;
   const actorName = options.createdBy || getActorName(actor) || 'Automação NPS Ecuro';
   const clinicIds = Array.isArray(options.clinicIds) ? options.clinicIds.filter(Boolean) : [];
+  const targetDate = getEcuroAutomationTargetDate(options.appointmentDate || null);
   const candidates = await loadEcuroNpsAutomationCandidates({
     clinicIds,
-    appointmentDate: options.appointmentDate,
-    dateFrom: options.dateFrom,
-    dateTo: options.dateTo,
+    appointmentDate: targetDate,
     limit: options.limit
   }, actor);
   const grouped = groupEcuroNpsCandidates(candidates);
@@ -13595,6 +13892,7 @@ async function runEcuroNpsAutomation(options = {}) {
   const summary = {
     candidateCount: candidates.length,
     groups: grouped.length,
+    targetDate,
     jobs: [],
     completionRowsInserted: 0,
     completed: 0,
@@ -13602,6 +13900,12 @@ async function runEcuroNpsAutomation(options = {}) {
     notFound: 0,
     ambiguous: 0,
     errors: 0,
+    eligible: 0,
+    outOfDate: 0,
+    invalidPhone: 0,
+    duplicateRows: 0,
+    missingLastConsultation: 0,
+    clinicMismatch: 0,
     inviteCreated: 0,
     duplicates: 0,
     missingPhone: 0,
@@ -13624,6 +13928,10 @@ async function runEcuroNpsAutomation(options = {}) {
       robotResult = await callEcuroRobotCheckCompleted({
         clinicId: group.clinicId,
         clinicName: group.clinicName,
+        externalClinicName: group.externalClinicName || group.clinicName,
+        externalClinicId: group.externalClinicId || null,
+        externalContextId: group.externalContextId || null,
+        externalClinicPublicId: group.externalClinicPublicId || null,
         appointmentDate: group.appointmentDate,
         patients: group.patients
       });
@@ -13645,20 +13953,26 @@ async function runEcuroNpsAutomation(options = {}) {
 
       for (const result of jobResults) {
         const completionStatus = interpretEcuroCompletionStatus(result.completionStatus || result.completion_status || result.externalStatus || result.external_status);
+        const eligibilityStatus = String(result.eligibilityStatus || result.eligibility_status || '').trim().toLowerCase() || null;
         const agendaItemId = result.agendaItemId || result.agenda_item_id || result.rawAgendaRow?.agenda_item_id || null;
         const insertedId = await insertEcuroCompletionStatusRow(jobId, {
           clinic_id: group.clinicId,
-          clinic_name: group.clinicName,
+          clinic_name: result.clinicName || result.clinic_name || group.externalClinicName || group.clinicName,
           patient_name: result.patientName || result.patient_name || null,
           patient_phone: result.patientPhone || result.patient_phone || null,
-          appointment_date: result.appointmentDate || result.appointment_date || group.appointmentDate,
+          patient_document: result.document || result.patientDocument || result.patient_document || null,
+          appointment_date: result.appointmentDate || result.appointment_date || result.lastConsultationDate || result.last_consultation_date || group.appointmentDate,
           appointment_time: result.appointmentTime || result.appointment_time || null,
           external_patient_id: result.externalPatientId || result.external_patient_id || null,
           external_status: result.externalStatus || result.external_status || null,
           completion_status: completionStatus,
+          eligibility_status: eligibilityStatus,
           matched_by: result.matchedBy || result.matched_by || null,
           confidence_score: result.confidenceScore === undefined ? null : Number(result.confidenceScore || 0),
           agenda_item_id: agendaItemId,
+          last_consultation_date: result.lastConsultationDate || result.last_consultation_date || result.appointmentDate || result.appointment_date || group.appointmentDate,
+          next_consultation_date: result.nextConsultationDate || result.next_consultation_date || null,
+          source: result.source || 'ecuro_last_consultation',
           raw_payload_json: result.rawPayloadJson || result.raw_payload_json || JSON.stringify(result)
         });
         summary.completionRowsInserted += 1;
@@ -13667,6 +13981,12 @@ async function runEcuroNpsAutomation(options = {}) {
         else if (completionStatus === 'not_found') summary.notFound += 1;
         else if (completionStatus === 'ambiguous') summary.ambiguous += 1;
         else summary.errors += 1;
+        if (eligibilityStatus === 'eligible') summary.eligible += 1;
+        else if (eligibilityStatus === 'out_of_date') summary.outOfDate += 1;
+        else if (eligibilityStatus === 'invalid_phone') summary.invalidPhone += 1;
+        else if (eligibilityStatus === 'duplicate') summary.duplicateRows += 1;
+        else if (eligibilityStatus === 'missing_last_consultation') summary.missingLastConsultation += 1;
+        else if (eligibilityStatus === 'clinic_mismatch') summary.clinicMismatch += 1;
 
         if (completionStatus !== 'completed') {
           continue;
@@ -13675,11 +13995,12 @@ async function runEcuroNpsAutomation(options = {}) {
         const inviteCreation = await createNpsInviteFromEcuroCompletion({
           id: insertedId,
           clinic_id: group.clinicId,
-          clinic_name: group.clinicName,
+          clinic_name: result.clinicName || result.clinic_name || group.externalClinicName || group.clinicName,
           patient_name: result.patientName || result.patient_name || null,
           patient_phone: result.patientPhone || result.patient_phone || null,
           agenda_item_id: agendaItemId,
-          completion_status: completionStatus
+          completion_status: completionStatus,
+          source: result.source || 'ecuro_last_consultation'
         }, {
           createdBy: actorName
         });
@@ -13712,7 +14033,7 @@ async function runEcuroNpsAutomation(options = {}) {
     summary.jobs.push({
       id: jobId,
       clinic_id: group.clinicId,
-      clinic_name: group.clinicName,
+      clinic_name: group.externalClinicName || group.clinicName,
       appointment_date: group.appointmentDate,
       patient_count: group.patients.length,
       status: robotResult?.job?.status || robotResult?.status || 'failed'
@@ -13762,6 +14083,12 @@ async function loadEcuroNpsAutomationOverview(filters = {}, user = null) {
         totalAmbiguous: 0,
         totalError: 0,
         patientsWithoutPhone: 0,
+        totalEligible: 0,
+        totalOutOfDate: 0,
+        totalInvalidPhone: 0,
+        totalDuplicate: 0,
+        totalMissingLastConsultation: 0,
+        totalClinicMismatch: 0,
         pendingInvites: 0,
         queuedInvites: 0,
         sentInvites: 0,
@@ -13802,7 +14129,13 @@ async function loadEcuroNpsAutomationOverview(filters = {}, user = null) {
        SUM(CASE WHEN completion_status = 'not_found' THEN 1 ELSE 0 END) AS total_not_found,
        SUM(CASE WHEN completion_status = 'ambiguous' THEN 1 ELSE 0 END) AS total_ambiguous,
        SUM(CASE WHEN completion_status = 'error' THEN 1 ELSE 0 END) AS total_error,
-       SUM(CASE WHEN patient_phone IS NULL OR TRIM(patient_phone) = '' THEN 1 ELSE 0 END) AS patients_without_phone
+       SUM(CASE WHEN patient_phone IS NULL OR TRIM(patient_phone) = '' OR eligibility_status = 'invalid_phone' THEN 1 ELSE 0 END) AS patients_without_phone,
+       SUM(CASE WHEN eligibility_status = 'eligible' THEN 1 ELSE 0 END) AS total_eligible,
+       SUM(CASE WHEN eligibility_status = 'out_of_date' THEN 1 ELSE 0 END) AS total_out_of_date,
+       SUM(CASE WHEN eligibility_status = 'invalid_phone' THEN 1 ELSE 0 END) AS total_invalid_phone,
+       SUM(CASE WHEN eligibility_status = 'duplicate' THEN 1 ELSE 0 END) AS total_duplicate,
+       SUM(CASE WHEN eligibility_status = 'missing_last_consultation' THEN 1 ELSE 0 END) AS total_missing_last_consultation,
+       SUM(CASE WHEN eligibility_status = 'clinic_mismatch' THEN 1 ELSE 0 END) AS total_clinic_mismatch
      FROM ecuro_patient_completion_status
      WHERE checked_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
        ${clinicFilterSql}`,
@@ -13855,6 +14188,12 @@ async function loadEcuroNpsAutomationOverview(filters = {}, user = null) {
       totalAmbiguous: Number(completionSummaryRows[0]?.total_ambiguous || 0),
       totalError: Number(completionSummaryRows[0]?.total_error || 0),
       patientsWithoutPhone: Number(completionSummaryRows[0]?.patients_without_phone || 0),
+      totalEligible: Number(completionSummaryRows[0]?.total_eligible || 0),
+      totalOutOfDate: Number(completionSummaryRows[0]?.total_out_of_date || 0),
+      totalInvalidPhone: Number(completionSummaryRows[0]?.total_invalid_phone || 0),
+      totalDuplicate: Number(completionSummaryRows[0]?.total_duplicate || 0),
+      totalMissingLastConsultation: Number(completionSummaryRows[0]?.total_missing_last_consultation || 0),
+      totalClinicMismatch: Number(completionSummaryRows[0]?.total_clinic_mismatch || 0),
       pendingInvites: Number(inviteSummaryRows[0]?.pending_invites || 0),
       queuedInvites: Number(inviteSummaryRows[0]?.queued_invites || 0),
       sentInvites: Number(inviteSummaryRows[0]?.sent_invites || 0),
@@ -22914,6 +23253,20 @@ async function persistWhatsAppServiceMessageEvent(body = {}) {
     await autoAssignWhatsAppQueue({ name: 'Fila automática', role: 'system' });
   }
   const message = await getWhatsAppMessageById(messageId);
+  let npsInbound = null;
+  if (!inbound.fromMe) {
+    npsInbound = await processInboundNpsWhatsAppMessage({
+      sessionId: inbound.sessionId,
+      phone: inbound.phone,
+      text: inbound.text,
+      messageId: inbound.messageId,
+      receivedAt: new Date(),
+      rawPayload: body
+    }).catch((error) => ({
+      success: false,
+      error: sanitizeRobotError(error)
+    }));
+  }
   if (!inbound.fromMe && updatedConversation && message) {
     await processWhatsAppChatbotInbound({ conversation: updatedConversation, inboundMessage: message });
   }
@@ -22927,7 +23280,7 @@ async function persistWhatsAppServiceMessageEvent(body = {}) {
     response: body
   });
 
-  return { success: true, messageId, conversationId: conversation.id, direction: message.direction };
+  return { success: true, messageId, conversationId: conversation.id, direction: message.direction, npsInbound };
 }
 
 async function handleWhatsAppServiceEvents(req, res) {
@@ -25972,7 +26325,7 @@ async function runScheduledEcuroNpsAutomationSweep(now = new Date()) {
   ecuroNpsAutomationScheduleState.lastSlot = slotKey;
   return runEcuroNpsAutomation({
     createdBy: 'Sistema - Robô Ecuro',
-    appointmentDate: saoPaulo.dateKey,
+    appointmentDate: addDaysToAgendaDateKey(saoPaulo.dateKey, -1),
     dryRun: config.dryRun
   });
 }
@@ -32433,8 +32786,8 @@ app.post('/nps', async (req, res) => {
     const { clinic_id, patient_name, score, comment, feedback_type } = req.body;
     const numericScore = Number(score);
 
-    if (!Number.isInteger(numericScore) || numericScore < 1 || numericScore > 10) {
-      return res.status(400).json({ error: 'Informe uma nota NPS entre 1 e 10.' });
+    if (!Number.isInteger(numericScore) || numericScore < 0 || numericScore > 10) {
+      return res.status(400).json({ error: 'Informe uma nota NPS entre 0 e 10.' });
     }
 
     const classification = classifyNpsFeedback(score, feedback_type);
@@ -32475,6 +32828,42 @@ app.post('/nps', async (req, res) => {
   }
 });
 
+app.post('/nps/whatsapp/inbound', async (req, res) => {
+  try {
+    const configuredSecret = getNpsInboundWebhookSecret();
+    if (configuredSecret) {
+      const providedSecret = String(
+        req.headers['x-webhook-secret']
+        || req.headers['x-api-key']
+        || req.headers.authorization || ''
+      ).replace(/^Bearer\s+/i, '').trim();
+      if (providedSecret !== configuredSecret) {
+        return res.status(401).json({ error: 'Webhook NPS não autorizado.' });
+      }
+    }
+
+    const payload = await processInboundNpsWhatsAppMessage({
+      sessionId: req.body?.sessionId || req.body?.session_id || '',
+      phone: req.body?.phone || req.body?.patient_phone || '',
+      text: req.body?.message || req.body?.text || '',
+      messageId: req.body?.messageId || req.body?.message_id || '',
+      receivedAt: req.body?.timestamp || req.body?.receivedAt || null,
+      rawPayload: req.body || {}
+    });
+
+    return res.json({
+      success: true,
+      payload
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      error: 'Erro ao processar resposta NPS via WhatsApp.',
+      detail: sanitizeRobotError(error)
+    });
+  }
+});
+
 app.post('/nps/public', async (req, res) => {
   try {
     const {
@@ -32499,8 +32888,8 @@ app.post('/nps/public', async (req, res) => {
     } = req.body;
     const numericScore = Number(score);
 
-    if (!Number.isInteger(numericScore) || numericScore < 1 || numericScore > 10) {
-      return res.status(400).json({ error: 'Informe uma nota NPS entre 1 e 10.' });
+    if (!Number.isInteger(numericScore) || numericScore < 0 || numericScore > 10) {
+      return res.status(400).json({ error: 'Informe uma nota NPS entre 0 e 10.' });
     }
 
     if (!clinic_id || !patient_name || !isCompleteBrazilPhone(patient_phone)) {
@@ -32586,8 +32975,8 @@ app.post('/nps/public', async (req, res) => {
 
     const [npsInsert] = await pool.query(
       `INSERT INTO nps_responses
-       (clinic_id, patient_name, patient_phone, score, comment, feedback_type, nps_profile, recommend_yes, contact_share_allowed, referral_name, referral_phone, improvement_comment, detractor_reasons, detractor_feedback, source, ip_address, whatsapp_conversation_id, whatsapp_nps_invite_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (clinic_id, patient_name, patient_phone, score, comment, feedback_type, nps_profile, recommend_yes, contact_share_allowed, referral_name, referral_phone, improvement_comment, detractor_reasons, detractor_feedback, source, ip_address, whatsapp_conversation_id, whatsapp_nps_invite_id, ecuro_nps_invite_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         clinic_id || null,
         patient_name || null,
@@ -32605,12 +32994,13 @@ app.post('/nps/public', async (req, res) => {
         detractor_feedback || null,
         source === 'whatsapp_atendimento'
           ? 'whatsapp_atendimento'
-          : source === 'ecuro_robot'
-            ? 'ecuro_robot'
+          : ['ecuro_robot', 'ecuro_last_consultation'].includes(String(source || '').trim())
+            ? String(source || '').trim()
             : 'link_publico',
         requestIp || null,
         whatsappConversationId,
-        whatsappNpsInviteId
+        whatsappNpsInviteId,
+        ecuroNpsInviteId
       ]
     );
 

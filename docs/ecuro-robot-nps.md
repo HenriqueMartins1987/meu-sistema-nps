@@ -2,14 +2,25 @@
 
 ## Visão geral
 
-O fluxo automático de NPS consulta o Ecuro por navegador, identifica pacientes concluídos e cria convites NPS enviados exclusivamente pela VPS de WhatsApp via `whatsappProvider.sendText()`.
+O fluxo automático de NPS consulta o Ecuro por navegador, abre diretamente `https://ecuro.com.br/dashboard/patients` e usa a coluna `ÚLTIMA CONSULTA` como regra principal de elegibilidade.
+
+Regra atual:
+
+- o robô autentica em dois níveis;
+- navega para `/dashboard/patients`;
+- identifica a clínica selecionada no topo;
+- coleta a tabela de pacientes;
+- considera elegível somente quem possui `ÚLTIMA CONSULTA = ontem` no fuso `America/Sao_Paulo`;
+- cria convites NPS com `source=ecuro_last_consultation`;
+- envia pelo WhatsApp da VPS usando `whatsappProvider.sendText()`;
+- recebe respostas pelo link público e também por resposta direta no WhatsApp.
 
 Camadas:
 
 - `backend/robot/ecuroRobotServer.js`: API interna protegida do robô.
-- `backend/services/ecuroRobotService.js`: Playwright, login, coleta e matching.
-- `backend/services/ecuroCompletionService.js`: integração com backend principal, NPS, idempotência e janela de envio.
-- `backend/migrations/2026-06-29-ecuro-robot-nps.sql`: tabelas de jobs, status de conclusão e convites.
+- `backend/services/ecuroRobotService.js`: Playwright, login, navegação, leitura da tabela e elegibilidade.
+- `backend/services/ecuroCompletionService.js`: integração com backend principal, link público, janela de envio e idempotência.
+- `backend/server.js`: orquestração, fila de convites, auditoria e webhook inbound.
 
 ## Variáveis obrigatórias
 
@@ -28,10 +39,14 @@ Camadas:
 - `ECURO_ROBOT_API_KEY`
 - `ECURO_ROBOT_HOST=127.0.0.1`
 - `ECURO_ROBOT_PORT=3010`
-- `ECURO_ROBOT_SERVICE_URL=http://127.0.0.1:3010`
+- `ECURO_ROBOT_SERVICE_URL=http://2.24.101.6:3010`
+- `ECURO_ROBOT_SERVICE_TIMEOUT_MS=60000`
 - `ECURO_ROBOT_CRON=0 19 * * 1-6`
 - `ECURO_ROBOT_DRY_RUN=true`
-- `NPS_WHATSAPP_SESSION_ID=reclamacoes` (temporário; após homologação, voltar para `nps`)
+- `ECURO_MAX_PAGES_PER_RUN=20`
+- `ECURO_MAX_PATIENTS_PER_RUN=1000`
+- `ECURO_STOP_WHEN_OLDER_THAN_TARGET=true`
+- `NPS_WHATSAPP_SESSION_ID=reclamacoes`
 - `NPS_PUBLIC_URL=https://meu-sistema-nps-three.vercel.app/nps`
 - `NPS_DISPATCH_ENABLED=true`
 - `NPS_DISPATCH_WINDOW_START=08:00`
@@ -41,48 +56,11 @@ Camadas:
 - `NPS_DUPLICATE_BLOCK_HOURS=24`
 - `WHATSAPP_API_URL`
 - `WHATSAPP_API_KEY`
+- `BACKEND_INBOUND_WEBHOOK_SECRET`
 
-## Subida local / VPS
-
-### Backend principal
-
-```bash
-cd backend
-npm install
-npm start
-```
+## Endpoints internos
 
 ### Robô Ecuro
-
-```bash
-cd backend
-npm install
-npm run robot:install-browser
-npm run robot:server
-```
-
-## PM2
-
-```bash
-pm2 start npm --name meu-sistema-nps-backend -- run start
-pm2 start npm --name ecuro-robot-service -- run robot:server
-pm2 save
-```
-
-## Docker
-
-Exemplo de entrypoints:
-
-- backend principal: `node server.js`
-- robô Ecuro: `node robot/ecuroRobotServer.js`
-
-Antes de subir a imagem do robô, instalar o Chromium do Playwright:
-
-```bash
-npx playwright install chromium
-```
-
-## Endpoints internos do robô
 
 Todos exigem `x-api-key: ECURO_ROBOT_API_KEY`.
 
@@ -94,15 +72,58 @@ Todos exigem `x-api-key: ECURO_ROBOT_API_KEY`.
 - `GET /ecuro/jobs/:id`
 - `POST /ecuro/jobs/:id/retry`
 
+### Backend principal
+
+- `GET /nps/automation/overview`
+- `POST /nps/automation/test-login`
+- `POST /nps/automation/run`
+- `POST /nps/automation/reprocess-failures`
+- `POST /nps/public`
+- `POST /nps/whatsapp/inbound`
+
+## Webhook inbound do WhatsApp
+
+Quando o `whatsapp-service` receber mensagem do paciente, ele deve chamar:
+
+```text
+POST /nps/whatsapp/inbound
+```
+
+Headers:
+
+- `x-webhook-secret: BACKEND_INBOUND_WEBHOOK_SECRET`
+
+Payload mínimo:
+
+```json
+{
+  "sessionId": "reclamacoes",
+  "phone": "+5562999999999",
+  "message": "10",
+  "messageId": "wamid-123",
+  "timestamp": "2026-06-30T14:15:00-03:00"
+}
+```
+
+Comportamento:
+
+- se a mensagem for `0` a `10`, cria a resposta NPS;
+- se vier texto depois da nota, grava comentário complementar;
+- deduplica por `messageId`;
+- atualiza `nps_invites` para `responded`.
+
 ## Checklist de homologação
 
-1. Validar `GET /health` do robô.
-2. Executar `POST /ecuro/login-test`.
-3. Rodar `POST /ecuro/check-completed` com clínica e data controladas.
-4. Confirmar gravação em `ecuro_robot_jobs`.
-5. Confirmar gravação em `ecuro_patient_completion_status`.
-6. Validar criação de `nps_invites`.
-7. Com `ECURO_ROBOT_DRY_RUN=true`, confirmar que nenhum WhatsApp é enviado.
-8. Com `ECURO_ROBOT_DRY_RUN=false`, validar envio unitário pela sessão `NPS_WHATSAPP_SESSION_ID`.
-9. Abrir o link público e confirmar que a resposta grava no painel NPS.
-10. Verificar se nenhum item foi criado indevidamente no módulo de reclamações.
+1. Validar `GET /health` do backend principal.
+2. Validar `GET /health` do robô Ecuro.
+3. Executar `POST /nps/automation/test-login`.
+4. Rodar `POST /nps/automation/run` com `ECURO_ROBOT_DRY_RUN=true`.
+5. Confirmar leitura da clínica e da coluna `ÚLTIMA CONSULTA`.
+6. Confirmar totais de elegíveis, fora da data, sem telefone e duplicados.
+7. Validar gravação em `ecuro_robot_jobs`.
+8. Validar gravação em `ecuro_patient_completion_status`.
+9. Confirmar criação de `nps_invites` apenas para elegíveis com telefone válido.
+10. Desativar o dry-run e fazer envio unitário controlado.
+11. Abrir o link público e confirmar a gravação em `nps_responses`.
+12. Responder também pelo WhatsApp e confirmar atualização do mesmo convite.
+13. Verificar se nenhuma reclamação foi criada indevidamente.

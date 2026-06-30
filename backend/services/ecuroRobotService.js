@@ -16,54 +16,82 @@ const DEFAULT_SELECTORS = {
     manualActionIndicators: ['text=/captcha/i', 'text=/2fa/i', 'text=/verifica/i', 'text=/c[oó]digo/i']
   },
   navigation: {
-    completedPagePath: '',
-    agendaMenu: ['a:has-text("Agenda")', 'button:has-text("Agenda")', '[href*="agenda"]'],
-    patientsMenu: ['a:has-text("Pacientes")', 'button:has-text("Pacientes")', '[href*="patients"]'],
-    reportsMenu: ['a:has-text("Relat")', 'button:has-text("Relat")', '[href*="report"]'],
-    clinicFilter: ['select[name="clinic"]', 'input[name="clinic"]', '[data-testid="clinic-filter"]'],
+    completedPagePath: 'https://ecuro.com.br/dashboard/patients',
+    currentClinic: [
+      '[data-testid="clinic-current"]',
+      'header [class*="clinic"]',
+      'header [class*="unit"]',
+      'header strong',
+      'main h1',
+      'main h2'
+    ],
+    clinicSelector: [
+      '[data-testid="clinic-selector"]',
+      'button[aria-haspopup="listbox"]',
+      'header button',
+      'header [role="button"]'
+    ],
+    clinicFilter: [
+      'input[name="clinic"]',
+      'input[placeholder*="Clinica"]',
+      'input[placeholder*="clínica"]',
+      'input[placeholder*="Unidade"]',
+      'input[placeholder*="Pesquisar"]',
+      'input[type="search"]',
+      '[data-testid="clinic-filter"]'
+    ],
+    clinicOptions: ['[role="option"]', '.v-list-item', 'li'],
     dateFilter: ['input[name="date"]', 'input[type="date"]', '[data-testid="date-filter"]'],
     searchField: ['input[name="search"]', 'input[type="search"]', '[placeholder*="paciente"]'],
-    statusFilter: ['select[name="status"]', '[data-testid="status-filter"]'],
-    applyFilters: ['button:has-text("Filtrar")', 'button:has-text("Buscar")', 'button:has-text("Aplicar")']
+    applyFilters: ['button:has-text("Filtrar")', 'button:has-text("Buscar")', 'button:has-text("Aplicar")'],
+    nextPage: [
+      'button[aria-label*="Next"]',
+      'button[aria-label*="Próxima"]',
+      'button[aria-label*="Proxima"]',
+      'button:has-text("Próxima")',
+      'button:has-text("Proxima")',
+      '.v-pagination__next button',
+      '[data-testid="pagination-next"]'
+    ],
+    paginationSummary: ['text=/\\d+\\s*-\\s*\\d+\\s+de\\s+\\d+/i', '.v-data-footer__pagination']
   },
   results: {
-    rows: ['table tbody tr', '[role="row"]', '.table-row', '.agenda-row'],
-    patientName: ['[data-col="patient"]', '[data-column="patientName"]', '.patient-name', '.name'],
-    patientPhone: ['[data-col="phone"]', '[data-column="phone"]', '.patient-phone', '.phone'],
-    appointmentDate: ['[data-col="date"]', '[data-column="date"]', '.appointment-date', '.date'],
-    appointmentTime: ['[data-col="time"]', '[data-column="time"]', '.appointment-time', '.time'],
-    externalPatientId: ['[data-col="id"]', '[data-column="externalId"]', '.external-id', '.patient-id'],
-    clinicName: ['[data-col="clinic"]', '[data-column="clinic"]', '.clinic-name', '.clinic'],
-    status: ['[data-col="status"]', '[data-column="status"]', '.status', '.appointment-status']
+    tables: ['table'],
+    headers: ['thead th', 'thead td'],
+    rows: ['tbody tr'],
+    emptyStates: ['text=/nenhum registro/i', 'text=/sem registros/i', 'text=/no results/i']
   }
 };
 
-const COMPLETED_STATUS_KEYWORDS = [
-  'concluido',
-  'concluida',
-  'finalizado',
-  'finalizada',
-  'atendido',
-  'atendida',
-  'compareceu',
-  'encerrado',
-  'encerrada',
-  'realizado',
-  'realizada'
-];
+const PATIENT_TABLE_HEADER_MATCHERS = {
+  patientFirstName: [{ includes: 'primeiro nome' }],
+  patientLastName: [{ includes: 'sobrenome' }],
+  document: [{ exact: 'cpf' }],
+  externalPatientId: [{ exact: 'id' }],
+  patientPhone: [
+    { includes: 'numero de telef' },
+    { includes: 'numero de telefone' },
+    { includes: 'telefone' },
+    { includes: 'whatsapp' }
+  ],
+  birthDate: [
+    { includes: 'data de nascimento' },
+    { includes: 'data de nasc' }
+  ],
+  registrationDate: [{ includes: 'data de cadastro' }],
+  lastConsultationDate: [{ includes: 'ultima consulta' }],
+  nextConsultationDate: [{ includes: 'proxima consulta' }]
+};
 
-const NOT_COMPLETED_STATUS_KEYWORDS = [
-  'agendado',
-  'agendada',
-  'pendente',
-  'remarcado',
-  'remarcada',
-  'cancelado',
-  'cancelada',
-  'faltou',
-  'nao compareceu',
-  'não compareceu'
-];
+const ELIGIBILITY_TO_COMPLETION_STATUS = {
+  eligible: 'completed',
+  out_of_date: 'not_completed',
+  invalid_phone: 'not_completed',
+  duplicate: 'ambiguous',
+  missing_last_consultation: 'not_found',
+  clinic_mismatch: 'error',
+  error: 'error'
+};
 
 function onlyDigits(value) {
   return String(value ?? '').replace(/\D/g, '');
@@ -110,16 +138,16 @@ function readSelectorsConfig(env = process.env) {
     try {
       const filePayload = JSON.parse(fs.readFileSync(path.resolve(rawFile), 'utf8'));
       selectors = mergeDeep(selectors, filePayload);
-    } catch (error) {
-      // Ignore malformed optional selector override file.
+    } catch (_error) {
+      // Optional override file.
     }
   }
 
   if (rawJson) {
     try {
       selectors = mergeDeep(selectors, JSON.parse(rawJson));
-    } catch (error) {
-      // Ignore malformed optional inline selector override payload.
+    } catch (_error) {
+      // Optional inline override payload.
     }
   }
 
@@ -154,7 +182,10 @@ function getEcuroRobotConfig(env = process.env) {
     cron: String(env.ECURO_ROBOT_CRON || '0 19 * * 1-6').trim() || '0 19 * * 1-6',
     selectors: readSelectorsConfig(env),
     userAgent: String(env.ECURO_ROBOT_USER_AGENT || '').trim(),
-    manualActionPattern: /captcha|two[\s-]?factor|2fa|verifica[cç][aã]o|c[oó]digo/i
+    manualActionPattern: /captcha|two[\s-]?factor|2fa|verifica[cç][aã]o|c[oó]digo/i,
+    maxPagesPerRun: Math.max(1, Number(env.ECURO_MAX_PAGES_PER_RUN || 20) || 20),
+    maxPatientsPerRun: Math.max(1, Number(env.ECURO_MAX_PATIENTS_PER_RUN || 1000) || 1000),
+    stopWhenOlderThanTarget: toBoolean(env.ECURO_STOP_WHEN_OLDER_THAN_TARGET, true)
   };
 }
 
@@ -179,15 +210,21 @@ function getEcuroRobotConfigStatus(env = process.env) {
     profileDir: config.profileDir,
     screenshotDir: config.screenshotDir,
     htmlDir: config.htmlDir,
-    apiKeyConfigured: Boolean(config.apiKey)
+    apiKeyConfigured: Boolean(config.apiKey),
+    maxPagesPerRun: config.maxPagesPerRun,
+    maxPatientsPerRun: config.maxPatientsPerRun,
+    stopWhenOlderThanTarget: config.stopWhenOlderThanTarget
   };
 }
 
 function normalizeEcuroCompletionStatus(value) {
   const normalized = normalizeText(value || '');
   if (!normalized) return 'unknown';
-  if (COMPLETED_STATUS_KEYWORDS.some((keyword) => normalized.includes(keyword))) return 'completed';
-  if (NOT_COMPLETED_STATUS_KEYWORDS.some((keyword) => normalized.includes(keyword))) return 'not_completed';
+  if (['eligible', 'completed', 'concluido', 'concluida', 'atendido', 'atendida', 'compareceu'].some((token) => normalized.includes(token))) return 'completed';
+  if (['out_of_date', 'not_completed', 'invalid_phone'].some((token) => normalized.includes(token))) return 'not_completed';
+  if (['missing_last_consultation', 'not_found'].some((token) => normalized.includes(token))) return 'not_found';
+  if (['duplicate', 'ambiguous', 'ambiguo'].some((token) => normalized.includes(token))) return 'ambiguous';
+  if (['clinic_mismatch', 'error', 'manual_action_required'].some((token) => normalized.includes(token))) return 'error';
   return 'unknown';
 }
 
@@ -230,6 +267,12 @@ class EcuroRobotJobStore {
       totalNotCompleted: 0,
       totalAmbiguous: 0,
       totalNotFound: 0,
+      totalEligible: 0,
+      totalInvalidPhone: 0,
+      totalOutOfDate: 0,
+      totalDuplicate: 0,
+      totalMissingLastConsultation: 0,
+      totalClinicMismatch: 0,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       startedAt: null,
@@ -266,7 +309,7 @@ class EcuroRobotJobStore {
 
 const jobStore = new EcuroRobotJobStore();
 
-function buildManualActionError(message = 'Ação manual necessária no Ecuro.') {
+function buildManualActionError(message = 'Manual action required in Ecuro.') {
   const error = new Error(message);
   error.code = 'manual_action_required';
   return error;
@@ -283,14 +326,14 @@ async function saveRobotArtifacts(page, config, jobId, reason = 'error') {
   try {
     await page.screenshot({ path: screenshotPath, fullPage: true });
     artifacts.push({ type: 'screenshot', path: screenshotPath });
-  } catch (error) {
+  } catch (_error) {
     // Ignore artifact persistence issues.
   }
 
   try {
     fs.writeFileSync(htmlPath, await page.content(), 'utf8');
     artifacts.push({ type: 'html', path: htmlPath });
-  } catch (error) {
+  } catch (_error) {
     // Ignore artifact persistence issues.
   }
 
@@ -304,7 +347,7 @@ async function firstVisibleLocator(page, selectors = []) {
       if (await locator.isVisible({ timeout: 1200 })) {
         return { selector, locator };
       }
-    } catch (error) {
+    } catch (_error) {
       // Keep trying the next selector candidate.
     }
   }
@@ -363,7 +406,7 @@ async function detectManualActionRequired(page, config) {
 
 async function performEcuroBrowserLogin(page, config) {
   if (config.mode !== 'browser') {
-    throw new Error(`Modo ${config.mode} não suportado pelo robô de navegador.`);
+    throw new Error(`Unsupported Ecuro robot mode: ${config.mode}.`);
   }
 
   await page.goto(config.baseUrl, { waitUntil: 'domcontentloaded', timeout: config.timeoutMs });
@@ -402,10 +445,144 @@ async function performEcuroBrowserLogin(page, config) {
   }
 
   if (!(await isAuthenticated(page, config.selectors))) {
-    throw new Error('Não foi possível confirmar a autenticação no Ecuro.');
+    throw new Error('Could not confirm Ecuro authentication.');
   }
 
   return { authenticated: true, reusedSession: false };
+}
+
+function getDateKeyInSaoPaulo(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit'
+  }).formatToParts(date).reduce((acc, part) => {
+    acc[part.type] = part.value;
+    return acc;
+  }, {});
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+function parseDateKeyToUtc(dateKey) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(dateKey || ''))) return null;
+  return new Date(`${dateKey}T12:00:00Z`);
+}
+
+function shiftDateKey(dateKey, days = 0) {
+  const base = parseDateKeyToUtc(dateKey);
+  if (!base) return '';
+  base.setUTCDate(base.getUTCDate() + Number(days || 0));
+  return `${base.getUTCFullYear()}-${String(base.getUTCMonth() + 1).padStart(2, '0')}-${String(base.getUTCDate()).padStart(2, '0')}`;
+}
+
+function getYesterdaySaoPauloDateKey(date = new Date()) {
+  return shiftDateKey(getDateKeyInSaoPaulo(date), -1);
+}
+
+function normalizeBrazilianDate(value) {
+  const raw = String(value || '').trim();
+  if (!raw || raw === '-' || raw.toLowerCase() === 'null') return '';
+
+  const isoMatch = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) return `${isoMatch[1]}-${isoMatch[2]}-${isoMatch[3]}`;
+
+  const brMatch = raw.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/);
+  if (brMatch) {
+    const day = String(brMatch[1]).padStart(2, '0');
+    const month = String(brMatch[2]).padStart(2, '0');
+    const year = String(brMatch[3]).length === 2 ? `20${brMatch[3]}` : brMatch[3];
+    return `${year}-${month}-${day}`;
+  }
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return getDateKeyInSaoPaulo(parsed);
+  }
+
+  return '';
+}
+
+function isLikelyClinicName(value = '') {
+  const text = String(value || '').trim();
+  if (!text || text.length < 10 || text.length > 180) return false;
+  return /^[A-Z0-9]{4,}\s*-\s+.+/i.test(text) || text.split('-').length >= 3;
+}
+
+async function extractCurrentClinicName(page, config) {
+  const explicitTarget = await firstVisibleLocator(page, config.selectors.navigation.currentClinic || []);
+  if (explicitTarget) {
+    const text = String(await explicitTarget.locator.innerText().catch(() => '')).trim();
+    if (isLikelyClinicName(text)) return text;
+  }
+
+  const text = await page.evaluate(() => {
+    const roots = Array.from(document.querySelectorAll('header, main, nav')).slice(0, 12);
+    const candidates = [];
+    roots.forEach((root) => {
+      root.querySelectorAll('*').forEach((element) => {
+        const value = String(element.innerText || '').trim();
+        if (value) candidates.push(value);
+      });
+    });
+    return candidates.find((value) => /^[A-Z0-9]{4,}\s*-\s+.+/i.test(value) || value.split('-').length >= 3) || '';
+  }).catch(() => '');
+
+  return String(text || '').trim();
+}
+
+function clinicNamesMatch(currentClinicName = '', expectedClinicName = '') {
+  const current = normalizeText(currentClinicName);
+  const expected = normalizeText(expectedClinicName);
+  if (!current || !expected) return false;
+  return current === expected || current.includes(expected) || expected.includes(current);
+}
+
+async function ensureClinicSelection(page, config, expectedClinicName = '') {
+  let currentClinicName = await extractCurrentClinicName(page, config);
+  if (!expectedClinicName) {
+    return {
+      clinicName: currentClinicName || '',
+      matched: Boolean(currentClinicName),
+      changed: false
+    };
+  }
+
+  if (clinicNamesMatch(currentClinicName, expectedClinicName)) {
+    return {
+      clinicName: currentClinicName,
+      matched: true,
+      changed: false
+    };
+  }
+
+  let changed = false;
+  const filled = await fillFirstVisible(page, config.selectors.navigation.clinicFilter || [], expectedClinicName);
+  if (filled) {
+    changed = true;
+    const target = await firstVisibleLocator(page, config.selectors.navigation.clinicFilter || []);
+    if (target) {
+      await target.locator.press('Enter').catch(() => null);
+      await waitForPostSubmit(page);
+    }
+  }
+
+  if (!filled && await clickFirstVisible(page, config.selectors.navigation.clinicSelector || [])) {
+    changed = true;
+    await waitForPostSubmit(page);
+    const option = page.getByText(expectedClinicName, { exact: false }).first();
+    if (await option.isVisible().catch(() => false)) {
+      await option.click().catch(() => null);
+      await waitForPostSubmit(page);
+    }
+  }
+
+  currentClinicName = await extractCurrentClinicName(page, config);
+  return {
+    clinicName: currentClinicName || expectedClinicName,
+    matched: clinicNamesMatch(currentClinicName, expectedClinicName),
+    changed
+  };
 }
 
 async function navigateToCompletionScreen(page, config) {
@@ -419,93 +596,343 @@ async function navigateToCompletionScreen(page, config) {
     return;
   }
 
-  const navigationSelectors = [
-    ...config.selectors.navigation.agendaMenu,
-    ...config.selectors.navigation.patientsMenu,
-    ...config.selectors.navigation.reportsMenu
-  ];
-
-  if (await clickFirstVisible(page, navigationSelectors)) {
+  if (await clickFirstVisible(page, config.selectors.navigation.patientsMenu || [])) {
     await waitForPostSubmit(page);
   }
 }
 
 async function applyFilters(page, config, payload = {}) {
-  if (payload.clinicName) {
-    await fillFirstVisible(page, config.selectors.navigation.clinicFilter, payload.clinicName);
+  if (payload.search) {
+    await fillFirstVisible(page, config.selectors.navigation.searchField, payload.search);
   }
   if (payload.appointmentDate) {
     await fillFirstVisible(page, config.selectors.navigation.dateFilter, payload.appointmentDate);
   }
-  if (payload.search) {
-    await fillFirstVisible(page, config.selectors.navigation.searchField, payload.search);
+  if (await clickFirstVisible(page, config.selectors.navigation.applyFilters || [])) {
+    await waitForPostSubmit(page);
   }
-  if (payload.status) {
-    await fillFirstVisible(page, config.selectors.navigation.statusFilter, payload.status);
-  }
-
-  await clickFirstVisible(page, config.selectors.navigation.applyFilters);
-  await waitForPostSubmit(page);
 }
 
-function parseRowTextHeuristics(rowText = '') {
-  const tokens = String(rowText || '')
-    .split(/\n+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-
-  const statusToken = tokens.find((item) => normalizeEcuroCompletionStatus(item) !== 'unknown') || '';
-  const phoneToken = tokens.find((item) => normalizePhone(item).valid) || '';
-  const timeToken = tokens.find((item) => /\b\d{1,2}:\d{2}\b/.test(item)) || '';
-  const dateToken = tokens.find((item) => /\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/.test(item) || /\b\d{4}-\d{2}-\d{2}\b/.test(item)) || '';
-  const externalIdToken = tokens.find((item) => /^[A-Z0-9-]{4,20}$/i.test(item)) || '';
-  const patientNameToken = tokens.find((item) => {
-    const normalized = normalizeText(item);
-    return normalized
-      && !phoneToken.includes(item)
-      && !timeToken.includes(item)
-      && !dateToken.includes(item)
-      && normalizeEcuroCompletionStatus(normalized) === 'unknown'
-      && /[a-zà-ÿ]{2,}/i.test(item)
-      && item.split(/\s+/).length >= 2;
-  }) || tokens[0] || '';
-
-  return {
-    patientName: patientNameToken,
-    patientPhone: phoneToken,
-    appointmentDate: dateToken,
-    appointmentTime: timeToken,
-    externalPatientId: externalIdToken,
-    externalStatus: statusToken
-  };
+function normalizeHeaderLabel(value = '') {
+  return normalizeText(String(value || '').replace(/\s+/g, ' ').trim());
 }
 
-async function extractCompletionRows(page, config) {
-  const rowSelectors = config.selectors.results.rows || [];
-  for (const selector of rowSelectors) {
+function findHeaderIndex(headers = [], matcherList = []) {
+  const normalizedHeaders = headers.map((header) => normalizeHeaderLabel(header));
+  for (const matcher of matcherList) {
+    const index = normalizedHeaders.findIndex((header) => {
+      if (matcher.exact) return header === normalizeHeaderLabel(matcher.exact);
+      if (matcher.includes) return header.includes(normalizeHeaderLabel(matcher.includes));
+      return false;
+    });
+    if (index >= 0) return index;
+  }
+  return -1;
+}
+
+function resolvePatientTableHeaderIndexes(headers = []) {
+  return Object.fromEntries(
+    Object.entries(PATIENT_TABLE_HEADER_MATCHERS).map(([field, matcherList]) => [field, findHeaderIndex(headers, matcherList)])
+  );
+}
+
+function pickPatientTable(tables = []) {
+  const candidates = tables
+    .map((table) => ({
+      ...table,
+      headerIndexes: resolvePatientTableHeaderIndexes(table.headers || [])
+    }))
+    .filter((table) => (
+      table.headerIndexes.patientFirstName >= 0
+      && table.headerIndexes.patientLastName >= 0
+      && table.headerIndexes.lastConsultationDate >= 0
+    ))
+    .sort((left, right) => (right.rows?.length || 0) - (left.rows?.length || 0));
+
+  return candidates[0] || null;
+}
+
+async function extractPatientTableSnapshot(page, config) {
+  const tableSelectors = config.selectors.results.tables || [];
+  for (const selector of tableSelectors) {
     const rowCount = await page.locator(selector).count().catch(() => 0);
     if (!rowCount) continue;
 
-    return page.$$eval(selector, (rows) => rows.map((row) => ({
-      rowText: row.innerText || '',
-      html: row.innerHTML || ''
-    }))).then((rows) => rows.map((row) => {
-      const parsed = parseRowTextHeuristics(row.rowText);
+    const tables = await page.$$eval(selector, (nodes) => nodes.map((table) => {
+      const headerNodes = Array.from(table.querySelectorAll('thead th, thead td'));
+      const headers = headerNodes.map((cell) => String(cell.innerText || '').trim()).filter(Boolean);
+      const rowNodes = Array.from(table.querySelectorAll('tbody tr'));
+      const rows = rowNodes.map((row) => Array.from(row.children).map((cell) => String(cell.innerText || '').trim()));
       return {
-        patientName: parsed.patientName,
-        patientPhone: parsed.patientPhone,
-        clinicName: '',
-        appointmentDate: parsed.appointmentDate,
-        appointmentTime: parsed.appointmentTime,
-        externalPatientId: parsed.externalPatientId,
-        externalStatus: parsed.externalStatus,
-        rawRow: row.rowText,
-        rawHtml: row.html
+        headers,
+        rows
       };
-    }));
+    })).catch(() => []);
+
+    const selected = pickPatientTable(tables);
+    if (selected) return selected;
   }
 
-  return [];
+  throw new Error('Could not locate the Ecuro patient table.');
+}
+
+function safeRowValue(row = [], index = -1) {
+  if (!Array.isArray(row) || index < 0 || index >= row.length) return '';
+  return String(row[index] || '').trim();
+}
+
+function mapEligibilityToCompletionStatus(eligibilityStatus = '') {
+  return ELIGIBILITY_TO_COMPLETION_STATUS[eligibilityStatus] || 'error';
+}
+
+function buildPatientDirectoryRecord(row = [], context = {}) {
+  const headerIndexes = context.headerIndexes || {};
+  const patientFirstName = safeRowValue(row, headerIndexes.patientFirstName);
+  const patientLastName = safeRowValue(row, headerIndexes.patientLastName);
+  const patientName = [patientFirstName, patientLastName].filter(Boolean).join(' ').trim();
+  const document = safeRowValue(row, headerIndexes.document);
+  const externalPatientId = safeRowValue(row, headerIndexes.externalPatientId);
+  const patientPhoneRaw = safeRowValue(row, headerIndexes.patientPhone);
+  const birthDate = normalizeBrazilianDate(safeRowValue(row, headerIndexes.birthDate));
+  const registrationDate = normalizeBrazilianDate(safeRowValue(row, headerIndexes.registrationDate));
+  const lastConsultationDate = normalizeBrazilianDate(safeRowValue(row, headerIndexes.lastConsultationDate));
+  const nextConsultationDate = normalizeBrazilianDate(safeRowValue(row, headerIndexes.nextConsultationDate));
+  const normalizedPhone = normalizePhone(patientPhoneRaw || '');
+
+  if (!patientName && !document && !externalPatientId && !patientPhoneRaw && !lastConsultationDate && !nextConsultationDate) {
+    return null;
+  }
+
+  let eligibilityStatus = 'eligible';
+  if (context.forceClinicMismatch) {
+    eligibilityStatus = 'clinic_mismatch';
+  } else if (!lastConsultationDate) {
+    eligibilityStatus = 'missing_last_consultation';
+  } else if (context.targetDate && lastConsultationDate !== context.targetDate) {
+    eligibilityStatus = 'out_of_date';
+  } else if (!normalizedPhone.valid) {
+    eligibilityStatus = 'invalid_phone';
+  }
+
+  const record = {
+    patientName,
+    patientFirstName,
+    patientLastName,
+    patientPhone: normalizedPhone.valid ? normalizedPhone.normalized : patientPhoneRaw,
+    document: document || null,
+    externalPatientId: externalPatientId || null,
+    clinicName: context.clinicName || null,
+    birthDate: birthDate || null,
+    registrationDate: registrationDate || null,
+    lastConsultationDate: lastConsultationDate || null,
+    nextConsultationDate: nextConsultationDate || null,
+    eligibilityStatus,
+    completionStatus: mapEligibilityToCompletionStatus(eligibilityStatus),
+    externalStatus: eligibilityStatus,
+    matchedBy: externalPatientId ? 'external_id' : (normalizedPhone.valid ? 'phone' : 'manual_review'),
+    confidenceScore: eligibilityStatus === 'eligible'
+      ? 100
+      : eligibilityStatus === 'out_of_date'
+        ? 92
+        : eligibilityStatus === 'invalid_phone'
+          ? 88
+          : eligibilityStatus === 'missing_last_consultation'
+            ? 72
+            : 0,
+    source: 'ecuro_last_consultation'
+  };
+
+  record.rawPayloadJson = JSON.stringify({
+    patientFirstName,
+    patientLastName,
+    patientName,
+    patientPhone: patientPhoneRaw || null,
+    document: document || null,
+    externalPatientId: externalPatientId || null,
+    clinicName: context.clinicName || null,
+    birthDate: birthDate || null,
+    registrationDate: registrationDate || null,
+    lastConsultationDate: lastConsultationDate || null,
+    nextConsultationDate: nextConsultationDate || null,
+    eligibilityStatus,
+    source: 'ecuro_last_consultation',
+    rawCells: row
+  });
+
+  return record;
+}
+
+function mapPatientDirectoryRows(table = {}, context = {}) {
+  const rows = Array.isArray(table.rows) ? table.rows : [];
+  return rows
+    .map((row) => buildPatientDirectoryRecord(row, { ...context, headerIndexes: table.headerIndexes || context.headerIndexes || {} }))
+    .filter(Boolean);
+}
+
+function summarizeCompletionResults(results = []) {
+  return results.reduce((summary, row) => {
+    const eligibilityStatus = String(row.eligibilityStatus || '').trim().toLowerCase();
+    const completionStatus = String(row.completionStatus || '').trim().toLowerCase();
+
+    summary.totalChecked += 1;
+    if (eligibilityStatus === 'eligible' || completionStatus === 'completed') {
+      summary.totalEligible += 1;
+      summary.totalCompleted += 1;
+    }
+    if (eligibilityStatus === 'invalid_phone') {
+      summary.totalInvalidPhone += 1;
+      summary.totalNotCompleted += 1;
+    }
+    if (eligibilityStatus === 'out_of_date') {
+      summary.totalOutOfDate += 1;
+      summary.totalNotCompleted += 1;
+    }
+    if (eligibilityStatus === 'duplicate') {
+      summary.totalDuplicate += 1;
+      summary.totalAmbiguous += 1;
+    }
+    if (eligibilityStatus === 'missing_last_consultation' || completionStatus === 'not_found') {
+      summary.totalMissingLastConsultation += 1;
+      summary.totalNotFound += 1;
+    }
+    if (eligibilityStatus === 'clinic_mismatch') {
+      summary.totalClinicMismatch += 1;
+      summary.totalFailed += 1;
+    }
+    if (!eligibilityStatus && completionStatus === 'not_completed') {
+      summary.totalNotCompleted += 1;
+    }
+    if (completionStatus === 'ambiguous' && eligibilityStatus !== 'duplicate') {
+      summary.totalAmbiguous += 1;
+    }
+    if (completionStatus === 'error' && eligibilityStatus !== 'clinic_mismatch') {
+      summary.totalFailed += 1;
+    }
+
+    return summary;
+  }, {
+    totalChecked: 0,
+    totalCompleted: 0,
+    totalFailed: 0,
+    totalNotCompleted: 0,
+    totalNotFound: 0,
+    totalAmbiguous: 0,
+    totalEligible: 0,
+    totalInvalidPhone: 0,
+    totalOutOfDate: 0,
+    totalDuplicate: 0,
+    totalMissingLastConsultation: 0,
+    totalClinicMismatch: 0
+  });
+}
+
+async function clickNextPatientsPage(page, config) {
+  for (const selector of config.selectors.navigation.nextPage || []) {
+    const locator = page.locator(selector).first();
+    try {
+      if (!(await locator.isVisible({ timeout: 800 }))) continue;
+      if (!(await locator.isEnabled().catch(() => true))) continue;
+      const disabled = await locator.getAttribute('disabled').catch(() => null);
+      const ariaDisabled = await locator.getAttribute('aria-disabled').catch(() => null);
+      if (disabled !== null || String(ariaDisabled || '').toLowerCase() === 'true') continue;
+      await locator.click();
+      await waitForPostSubmit(page);
+      return true;
+    } catch (_error) {
+      // Try next selector.
+    }
+  }
+  return false;
+}
+
+function shouldStopWhenOlderThanTarget(pageResults = [], targetDate = '') {
+  const datedRows = pageResults
+    .map((row) => row.lastConsultationDate || '')
+    .filter(Boolean);
+
+  if (!datedRows.length) return false;
+  if (datedRows.some((dateKey) => dateKey === targetDate)) return false;
+  return datedRows.every((dateKey) => dateKey < targetDate);
+}
+
+async function collectPatientDirectoryRows(page, config, payload = {}) {
+  const targetDate = normalizeBrazilianDate(payload.appointmentDate || payload.targetDate || '') || getYesterdaySaoPauloDateKey();
+  const expectedClinicName = String(payload.externalClinicName || payload.clinicName || '').trim();
+  const clinicSelection = await ensureClinicSelection(page, config, expectedClinicName);
+  const clinicName = clinicSelection.clinicName || expectedClinicName || '';
+  const results = [];
+  let pagesVisited = 0;
+  let totalRowsRead = 0;
+
+  if (payload.search) {
+    await applyFilters(page, config, { search: payload.search, appointmentDate: payload.appointmentDate });
+  }
+
+  if (expectedClinicName && !clinicSelection.matched) {
+    return {
+      clinicName,
+      clinicMatched: false,
+      targetDate,
+      pagesVisited: 0,
+      totalRowsRead: 0,
+      results: [{
+        patientName: '',
+        patientFirstName: '',
+        patientLastName: '',
+        patientPhone: '',
+        document: null,
+        externalPatientId: null,
+        clinicName,
+        birthDate: null,
+        registrationDate: null,
+        lastConsultationDate: null,
+        nextConsultationDate: null,
+        eligibilityStatus: 'clinic_mismatch',
+        completionStatus: 'error',
+        externalStatus: 'clinic_mismatch',
+        matchedBy: 'manual_review',
+        confidenceScore: 0,
+        source: 'ecuro_last_consultation',
+        rawPayloadJson: JSON.stringify({
+          expectedClinicName,
+          detectedClinicName: clinicName,
+          eligibilityStatus: 'clinic_mismatch',
+          source: 'ecuro_last_consultation'
+        })
+      }]
+    };
+  }
+
+  while (pagesVisited < config.maxPagesPerRun && results.length < config.maxPatientsPerRun) {
+    const table = await extractPatientTableSnapshot(page, config);
+    const pageResults = mapPatientDirectoryRows(table, {
+      headerIndexes: table.headerIndexes,
+      clinicName,
+      targetDate
+    });
+
+    totalRowsRead += pageResults.length;
+    for (const item of pageResults) {
+      if (results.length >= config.maxPatientsPerRun) break;
+      results.push(item);
+    }
+
+    pagesVisited += 1;
+    if (results.length >= config.maxPatientsPerRun) break;
+    if (config.stopWhenOlderThanTarget && shouldStopWhenOlderThanTarget(pageResults, targetDate)) break;
+
+    const moved = await clickNextPatientsPage(page, config);
+    if (!moved) break;
+  }
+
+  return {
+    clinicName,
+    clinicMatched: clinicSelection.matched,
+    targetDate,
+    pagesVisited,
+    totalRowsRead,
+    results
+  };
 }
 
 function buildMatchCandidates(patient = {}) {
@@ -513,7 +940,7 @@ function buildMatchCandidates(patient = {}) {
     externalPatientId: String(patient.externalPatientId || patient.external_patient_id || '').trim().toLowerCase(),
     phone: normalizePhone(patient.patientPhone || patient.patient_phone || '').normalized,
     name: normalizeText(patient.patientName || patient.patient_name || ''),
-    appointmentDate: String(patient.appointmentDate || patient.appointment_date || '').trim(),
+    appointmentDate: normalizeBrazilianDate(patient.appointmentDate || patient.appointment_date || patient.lastConsultationDate || patient.last_consultation_date || ''),
     appointmentTime: String(patient.appointmentTime || patient.appointment_time || '').trim()
   };
 }
@@ -523,7 +950,7 @@ function scoreExtractedMatch(patient, extracted) {
   const extractedPhone = normalizePhone(extracted.patientPhone || '').normalized;
   const extractedName = normalizeText(extracted.patientName || '');
   const extractedExternalId = String(extracted.externalPatientId || '').trim().toLowerCase();
-  const extractedDate = String(extracted.appointmentDate || '').trim();
+  const extractedDate = normalizeBrazilianDate(extracted.lastConsultationDate || extracted.appointmentDate || '');
   const extractedTime = String(extracted.appointmentTime || '').trim();
 
   let score = 0;
@@ -558,16 +985,23 @@ function matchCompletionRows(patients = [], extractedRows = []) {
   if (!Array.isArray(patients) || !patients.length) {
     return extractedRows.map((row) => ({
       patientName: row.patientName,
+      patientFirstName: row.patientFirstName || '',
+      patientLastName: row.patientLastName || '',
       patientPhone: row.patientPhone,
+      document: row.document || null,
       clinicName: row.clinicName || '',
-      appointmentDate: row.appointmentDate || '',
+      appointmentDate: row.lastConsultationDate || row.appointmentDate || '',
+      lastConsultationDate: row.lastConsultationDate || row.appointmentDate || '',
+      nextConsultationDate: row.nextConsultationDate || '',
       appointmentTime: row.appointmentTime || '',
       externalPatientId: row.externalPatientId || '',
-      externalStatus: row.externalStatus || '',
-      completionStatus: normalizeEcuroCompletionStatus(row.externalStatus) === 'completed' ? 'completed' : 'not_completed',
-      matchedBy: row.externalPatientId ? 'external_id' : (normalizePhone(row.patientPhone || '').valid ? 'phone' : 'manual_review'),
-      confidenceScore: normalizeEcuroCompletionStatus(row.externalStatus) === 'completed' ? 95 : 70,
-      rawPayloadJson: JSON.stringify(row)
+      externalStatus: row.externalStatus || row.eligibilityStatus || '',
+      completionStatus: row.completionStatus || mapEligibilityToCompletionStatus(row.eligibilityStatus),
+      eligibilityStatus: row.eligibilityStatus || '',
+      matchedBy: row.matchedBy || (row.externalPatientId ? 'external_id' : (normalizePhone(row.patientPhone || '').valid ? 'phone' : 'manual_review')),
+      confidenceScore: row.confidenceScore ?? (row.eligibilityStatus === 'eligible' ? 100 : 70),
+      source: row.source || 'ecuro_last_consultation',
+      rawPayloadJson: row.rawPayloadJson || JSON.stringify(row)
     }));
   }
 
@@ -590,8 +1024,10 @@ function matchCompletionRows(patients = [], extractedRows = []) {
         externalPatientId: patient.externalPatientId || patient.external_patient_id || '',
         externalStatus: '',
         completionStatus: 'not_found',
+        eligibilityStatus: 'missing_last_consultation',
         matchedBy: 'manual_review',
         confidenceScore: 0,
+        source: 'ecuro_last_consultation',
         rawPayloadJson: JSON.stringify({ patient, extractedRows: [] })
       };
     }
@@ -606,46 +1042,31 @@ function matchCompletionRows(patients = [], extractedRows = []) {
         externalPatientId: patient.externalPatientId || patient.external_patient_id || '',
         externalStatus: matches[0].row.externalStatus || '',
         completionStatus: 'ambiguous',
+        eligibilityStatus: 'duplicate',
         matchedBy: 'manual_review',
         confidenceScore: matches[0].score,
+        source: 'ecuro_last_consultation',
         rawPayloadJson: JSON.stringify({ patient, candidates: matches.map((item) => item.row) })
       };
     }
 
     const best = matches[0];
-    const normalizedStatus = normalizeEcuroCompletionStatus(best.row.externalStatus);
+    const normalizedStatus = normalizeEcuroCompletionStatus(best.row.externalStatus || best.row.eligibilityStatus || '');
     return {
       patientName: patient.patientName || patient.patient_name || best.row.patientName || '',
       patientPhone: patient.patientPhone || patient.patient_phone || best.row.patientPhone || '',
       clinicName: patient.clinicName || patient.clinic_name || best.row.clinicName || '',
-      appointmentDate: patient.appointmentDate || patient.appointment_date || best.row.appointmentDate || '',
+      appointmentDate: patient.appointmentDate || patient.appointment_date || best.row.lastConsultationDate || best.row.appointmentDate || '',
       appointmentTime: patient.appointmentTime || patient.appointment_time || best.row.appointmentTime || '',
       externalPatientId: best.row.externalPatientId || patient.externalPatientId || patient.external_patient_id || '',
-      externalStatus: best.row.externalStatus || '',
-      completionStatus: normalizedStatus === 'completed' ? 'completed' : 'not_completed',
+      externalStatus: best.row.externalStatus || best.row.eligibilityStatus || '',
+      completionStatus: best.row.completionStatus || (normalizedStatus !== 'unknown' ? normalizedStatus : mapEligibilityToCompletionStatus(best.row.eligibilityStatus)),
+      eligibilityStatus: best.row.eligibilityStatus || '',
       matchedBy: best.matchedBy,
       confidenceScore: best.score,
-      rawPayloadJson: JSON.stringify(best.row)
+      source: best.row.source || 'ecuro_last_consultation',
+      rawPayloadJson: best.row.rawPayloadJson || JSON.stringify(best.row)
     };
-  });
-}
-
-function summarizeCompletionResults(results = []) {
-  return results.reduce((summary, row) => {
-    summary.totalChecked += 1;
-    if (row.completionStatus === 'completed') summary.totalCompleted += 1;
-    if (row.completionStatus === 'not_completed') summary.totalNotCompleted += 1;
-    if (row.completionStatus === 'not_found') summary.totalNotFound += 1;
-    if (row.completionStatus === 'ambiguous') summary.totalAmbiguous += 1;
-    if (row.completionStatus === 'error') summary.totalFailed += 1;
-    return summary;
-  }, {
-    totalChecked: 0,
-    totalCompleted: 0,
-    totalFailed: 0,
-    totalNotCompleted: 0,
-    totalNotFound: 0,
-    totalAmbiguous: 0
   });
 }
 
@@ -666,18 +1087,20 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
   try {
     await performEcuroBrowserLogin(page, config);
     await navigateToCompletionScreen(page, config);
-    await applyFilters(page, config, {
-      clinicName: payload.clinicName || '',
-      appointmentDate: payload.appointmentDate || '',
-      status: 'concluido'
-    });
-    const extractedRows = await extractCompletionRows(page, config);
-    const matchedResults = matchCompletionRows(payload.patients || [], extractedRows);
+    const collection = await collectPatientDirectoryRows(page, config, payload);
+    const extractedRows = collection.results || [];
+    const matchedResults = Array.isArray(payload.patients) && payload.patients.length
+      ? matchCompletionRows(payload.patients || [], extractedRows)
+      : matchCompletionRows([], extractedRows);
     return {
-      status: 'completed',
+      status: collection.clinicMatched === false ? 'partial' : 'completed',
       extractedRows,
       results: matchedResults,
-      artifacts: []
+      artifacts: [],
+      pagesVisited: collection.pagesVisited || 0,
+      totalRowsRead: collection.totalRowsRead || 0,
+      targetDate: collection.targetDate || getYesterdaySaoPauloDateKey(),
+      clinicName: collection.clinicName || payload.clinicName || ''
     };
   } catch (error) {
     const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'error');
@@ -702,10 +1125,12 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
           appointmentDate: patient.appointmentDate || patient.appointment_date || '',
           appointmentTime: patient.appointmentTime || patient.appointment_time || '',
           externalPatientId: patient.externalPatientId || patient.external_patient_id || '',
-          externalStatus: '',
+          externalStatus: 'error',
           completionStatus: 'error',
+          eligibilityStatus: 'error',
           matchedBy: 'manual_review',
           confidenceScore: 0,
+          source: 'ecuro_last_consultation',
           rawPayloadJson: JSON.stringify({ reason: error.message })
         }))
         : [],
@@ -717,12 +1142,12 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
   }
 }
 
-async function runLoginTest(payload = {}, config = getEcuroRobotConfig()) {
+async function runLoginTest(_payload = {}, config = getEcuroRobotConfig()) {
   if (config.mode !== 'browser') {
     return {
       success: false,
       status: 'failed',
-      message: `Modo ${config.mode} não suportado para login-test sem API explícita.`,
+      message: `Unsupported Ecuro robot mode for login-test: ${config.mode}.`,
       browserMode: false
     };
   }
@@ -741,12 +1166,23 @@ async function runLoginTest(payload = {}, config = getEcuroRobotConfig()) {
 
   try {
     const result = await performEcuroBrowserLogin(page, config);
+    const targetUrl = String(config.selectors.navigation.completedPagePath || '').trim();
+    if (targetUrl) {
+      const destination = targetUrl.startsWith('http')
+        ? targetUrl
+        : `${config.baseUrl}${targetUrl.startsWith('/') ? '' : '/'}${targetUrl}`;
+      await page.goto(destination, { waitUntil: 'domcontentloaded', timeout: config.timeoutMs });
+      await page.waitForTimeout(1200);
+    }
+    const clinicName = await extractCurrentClinicName(page, config);
     return {
       success: true,
       status: 'authenticated',
       browserMode: true,
       reusedSession: Boolean(result.reusedSession),
-      checkedAt: new Date().toISOString()
+      checkedAt: new Date().toISOString(),
+      destination: targetUrl || null,
+      clinicName: clinicName || null
     };
   } catch (error) {
     const artifacts = await saveRobotArtifacts(page, config, buildJobId(), error.code || 'login-test');
@@ -790,6 +1226,10 @@ async function runCheckCompletedJob(payload = {}, config = getEcuroRobotConfig()
     artifacts: result.artifacts || [],
     extractedRows: result.extractedRows || [],
     results: result.results || [],
+    pagesVisited: result.pagesVisited || 0,
+    totalRowsRead: result.totalRowsRead || 0,
+    targetDate: result.targetDate || payload.appointmentDate || getYesterdaySaoPauloDateKey(),
+    detectedClinicName: result.clinicName || payload.clinicName || '',
     ...summary
   });
 }
@@ -797,7 +1237,7 @@ async function runCheckCompletedJob(payload = {}, config = getEcuroRobotConfig()
 async function runCheckCompletedBatch(payload = {}, config = getEcuroRobotConfig()) {
   const batches = Array.isArray(payload.jobs) ? payload.jobs : [];
   if (!batches.length) {
-    throw new Error('Nenhum job informado para o lote do Ecuro.');
+    throw new Error('No Ecuro jobs were provided for batch processing.');
   }
 
   const results = [];
@@ -811,7 +1251,7 @@ async function runCheckCompletedBatch(payload = {}, config = getEcuroRobotConfig
 async function retryRobotJob(jobId, config = getEcuroRobotConfig()) {
   const job = jobStore.get(jobId);
   if (!job) {
-    const error = new Error('Job não encontrado.');
+    const error = new Error('Robot job not found.');
     error.statusCode = 404;
     throw error;
   }
@@ -821,11 +1261,15 @@ async function retryRobotJob(jobId, config = getEcuroRobotConfig()) {
 module.exports = {
   buildInviteToken,
   buildJobId,
+  buildPatientDirectoryRecord,
   detectManualActionRequired,
   getEcuroRobotConfig,
   getEcuroRobotConfigStatus,
+  getYesterdaySaoPauloDateKey,
   jobStore,
+  mapPatientDirectoryRows,
   matchCompletionRows,
+  normalizeBrazilianDate,
   normalizeEcuroCompletionStatus,
   retryRobotJob,
   runCheckCompletedBatch,

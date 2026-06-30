@@ -26,14 +26,19 @@ CREATE TABLE IF NOT EXISTS ecuro_patient_completion_status (
   clinic_name VARCHAR(180) NULL,
   patient_name VARCHAR(180) NULL,
   patient_phone VARCHAR(40) NULL,
+  patient_document VARCHAR(40) NULL,
   appointment_date DATE NULL,
   appointment_time VARCHAR(20) NULL,
   external_patient_id VARCHAR(120) NULL,
   external_status VARCHAR(120) NULL,
   completion_status VARCHAR(40) NOT NULL DEFAULT 'not_found',
+  eligibility_status VARCHAR(40) NULL,
   matched_by VARCHAR(40) NULL,
   confidence_score DECIMAL(5,2) NULL,
   agenda_item_id INT NULL,
+  last_consultation_date DATE NULL,
+  next_consultation_date DATE NULL,
+  source VARCHAR(80) NULL,
   raw_payload_json LONGTEXT NULL,
   checked_at DATETIME NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -52,7 +57,7 @@ CREATE TABLE IF NOT EXISTS nps_invites (
   patient_phone VARCHAR(40) NULL,
   appointment_id INT NULL,
   ecuro_completion_id BIGINT NULL,
-  source VARCHAR(80) NOT NULL DEFAULT 'ecuro_robot',
+  source VARCHAR(80) NOT NULL DEFAULT 'ecuro_last_consultation',
   session_id VARCHAR(120) NOT NULL DEFAULT 'nps',
   status VARCHAR(40) NOT NULL DEFAULT 'pending',
   public_url TEXT NULL,
@@ -73,3 +78,23 @@ CREATE TABLE IF NOT EXISTS nps_invites (
   INDEX idx_nps_invites_phone_day (patient_phone, created_at),
   INDEX idx_nps_invites_completion (ecuro_completion_id)
 );
+
+CREATE TABLE IF NOT EXISTS nps_whatsapp_inbound_events (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  message_id VARCHAR(180) NOT NULL,
+  session_id VARCHAR(120) NULL,
+  patient_phone VARCHAR(40) NULL,
+  message_text TEXT NULL,
+  processed_status VARCHAR(40) NOT NULL DEFAULT 'pending',
+  raw_payload_json LONGTEXT NULL,
+  nps_invite_id BIGINT NULL,
+  nps_response_id INT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uniq_nps_whatsapp_inbound_message (message_id),
+  INDEX idx_nps_whatsapp_inbound_phone (patient_phone, created_at)
+);
+
+ALTER TABLE nps_responses
+  ADD COLUMN IF NOT EXISTS ecuro_nps_invite_id BIGINT NULL,
+  ADD COLUMN IF NOT EXISTS whatsapp_inbound_message_id VARCHAR(180) NULL;

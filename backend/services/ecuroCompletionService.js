@@ -4,7 +4,7 @@ const axios = require('axios');
 const whatsappProvider = require('./whatsappProvider');
 const { normalizePhone, normalizeText, maskPhone } = require('./patientEnrichmentService');
 
-const DEFAULT_NPS_MESSAGE_TEMPLATE = 'Olá, {{nome_paciente}}! Aqui é do Grupo Sorria, unidade {{clinica}}. Queremos saber como foi sua experiência. De 0 a 10, qual nota você daria para nosso atendimento? Você pode responder por aqui ou acessar a pesquisa completa: {{link_nps}}';
+const DEFAULT_NPS_MESSAGE_TEMPLATE = 'Olá, {{nome_paciente}}! Aqui é do Grupo Sorria, unidade {{clinica}}. Queremos saber como foi sua experiência na sua última consulta. De 0 a 10, qual nota você daria para nosso atendimento? Você pode responder por aqui ou acessar a pesquisa completa: {{link_nps}}';
 
 function onlyDigits(value) {
   return String(value ?? '').replace(/\D/g, '');
@@ -64,7 +64,7 @@ function buildNpsInvitePublicUrl({
   patientPhone,
   inviteId,
   token,
-  source = 'ecuro_robot'
+  source = 'ecuro_last_consultation'
 }, env = process.env) {
   const config = getNpsAutomationConfig(env);
   const url = new URL(config.publicUrl);
