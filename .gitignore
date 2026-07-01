@@ -28,6 +28,11 @@ build-web-final-4/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+*.log
+logs/
+**/logs/
+runtime/
+**/runtime/
 backups/
 
 .vercel

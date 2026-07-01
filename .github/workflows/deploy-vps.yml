@@ -1,0 +1,48 @@
+name: Deploy VPS Services
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-vps.yml"
+  workflow_dispatch:
+
+jobs:
+  deploy-vps:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy backend/robot to VPS
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT }}
+          script_stop: true
+          script: |
+            set -e
+
+            echo "==> Entrando no backend"
+            cd ${{ secrets.VPS_BACKEND_PATH }}
+
+            echo "==> Atualizando código"
+            git fetch origin main
+            git reset --hard origin/main
+
+            echo "==> Instalando dependências"
+            npm install
+
+            echo "==> Instalando Chromium do Playwright se necessário"
+            npx playwright install chromium || true
+
+            echo "==> Reiniciando ecuro-robot-service"
+            pm2 restart ecuro-robot-service --update-env || pm2 start npm --name ecuro-robot-service -- run robot:server
+
+            echo "==> Salvando PM2"
+            pm2 save
+
+            echo "==> Status final"
+            pm2 list
