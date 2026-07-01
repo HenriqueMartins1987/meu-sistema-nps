@@ -14,8 +14,10 @@ const {
 } = require('../services/ecuroCompletionService');
 const {
   extractEcuroPatientRowsFromText,
+  getNpsEligibleDates,
   getEcuroRobotConfigStatus,
   isEligibleByLastConsultationDate,
+  isEligibleByLastConsultationDates,
   matchCompletionRows,
   mapPatientDirectoryRows,
   normalizeBrazilianDate,
@@ -202,15 +204,38 @@ test('extractEcuroPatientRowsFromText parses the Ecuro patients page text layout
   assert.equal(extracted.rows[1][7], '-');
 });
 
-test('isEligibleByLastConsultationDate uses the previous day as the NPS rule', () => {
-  assert.equal(isEligibleByLastConsultationDate('29/06/2026', '2026-06-29'), 'eligible');
-  assert.equal(isEligibleByLastConsultationDate('-', '2026-06-29'), 'missing_last_consultation');
-  assert.equal(isEligibleByLastConsultationDate('30/06/2026', '2026-06-29'), 'out_of_date');
+test('extractEcuroPatientRowsFromText parses a single visual row line', () => {
+  const extracted = extractEcuroPatientRowsFromText(
+    'George Marques De Freitas 008.597.431-52 DPAWQ +5577998433088 27/02/1984 29/06/2026 01/07/2026 29/12/2026'
+  );
+
+  assert.equal(extracted.rows.length, 1);
+  assert.equal(extracted.rows[0][0], 'George');
+  assert.equal(extracted.rows[0][1], 'Marques De Freitas');
+  assert.equal(extracted.rows[0][4], '+5577998433088');
+  assert.equal(extracted.rows[0][7], '01/07/2026');
 });
 
-test('resolveEcuroTargetDate honors explicit target date and yesterday mode', () => {
-  assert.equal(resolveEcuroTargetDate({ targetDate: '29/06/2026' }, new Date('2026-06-30T12:00:00Z')), '2026-06-29');
-  assert.equal(resolveEcuroTargetDate({ targetDateMode: 'yesterday' }, new Date('2026-06-30T12:00:00Z')), '2026-06-29');
+test('isEligibleByLastConsultationDate uses the current target day as the NPS rule', () => {
+  assert.equal(isEligibleByLastConsultationDate('01/07/2026', '2026-07-01'), 'eligible');
+  assert.equal(isEligibleByLastConsultationDate('-', '2026-07-01'), 'missing_last_consultation');
+  assert.equal(isEligibleByLastConsultationDate('30/06/2026', '2026-07-01'), 'out_of_date');
+});
+
+test('resolveEcuroTargetDate honors explicit target date and defaults to today', () => {
+  assert.equal(resolveEcuroTargetDate({ targetDate: '01/07/2026' }, new Date('2026-07-01T12:00:00Z')), '2026-07-01');
+  assert.equal(resolveEcuroTargetDate({}, new Date('2026-07-01T12:00:00Z')), '2026-07-01');
+  assert.equal(resolveEcuroTargetDate({ targetDateMode: 'yesterday' }, new Date('2026-07-01T12:00:00Z')), '2026-06-30');
+});
+
+test('getNpsEligibleDates returns only today unless target dates are explicit', () => {
+  assert.deepEqual(getNpsEligibleDates({
+    npsDateMode: 'today',
+    includeToday: true,
+    includeYesterday: false
+  }, {}, new Date('2026-07-01T12:00:00Z')), ['2026-07-01']);
+  assert.deepEqual(getNpsEligibleDates({}, { targetDate: '01/07/2026' }, new Date('2026-06-30T12:00:00Z')), ['2026-07-01']);
+  assert.equal(isEligibleByLastConsultationDates('30/06/2026', ['2026-07-01']), 'out_of_date');
 });
 
 test('computeRetryState stops after max attempts and handles manual action', () => {

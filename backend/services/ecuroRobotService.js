@@ -188,7 +188,7 @@ function getEcuroRobotConfig(env = process.env) {
     headless: toBoolean(env.ROBOT_HEADLESS, true),
     timeoutMs: Math.max(10000, Number(env.ROBOT_TIMEOUT_MS || 60000) || 60000),
     maxAttempts: Math.max(1, Number(env.ROBOT_MAX_ATTEMPTS || 3) || 3),
-    dryRun: toBoolean(env.ECURO_ROBOT_DRY_RUN, false),
+    dryRun: toBoolean(env.ECURO_ROBOT_DRY_RUN, true),
     profileDir,
     screenshotDir,
     htmlDir,
@@ -200,8 +200,21 @@ function getEcuroRobotConfig(env = process.env) {
     selectors: readSelectorsConfig(env),
     userAgent: String(env.ECURO_ROBOT_USER_AGENT || '').trim(),
     manualActionPattern: /captcha|two[\s-]?factor|2fa|verifica[cç][aã]o|c[oó]digo/i,
-    maxPagesPerRun: Math.max(1, Number(env.ECURO_MAX_PAGES_PER_RUN || 20) || 20),
-    maxPatientsPerRun: Math.max(1, Number(env.ECURO_MAX_PATIENTS_PER_RUN || 1000) || 1000),
+    discoverAllClinics: toBoolean(env.ECURO_DISCOVER_ALL_CLINICS, true),
+    clinicListScrollEnabled: toBoolean(env.ECURO_CLINIC_LIST_SCROLL_ENABLED, true),
+    maxClinicsPerRun: Math.max(1, Number(env.ECURO_MAX_CLINICS_PER_RUN || 200) || 200),
+    clinicSelectionMaxAttempts: Math.max(1, Number(env.ECURO_CLINIC_SELECTION_MAX_ATTEMPTS || 3) || 3),
+    clinicSelectionWaitMs: Math.max(500, Number(env.ECURO_CLINIC_SELECTION_WAIT_MS || 3000) || 3000),
+    npsDateMode: String(env.ECURO_NPS_DATE_MODE || 'today').trim() || 'today',
+    npsTimezone: String(env.ECURO_NPS_TIMEZONE || 'America/Sao_Paulo').trim() || 'America/Sao_Paulo',
+    includeToday: toBoolean(env.ECURO_NPS_INCLUDE_TODAY, true),
+    includeYesterday: toBoolean(env.ECURO_NPS_INCLUDE_YESTERDAY, false),
+    patientsPageSize: Math.max(1, Number(env.ECURO_PATIENTS_PAGE_SIZE || 500) || 500),
+    maxPagesPerClinic: Math.max(1, Number(env.ECURO_MAX_PAGES_PER_CLINIC || env.ECURO_MAX_PAGES_PER_RUN || 5) || 5),
+    maxPatientsPerClinic: Math.max(1, Number(env.ECURO_MAX_PATIENTS_PER_CLINIC || env.ECURO_MAX_PATIENTS_PER_RUN || 1000) || 1000),
+    maxTotalPatientsPerRun: Math.max(1, Number(env.ECURO_MAX_TOTAL_PATIENTS_PER_RUN || 10000) || 10000),
+    maxPagesPerRun: Math.max(1, Number(env.ECURO_MAX_PAGES_PER_RUN || env.ECURO_MAX_PAGES_PER_CLINIC || 20) || 20),
+    maxPatientsPerRun: Math.max(1, Number(env.ECURO_MAX_PATIENTS_PER_RUN || env.ECURO_MAX_PATIENTS_PER_CLINIC || 1000) || 1000),
     stopWhenOlderThanTarget: toBoolean(env.ECURO_STOP_WHEN_OLDER_THAN_TARGET, true),
     mappingEnabled: toBoolean(env.ECURO_MAPPING_ENABLED, false),
     mappingCron: String(env.ECURO_MAPPING_CRON || '0 2 * * *').trim() || '0 2 * * *',
@@ -244,6 +257,19 @@ function getEcuroRobotConfigStatus(env = process.env) {
     apiKeyConfigured: Boolean(config.apiKey),
     maxPagesPerRun: config.maxPagesPerRun,
     maxPatientsPerRun: config.maxPatientsPerRun,
+    discoverAllClinics: config.discoverAllClinics,
+    clinicListScrollEnabled: config.clinicListScrollEnabled,
+    maxClinicsPerRun: config.maxClinicsPerRun,
+    clinicSelectionMaxAttempts: config.clinicSelectionMaxAttempts,
+    clinicSelectionWaitMs: config.clinicSelectionWaitMs,
+    npsDateMode: config.npsDateMode,
+    npsTimezone: config.npsTimezone,
+    includeToday: config.includeToday,
+    includeYesterday: config.includeYesterday,
+    patientsPageSize: config.patientsPageSize,
+    maxPagesPerClinic: config.maxPagesPerClinic,
+    maxPatientsPerClinic: config.maxPatientsPerClinic,
+    maxTotalPatientsPerRun: config.maxTotalPatientsPerRun,
     stopWhenOlderThanTarget: config.stopWhenOlderThanTarget,
     mappingEnabled: config.mappingEnabled,
     mappingCron: config.mappingCron,
@@ -752,15 +778,52 @@ function resolveEcuroTargetDate(payload = {}, now = new Date()) {
   if (appointmentDate) return appointmentDate;
 
   const targetDateMode = normalizeText(payload.targetDateMode || '');
-  if (!targetDateMode || targetDateMode === 'yesterday') {
-    return getYesterdaySaoPauloDateKey(now);
-  }
-
-  if (targetDateMode === 'today') {
+  if (!targetDateMode || targetDateMode === 'today') {
     return getDateKeyInSaoPaulo(now);
   }
 
-  return getYesterdaySaoPauloDateKey(now);
+  if (targetDateMode === 'yesterday') {
+    return getYesterdaySaoPauloDateKey(now);
+  }
+
+  return getDateKeyInSaoPaulo(now);
+}
+
+function getNpsEligibleDates(config = getEcuroRobotConfig(), payload = {}, now = new Date()) {
+  const explicitTargetDate = normalizeBrazilianDate(payload.targetDate || payload.target_date || '');
+  if (explicitTargetDate) return [explicitTargetDate];
+
+  const explicitDates = Array.isArray(payload.targetDates)
+    ? payload.targetDates
+    : (Array.isArray(payload.target_dates) ? payload.target_dates : []);
+  const normalizedExplicitDates = Array.from(new Set(
+    explicitDates
+      .map((date) => normalizeBrazilianDate(date))
+      .filter(Boolean)
+  ));
+  if (normalizedExplicitDates.length) return normalizedExplicitDates;
+
+  const dateMode = normalizeText(payload.dateMode || payload.date_mode || config.npsDateMode || 'today');
+  const today = getDateKeyInSaoPaulo(now);
+  const yesterday = shiftDateKey(today, -1);
+  const dates = [];
+  const includeOnlyToday = dateMode === 'today';
+  const includeOnlyYesterday = dateMode === 'yesterday';
+
+  if ((config.includeToday || includeOnlyToday) && !includeOnlyYesterday) {
+    dates.push(today);
+  }
+  if ((config.includeYesterday || includeOnlyYesterday) && !includeOnlyToday) {
+    dates.push(yesterday);
+  }
+
+  if (!dates.length) dates.push(today);
+
+  return Array.from(new Set(dates.filter(Boolean)));
+}
+
+function formatEligibleDatesForPayload(eligibleDates = []) {
+  return eligibleDates.map((date) => formatDateKeyToBrazilian(date)).filter(Boolean);
 }
 
 function isEligibleByLastConsultationDate(lastConsultationDate = '', targetDate = '') {
@@ -771,6 +834,14 @@ function isEligibleByLastConsultationDate(lastConsultationDate = '', targetDate 
   if (!normalizedTargetDate) return 'out_of_date';
   if (normalizedLastConsultationDate === normalizedTargetDate) return 'eligible';
   return 'out_of_date';
+}
+
+function isEligibleByLastConsultationDates(lastConsultationDate = '', eligibleDates = []) {
+  const normalizedLastConsultationDate = normalizeBrazilianDate(lastConsultationDate || '');
+  if (!normalizedLastConsultationDate) return 'missing_last_consultation';
+  const normalizedEligibleDates = new Set((eligibleDates || []).map((date) => normalizeBrazilianDate(date)).filter(Boolean));
+  if (!normalizedEligibleDates.size) return 'out_of_date';
+  return normalizedEligibleDates.has(normalizedLastConsultationDate) ? 'eligible' : 'out_of_date';
 }
 
 function normalizeEcuroCellText(value = '') {
@@ -906,6 +977,31 @@ function buildEcuroPatientTableFromCandidateRows(candidateRows = []) {
   };
 }
 
+function parseEcuroPatientRowFromTextLine(line = '') {
+  const normalizedLine = normalizeEcuroCellText(line);
+  if (!normalizedLine || !/\+?\d{10,15}/.test(normalizedLine)) return null;
+
+  const rowMatch = normalizedLine.match(/^(.*?)\s+(\d{3}\.?\d{3}\.?\d{3}-?\d{2}|-)\s+([A-Z0-9]{4,8})\s+(\+?\d[\d\s().-]{9,20}|-)\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|-)\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|-)\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|-)\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|-)\s*$/i);
+  if (!rowMatch) return null;
+
+  const nameParts = normalizeEcuroCellText(rowMatch[1]).split(/\s+/).filter(Boolean);
+  if (!nameParts.length) return null;
+  const patientFirstName = nameParts[0];
+  const patientLastName = nameParts.slice(1).join(' ');
+
+  return [
+    patientFirstName,
+    patientLastName,
+    rowMatch[2],
+    rowMatch[3],
+    normalizeEcuroCellText(rowMatch[4]),
+    rowMatch[5],
+    rowMatch[6],
+    rowMatch[7],
+    rowMatch[8]
+  ];
+}
+
 function extractEcuroPatientRowsFromText(text = '') {
   const lines = String(text || '')
     .split(/\r?\n/)
@@ -916,6 +1012,13 @@ function extractEcuroPatientRowsFromText(text = '') {
   const candidateLines = filterEcuroCandidateTokens(lastHeaderIndex >= 0 ? lines.slice(lastHeaderIndex + 1) : lines);
   const rows = [];
   const rawCandidateRows = [];
+
+  candidateLines.forEach((line) => {
+    const parsedLineRow = parseEcuroPatientRowFromTextLine(line);
+    if (!parsedLineRow) return;
+    rows.push(parsedLineRow);
+    rawCandidateRows.push(parsedLineRow.join(' | '));
+  });
 
   for (let index = 0; index < candidateLines.length; index += 1) {
     const match = extractEcuroPatientRowFromTokenWindow(candidateLines.slice(index, index + 14));
@@ -936,6 +1039,231 @@ function isLikelyClinicName(value = '') {
   const text = String(value || '').trim();
   if (!text || text.length < 10 || text.length > 180) return false;
   return /^[A-Z0-9]{4,}\s*-\s+.+/i.test(text) || text.split('-').length >= 3;
+}
+
+function parseEcuroClinicLabel(value = '', index = 0) {
+  const fullLabel = normalizeEcuroCellText(value);
+  if (!isLikelyClinicName(fullLabel)) return null;
+  const parts = fullLabel.split(/\s+-\s+/).map((part) => part.trim()).filter(Boolean);
+  const clinicCode = /^[A-Z0-9]{3,10}$/i.test(parts[0] || '') ? parts[0] : '';
+  const clinicName = clinicCode ? parts.slice(1).join(' - ') : fullLabel;
+
+  return {
+    clinicCode,
+    clinicName: clinicName || fullLabel,
+    fullLabel,
+    normalizedLabel: normalizeText(fullLabel),
+    index,
+    visibleText: fullLabel
+  };
+}
+
+function clinicOptionMatches(candidate = {}, target = {}) {
+  const candidateCode = normalizeText(candidate.clinicCode || '');
+  const targetCode = normalizeText(target.clinicCode || target.externalClinicId || target.external_clinic_id || '');
+  if (candidateCode && targetCode && candidateCode === targetCode) return true;
+
+  const candidateLabel = normalizeText(candidate.fullLabel || candidate.visibleText || candidate.clinicName || '');
+  const targetLabel = normalizeText(target.fullLabel || target.visibleText || target.clinicName || target.clinic_name || '');
+  if (!candidateLabel || !targetLabel) return false;
+  return candidateLabel === targetLabel || candidateLabel.includes(targetLabel) || targetLabel.includes(candidateLabel);
+}
+
+async function clickEcuroClinicSelector(page, config) {
+  if (await clickFirstVisible(page, config.selectors.navigation.clinicSelector || [])) {
+    await page.waitForTimeout(700);
+    return true;
+  }
+
+  const clicked = await page.evaluate(() => {
+    const textOf = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const isVisible = (element) => {
+      if (!element) return false;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && rect.width > 0
+        && rect.height > 0;
+    };
+    const candidates = Array.from(document.querySelectorAll('button, [role="button"], header *, nav *'))
+      .filter((element) => isVisible(element))
+      .filter((element) => /^[A-Z0-9]{4,}\s*-\s+.+/i.test(textOf(element.innerText || element.textContent)));
+    const target = candidates[0];
+    if (!target) return false;
+    target.click();
+    return true;
+  }).catch(() => false);
+
+  if (clicked) {
+    await page.waitForTimeout(700);
+  }
+  return Boolean(clicked);
+}
+
+async function collectVisibleEcuroClinicOptions(page) {
+  return page.evaluate(() => {
+    const textOf = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const isVisible = (element) => {
+      if (!element) return false;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && rect.width > 0
+        && rect.height > 0;
+    };
+    const optionSelectors = [
+      '[role="option"]',
+      '[role="listbox"] *',
+      '.v-overlay *',
+      '.v-menu__content *',
+      '.mat-mdc-option',
+      '.mat-option',
+      'li',
+      'button',
+      '[role="button"]'
+    ];
+    const labels = [];
+    optionSelectors.forEach((selector) => {
+      document.querySelectorAll(selector).forEach((element) => {
+        if (!isVisible(element)) return;
+        const text = textOf(element.innerText || element.textContent);
+        if (/^[A-Z0-9]{4,}\s*-\s+.+/i.test(text)) labels.push(text);
+      });
+    });
+    return Array.from(new Set(labels));
+  }).catch(() => []);
+}
+
+async function scrollEcuroClinicDropdown(page) {
+  return page.evaluate(() => {
+    const isVisible = (element) => {
+      if (!element) return false;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && rect.width > 0
+        && rect.height > 0;
+    };
+    const containers = Array.from(document.querySelectorAll('[role="listbox"], .v-overlay, .v-menu__content, .cdk-overlay-pane, .mat-mdc-select-panel, body *'))
+      .filter((element) => isVisible(element) && element.scrollHeight > element.clientHeight + 20)
+      .sort((left, right) => (right.scrollHeight - right.clientHeight) - (left.scrollHeight - left.clientHeight));
+    const target = containers[0];
+    if (!target) return false;
+    const before = target.scrollTop;
+    target.scrollTop = Math.min(target.scrollHeight, target.scrollTop + Math.max(180, target.clientHeight * 0.8));
+    return target.scrollTop !== before;
+  }).catch(() => false);
+}
+
+async function discoverEcuroClinics(page, config = getEcuroRobotConfig()) {
+  const opened = await clickEcuroClinicSelector(page, config);
+  if (!opened) return [];
+
+  const clinicsByKey = new Map();
+  const maxScrolls = config.clinicListScrollEnabled ? Math.max(1, Math.min(80, config.maxClinicsPerRun || 200)) : 1;
+  let stableScrolls = 0;
+
+  for (let index = 0; index < maxScrolls && clinicsByKey.size < config.maxClinicsPerRun; index += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    const visibleOptions = await collectVisibleEcuroClinicOptions(page);
+    const beforeSize = clinicsByKey.size;
+    visibleOptions.forEach((label) => {
+      const parsed = parseEcuroClinicLabel(label, clinicsByKey.size);
+      if (!parsed) return;
+      const key = parsed.clinicCode || parsed.normalizedLabel;
+      if (!clinicsByKey.has(key)) clinicsByKey.set(key, parsed);
+    });
+
+    if (!config.clinicListScrollEnabled) break;
+    if (clinicsByKey.size === beforeSize) stableScrolls += 1;
+    else stableScrolls = 0;
+    if (stableScrolls >= 3) break;
+
+    // eslint-disable-next-line no-await-in-loop
+    const moved = await scrollEcuroClinicDropdown(page);
+    if (!moved) break;
+    // eslint-disable-next-line no-await-in-loop
+    await page.waitForTimeout(250);
+  }
+
+  await page.keyboard.press('Escape').catch(() => null);
+  await page.waitForTimeout(300).catch(() => null);
+  return Array.from(clinicsByKey.values()).slice(0, config.maxClinicsPerRun);
+}
+
+async function selectEcuroClinic(page, clinic = {}, config = getEcuroRobotConfig()) {
+  const attempts = Math.max(1, Number(config.clinicSelectionMaxAttempts || 3) || 3);
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    // eslint-disable-next-line no-await-in-loop
+    await clickEcuroClinicSelector(page, config);
+    // eslint-disable-next-line no-await-in-loop
+    await page.waitForTimeout(500);
+
+    const selected = await page.evaluate((targetClinic) => {
+      const normalizeValue = (value) => String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim();
+      const textOf = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+      const isVisible = (element) => {
+        if (!element) return false;
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && rect.width > 0
+          && rect.height > 0;
+      };
+      const targetCode = normalizeValue(targetClinic.clinicCode || '');
+      const targetLabel = normalizeValue(targetClinic.fullLabel || targetClinic.clinicName || '');
+      const options = Array.from(document.querySelectorAll('[role="option"], [role="listbox"] *, .v-overlay *, .v-menu__content *, .mat-mdc-option, .mat-option, li, button, [role="button"]'))
+        .filter((element) => isVisible(element))
+        .map((element) => ({ element, text: textOf(element.innerText || element.textContent) }))
+        .filter((item) => /^[A-Z0-9]{4,}\s*-\s+.+/i.test(item.text));
+      const match = options.find((item) => {
+        const normalized = normalizeValue(item.text);
+        return (targetCode && normalized.startsWith(targetCode)) || (targetLabel && (normalized === targetLabel || normalized.includes(targetLabel) || targetLabel.includes(normalized)));
+      });
+      if (!match) return false;
+      match.element.click();
+      return true;
+    }, clinic).catch(() => false);
+
+    if (selected) {
+      // eslint-disable-next-line no-await-in-loop
+      await Promise.race([
+        page.waitForLoadState('networkidle').catch(() => null),
+        page.waitForTimeout(config.clinicSelectionWaitMs)
+      ]);
+      // eslint-disable-next-line no-await-in-loop
+      const currentClinicName = await extractCurrentClinicName(page, config);
+      const parsedCurrent = parseEcuroClinicLabel(currentClinicName);
+      if (clinicOptionMatches(parsedCurrent || { fullLabel: currentClinicName }, clinic)) {
+        return {
+          selected: true,
+          attempts: attempt,
+          clinicName: currentClinicName || clinic.fullLabel || clinic.clinicName || '',
+          clinicCode: clinic.clinicCode || parsedCurrent?.clinicCode || ''
+        };
+      }
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    await page.keyboard.press('Escape').catch(() => null);
+  }
+
+  return {
+    selected: false,
+    attempts,
+    clinicName: await extractCurrentClinicName(page, config).catch(() => ''),
+    clinicCode: clinic.clinicCode || ''
+  };
 }
 
 async function extractCurrentClinicName(page, config) {
@@ -1042,6 +1370,119 @@ async function applyFilters(page, config, payload = {}) {
   }
 }
 
+async function setPatientsPageSize(page, preferredSize = 500) {
+  const preferredOrder = Array.from(new Set([
+    Number(preferredSize || 0),
+    500,
+    300,
+    200,
+    100,
+    50
+  ].filter((value) => Number(value) > 0)));
+
+  const result = await page.evaluate((sizes) => {
+    const textOf = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+    const isVisible = (element) => {
+      if (!element) return false;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && rect.width > 0
+        && rect.height > 0;
+    };
+
+    const nativeSelects = Array.from(document.querySelectorAll('select')).filter((element) => isVisible(element));
+    for (const select of nativeSelects) {
+      const options = Array.from(select.options || [])
+        .map((option) => Number(textOf(option.textContent || option.value).match(/\d+/)?.[0] || 0))
+        .filter(Boolean);
+      const selected = sizes.find((size) => options.includes(size)) || Math.max(0, ...options);
+      if (selected) {
+        const option = Array.from(select.options || []).find((item) => Number(textOf(item.textContent || item.value).match(/\d+/)?.[0] || 0) === selected);
+        if (option) {
+          select.value = option.value;
+          select.dispatchEvent(new Event('input', { bubbles: true }));
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+          return {
+            changed: true,
+            pageSizeBefore: null,
+            pageSizeAfter: selected,
+            optionsFound: options
+          };
+        }
+      }
+    }
+
+    const clickable = Array.from(document.querySelectorAll('button, [role="button"], [aria-haspopup="listbox"], .v-select, .mat-mdc-select'))
+      .filter((element) => isVisible(element))
+      .find((element) => /mostrar|itens|items|rows|linhas/i.test(textOf(element.innerText || element.textContent || element.getAttribute('aria-label'))));
+    if (clickable) {
+      clickable.click();
+      return {
+        changed: false,
+        opened: true,
+        pageSizeBefore: textOf(clickable.innerText || clickable.textContent),
+        pageSizeAfter: null,
+        optionsFound: []
+      };
+    }
+
+    return {
+      changed: false,
+      pageSizeBefore: null,
+      pageSizeAfter: null,
+      optionsFound: []
+    };
+  }, preferredOrder).catch(() => ({
+    changed: false,
+    pageSizeBefore: null,
+    pageSizeAfter: null,
+    optionsFound: []
+  }));
+
+  if (result.opened) {
+    await page.waitForTimeout(500);
+    const selected = await page.evaluate((sizes) => {
+      const textOf = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+      const isVisible = (element) => {
+        if (!element) return false;
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none'
+          && style.visibility !== 'hidden'
+          && rect.width > 0
+          && rect.height > 0;
+      };
+      const options = Array.from(document.querySelectorAll('[role="option"], .v-list-item, .mat-mdc-option, .mat-option, li, button'))
+        .filter((element) => isVisible(element))
+        .map((element) => ({
+          element,
+          value: Number(textOf(element.innerText || element.textContent).match(/^\d+$/)?.[0] || 0)
+        }))
+        .filter((item) => item.value);
+      const values = options.map((item) => item.value);
+      const bestValue = sizes.find((size) => values.includes(size)) || Math.max(0, ...values);
+      const match = options.find((item) => item.value === bestValue);
+      if (!match) return { selected: false, optionsFound: values, pageSizeAfter: null };
+      match.element.click();
+      return { selected: true, optionsFound: values, pageSizeAfter: bestValue };
+    }, preferredOrder).catch(() => ({ selected: false, optionsFound: [], pageSizeAfter: null }));
+
+    if (selected.selected) {
+      await waitForPostSubmit(page);
+      return {
+        changed: true,
+        pageSizeBefore: result.pageSizeBefore || null,
+        pageSizeAfter: selected.pageSizeAfter || null,
+        optionsFound: selected.optionsFound || []
+      };
+    }
+  }
+
+  return result;
+}
+
 function normalizeHeaderLabel(value = '') {
   return normalizeText(String(value || '').replace(/\s+/g, ' ').trim());
 }
@@ -1126,12 +1567,29 @@ async function waitForEcuroPatientsPageReady(page, config) {
 async function extractPatientsFromEcuroPatientsPage(page, config, payload = {}) {
   await waitForEcuroPatientsPageReady(page, config);
 
-  const diagnostics = await page.evaluate((headerTexts) => {
+  const diagnostics = await page.evaluate((columnDefinitions) => {
+    const headerTexts = columnDefinitions.map((column) => column.label);
     const normalizeTextContent = (value) => String(value || '').replace(/\s+/g, ' ').trim();
     const normalizeKey = (value) => normalizeTextContent(value)
       .normalize('NFD')
       .replace(/[\u0300-\u036f]/g, '')
       .toLowerCase();
+    const headerMatchesField = (field, value) => {
+      const normalized = normalizeKey(value);
+      if (!normalized) return false;
+      const matchers = {
+        patientFirstName: ['primeiro nome'],
+        patientLastName: ['sobrenome'],
+        document: ['cpf'],
+        externalPatientId: ['id'],
+        patientPhone: ['numero de telef', 'telefone', 'whatsapp'],
+        birthDate: ['data de nasc'],
+        registrationDate: ['data de cadastro'],
+        lastConsultationDate: ['ultima consulta'],
+        nextConsultationDate: ['proxima consul', 'proxima consulta']
+      };
+      return (matchers[field] || []).some((token) => normalized.includes(token));
+    };
     const isVisible = (element) => {
       if (!element) return false;
       const style = window.getComputedStyle(element);
@@ -1245,40 +1703,170 @@ async function extractPatientsFromEcuroPatientsPage(page, config, payload = {}) 
       .map((group) => group.items.sort((left, right) => left.left - right.left).map((item) => item.text))
       .filter((texts) => texts.length);
 
+    const headerCandidates = [];
+    Array.from(root.querySelectorAll('th, td, div, span, strong, p'))
+      .filter((element) => isVisible(element))
+      .forEach((element) => {
+        const text = normalizeTextContent(element.innerText || element.textContent);
+        if (!text) return;
+        const rect = element.getBoundingClientRect();
+        columnDefinitions.forEach((column) => {
+          if (!headerMatchesField(column.field, text)) return;
+          headerCandidates.push({
+            field: column.field,
+            text,
+            left: Math.round(rect.left),
+            right: Math.round(rect.right),
+            top: Math.round(rect.top),
+            bottom: Math.round(rect.bottom),
+            centerX: Math.round(rect.left + (rect.width / 2))
+          });
+        });
+      });
+
+    const headersByField = columnDefinitions.reduce((accumulator, column) => {
+      const candidates = headerCandidates
+        .filter((candidate) => candidate.field === column.field)
+        .sort((left, right) => left.top - right.top || left.left - right.left);
+      if (candidates[0]) accumulator[column.field] = candidates[0];
+      return accumulator;
+    }, {});
+    const orderedHeaders = columnDefinitions
+      .map((column) => headersByField[column.field])
+      .filter(Boolean)
+      .sort((left, right) => left.centerX - right.centerX);
+    const headerBottom = orderedHeaders.length ? Math.max(...orderedHeaders.map((header) => header.bottom)) : 0;
+    const columnCenters = columnDefinitions
+      .map((column) => headersByField[column.field] ? {
+        field: column.field,
+        centerX: headersByField[column.field].centerX,
+        left: headersByField[column.field].left,
+        right: headersByField[column.field].right
+      } : null)
+      .filter(Boolean)
+      .sort((left, right) => left.centerX - right.centerX);
+    const columnBoundaries = columnCenters.map((column, index) => {
+      const previous = columnCenters[index - 1];
+      const next = columnCenters[index + 1];
+      return {
+        ...column,
+        minX: previous ? Math.floor((previous.centerX + column.centerX) / 2) : -Infinity,
+        maxX: next ? Math.ceil((next.centerX + column.centerX) / 2) : Infinity
+      };
+    });
+    const assignFieldByX = (centerX) => {
+      const bounded = columnBoundaries.find((column) => centerX >= column.minX && centerX < column.maxX);
+      if (bounded) return bounded.field;
+      const nearest = columnBoundaries
+        .slice()
+        .sort((left, right) => Math.abs(left.centerX - centerX) - Math.abs(right.centerX - centerX))[0];
+      return nearest?.field || '';
+    };
+    const isNoiseText = (text) => {
+      const normalized = normalizeKey(text);
+      if (!normalized) return true;
+      if (headerTexts.some((label) => headerMatchesField(columnDefinitions.find((column) => normalizeKey(column.label) === normalizeKey(label))?.field, text))) return true;
+      if (/^(itens?|items?)\s+\d+\s*-\s*\d+\s*(de|of)\s*\d+/i.test(text)) return true;
+      if (normalized.includes('proxima pagina') || normalized.includes('pagina anterior')) return true;
+      if (/^[A-Z0-9]{4,}\s*-\s+.+/i.test(text)) return true;
+      return false;
+    };
+    const coordinateElements = Array.from(root.querySelectorAll('td, [role="cell"], [role="gridcell"], div, span, p, strong, small, a'))
+      .filter((element) => isVisible(element))
+      .map((element) => {
+        const rect = element.getBoundingClientRect();
+        return {
+          text: normalizeTextContent(element.innerText || element.textContent),
+          top: Math.round(rect.top),
+          bottom: Math.round(rect.bottom),
+          left: Math.round(rect.left),
+          centerX: Math.round(rect.left + (rect.width / 2)),
+          centerY: Math.round(rect.top + (rect.height / 2))
+        };
+      })
+      .filter((item) => item.text && item.centerY > headerBottom - 2 && !isNoiseText(item.text));
+    const buildRowFromItems = (items) => {
+      const rowByField = {};
+      items
+        .sort((left, right) => left.left - right.left)
+        .forEach((item) => {
+          const field = assignFieldByX(item.centerX);
+          if (!field) return;
+          const current = rowByField[field] || '';
+          rowByField[field] = current && current !== item.text ? `${current} ${item.text}` : item.text;
+        });
+      return columnDefinitions.map((column) => rowByField[column.field] || '');
+    };
+    const coordinateGroupedRows = [];
+    coordinateElements
+      .slice()
+      .sort((left, right) => left.centerY - right.centerY || left.left - right.left)
+      .forEach((item) => {
+        const current = coordinateGroupedRows[coordinateGroupedRows.length - 1];
+        if (current && Math.abs(current.centerY - item.centerY) <= 14) {
+          current.items.push(item);
+          current.centerY = Math.round((current.centerY + item.centerY) / 2);
+          return;
+        }
+        coordinateGroupedRows.push({ centerY: item.centerY, items: [item] });
+      });
+    const coordinateRows = coordinateGroupedRows
+      .map((group) => buildRowFromItems(group.items))
+      .filter((row) => row.some(Boolean));
+    const phoneAnchorRows = coordinateElements
+      .filter((item) => /\+?\d[\d\s().-]{9,20}/.test(item.text))
+      .map((phoneItem) => buildRowFromItems(coordinateElements.filter((item) => Math.abs(item.centerY - phoneItem.centerY) <= 22)))
+      .filter((row) => row.some(Boolean));
+
     const paginationMatch = rootText.match(/(Itens?\s*\d+\s*-\s*\d+\s*de\s*\d+|Items?\s*\d+\s*-\s*\d+\s*of\s*\d+)/i);
     const clinicNameMatch = rootText.match(/[A-Z0-9]{4,}\s*-\s+.+?\s+-\s+.+?\s+-\s+.+/);
+    const domSimplified = leafElements
+      .slice(0, 250)
+      .map((item) => `${item.top}:${item.left}:${item.text}`)
+      .join('\n');
 
     return {
       currentUrl,
       bodyText: rawRootText,
       headerTexts: discoveredHeaders,
+      detectedHeaders: Object.values(headersByField),
+      coordinateRows: uniqueRows([...phoneAnchorRows, ...coordinateRows]),
       semanticRows: uniqueRows(semanticRows),
       visualRows: uniqueRows(visualRows),
       candidateElementsCount: leafElements.length,
       clinicNameCandidate: clinicNameMatch ? normalizeTextContent(clinicNameMatch[0]) : '',
       paginationSummary: paginationMatch ? normalizeTextContent(paginationMatch[0]) : '',
+      domSimplified,
       rootPreview: rawRootText.split(/\r?\n/).slice(0, 80).map((line) => normalizeTextContent(line)).filter(Boolean).slice(0, 80)
     };
-  }, ECURO_PATIENT_HEADER_TEXTS);
+  }, ECURO_PATIENT_TABLE_COLUMNS);
 
   const textStrategy = extractEcuroPatientRowsFromText(diagnostics.bodyText || '');
   const candidateTables = [
-    buildEcuroPatientTableFromCandidateRows(diagnostics.semanticRows || []),
-    buildEcuroPatientTableFromCandidateRows(diagnostics.visualRows || []),
-    buildEcuroPatientTableFromCandidateRows(textStrategy.rows || [])
+    { strategy: 'headers_coordinates', table: buildEcuroPatientTableFromCandidateRows(diagnostics.coordinateRows || []) },
+    { strategy: 'semantic_dom_rows', table: buildEcuroPatientTableFromCandidateRows(diagnostics.semanticRows || []) },
+    { strategy: 'visible_text_rows', table: buildEcuroPatientTableFromCandidateRows(diagnostics.visualRows || []) },
+    { strategy: 'raw_text_regex', table: buildEcuroPatientTableFromCandidateRows(textStrategy.rows || []) }
   ];
 
   const fallbackTable = await extractPatientTableSnapshot(page, config).catch(() => null);
   if (fallbackTable) {
     candidateTables.push({
-      headers: fallbackTable.headers || ECURO_PATIENT_TABLE_COLUMNS.map((column) => column.label),
-      headerIndexes: fallbackTable.headerIndexes || resolvePatientTableHeaderIndexes(fallbackTable.headers || []),
-      rows: Array.isArray(fallbackTable.rows) ? fallbackTable.rows : []
+      strategy: 'html_table_fallback',
+      table: {
+        headers: fallbackTable.headers || ECURO_PATIENT_TABLE_COLUMNS.map((column) => column.label),
+        headerIndexes: fallbackTable.headerIndexes || resolvePatientTableHeaderIndexes(fallbackTable.headers || []),
+        rows: Array.isArray(fallbackTable.rows) ? fallbackTable.rows : []
+      }
     });
   }
 
-  const table = chooseBestEcuroPatientTable(candidateTables) || buildEcuroPatientTableFromCandidateRows([]);
+  const selectedCandidate = candidateTables
+    .filter((candidate) => candidate?.table && Array.isArray(candidate.table.rows) && candidate.table.rows.length)
+    .sort((left, right) => right.table.rows.length - left.table.rows.length)[0] || null;
+  const table = selectedCandidate?.table || chooseBestEcuroPatientTable(candidateTables.map((candidate) => candidate.table)) || buildEcuroPatientTableFromCandidateRows([]);
   const candidateRowTexts = [
+    ...(diagnostics.coordinateRows || []).map((row) => row.join(' | ')),
     ...(diagnostics.semanticRows || []).map((row) => row.join(' | ')),
     ...(diagnostics.visualRows || []).map((row) => row.join(' | ')),
     ...(textStrategy.rawCandidateRows || [])
@@ -1289,8 +1877,11 @@ async function extractPatientsFromEcuroPatientsPage(page, config, payload = {}) 
     diagnostics: {
       ...diagnostics,
       targetDate: formatDateKeyToBrazilian(resolveEcuroTargetDate(payload)),
+      extractionStrategyUsed: selectedCandidate?.strategy || 'none',
+      detectedHeaders: diagnostics.detectedHeaders || [],
       textStrategyCandidateLines: (textStrategy.candidateLines || []).slice(0, 40),
       textStrategyRows: (textStrategy.rows || []).slice(0, 10),
+      coordinateRowCount: Array.isArray(diagnostics.coordinateRows) ? diagnostics.coordinateRows.length : 0,
       semanticRowCount: Array.isArray(diagnostics.semanticRows) ? diagnostics.semanticRows.length : 0,
       visualRowCount: Array.isArray(diagnostics.visualRows) ? diagnostics.visualRows.length : 0,
       textRowCount: Array.isArray(textStrategy.rows) ? textStrategy.rows.length : 0,
@@ -1327,7 +1918,9 @@ function buildPatientDirectoryRecord(row = [], context = {}) {
     return null;
   }
 
-  let eligibilityStatus = isEligibleByLastConsultationDate(lastConsultationDate, context.targetDate);
+  let eligibilityStatus = Array.isArray(context.eligibleDates) && context.eligibleDates.length
+    ? isEligibleByLastConsultationDates(lastConsultationDate, context.eligibleDates)
+    : isEligibleByLastConsultationDate(lastConsultationDate, context.targetDate);
   if (context.forceClinicMismatch) {
     eligibilityStatus = 'clinic_mismatch';
   } else if (!normalizedPhone.valid) {
@@ -1341,6 +1934,7 @@ function buildPatientDirectoryRecord(row = [], context = {}) {
     patientPhone: normalizedPhone.valid ? normalizedPhone.normalized : patientPhoneRaw,
     document: document || null,
     externalPatientId: externalPatientId || null,
+    clinicCode: context.clinicCode || null,
     clinicName: context.clinicName || null,
     birthDate: birthDate || null,
     registrationDate: registrationDate || null,
@@ -1359,7 +1953,7 @@ function buildPatientDirectoryRecord(row = [], context = {}) {
           : eligibilityStatus === 'missing_last_consultation'
             ? 72
             : 0,
-    source: 'ecuro_last_consultation'
+    source: context.source || 'ecuro_last_consultation'
   };
 
   record.rawPayloadJson = JSON.stringify({
@@ -1369,13 +1963,14 @@ function buildPatientDirectoryRecord(row = [], context = {}) {
     patientPhone: patientPhoneRaw || null,
     document: document || null,
     externalPatientId: externalPatientId || null,
+    clinicCode: context.clinicCode || null,
     clinicName: context.clinicName || null,
     birthDate: birthDate || null,
     registrationDate: registrationDate || null,
     lastConsultationDate: lastConsultationDate || null,
     nextConsultationDate: nextConsultationDate || null,
     eligibilityStatus,
-    source: 'ecuro_last_consultation',
+    source: context.source || 'ecuro_last_consultation',
     rawCells: row
   });
 
@@ -1475,18 +2070,39 @@ function shouldStopWhenOlderThanTarget(pageResults = [], targetDate = '') {
   return datedRows.every((dateKey) => dateKey < targetDate);
 }
 
+function shouldStopWhenOlderThanEligibleDates(pageResults = [], eligibleDates = []) {
+  const normalizedDates = (eligibleDates || []).map((date) => normalizeBrazilianDate(date)).filter(Boolean).sort();
+  const oldestEligibleDate = normalizedDates[0] || '';
+  if (!oldestEligibleDate) return false;
+  return shouldStopWhenOlderThanTarget(pageResults, oldestEligibleDate);
+}
+
 async function collectPatientDirectoryRows(page, config, payload = {}) {
   const targetDate = resolveEcuroTargetDate(payload);
+  const eligibleDates = getNpsEligibleDates(config, payload);
   const expectedClinicName = String(payload.externalClinicName || payload.clinicName || '').trim();
   const clinicSelection = await ensureClinicSelection(page, config, expectedClinicName);
   const clinicName = clinicSelection.clinicName || expectedClinicName || '';
+  const parsedClinic = parseEcuroClinicLabel(clinicName);
+  const clinicCode = payload.clinicCode || parsedClinic?.clinicCode || '';
   const results = [];
   let pagesVisited = 0;
   let totalRowsRead = 0;
+  const maxPages = Math.max(1, Number(payload.maxPagesPerClinic || config.maxPagesPerClinic || config.maxPagesPerRun || 1) || 1);
+  const maxPatients = Math.max(1, Number(payload.maxPatientsPerClinic || config.maxPatientsPerClinic || config.maxPatientsPerRun || 1000) || 1000);
+  const pageSize = await setPatientsPageSize(page, Number(payload.pageSize || config.patientsPageSize || 500) || 500).catch(() => ({
+    changed: false,
+    pageSizeBefore: null,
+    pageSizeAfter: null,
+    optionsFound: []
+  }));
   let diagnostics = {
     currentUrl: page.url(),
     clinicName,
+    clinicCode,
     targetDate: formatDateKeyToBrazilian(targetDate),
+    eligibleDates: formatEligibleDatesForPayload(eligibleDates),
+    pageSize,
     candidateElementsCount: 0,
     candidateRowTexts: []
   };
@@ -1505,6 +2121,7 @@ async function collectPatientDirectoryRows(page, config, payload = {}) {
       diagnostics: {
         ...diagnostics,
         clinicName,
+        clinicCode,
         clinicMatched: false
       },
       results: [{
@@ -1514,6 +2131,7 @@ async function collectPatientDirectoryRows(page, config, payload = {}) {
         patientPhone: '',
         document: null,
         externalPatientId: null,
+        clinicCode,
         clinicName,
         birthDate: null,
         registrationDate: null,
@@ -1524,41 +2142,47 @@ async function collectPatientDirectoryRows(page, config, payload = {}) {
         externalStatus: 'clinic_mismatch',
         matchedBy: 'manual_review',
         confidenceScore: 0,
-        source: 'ecuro_last_consultation',
+        source: payload.source || 'ecuro_last_consultation',
         rawPayloadJson: JSON.stringify({
           expectedClinicName,
           detectedClinicName: clinicName,
           eligibilityStatus: 'clinic_mismatch',
-          source: 'ecuro_last_consultation'
+          source: payload.source || 'ecuro_last_consultation'
         })
       }]
     };
   }
 
-  while (pagesVisited < config.maxPagesPerRun && results.length < config.maxPatientsPerRun) {
+  while (pagesVisited < maxPages && results.length < maxPatients) {
     const extractedPage = await extractPatientsFromEcuroPatientsPage(page, config, payload);
     const table = extractedPage.table || buildEcuroPatientTableFromCandidateRows([]);
     const pageResults = mapPatientDirectoryRows(table, {
       headerIndexes: table.headerIndexes,
+      clinicCode,
       clinicName,
-      targetDate
+      targetDate,
+      eligibleDates,
+      source: payload.source || 'ecuro_last_consultation'
     });
     diagnostics = {
       ...diagnostics,
       ...(extractedPage.diagnostics || {}),
       clinicName,
-      targetDate: formatDateKeyToBrazilian(targetDate)
+      clinicCode,
+      targetDate: formatDateKeyToBrazilian(targetDate),
+      eligibleDates: formatEligibleDatesForPayload(eligibleDates),
+      pageSize
     };
 
     totalRowsRead += pageResults.length;
     for (const item of pageResults) {
-      if (results.length >= config.maxPatientsPerRun) break;
+      if (results.length >= maxPatients) break;
       results.push(item);
     }
 
     pagesVisited += 1;
-    if (results.length >= config.maxPatientsPerRun) break;
-    if (config.stopWhenOlderThanTarget && shouldStopWhenOlderThanTarget(pageResults, targetDate)) break;
+    if (results.length >= maxPatients) break;
+    if (config.stopWhenOlderThanTarget && shouldStopWhenOlderThanEligibleDates(pageResults, eligibleDates)) break;
 
     const moved = await clickNextPatientsPage(page, config);
     if (!moved) break;
@@ -1566,8 +2190,11 @@ async function collectPatientDirectoryRows(page, config, payload = {}) {
 
   return {
     clinicName,
+    clinicCode,
     clinicMatched: clinicSelection.matched,
     targetDate,
+    eligibleDates,
+    pageSize,
     pagesVisited,
     totalRowsRead,
     diagnostics,
@@ -2062,8 +2689,12 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
       artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
       pagesVisited: collection.pagesVisited || 0,
       totalRowsRead: collection.totalRowsRead || 0,
-      targetDate: collection.targetDate || getYesterdaySaoPauloDateKey(),
+      totalRead: collection.totalRowsRead || 0,
+      targetDate: collection.targetDate || getDateKeyInSaoPaulo(),
       clinicName: collection.clinicName || payload.clinicName || '',
+      capturedClinicName: collection.clinicName || payload.clinicName || '',
+      detectedHeaders: collection.diagnostics?.detectedHeaders || collection.diagnostics?.headerTexts || [],
+      extractionStrategyUsed: collection.diagnostics?.extractionStrategyUsed || 'none',
       diagnostics: collection.diagnostics || null,
       errorMessage: collectionErrorMessage
     };
@@ -2116,6 +2747,495 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
   } finally {
     await context.close().catch(() => null);
   }
+}
+
+function buildClinicRunSummary(clinic = {}, patch = {}) {
+  return {
+    clinicCode: clinic.clinicCode || '',
+    clinicName: clinic.clinicName || '',
+    fullLabel: clinic.fullLabel || clinic.visibleText || clinic.clinicName || '',
+    status: patch.status || 'pending',
+    totalRead: Number(patch.totalRead || 0),
+    totalEligible: Number(patch.totalEligible || 0),
+    totalOutOfDate: Number(patch.totalOutOfDate || 0),
+    totalInvalidPhone: Number(patch.totalInvalidPhone || 0),
+    totalDuplicate: Number(patch.totalDuplicate || 0),
+    totalMissingLastConsultation: Number(patch.totalMissingLastConsultation || 0),
+    totalSent: Number(patch.totalSent || 0),
+    totalFailed: Number(patch.totalFailed || 0),
+    pageSizeUsed: patch.pageSizeUsed || null,
+    pagesRead: Number(patch.pagesRead || 0),
+    errorMessage: patch.errorMessage || null
+  };
+}
+
+function summarizeClinicResults(results = []) {
+  const summary = summarizeCompletionResults(results);
+  return {
+    totalRead: summary.totalChecked,
+    totalEligible: summary.totalEligible,
+    totalOutOfDate: summary.totalOutOfDate,
+    totalInvalidPhone: summary.totalInvalidPhone,
+    totalDuplicate: summary.totalDuplicate,
+    totalMissingLastConsultation: summary.totalMissingLastConsultation,
+    totalFailed: summary.totalFailed,
+    totalSent: 0
+  };
+}
+
+function markDuplicateEcuroPatients(results = [], seenKeys = new Set()) {
+  return results.map((row) => {
+    const duplicateKey = [
+      row.clinicCode || row.clinicName || '',
+      row.externalPatientId || '',
+      normalizePhone(row.patientPhone || '').normalized || row.patientPhone || '',
+      row.lastConsultationDate || ''
+    ].map((part) => normalizeText(part)).join('|');
+
+    if (!duplicateKey.replace(/\|/g, '')) return row;
+    if (seenKeys.has(duplicateKey)) {
+      return {
+        ...row,
+        eligibilityStatus: 'duplicate',
+        completionStatus: 'ambiguous',
+        externalStatus: 'duplicate',
+        confidenceScore: Math.min(Number(row.confidenceScore || 0), 80)
+      };
+    }
+    seenKeys.add(duplicateKey);
+    return row;
+  });
+}
+
+async function executeBrowserAllClinicsNpsAutomation(job, payload = {}, config = getEcuroRobotConfig()) {
+  const playwright = await loadPlaywright();
+  ensureDir(config.profileDir);
+  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
+    headless: config.headless,
+    viewport: { width: 1440, height: 960 },
+    args: ['--disable-dev-shm-usage', '--no-sandbox'],
+    userAgent: config.userAgent || undefined
+  });
+
+  const page = context.pages()[0] || await context.newPage();
+  page.setDefaultTimeout(config.timeoutMs);
+  page.setDefaultNavigationTimeout(config.timeoutMs);
+
+  const source = 'ecuro_all_clinics_last_consultation';
+  const eligibleDates = getNpsEligibleDates(config, payload);
+  const eligibleDateLabels = formatEligibleDatesForPayload(eligibleDates);
+  const startedAt = new Date().toISOString();
+  const clinics = [];
+  const results = [];
+  const extractedRows = [];
+  const seenDuplicateKeys = new Set();
+  let discoveredClinics = [];
+  let totalRead = 0;
+  let totalFailed = 0;
+  let capturedClinicName = '';
+  let detectedHeaders = [];
+  let extractionStrategyUsed = 'none';
+
+  try {
+    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'login', currentStep: 'login', message: 'Login do robo Ecuro iniciado para varredura multi-clinicas.' });
+    await performEcuroBrowserLogin(page, config);
+    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'authenticated', currentStep: 'authenticated', currentUrl: page.url(), message: 'Login do robo Ecuro concluido.' });
+
+    await navigateToCompletionScreen(page, config);
+    await waitForEcuroPatientsPageReady(page, config);
+    logRobotJobEvent(job.id, {
+      level: 'info',
+      step: 'discover_clinics',
+      action: 'discovering',
+      currentStep: 'discover_clinics',
+      currentUrl: page.url(),
+      message: 'Descobrindo clinicas disponiveis no seletor superior.'
+    });
+
+    discoveredClinics = await discoverEcuroClinics(page, config);
+    const filteredClinics = discoveredClinics.filter((clinic) => {
+      if (payload.clinicCode && normalizeText(clinic.clinicCode) !== normalizeText(payload.clinicCode)) return false;
+      if (payload.clinicName && !clinicOptionMatches(clinic, { clinicName: payload.clinicName })) return false;
+      return true;
+    });
+    const maxClinics = Math.max(1, Number(payload.maxClinics || payload.max_clinics || config.maxClinicsPerRun || 1) || 1);
+    const clinicsToProcess = (filteredClinics.length ? filteredClinics : discoveredClinics).slice(0, maxClinics);
+
+    if (!clinicsToProcess.length) {
+      const artifacts = await capturePatientExtractionArtifacts(page, config, job.id, 'clinics-not-found', {
+        currentUrl: page.url(),
+        bodyText: await page.locator('body').innerText().catch(() => ''),
+        clinicName: await extractCurrentClinicName(page, config).catch(() => ''),
+        targetDate: eligibleDateLabels.join(', '),
+        candidateRowTexts: []
+      });
+      if (artifacts.length) jobStore.addArtifacts(job.id, artifacts);
+      return {
+        status: 'partial',
+        jobType: 'all_clinics_nps_last_consultation',
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        eligibleDates,
+        totalClinicsDiscovered: discoveredClinics.length,
+        totalClinicsProcessed: 0,
+        totalRead: 0,
+        totalFailed: 1,
+        clinics: [],
+        results: [],
+        extractedRows: [],
+        artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+        errorMessage: 'Robo autenticou no Ecuro, mas nao conseguiu descobrir clinicas no seletor superior.'
+      };
+    }
+
+    logRobotJobEvent(job.id, {
+      level: 'info',
+      step: 'discover_clinics',
+      action: 'discovered',
+      currentStep: 'discover_clinics',
+      currentUrl: page.url(),
+      pageProgress: { current: 0, total: clinicsToProcess.length },
+      message: `Clinicas descobertas: ${discoveredClinics.length}. Clinicas selecionadas para processamento: ${clinicsToProcess.length}.`,
+      metadata: {
+        discoveredClinics: discoveredClinics.slice(0, 30),
+        eligibleDates: eligibleDateLabels
+      }
+    });
+
+    for (let index = 0; index < clinicsToProcess.length; index += 1) {
+      const clinic = clinicsToProcess[index];
+      if (totalRead >= config.maxTotalPatientsPerRun) break;
+
+      updateRobotJobStep(job.id, {
+        currentStep: 'select_clinic',
+        action: 'selecting_clinic',
+        currentUrl: page.url(),
+        pageProgress: { current: index + 1, total: clinicsToProcess.length },
+        totalRowsRead: totalRead,
+        eligibleFound: results.filter((row) => row.eligibilityStatus === 'eligible').length,
+        status: 'running'
+      });
+      logRobotJobEvent(job.id, {
+        level: 'info',
+        step: 'select_clinic',
+        action: 'selecting_clinic',
+        currentStep: 'select_clinic',
+        currentUrl: page.url(),
+        message: `Selecionando clinica ${clinic.fullLabel || clinic.clinicName}.`,
+        metadata: { clinic }
+      });
+
+      let selection = null;
+      try {
+        // eslint-disable-next-line no-await-in-loop
+        selection = await selectEcuroClinic(page, clinic, config);
+        if (!selection.selected) {
+          const summary = buildClinicRunSummary(clinic, {
+            status: 'clinic_selection_failed',
+            totalFailed: 1,
+            errorMessage: 'Nao foi possivel confirmar a selecao da clinica no topo da tela.'
+          });
+          clinics.push(summary);
+          totalFailed += 1;
+          logRobotJobEvent(job.id, {
+            level: 'warning',
+            step: 'select_clinic',
+            action: 'clinic_selection_failed',
+            currentStep: 'select_clinic',
+            currentUrl: page.url(),
+            message: summary.errorMessage,
+            metadata: { clinic, selection }
+          });
+          continue;
+        }
+
+        // eslint-disable-next-line no-await-in-loop
+        const collection = await collectPatientDirectoryRows(page, config, {
+          ...payload,
+          source,
+          clinicCode: clinic.clinicCode || selection.clinicCode || '',
+          clinicName: selection.clinicName || clinic.fullLabel || clinic.clinicName || '',
+          externalClinicName: selection.clinicName || clinic.fullLabel || clinic.clinicName || '',
+          targetDates: eligibleDateLabels,
+          maxPagesPerClinic: payload.maxPagesPerClinic || config.maxPagesPerClinic,
+          maxPatientsPerClinic: Math.min(
+            Number(payload.maxPatientsPerClinic || config.maxPatientsPerClinic || 1000),
+            Math.max(1, config.maxTotalPatientsPerRun - totalRead)
+          )
+        });
+        capturedClinicName = capturedClinicName || collection.clinicName || '';
+        detectedHeaders = detectedHeaders.length ? detectedHeaders : (collection.diagnostics?.detectedHeaders || collection.diagnostics?.headerTexts || []);
+        if (extractionStrategyUsed === 'none' && collection.diagnostics?.extractionStrategyUsed) {
+          extractionStrategyUsed = collection.diagnostics.extractionStrategyUsed;
+        }
+        const clinicRows = markDuplicateEcuroPatients(collection.results || [], seenDuplicateKeys);
+        const matchedRows = matchCompletionRows([], clinicRows).map((row) => ({
+          ...row,
+          clinicCode: clinic.clinicCode || selection.clinicCode || row.clinicCode || '',
+          clinicName: row.clinicName || selection.clinicName || clinic.fullLabel || clinic.clinicName || '',
+          source
+        }));
+        const clinicSummary = summarizeClinicResults(matchedRows);
+        totalRead += Number(collection.totalRowsRead || matchedRows.length || 0);
+        results.push(...matchedRows);
+        extractedRows.push(...clinicRows);
+        clinics.push(buildClinicRunSummary(clinic, {
+          ...clinicSummary,
+          status: collection.totalRowsRead > 0 ? 'completed' : 'partial',
+          pageSizeUsed: collection.pageSize?.pageSizeAfter || collection.pageSize?.pageSizeBefore || null,
+          pagesRead: collection.pagesVisited || 0,
+          errorMessage: collection.totalRowsRead > 0 ? null : 'Nenhuma linha de paciente foi extraida para esta clinica.'
+        }));
+
+        if (config.debugCapture || !collection.totalRowsRead) {
+          // eslint-disable-next-line no-await-in-loop
+          const artifacts = await capturePatientExtractionArtifacts(page, config, job.id, `clinic-${clinic.clinicCode || index + 1}`, {
+            ...(collection.diagnostics || {}),
+            currentUrl: page.url(),
+            clinicName: selection.clinicName || clinic.fullLabel || clinic.clinicName || '',
+            clinicCode: clinic.clinicCode || '',
+            targetDate: eligibleDateLabels.join(', '),
+            candidateRowTexts: Array.isArray(collection.diagnostics?.candidateRowTexts) ? collection.diagnostics.candidateRowTexts : [],
+            bodyText: collection.diagnostics?.bodyText || ''
+          });
+          if (artifacts.length) jobStore.addArtifacts(job.id, artifacts);
+        }
+
+        logRobotJobEvent(job.id, {
+          level: collection.totalRowsRead > 0 ? 'info' : 'warning',
+          step: 'collect_patients',
+          action: 'clinic_collected',
+          currentStep: 'collect_patients',
+          currentUrl: page.url(),
+          pageProgress: { current: index + 1, total: clinicsToProcess.length },
+          totalRowsRead: totalRead,
+          eligibleFound: results.filter((row) => row.eligibilityStatus === 'eligible').length,
+          message: `Clinica ${clinic.fullLabel || clinic.clinicName}: ${collection.totalRowsRead || 0} lidos, ${clinicSummary.totalEligible || 0} elegiveis.`,
+          metadata: {
+            clinic,
+            pagesVisited: collection.pagesVisited || 0,
+            pageSize: collection.pageSize || null,
+            eligibleDates: eligibleDateLabels
+          }
+        });
+      } catch (clinicError) {
+        totalFailed += 1;
+        clinics.push(buildClinicRunSummary(clinic, {
+          status: 'error',
+          totalFailed: 1,
+          errorMessage: clinicError.message
+        }));
+        logRobotJobEvent(job.id, {
+          level: 'error',
+          step: 'collect_patients',
+          action: 'clinic_error',
+          currentStep: 'collect_patients',
+          currentUrl: page.url(),
+          message: clinicError.message,
+          metadata: { clinic }
+        });
+      }
+    }
+
+    const summary = summarizeCompletionResults(results);
+    return {
+      status: totalFailed || clinics.some((clinic) => clinic.status !== 'completed') ? 'partial' : 'completed',
+      jobType: 'all_clinics_nps_last_consultation',
+      dateMode: payload.dateMode || payload.date_mode || config.npsDateMode,
+      eligibleDates,
+      totalClinicsDiscovered: discoveredClinics.length,
+      totalClinicsProcessed: clinics.length,
+      totalRead,
+      totalSent: 0,
+      totalFailed: Number(summary.totalFailed || 0) + totalFailed,
+      capturedClinicName,
+      detectedHeaders,
+      extractionStrategyUsed,
+      totalEligible: summary.totalEligible,
+      totalOutOfDate: summary.totalOutOfDate,
+      totalInvalidPhone: summary.totalInvalidPhone,
+      totalDuplicate: summary.totalDuplicate,
+      totalMissingLastConsultation: summary.totalMissingLastConsultation,
+      totalCompleted: summary.totalCompleted,
+      totalNotCompleted: summary.totalNotCompleted,
+      totalNotFound: summary.totalNotFound,
+      totalAmbiguous: summary.totalAmbiguous,
+      clinics,
+      results,
+      extractedRows,
+      discoveredClinics,
+      logs: (jobStore.get(job.id)?.logs || []).slice(),
+      artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      currentUrl: page.url()
+    };
+  } catch (error) {
+    const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'all-clinics-error');
+    if (artifacts.length) {
+      jobStore.addArtifacts(job.id, artifacts);
+    }
+    logRobotJobEvent(job.id, {
+      level: 'error',
+      step: error.code === 'manual_action_required' ? 'manual_action_required' : 'error',
+      action: 'failed',
+      currentStep: error.code === 'manual_action_required' ? 'manual_action_required' : 'error',
+      currentUrl: page.url(),
+      message: error.message
+    });
+    return {
+      status: error.code === 'manual_action_required' ? 'manual_action_required' : 'failed',
+      jobType: 'all_clinics_nps_last_consultation',
+      eligibleDates,
+      totalClinicsDiscovered: discoveredClinics.length,
+      totalClinicsProcessed: clinics.length,
+      totalRead,
+      totalFailed: Math.max(1, totalFailed),
+      capturedClinicName,
+      detectedHeaders,
+      extractionStrategyUsed,
+      clinics,
+      results,
+      extractedRows,
+      logs: (jobStore.get(job.id)?.logs || []).slice(),
+      artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      currentUrl: page.url(),
+      errorMessage: error.message
+    };
+  } finally {
+    await context.close().catch(() => null);
+  }
+}
+
+async function runDiscoverClinicsJob(payload = {}, config = getEcuroRobotConfig()) {
+  const job = jobStore.create({
+    jobType: 'discover_clinics',
+    clinicName: payload.clinicName || '',
+    payload
+  });
+
+  jobStore.update(job.id, {
+    status: 'running',
+    startedAt: new Date().toISOString()
+  });
+  updateRobotJobStep(job.id, {
+    currentStep: 'starting_discovery',
+    action: 'starting_discovery',
+    status: 'running'
+  });
+
+  const playwright = await loadPlaywright();
+  ensureDir(config.profileDir);
+  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
+    headless: config.headless,
+    viewport: { width: 1440, height: 960 },
+    args: ['--disable-dev-shm-usage', '--no-sandbox'],
+    userAgent: config.userAgent || undefined
+  });
+  const page = context.pages()[0] || await context.newPage();
+  page.setDefaultTimeout(config.timeoutMs);
+  page.setDefaultNavigationTimeout(config.timeoutMs);
+
+  try {
+    await performEcuroBrowserLogin(page, config);
+    await navigateToCompletionScreen(page, config);
+    const clinics = await discoverEcuroClinics(page, config);
+    const artifacts = config.debugCapture
+      ? await capturePatientExtractionArtifacts(page, config, job.id, 'discover-clinics', {
+        currentUrl: page.url(),
+        clinicName: await extractCurrentClinicName(page, config).catch(() => ''),
+        candidateRowTexts: clinics.map((clinic) => clinic.fullLabel),
+        bodyText: await page.locator('body').innerText().catch(() => '')
+      })
+      : [];
+    if (artifacts.length) jobStore.addArtifacts(job.id, artifacts);
+    const updated = jobStore.update(job.id, {
+      status: clinics.length ? 'completed' : 'partial',
+      finishedAt: new Date().toISOString(),
+      results: clinics,
+      discoveredClinics: clinics,
+      totalChecked: clinics.length,
+      totalRead: clinics.length,
+      totalRowsRead: clinics.length,
+      currentUrl: page.url(),
+      artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+      errorMessage: clinics.length ? null : 'Nenhuma clinica foi encontrada no seletor superior.'
+    });
+    jobStore.resetRuntime();
+    return updated;
+  } catch (error) {
+    const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'discover-clinics-error');
+    if (artifacts.length) jobStore.addArtifacts(job.id, artifacts);
+    const updated = jobStore.update(job.id, {
+      status: error.code === 'manual_action_required' ? 'manual_action_required' : 'failed',
+      finishedAt: new Date().toISOString(),
+      errorMessage: error.message,
+      artifacts: (jobStore.get(job.id)?.artifacts || []).slice()
+    });
+    jobStore.resetRuntime();
+    return updated;
+  } finally {
+    await context.close().catch(() => null);
+  }
+}
+
+async function runEcuroAllClinicsNpsAutomation(payload = {}, config = getEcuroRobotConfig()) {
+  const job = jobStore.create({
+    jobType: payload.jobType || 'all_clinics_nps_last_consultation',
+    clinicId: payload.clinicId || null,
+    clinicName: payload.clinicName || '',
+    appointmentDate: payload.appointmentDate || '',
+    payload: {
+      ...payload,
+      source: payload.source || 'ecuro_all_clinics_last_consultation',
+      dryRun: payload.dryRun !== undefined ? Boolean(payload.dryRun) : config.dryRun
+    }
+  });
+
+  jobStore.update(job.id, {
+    status: 'running',
+    startedAt: new Date().toISOString()
+  });
+  updateRobotJobStep(job.id, {
+    currentStep: 'starting_all_clinics',
+    action: 'starting_all_clinics',
+    status: 'running'
+  });
+
+  const result = await executeBrowserAllClinicsNpsAutomation(job, {
+    ...payload,
+    source: payload.source || 'ecuro_all_clinics_last_consultation'
+  }, config);
+  const summary = summarizeCompletionResults(result.results || []);
+  const updated = jobStore.update(job.id, {
+    status: result.status,
+    finishedAt: result.finishedAt || new Date().toISOString(),
+    errorMessage: result.errorMessage || null,
+    artifacts: result.artifacts || [],
+    logs: result.logs || (jobStore.get(job.id)?.logs || []),
+    extractedRows: result.extractedRows || [],
+    results: result.results || [],
+    clinics: result.clinics || [],
+    discoveredClinics: result.discoveredClinics || [],
+    dateMode: result.dateMode || config.npsDateMode,
+    eligibleDates: result.eligibleDates || [],
+    totalClinicsDiscovered: Number(result.totalClinicsDiscovered || 0),
+    totalClinicsProcessed: Number(result.totalClinicsProcessed || 0),
+    totalRowsRead: Number(result.totalRead || summary.totalChecked || 0),
+    totalRead: Number(result.totalRead || summary.totalChecked || 0),
+    totalSent: Number(result.totalSent || 0),
+    capturedClinicName: result.capturedClinicName || '',
+    detectedHeaders: result.detectedHeaders || [],
+    extractionStrategyUsed: result.extractionStrategyUsed || 'none',
+    targetDate: Array.isArray(result.eligibleDates) ? result.eligibleDates.join(',') : '',
+    currentUrl: result.currentUrl || '',
+    ...summary,
+    totalFailed: Number(result.totalFailed || summary.totalFailed || 0)
+  });
+  jobStore.resetRuntime();
+  return updated;
 }
 
 async function runLoginTest(_payload = {}, config = getEcuroRobotConfig()) {
@@ -2210,8 +3330,11 @@ async function runCheckCompletedJob(payload = {}, config = getEcuroRobotConfig()
     pagesVisited: result.pagesVisited || 0,
     totalRowsRead: result.totalRowsRead || 0,
     totalRead: result.totalRowsRead || 0,
-    targetDate: result.targetDate || payload.appointmentDate || getYesterdaySaoPauloDateKey(),
+    targetDate: result.targetDate || payload.appointmentDate || getDateKeyInSaoPaulo(),
     detectedClinicName: result.clinicName || payload.clinicName || '',
+    capturedClinicName: result.capturedClinicName || result.clinicName || payload.clinicName || '',
+    detectedHeaders: result.detectedHeaders || [],
+    extractionStrategyUsed: result.extractionStrategyUsed || 'none',
     diagnostics: result.diagnostics || null,
     ...summary
   });
@@ -2323,20 +3446,25 @@ module.exports = {
   buildJobId,
   buildPatientDirectoryRecord,
   detectManualActionRequired,
+  discoverEcuroClinics,
   extractEcuroPatientRowsFromText,
   extractPatientsFromEcuroPatientsPage,
+  getNpsEligibleDates,
   getRobotLiveState,
   getRobotVncStatus,
   getEcuroRobotConfig,
   getEcuroRobotConfigStatus,
   getYesterdaySaoPauloDateKey,
   isEligibleByLastConsultationDate,
+  isEligibleByLastConsultationDates,
   jobStore,
   mapPatientDirectoryRows,
   matchCompletionRows,
   normalizeBrazilianDate,
   normalizeEcuroCompletionStatus,
   resolveEcuroTargetDate,
+  runDiscoverClinicsJob,
+  runEcuroAllClinicsNpsAutomation,
   retryRobotJob,
   runCheckCompletedBatch,
   runCheckCompletedJob,
