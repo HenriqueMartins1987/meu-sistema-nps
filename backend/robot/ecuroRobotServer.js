@@ -24,6 +24,15 @@ const {
   stopRobotVncSession
 } = require('../services/ecuroRobotService');
 
+const {
+  listEcuroClinics,
+  listEcuroNpsQueue,
+  listEcuroPatients,
+  runCurrentClinicExcelDryRun,
+  runSequentialExcelClinicsJob,
+  upsertClinics
+} = require('../services/ecuroSequentialExcelService');
+
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 
@@ -53,10 +62,7 @@ app.get('/health', (_req, res) => {
 });
 
 app.get('/ecuro/live-state', (_req, res) => {
-  return res.json({
-    success: true,
-    live: getRobotLiveState()
-  });
+  return res.json({ success: true, live: getRobotLiveState() });
 });
 
 app.post('/ecuro/login-test', async (req, res) => {
@@ -123,23 +129,30 @@ app.post('/ecuro/excel/discover-export', async (req, res) => {
       dryRun: true,
       maxClinics: req.body?.maxClinics || req.body?.max_clinics || 1
     }, getEcuroRobotConfig());
-    const endpoints = (Array.isArray(job.clinics) ? job.clinics : [])
-      .map((clinic) => clinic.selectedExcelExportEndpoint)
-      .filter(Boolean);
-    return res.status(job.status === 'manual_action_required' ? 409 : 200).json({
-      success: true,
-      job,
-      selectedExcelExportEndpoint: endpoints[0] || null,
-      excelExportEndpoints: endpoints
-    });
+    const endpoints = (Array.isArray(job.clinics) ? job.clinics : []).map((clinic) => clinic.selectedExcelExportEndpoint).filter(Boolean);
+    return res.status(job.status === 'manual_action_required' ? 409 : 200).json({ success: true, job, selectedExcelExportEndpoint: endpoints[0] || null, excelExportEndpoints: endpoints });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Erro ao descobrir exportacao Excel no Ecuro.' });
   }
 });
 
+app.post('/ecuro/excel/dry-run-current-clinic', async (req, res) => {
+  try {
+    const job = await runCurrentClinicExcelDryRun({
+      ...(req.body || {}),
+      source: req.body?.source || 'ecuro_excel_current_clinic',
+      dateMode: req.body?.dateMode || 'today',
+      dryRun: true
+    }, getEcuroRobotConfig());
+    return res.status(job.status === 'manual_action_required' ? 409 : 200).json({ success: true, job });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Erro ao executar dry-run Excel da clinica atual no Ecuro.' });
+  }
+});
+
 app.post('/ecuro/excel/download-one-clinic', async (req, res) => {
   try {
-    const job = await runEcuroExcelExportAllClinicsNpsJob({
+    const job = await runSequentialExcelClinicsJob({
       ...(req.body || {}),
       source: 'ecuro_excel_export',
       jobType: 'excel_export_one_clinic',
@@ -155,9 +168,9 @@ app.post('/ecuro/excel/download-one-clinic', async (req, res) => {
 
 app.post('/ecuro/excel/dry-run-one-clinic', async (req, res) => {
   try {
-    const job = await runEcuroExcelExportAllClinicsNpsJob({
+    const job = await runSequentialExcelClinicsJob({
       ...(req.body || {}),
-      source: 'ecuro_excel_export',
+      source: req.body?.source || 'ecuro_excel_export',
       jobType: 'excel_export_nps',
       dateMode: req.body?.dateMode || 'today',
       dryRun: true,
@@ -169,62 +182,108 @@ app.post('/ecuro/excel/dry-run-one-clinic', async (req, res) => {
   }
 });
 
-app.post('/ecuro/excel/dry-run-all-clinics', async (req, res) => {
+app.post('/ecuro/excel/dry-run-sequential-clinics', async (req, res) => {
   try {
-    const job = await runEcuroExcelExportAllClinicsNpsJob({
+    const job = await runSequentialExcelClinicsJob({
       ...(req.body || {}),
-      source: 'ecuro_excel_export',
-      jobType: 'excel_export_nps',
+      source: req.body?.source || 'ecuro_excel_sequential_clinics',
+      jobType: 'ecuro_daily_nps_collection_job',
       dateMode: req.body?.dateMode || 'today',
       dryRun: true
     }, getEcuroRobotConfig());
     return res.status(job.status === 'manual_action_required' ? 409 : 200).json({ success: true, job });
   } catch (error) {
-    return res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Erro ao executar dry-run Excel em todas as clinicas no Ecuro.' });
+    return res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Erro ao executar dry-run sequencial por clinica no Ecuro.' });
+  }
+});
+
+app.post('/ecuro/excel/run-sequential-clinics', async (req, res) => {
+  try {
+    const job = await runSequentialExcelClinicsJob({
+      ...(req.body || {}),
+      source: req.body?.source || 'ecuro_excel_sequential_clinics',
+      jobType: 'ecuro_daily_nps_collection_job',
+      dateMode: req.body?.dateMode || 'today',
+      dryRun: true
+    }, getEcuroRobotConfig());
+    return res.status(job.status === 'manual_action_required' ? 409 : 200).json({ success: true, job, warning: 'Envio real bloqueado: dryRun permanece ativo no robô.' });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Erro ao executar sequencial por clinica no Ecuro.' });
+  }
+});
+
+app.post('/ecuro/excel/dry-run-all-clinics', async (req, res) => {
+  try {
+    const job = await runSequentialExcelClinicsJob({
+      ...(req.body || {}),
+      source: req.body?.source || 'ecuro_excel_sequential_clinics',
+      jobType: 'ecuro_daily_nps_collection_job',
+      dateMode: req.body?.dateMode || 'today',
+      dryRun: true
+    }, getEcuroRobotConfig());
+    return res.status(job.status === 'manual_action_required' ? 409 : 200).json({ success: true, job });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Erro ao executar dry-run Excel sequencial no Ecuro.' });
   }
 });
 
 app.post('/ecuro/excel/process-latest', async (_req, res) => {
-  const latest = jobStore.list()
-    .filter((job) => String(job.jobType || '').includes('excel_export'))
-    .sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0))[0];
-  if (!latest) {
-    return res.status(404).json({ success: false, error: 'Nenhum job Excel encontrado para processamento.' });
-  }
+  const latest = jobStore.list().filter((job) => String(job.jobType || '').includes('excel') || String(job.jobType || '').includes('ecuro_daily')).sort((left, right) => new Date(right.createdAt || 0) - new Date(left.createdAt || 0))[0];
+  if (!latest) return res.status(404).json({ success: false, error: 'Nenhum job Excel encontrado para processamento.' });
   return res.json({ success: true, job: latest, dryRun: true, message: 'Ultimo job Excel localizado. O processamento real permanece bloqueado pelo dry-run.' });
 });
 
 app.get('/ecuro/excel/jobs', (_req, res) => {
-  const jobs = jobStore.list().filter((job) => String(job.jobType || '').includes('excel_export'));
+  const jobs = jobStore.list().filter((job) => String(job.jobType || '').includes('excel') || String(job.jobType || '').includes('ecuro_daily'));
   return res.json({ success: true, jobs });
 });
 
 app.get('/ecuro/excel/jobs/:id', (req, res) => {
   const job = jobStore.get(req.params.id);
-  if (!job || !String(job.jobType || '').includes('excel_export')) {
-    return res.status(404).json({ success: false, error: 'Job Excel nao encontrado.' });
-  }
+  if (!job || !(String(job.jobType || '').includes('excel') || String(job.jobType || '').includes('ecuro_daily'))) return res.status(404).json({ success: false, error: 'Job Excel nao encontrado.' });
   return res.json({ success: true, job });
 });
 
 app.get('/ecuro/excel/artifacts/:id', (req, res) => {
   const artifactId = String(req.params.id || '');
-  const artifact = jobStore.list()
-    .flatMap((job) => Array.isArray(job.artifacts) ? job.artifacts : [])
-    .find((item) => String(item.id) === artifactId);
-  if (!artifact?.path) {
-    return res.status(404).json({ success: false, error: 'Artefato Excel nao encontrado.' });
-  }
+  const artifact = jobStore.list().flatMap((job) => Array.isArray(job.artifacts) ? job.artifacts : []).find((item) => String(item.id) === artifactId);
+  if (!artifact?.path) return res.status(404).json({ success: false, error: 'Artefato Excel nao encontrado.' });
   const config = getEcuroRobotConfig();
   const allowed = [config.exportDir, config.debugDir, config.screenshotDir, config.htmlDir].some((basePath) => isPathInside(basePath, artifact.path));
-  if (!allowed) {
-    return res.status(403).json({ success: false, error: 'Artefato fora das areas permitidas.' });
-  }
+  if (!allowed) return res.status(403).json({ success: false, error: 'Artefato fora das areas permitidas.' });
   return res.sendFile(artifact.path, (error) => {
-    if (error) {
-      res.status(error.statusCode || 500).json({ success: false, error: 'Nao foi possivel abrir o artefato Excel solicitado.' });
-    }
+    if (error) res.status(error.statusCode || 500).json({ success: false, error: 'Nao foi possivel abrir o artefato Excel solicitado.' });
   });
+});
+
+app.get('/ecuro/clinics', (_req, res) => {
+  return res.json({ success: true, clinics: listEcuroClinics() });
+});
+
+app.post('/ecuro/clinics', (req, res) => {
+  const clinics = Array.isArray(req.body?.clinics) ? req.body.clinics : [req.body || {}];
+  return res.json({ success: true, clinics: upsertClinics(clinics) });
+});
+
+app.post('/ecuro/clinics/sync', (req, res) => {
+  const clinics = Array.isArray(req.body?.clinics) ? req.body.clinics : [];
+  return res.json({ success: true, clinics: upsertClinics(clinics) });
+});
+
+app.get('/ecuro/patients', (req, res) => {
+  const clinicCode = String(req.query.clinicCode || '').trim();
+  const date = String(req.query.lastConsultationDate || req.query.date || '').trim();
+  const patients = listEcuroPatients().filter((patient) => {
+    if (clinicCode && String(patient.clinicCode || '') !== clinicCode) return false;
+    if (date && String(patient.lastConsultationDate || '') !== date) return false;
+    return true;
+  });
+  return res.json({ success: true, patients, total: patients.length });
+});
+
+app.get('/ecuro/nps-queue', (_req, res) => {
+  const queue = listEcuroNpsQueue();
+  return res.json({ success: true, queue, total: queue.length });
 });
 
 app.post('/ecuro/check-completed/batch', async (req, res) => {
@@ -251,9 +310,7 @@ app.get('/ecuro/jobs', (_req, res) => {
 
 app.get('/ecuro/jobs/:id', (req, res) => {
   const job = jobStore.get(req.params.id);
-  if (!job) {
-    return res.status(404).json({ success: false, error: 'Job não encontrado.' });
-  }
+  if (!job) return res.status(404).json({ success: false, error: 'Job não encontrado.' });
   return res.json({ success: true, job });
 });
 
@@ -268,17 +325,11 @@ app.post('/ecuro/jobs/:id/retry', async (req, res) => {
 
 app.get('/ecuro/jobs/:id/artifacts/:artifactId', (req, res) => {
   const job = jobStore.get(req.params.id);
-  if (!job) {
-    return res.status(404).json({ success: false, error: 'Job não encontrado.' });
-  }
+  if (!job) return res.status(404).json({ success: false, error: 'Job não encontrado.' });
   const artifact = (Array.isArray(job.artifacts) ? job.artifacts : []).find((item) => String(item.id) === String(req.params.artifactId));
-  if (!artifact?.path) {
-    return res.status(404).json({ success: false, error: 'Artefato não encontrado.' });
-  }
+  if (!artifact?.path) return res.status(404).json({ success: false, error: 'Artefato não encontrado.' });
   return res.sendFile(artifact.path, (error) => {
-    if (error) {
-      res.status(error.statusCode || 500).json({ success: false, error: 'Não foi possível abrir o artefato solicitado.' });
-    }
+    if (error) res.status(error.statusCode || 500).json({ success: false, error: 'Não foi possível abrir o artefato solicitado.' });
   });
 });
 
@@ -292,23 +343,12 @@ function isPathInside(basePath, filePath) {
 app.post('/ecuro/artifacts/open', (req, res) => {
   const artifactPath = String(req.body?.path || '').trim();
   const config = getEcuroRobotConfig();
-
-  if (!artifactPath) {
-    return res.status(400).json({ success: false, error: 'Caminho do artefato não informado.' });
-  }
-
+  if (!artifactPath) return res.status(400).json({ success: false, error: 'Caminho do artefato não informado.' });
   const allowed = [config.screenshotDir, config.htmlDir, config.debugDir, config.exportDir].some((basePath) => isPathInside(basePath, artifactPath));
-  if (!allowed) {
-    return res.status(403).json({ success: false, error: 'Artefato fora das áreas permitidas.' });
-  }
-  if (!fs.existsSync(artifactPath)) {
-    return res.status(404).json({ success: false, error: 'Arquivo do artefato não encontrado.' });
-  }
-
+  if (!allowed) return res.status(403).json({ success: false, error: 'Artefato fora das áreas permitidas.' });
+  if (!fs.existsSync(artifactPath)) return res.status(404).json({ success: false, error: 'Arquivo do artefato não encontrado.' });
   return res.sendFile(artifactPath, (error) => {
-    if (error) {
-      res.status(error.statusCode || 500).json({ success: false, error: 'Não foi possível abrir o artefato solicitado.' });
-    }
+    if (error) res.status(error.statusCode || 500).json({ success: false, error: 'Não foi possível abrir o artefato solicitado.' });
   });
 });
 
