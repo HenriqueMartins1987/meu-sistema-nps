@@ -83,7 +83,9 @@ const {
   callEcuroRobotArtifactByPath,
   callEcuroRobotCheckCompleted,
   callEcuroRobotCheckCompletedAllClinics,
+  callEcuroRobotCheckCompletedNetwork,
   callEcuroRobotDiscoverClinics,
+  callEcuroRobotDiscoverNetwork,
   callEcuroRobotJobDetail,
   callEcuroRobotJobs,
   callEcuroRobotLoginTest,
@@ -13190,7 +13192,14 @@ function buildEcuroRobotMasterConfigSnapshot() {
       vncEnabled: robotConfig.vncEnabled,
       vncHost: robotConfig.vncHost,
       vncPort: robotConfig.vncPort,
-      captureIntervalSeconds: robotConfig.captureIntervalSeconds
+      captureIntervalSeconds: robotConfig.captureIntervalSeconds,
+      discoveryMode: robotConfig.discoveryMode,
+      captureNetwork: robotConfig.captureNetwork,
+      networkSaveSamples: robotConfig.networkSaveSamples,
+      networkMaskSensitive: robotConfig.networkMaskSensitive,
+      networkWaitMs: robotConfig.networkWaitMs,
+      networkMaxResponses: robotConfig.networkMaxResponses,
+      networkMaxSampleItems: robotConfig.networkMaxSampleItems
     },
     mapping: {
       ...mappingConfig,
@@ -14445,10 +14454,259 @@ async function runEcuroAllClinicsNpsAutomationAudit(options = {}) {
   }
 }
 
+async function runEcuroNetworkDiscoveryAudit(options = {}) {
+  const actor = options.user || null;
+  const actorName = options.createdBy || getActorName(actor) || 'Automação NPS Ecuro';
+  const robotPayload = {
+    source: 'ecuro_network_discovery',
+    dateMode: options.dateMode || options.date_mode || 'today',
+    targetDate: options.targetDate || options.target_date || null,
+    dryRun: true
+  };
+  const jobId = await insertEcuroRobotJobAudit({
+    jobType: 'network_discovery',
+    clinicId: null,
+    clinicName: null,
+    appointmentDate: normalizeEcuroAutomationDate(robotPayload.targetDate, null),
+    status: 'running',
+    createdBy: actorName,
+    triggeredByUserId: actor?.id || null,
+    payloadJson: JSON.stringify(robotPayload)
+  });
+  const startedAt = new Date();
+
+  try {
+    const robotResult = await callEcuroRobotDiscoverNetwork(robotPayload);
+    const job = robotResult?.job || {};
+    const discovery = robotResult?.discovery || job.discovery || {};
+    const robotArtifacts = Array.isArray(job.artifacts) ? job.artifacts : [];
+    const robotLogs = Array.isArray(job.logs) ? job.logs : [];
+    const totalCandidates = Number(discovery.candidateResponses?.length || job.totalRead || 0);
+
+    await updateEcuroRobotJobAudit(jobId, {
+      status: job.status || 'completed',
+      totalChecked: totalCandidates,
+      totalCompleted: Number(discovery.patientEndpoints?.length || 0),
+      totalFailed: job.status === 'failed' ? 1 : 0,
+      totalEligible: Number(discovery.patientEndpoints?.length || 0),
+      totalSent: 0,
+      errorMessage: job.errorMessage || job.error_message || null,
+      artifactsJson: JSON.stringify(robotArtifacts),
+      resultJson: JSON.stringify({ ...job, discovery }),
+      currentStep: job.currentStep || job.current_step || 'network_discovery',
+      currentUrl: job.currentUrl || job.current_url || null,
+      robotJobKey: job.id || null,
+      startedAt: toMysqlDateTime(startedAt),
+      finishedAt: toMysqlDateTime(new Date())
+    });
+    await replaceEcuroRobotLogs(jobId, 'network_discovery', robotLogs);
+    await replaceEcuroRobotArtifacts(jobId, job.id || null, robotArtifacts);
+
+    return {
+      jobId,
+      dryRun: true,
+      discovery,
+      selectedPatientEndpoint: discovery.selectedPatientEndpoint || '',
+      selectedClinicEndpoint: discovery.selectedClinicEndpoint || '',
+      confidenceScore: Number(discovery.confidenceScore || 0),
+      totalCandidates
+    };
+  } catch (error) {
+    await updateEcuroRobotJobAudit(jobId, {
+      status: 'failed',
+      totalChecked: 0,
+      totalCompleted: 0,
+      totalFailed: 1,
+      errorMessage: sanitizeRobotError(error),
+      resultJson: JSON.stringify({ error: sanitizeRobotError(error) }),
+      startedAt: toMysqlDateTime(startedAt),
+      finishedAt: toMysqlDateTime(new Date())
+    });
+    throw error;
+  }
+}
+
+async function runEcuroNetworkNpsAutomationAudit(options = {}) {
+  const actor = options.user || null;
+  const actorName = options.createdBy || getActorName(actor) || 'Automação NPS Ecuro';
+  const npsConfig = getNpsAutomationConfig();
+  const dryRun = options.dryRun === undefined ? true : Boolean(options.dryRun);
+  const robotPayload = {
+    source: 'ecuro_network_patients',
+    dateMode: options.dateMode || options.date_mode || 'today',
+    targetDate: options.targetDate || options.target_date || options.appointmentDate || options.appointment_date || null,
+    dryRun: true,
+    patients: []
+  };
+  const jobId = await insertEcuroRobotJobAudit({
+    jobType: 'network_patients',
+    clinicId: null,
+    clinicName: null,
+    appointmentDate: normalizeEcuroAutomationDate(robotPayload.targetDate, null),
+    status: 'running',
+    createdBy: actorName,
+    triggeredByUserId: actor?.id || null,
+    payloadJson: JSON.stringify(robotPayload)
+  });
+  const startedAt = new Date();
+  const summary = {
+    candidateCount: 0,
+    groups: 1,
+    targetDate: robotPayload.targetDate || null,
+    jobs: [],
+    completionRowsInserted: 0,
+    completed: 0,
+    notCompleted: 0,
+    notFound: 0,
+    ambiguous: 0,
+    errors: 0,
+    eligible: 0,
+    outOfDate: 0,
+    invalidPhone: 0,
+    duplicateRows: 0,
+    missingLastConsultation: 0,
+    clinicMismatch: 0,
+    inviteCreated: 0,
+    duplicates: 0,
+    missingPhone: 0,
+    wouldSend: 0,
+    dryRun,
+    extractionMode: 'network'
+  };
+
+  try {
+    const robotResult = await callEcuroRobotCheckCompletedNetwork(robotPayload);
+    const job = robotResult?.job || robotResult || {};
+    const jobResults = Array.isArray(job.results) ? job.results : [];
+    const totalChecked = Number(job.totalRead || job.totalChecked || job.total_checked || jobResults.length || 0);
+    const totalCompleted = Number(job.totalCompleted || job.total_completed || 0);
+    const totalFailed = Number(job.totalFailed || job.total_failed || 0);
+    const totalEligible = Number(job.totalEligible || job.total_eligible || 0);
+    const robotArtifacts = Array.isArray(job.artifacts) ? job.artifacts : [];
+    const robotLogs = Array.isArray(job.logs) ? job.logs : [];
+
+    await updateEcuroRobotJobAudit(jobId, {
+      status: job.status || 'completed',
+      totalChecked,
+      totalCompleted,
+      totalFailed,
+      totalEligible,
+      totalSent: 0,
+      errorMessage: job.errorMessage || job.error_message || null,
+      artifactsJson: JSON.stringify(robotArtifacts),
+      resultJson: JSON.stringify(job || robotResult || {}),
+      currentStep: job.currentStep || job.current_step || 'network_collect',
+      currentUrl: job.currentUrl || job.current_url || null,
+      robotJobKey: job.id || null,
+      startedAt: toMysqlDateTime(startedAt),
+      finishedAt: toMysqlDateTime(new Date())
+    });
+    await replaceEcuroRobotLogs(jobId, 'network_patients', robotLogs);
+    await replaceEcuroRobotArtifacts(jobId, job.id || null, robotArtifacts);
+
+    summary.candidateCount = totalChecked;
+    summary.selectedPatientEndpoint = job.selectedPatientEndpoint || job.discovery?.selectedPatientEndpoint || '';
+    summary.selectedClinicEndpoint = job.selectedClinicEndpoint || job.discovery?.selectedClinicEndpoint || '';
+    summary.confidenceScore = Number(job.discovery?.confidenceScore || 0);
+
+    for (const result of jobResults) {
+      const completionStatus = interpretEcuroCompletionStatus(result.completionStatus || result.completion_status || result.externalStatus || result.external_status);
+      const eligibilityStatus = String(result.eligibilityStatus || result.eligibility_status || '').trim().toLowerCase() || null;
+      const insertedId = await insertEcuroCompletionStatusRow(jobId, {
+        clinic_id: result.clinicId || result.clinic_id || null,
+        clinic_name: result.clinicName || result.clinic_name || null,
+        patient_name: result.patientName || result.patient_name || null,
+        patient_phone: result.patientPhone || result.patient_phone || null,
+        patient_document: result.document || result.patientDocument || result.patient_document || null,
+        appointment_date: result.appointmentDate || result.appointment_date || result.lastConsultationDate || result.last_consultation_date || null,
+        appointment_time: result.appointmentTime || result.appointment_time || null,
+        external_patient_id: result.externalPatientId || result.external_patient_id || null,
+        external_status: result.externalStatus || result.external_status || null,
+        completion_status: completionStatus,
+        eligibility_status: eligibilityStatus,
+        matched_by: result.matchedBy || result.matched_by || null,
+        confidence_score: result.confidenceScore === undefined ? null : Number(result.confidenceScore || 0),
+        agenda_item_id: result.agendaItemId || result.agenda_item_id || null,
+        last_consultation_date: result.lastConsultationDate || result.last_consultation_date || null,
+        next_consultation_date: result.nextConsultationDate || result.next_consultation_date || null,
+        source: result.source || 'ecuro_network_patients',
+        raw_payload_json: result.rawPayloadJson || result.raw_payload_json || JSON.stringify(result)
+      });
+      summary.completionRowsInserted += 1;
+      if (completionStatus === 'completed') summary.completed += 1;
+      else if (completionStatus === 'not_completed') summary.notCompleted += 1;
+      else if (completionStatus === 'not_found') summary.notFound += 1;
+      else if (completionStatus === 'ambiguous') summary.ambiguous += 1;
+      else summary.errors += 1;
+      if (eligibilityStatus === 'eligible') summary.eligible += 1;
+      else if (eligibilityStatus === 'out_of_date') summary.outOfDate += 1;
+      else if (eligibilityStatus === 'invalid_phone') summary.invalidPhone += 1;
+      else if (eligibilityStatus === 'duplicate') summary.duplicateRows += 1;
+      else if (eligibilityStatus === 'missing_last_consultation') summary.missingLastConsultation += 1;
+
+      if (dryRun || npsConfig.dryRun || completionStatus !== 'completed') continue;
+      const inviteCreation = await createNpsInviteFromEcuroCompletion({
+        id: insertedId,
+        clinic_id: result.clinicId || result.clinic_id || null,
+        clinic_name: result.clinicName || result.clinic_name || null,
+        patient_name: result.patientName || result.patient_name || null,
+        patient_phone: result.patientPhone || result.patient_phone || null,
+        agenda_item_id: result.agendaItemId || result.agenda_item_id || null,
+        completion_status: completionStatus,
+        source: result.source || 'ecuro_network_patients'
+      }, {
+        createdBy: actorName
+      });
+      if (inviteCreation.created) summary.inviteCreated += 1;
+      else if (inviteCreation.reason === 'duplicate') summary.duplicates += 1;
+      else if (inviteCreation.reason === 'missing_phone') summary.missingPhone += 1;
+    }
+
+    summary.jobs.push({
+      id: jobId,
+      clinic_id: null,
+      clinic_name: job.capturedClinicName || 'Ecuro Network',
+      appointment_date: robotPayload.targetDate || null,
+      patient_count: totalChecked,
+      status: job.status || 'completed'
+    });
+    summary.dispatch = dryRun || npsConfig.dryRun
+      ? { skipped: true, dryRun: true, reason: 'dry_run', processed: 0, sent: 0 }
+      : await processPendingEcuroNpsInvites({
+        dryRun,
+        createdBy: actorName,
+        processAll: false,
+        limit: 1
+      });
+
+    return summary;
+  } catch (error) {
+    await updateEcuroRobotJobAudit(jobId, {
+      status: 'failed',
+      totalChecked: 0,
+      totalCompleted: 0,
+      totalFailed: 1,
+      errorMessage: sanitizeRobotError(error),
+      resultJson: JSON.stringify({ error: sanitizeRobotError(error) }),
+      startedAt: toMysqlDateTime(startedAt),
+      finishedAt: toMysqlDateTime(new Date())
+    });
+    throw error;
+  }
+}
+
 async function runEcuroNpsAutomation(options = {}) {
   const actor = options.user || null;
   const actorName = options.createdBy || getActorName(actor) || 'Automação NPS Ecuro';
   const clinicIds = Array.isArray(options.clinicIds) ? options.clinicIds.filter(Boolean) : [];
+
+  if (options.network || String(options.source || '').includes('network')) {
+    return runEcuroNetworkNpsAutomationAudit({
+      ...options,
+      createdBy: actorName,
+      user: actor
+    });
+  }
 
   if (options.allClinics || String(options.source || '').includes('all_clinics')) {
     return runEcuroAllClinicsNpsAutomationAudit({
@@ -34883,6 +35141,53 @@ app.post('/admin/robot/master/run-nps-dry-run', authenticate, requireEcuroRobotM
     console.error(error);
     return res.status(error.statusCode || 500).json({
       error: error.statusCode ? error.message : 'Erro ao executar o dry-run do robô Ecuro.'
+    });
+  }
+});
+
+app.post('/admin/robot/master/run-network-discovery', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'run_network_discovery');
+    const payload = await runEcuroNetworkDiscoveryAudit({
+      user: req.user,
+      createdBy: getActorName(req.user),
+      targetDate: req.body?.targetDate || req.body?.target_date || null,
+      dateMode: req.body?.dateMode || req.body?.date_mode || 'today'
+    });
+    return res.json({
+      success: true,
+      message: 'Descoberta Network/F12 do Ecuro executada com sucesso.',
+      payload
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao executar a descoberta Network do Ecuro.'
+    });
+  }
+});
+
+app.post('/admin/robot/master/run-network-dry-run', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'run_network_dry_run');
+    const payload = await runEcuroNpsAutomation({
+      user: req.user,
+      createdBy: getActorName(req.user),
+      network: true,
+      source: 'ecuro_network_patients',
+      targetDate: req.body?.targetDate || req.body?.target_date || null,
+      dateMode: req.body?.dateMode || req.body?.date_mode || 'today',
+      dryRun: true
+    });
+    return res.json({
+      success: true,
+      message: 'Dry-run por Network/F12 do Ecuro executado com sucesso.',
+      payload
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao executar dry-run por Network do Ecuro.'
     });
   }
 });

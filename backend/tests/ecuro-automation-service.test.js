@@ -14,14 +14,17 @@ const {
 } = require('../services/ecuroCompletionService');
 const {
   extractEcuroPatientRowsFromText,
+  extractPatientsFromNetworkResponses,
   getNpsEligibleDates,
   getEcuroRobotConfigStatus,
+  evaluateNpsEligibility,
   isEligibleByLastConsultationDate,
   isEligibleByLastConsultationDates,
   matchCompletionRows,
   mapPatientDirectoryRows,
   normalizeBrazilianDate,
   normalizeEcuroCompletionStatus,
+  normalizeEcuroPatientFromApi,
   resolveEcuroTargetDate,
   summarizeCompletionResults
 } = require('../services/ecuroRobotService');
@@ -236,6 +239,88 @@ test('getNpsEligibleDates returns only today unless target dates are explicit', 
   }, {}, new Date('2026-07-01T12:00:00Z')), ['2026-07-01']);
   assert.deepEqual(getNpsEligibleDates({}, { targetDate: '01/07/2026' }, new Date('2026-06-30T12:00:00Z')), ['2026-07-01']);
   assert.equal(isEligibleByLastConsultationDates('30/06/2026', ['2026-07-01']), 'out_of_date');
+});
+
+test('normalizeEcuroPatientFromApi maps Ecuro network patient payloads safely', () => {
+  const patient = normalizeEcuroPatientFromApi({
+    firstName: 'George',
+    lastName: 'Marques De Freitas',
+    cpf: '008.597.431-52',
+    id: 'DPAWQ',
+    phone: '+5577998433088',
+    registrationDate: '29/06/2026',
+    lastConsultation: '01/07/2026',
+    nextAppointment: '29/12/2026',
+    clinic: { code: 'G0007', name: 'G0007 - Sorriso do Povo - Goiania II - Goias' }
+  });
+
+  assert.equal(patient.patientName, 'George Marques De Freitas');
+  assert.equal(patient.patientPhone, '+5577998433088');
+  assert.equal(patient.document, '008.597.431-52');
+  assert.equal(patient.externalPatientId, 'DPAWQ');
+  assert.equal(patient.lastConsultationDate, '2026-07-01');
+  assert.equal(patient.nextConsultationDate, '2026-12-29');
+  assert.match(patient.rawPayloadJson, /\*\*\*/);
+});
+
+test('extractPatientsFromNetworkResponses reads JSON candidates and applies today eligibility', () => {
+  const candidate = {
+    url: 'https://ecuro.com.br/api/patients',
+    method: 'GET'
+  };
+  Object.defineProperty(candidate, '_rawJson', {
+    enumerable: false,
+    value: {
+      data: [
+        {
+          firstName: 'George',
+          lastName: 'Marques',
+          cpf: '008.597.431-52',
+          id: 'DPAWQ',
+          phone: '+5577998433088',
+          lastConsultation: '01/07/2026',
+          clinicName: 'G0007 - Sorriso do Povo - Goiania II - Goias'
+        },
+        {
+          name: 'Maria Silva',
+          phone: '+5562999669966',
+          lastConsultation: '30/06/2026',
+          clinicName: 'G0007 - Sorriso do Povo - Goiania II - Goias'
+        }
+      ]
+    }
+  });
+
+  const rows = extractPatientsFromNetworkResponses([candidate], {
+    targetDate: '2026-07-01',
+    source: 'ecuro_network_patients'
+  });
+
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].eligibilityStatus, 'eligible');
+  assert.equal(rows[0].completionStatus, 'completed');
+  assert.equal(rows[1].eligibilityStatus, 'out_of_date');
+});
+
+test('evaluateNpsEligibility blocks yesterday and invalid phone in network mode', () => {
+  assert.equal(evaluateNpsEligibility({
+    patientName: 'George Marques',
+    patientPhone: '+5577998433088',
+    clinicName: 'G0007 - Sorriso do Povo',
+    lastConsultationDate: '2026-07-01'
+  }, '2026-07-01'), 'eligible');
+  assert.equal(evaluateNpsEligibility({
+    patientName: 'George Marques',
+    patientPhone: '+5577998433088',
+    clinicName: 'G0007 - Sorriso do Povo',
+    lastConsultationDate: '2026-06-30'
+  }, '2026-07-01'), 'out_of_date');
+  assert.equal(evaluateNpsEligibility({
+    patientName: 'George Marques',
+    patientPhone: '',
+    clinicName: 'G0007 - Sorriso do Povo',
+    lastConsultationDate: '2026-07-01'
+  }, '2026-07-01'), 'invalid_phone');
 });
 
 test('computeRetryState stops after max attempts and handles manual action', () => {

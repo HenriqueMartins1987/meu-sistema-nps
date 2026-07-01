@@ -13,7 +13,9 @@ const {
   retryRobotJob,
   runCheckCompletedBatch,
   runCheckCompletedJob,
+  runCheckCompletedNetworkJob,
   runDiscoverClinicsJob,
+  runDiscoverNetworkJob,
   runEcuroAllClinicsNpsAutomation,
   runLoginTest,
   runMappingJob,
@@ -89,6 +91,24 @@ app.post('/ecuro/check-completed/all-clinics', async (req, res) => {
     return res.status(job.status === 'manual_action_required' ? 409 : 200).json({ success: true, job });
   } catch (error) {
     return res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Erro ao consultar pacientes em todas as clinicas no Ecuro.' });
+  }
+});
+
+app.post('/ecuro/discover-network', async (req, res) => {
+  try {
+    const job = await runDiscoverNetworkJob(req.body || {}, getEcuroRobotConfig());
+    return res.status(job.status === 'manual_action_required' ? 409 : 200).json({ success: true, discovery: job.discovery || {}, job });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Erro ao descobrir endpoints Network no Ecuro.' });
+  }
+});
+
+app.post('/ecuro/check-completed/network', async (req, res) => {
+  try {
+    const job = await runCheckCompletedNetworkJob(req.body || {}, getEcuroRobotConfig());
+    return res.status(job.status === 'manual_action_required' ? 409 : 200).json({ success: true, job });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Erro ao consultar pacientes via Network no Ecuro.' });
   }
 });
 

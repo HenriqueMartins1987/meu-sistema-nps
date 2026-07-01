@@ -221,6 +221,18 @@ async function callEcuroRobotDiscoverClinics(payload = {}, env = process.env) {
   return response.data;
 }
 
+async function callEcuroRobotDiscoverNetwork(payload = {}, env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.post('/ecuro/discover-network', payload);
+  return response.data;
+}
+
+async function callEcuroRobotCheckCompletedNetwork(payload = {}, env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.post('/ecuro/check-completed/network', payload);
+  return response.data;
+}
+
 async function callEcuroRobotMappingRun(payload = {}, env = process.env) {
   const client = createEcuroRobotApiClient(env);
   const response = await client.post('/ecuro/mapping/run', payload);
@@ -311,7 +323,9 @@ module.exports = {
   buildNpsInviteToken,
   callEcuroRobotCheckCompleted,
   callEcuroRobotCheckCompletedAllClinics,
+  callEcuroRobotCheckCompletedNetwork,
   callEcuroRobotDiscoverClinics,
+  callEcuroRobotDiscoverNetwork,
   callEcuroRobotArtifact,
   callEcuroRobotArtifactByPath,
   callEcuroRobotJobDetail,

@@ -4,6 +4,7 @@ import { isMasterAdmin, readUser } from './constants';
 
 const tabs = [
   { id: 'nps', label: 'NPS Automatica' },
+  { id: 'network', label: 'Descoberta Network/F12' },
   { id: 'jobs', label: 'Jobs' },
   { id: 'logs', label: 'Logs' },
   { id: 'mapping', label: 'Mapeamento Ecuro' },
@@ -267,6 +268,10 @@ function RobotMasterMonitor() {
     () => artifacts.filter((item) => item.artifact_type === 'screenshot' || item.artifact_type === 'html').slice(0, 8),
     [artifacts]
   );
+  const networkJobs = useMemo(
+    () => jobs.filter((item) => String(item.job_type || '').includes('network')).slice(0, 8),
+    [jobs]
+  );
 
   if (!isAllowed) {
     return (
@@ -398,6 +403,75 @@ function RobotMasterMonitor() {
                     </div>
                   ) : (
                     <EmptyState title="Nenhum evento recente" detail="A execucao em tempo real vai aparecer aqui quando o robo estiver ativo." />
+                  )}
+                </article>
+              </section>
+            )}
+
+            {activeTab === 'network' && (
+              <section className="robot-master-panel">
+                <SectionHeader
+                  eyebrow="Descoberta Network/F12"
+                  title="Endpoints internos capturados com sessao autenticada"
+                  description="O robo observa XHR/Fetch da tela de pacientes, identifica candidatos e executa dry-run sem enviar WhatsApp."
+                  action={(
+                    <div className="robot-master-inline-actions">
+                      <button type="button" className="outline-action" disabled={actionState === 'network-discovery'} onClick={() => runAction('network-discovery', () => api.post('/admin/robot/master/run-network-discovery'))}>
+                        {actionState === 'network-discovery' ? 'Descobrindo...' : 'Executar descoberta Network'}
+                      </button>
+                      <button type="button" className="primary-action" disabled={actionState === 'network-dry-run'} onClick={() => runAction('network-dry-run', () => api.post('/admin/robot/master/run-network-dry-run'))}>
+                        {actionState === 'network-dry-run' ? 'Executando...' : 'Dry-run por API capturada'}
+                      </button>
+                    </div>
+                  )}
+                />
+
+                <div className="robot-master-two-column">
+                  <article className="robot-master-card">
+                    <h3>Ultimo job Network</h3>
+                    <dl className="robot-master-definition-list">
+                      <div><dt>Status</dt><dd><StatusChip status={networkJobs[0]?.status || 'pending'} /></dd></div>
+                      <div><dt>Tipo</dt><dd>{networkJobs[0]?.job_type || 'N/D'}</dd></div>
+                      <div><dt>Pacientes encontrados</dt><dd>{formatNumber(networkJobs[0]?.total_checked)}</dd></div>
+                      <div><dt>Elegiveis</dt><dd>{formatNumber(networkJobs[0]?.total_eligible)}</dd></div>
+                      <div><dt>Falhas</dt><dd>{formatNumber(networkJobs[0]?.total_failed)}</dd></div>
+                      <div><dt>Ultima execucao</dt><dd>{formatDateTime(networkJobs[0]?.started_at || networkJobs[0]?.created_at)}</dd></div>
+                    </dl>
+                  </article>
+
+                  <article className="robot-master-card">
+                    <h3>Modo seguro</h3>
+                    <dl className="robot-master-definition-list">
+                      <div><dt>Discovery mode</dt><dd>{overview?.config?.robot?.discoveryMode || 'network'}</dd></div>
+                      <div><dt>Captura Network</dt><dd>{overview?.config?.robot?.captureNetwork ? 'Ativa' : 'Inativa'}</dd></div>
+                      <div><dt>Mascaramento</dt><dd>{overview?.config?.robot?.networkMaskSensitive !== false ? 'Ativo' : 'Inativo'}</dd></div>
+                      <div><dt>Dry-run NPS</dt><dd>{overview?.config?.nps?.dryRun ? 'Ativo' : 'Inativo'}</dd></div>
+                      <div><dt>Envio automatico</dt><dd>{overview?.config?.nps?.dispatchEnabled ? 'Ativo' : 'Inativo'}</dd></div>
+                      <div><dt>Regra de data</dt><dd>Somente ULTIMA CONSULTA = hoje</dd></div>
+                    </dl>
+                  </article>
+                </div>
+
+                <article className="robot-master-card">
+                  <h3>Jobs Network recentes</h3>
+                  {networkJobs.length ? (
+                    <div className="robot-master-page-list">
+                      {networkJobs.map((job) => (
+                        <div key={job.id} className="robot-master-page-item" onClick={() => { setSelectedJobId(job.id); setActiveTab('jobs'); }}>
+                          <div>
+                            <strong>#{job.id} - {job.job_type}</strong>
+                            <span>{compactText(job.error_message || job.current_url || 'Sem erro registrado.', 220)}</span>
+                          </div>
+                          <div className="robot-master-page-meta">
+                            <StatusChip status={job.status} />
+                            <em>{formatNumber(job.total_checked)} lidos</em>
+                            <em>{formatNumber(job.total_eligible)} elegiveis</em>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyState title="Nenhuma descoberta Network ainda" detail="Use os botoes acima para capturar endpoints e testar a extracao via JSON." />
                   )}
                 </article>
               </section>

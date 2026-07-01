@@ -228,7 +228,14 @@ function getEcuroRobotConfig(env = process.env) {
     vncHost: String(env.ECURO_ROBOT_VNC_HOST || '127.0.0.1').trim() || '127.0.0.1',
     vncPort: Math.max(1, Number(env.ECURO_ROBOT_VNC_PORT || 6080) || 6080),
     captureIntervalSeconds: Math.max(1, Number(env.ECURO_ROBOT_CAPTURE_INTERVAL_SECONDS || 5) || 5),
-    debugCapture: toBoolean(env.ECURO_ROBOT_DEBUG_CAPTURE, false)
+    debugCapture: toBoolean(env.ECURO_ROBOT_DEBUG_CAPTURE, false),
+    discoveryMode: String(env.ECURO_ROBOT_DISCOVERY_MODE || 'visual').trim().toLowerCase() || 'visual',
+    captureNetwork: toBoolean(env.ECURO_ROBOT_CAPTURE_NETWORK, false),
+    networkSaveSamples: toBoolean(env.ECURO_ROBOT_NETWORK_SAVE_SAMPLES, true),
+    networkMaskSensitive: toBoolean(env.ECURO_ROBOT_NETWORK_MASK_SENSITIVE, true),
+    networkWaitMs: Math.max(1000, Number(env.ECURO_ROBOT_NETWORK_WAIT_MS || 6000) || 6000),
+    networkMaxResponses: Math.max(10, Number(env.ECURO_ROBOT_NETWORK_MAX_RESPONSES || 80) || 80),
+    networkMaxSampleItems: Math.max(1, Number(env.ECURO_ROBOT_NETWORK_MAX_SAMPLE_ITEMS || 3) || 3)
   };
 }
 
@@ -283,7 +290,14 @@ function getEcuroRobotConfigStatus(env = process.env) {
     vncHost: config.vncHost,
     vncPort: config.vncPort,
     captureIntervalSeconds: config.captureIntervalSeconds,
-    debugCapture: config.debugCapture
+    debugCapture: config.debugCapture,
+    discoveryMode: config.discoveryMode,
+    captureNetwork: config.captureNetwork,
+    networkSaveSamples: config.networkSaveSamples,
+    networkMaskSensitive: config.networkMaskSensitive,
+    networkWaitMs: config.networkWaitMs,
+    networkMaxResponses: config.networkMaxResponses,
+    networkMaxSampleItems: config.networkMaxSampleItems
   };
 }
 
@@ -846,6 +860,484 @@ function isEligibleByLastConsultationDates(lastConsultationDate = '', eligibleDa
 
 function normalizeEcuroCellText(value = '') {
   return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+const ECURO_NETWORK_ENDPOINT_TERMS = [
+  'patient',
+  'patients',
+  'paciente',
+  'pacientes',
+  'customer',
+  'customers',
+  'client',
+  'clients',
+  'clinic',
+  'clinics',
+  'clinica',
+  'clinicas',
+  'unidade',
+  'unidades',
+  'attendance',
+  'attendances',
+  'appointment',
+  'appointments',
+  'consulta',
+  'consultas'
+];
+
+const ECURO_PATIENT_API_ALIASES = {
+  patientFirstName: ['firstName', 'first_name', 'primeiroNome', 'primeiro_nome', 'nome', 'patientFirstName'],
+  patientLastName: ['lastName', 'last_name', 'sobrenome', 'patientLastName'],
+  patientName: ['patientName', 'patient_name', 'fullName', 'full_name', 'nomeCompleto', 'nome_completo', 'name', 'nome', 'paciente', 'cliente'],
+  patientPhone: ['patientPhone', 'patient_phone', 'phone', 'telefone', 'numeroTelefone', 'numero_telefone', 'cellphone', 'cellPhone', 'mobile', 'celular', 'whatsapp', 'numeroDeTelefone'],
+  document: ['document', 'documentNumber', 'document_number', 'cpf', 'patientDocument', 'patient_document', 'documento'],
+  externalPatientId: ['externalPatientId', 'external_patient_id', 'patientId', 'patient_id', 'idPaciente', 'id_paciente', 'codigoPaciente', 'codigo_paciente', 'id', 'code', 'codigo'],
+  clinicCode: ['clinicCode', 'clinic_code', 'clinic', 'unit', 'codigoClinica', 'codigo_clinica', 'unitCode', 'unit_code', 'codigoUnidade', 'codigo_unidade'],
+  clinicName: ['clinicName', 'clinic_name', 'clinic', 'unit', 'clinica', 'clínica', 'unidade', 'unitName', 'unit_name', 'nomeClinica', 'nome_clinica'],
+  birthDate: ['birthDate', 'birth_date', 'dataNascimento', 'data_nascimento', 'nascimento'],
+  registrationDate: ['registrationDate', 'registration_date', 'dataCadastro', 'data_cadastro', 'createdAt', 'created_at', 'cadastro'],
+  lastConsultationDate: ['lastConsultationDate', 'last_consultation_date', 'lastConsultation', 'last_consultation', 'lastAppointment', 'last_appointment', 'lastVisit', 'last_visit', 'lastAttendance', 'last_attendance', 'ultimaConsulta', 'ultima_consulta', 'dataUltimaConsulta', 'data_ultima_consulta', 'últimaConsulta', 'última_consulta'],
+  nextConsultationDate: ['nextConsultationDate', 'next_consultation_date', 'nextConsultation', 'next_consultation', 'nextAppointment', 'next_appointment', 'nextVisit', 'next_visit', 'proximaConsulta', 'proxima_consulta', 'dataProximaConsulta', 'data_proxima_consulta', 'próximaConsulta', 'próxima_consulta']
+};
+
+function normalizeApiFieldKey(value = '') {
+  return normalizeText(value || '').replace(/[^a-z0-9]/g, '');
+}
+
+function shouldMaskSensitiveKey(key = '') {
+  const normalized = normalizeApiFieldKey(key);
+  return [
+    'authorization',
+    'cookie',
+    'setcookie',
+    'token',
+    'accesstoken',
+    'refreshtoken',
+    'apikey',
+    'apiKey',
+    'secret',
+    'password',
+    'senha',
+    'credential',
+    'credencial'
+  ].some((token) => normalized.includes(normalizeApiFieldKey(token)));
+}
+
+function maskDocumentValue(value = '') {
+  const digits = onlyDigits(value);
+  if (digits.length !== 11) return String(value || '');
+  return `${digits.slice(0, 3)}.***.***-${digits.slice(-2)}`;
+}
+
+function maskPhoneValue(value = '') {
+  const digits = onlyDigits(value);
+  if (digits.length < 10) return String(value || '');
+  return `+${digits.slice(0, 4)}*****${digits.slice(-4)}`;
+}
+
+function maskSensitiveString(value = '') {
+  const text = String(value || '');
+  if (!text) return text;
+  if (/\d{3}\.?\d{3}\.?\d{3}-?\d{2}/.test(text)) {
+    return text.replace(/\d{3}\.?\d{3}\.?\d{3}-?\d{2}/g, (match) => maskDocumentValue(match));
+  }
+  if (/\+?\d[\d\s().-]{9,20}/.test(text)) {
+    return text.replace(/\+?\d[\d\s().-]{9,20}/g, (match) => maskPhoneValue(match));
+  }
+  if (/bearer\s+[a-z0-9._-]+/i.test(text)) {
+    return text.replace(/bearer\s+[a-z0-9._-]+/ig, 'Bearer ***');
+  }
+  return text;
+}
+
+function maskSensitiveObject(value, depth = 0) {
+  if (depth > 5) return '[truncated]';
+  if (Array.isArray(value)) {
+    return value.slice(0, 5).map((item) => maskSensitiveObject(item, depth + 1));
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).slice(0, 80).map(([key, child]) => {
+      if (shouldMaskSensitiveKey(key)) return [key, '***'];
+      const normalizedKey = normalizeApiFieldKey(key);
+      if (normalizedKey.includes('cpf') || normalizedKey.includes('document')) return [key, maskDocumentValue(child)];
+      if (normalizedKey.includes('phone') || normalizedKey.includes('telefone') || normalizedKey.includes('celular') || normalizedKey.includes('whatsapp')) return [key, maskPhoneValue(child)];
+      return [key, maskSensitiveObject(child, depth + 1)];
+    }));
+  }
+  if (typeof value === 'string') return maskSensitiveString(value);
+  return value;
+}
+
+function sanitizeNetworkHeaders(headers = {}) {
+  return Object.fromEntries(Object.entries(headers || {}).map(([key, value]) => (
+    shouldMaskSensitiveKey(key) ? [key, '***'] : [key, maskSensitiveString(value)]
+  )));
+}
+
+function parseNetworkQueryParams(url = '') {
+  try {
+    const parsed = new URL(url);
+    return Object.fromEntries(Array.from(parsed.searchParams.entries()).map(([key, value]) => (
+      shouldMaskSensitiveKey(key) ? [key, '***'] : [key, maskSensitiveString(value)]
+    )));
+  } catch (_error) {
+    return {};
+  }
+}
+
+function isEcuroNetworkCandidateUrl(url = '') {
+  const normalizedUrl = normalizeText(url || '');
+  return ECURO_NETWORK_ENDPOINT_TERMS.some((term) => normalizedUrl.includes(normalizeText(term)));
+}
+
+function collectJsonObjects(value, output = [], depth = 0, maxItems = 3000) {
+  if (output.length >= maxItems || depth > 8 || value === null || value === undefined) return output;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      if (output.length >= maxItems) break;
+      collectJsonObjects(item, output, depth + 1, maxItems);
+    }
+    return output;
+  }
+  if (typeof value !== 'object') return output;
+  output.push(value);
+  for (const child of Object.values(value)) {
+    if (output.length >= maxItems) break;
+    if (child && typeof child === 'object') collectJsonObjects(child, output, depth + 1, maxItems);
+  }
+  return output;
+}
+
+function collectJsonArrays(value, output = [], pathParts = [], depth = 0) {
+  if (depth > 7 || value === null || value === undefined) return output;
+  if (Array.isArray(value)) {
+    output.push({ path: pathParts.join('.') || '$', length: value.length, sample: value[0] || null });
+    value.slice(0, 5).forEach((item, index) => collectJsonArrays(item, output, [...pathParts, String(index)], depth + 1));
+    return output;
+  }
+  if (typeof value === 'object') {
+    Object.entries(value).forEach(([key, child]) => collectJsonArrays(child, output, [...pathParts, key], depth + 1));
+  }
+  return output;
+}
+
+function summarizeNetworkResponseShape(value) {
+  if (Array.isArray(value)) {
+    const sample = value[0];
+    return {
+      type: 'array',
+      length: value.length,
+      itemKeys: sample && typeof sample === 'object' && !Array.isArray(sample) ? Object.keys(sample).slice(0, 40) : []
+    };
+  }
+  if (value && typeof value === 'object') {
+    const arrays = collectJsonArrays(value).sort((left, right) => right.length - left.length).slice(0, 10);
+    return {
+      type: 'object',
+      keys: Object.keys(value).slice(0, 50),
+      arrays: arrays.map((item) => ({
+        path: item.path,
+        length: item.length,
+        sampleKeys: item.sample && typeof item.sample === 'object' && !Array.isArray(item.sample) ? Object.keys(item.sample).slice(0, 30) : []
+      }))
+    };
+  }
+  return { type: typeof value };
+}
+
+function getAllJsonKeys(value, output = new Set(), depth = 0) {
+  if (depth > 6 || value === null || value === undefined || output.size > 300) return output;
+  if (Array.isArray(value)) {
+    value.slice(0, 20).forEach((item) => getAllJsonKeys(item, output, depth + 1));
+    return output;
+  }
+  if (typeof value === 'object') {
+    Object.entries(value).forEach(([key, child]) => {
+      output.add(key);
+      getAllJsonKeys(child, output, depth + 1);
+    });
+  }
+  return output;
+}
+
+function aliasMatchesKey(key = '', aliases = []) {
+  const normalizedKey = normalizeApiFieldKey(key);
+  return aliases.some((alias) => {
+    const normalizedAlias = normalizeApiFieldKey(alias);
+    return normalizedKey === normalizedAlias || normalizedKey.includes(normalizedAlias);
+  });
+}
+
+function findDirectValueByAliases(raw = {}, aliases = []) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  for (const [key, value] of Object.entries(raw)) {
+    if (aliasMatchesKey(key, aliases) && value !== null && value !== undefined && value !== '') {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function findNestedValueByAliases(raw, aliases = [], depth = 0) {
+  if (!raw || typeof raw !== 'object' || depth > 5) return undefined;
+  const direct = findDirectValueByAliases(raw, aliases);
+  if (direct !== undefined) return direct;
+  const children = Array.isArray(raw) ? raw : Object.values(raw);
+  for (const child of children) {
+    if (!child || typeof child !== 'object') continue;
+    const found = findNestedValueByAliases(child, aliases, depth + 1);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
+
+function stringifyEcuroApiField(value, preferredAliases = []) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'object') {
+    const nested = findDirectValueByAliases(value, preferredAliases)
+      ?? findDirectValueByAliases(value, ['name', 'nome', 'label', 'descricao', 'description', 'code', 'codigo', 'id']);
+    if (nested !== undefined && nested !== value) return stringifyEcuroApiField(nested, preferredAliases);
+    return '';
+  }
+  return normalizeEcuroCellText(value);
+}
+
+function findEcuroPatientApiValue(raw = {}, field = '') {
+  const aliases = ECURO_PATIENT_API_ALIASES[field] || [];
+  const direct = findDirectValueByAliases(raw, aliases);
+  if (direct !== undefined) return direct;
+  const nestedAliases = aliases.filter((alias) => !['name', 'nome', 'id', 'code', 'codigo'].includes(normalizeApiFieldKey(alias)));
+  return findNestedValueByAliases(raw, nestedAliases);
+}
+
+function splitPatientName(fullName = '') {
+  const parts = normalizeEcuroCellText(fullName).split(/\s+/).filter(Boolean);
+  if (!parts.length) return { patientFirstName: '', patientLastName: '' };
+  return {
+    patientFirstName: parts[0],
+    patientLastName: parts.slice(1).join(' ')
+  };
+}
+
+function normalizeEcuroPatientFromApi(raw = {}, context = {}) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const hasDirectPatientSignal = [
+    'patientFirstName',
+    'patientLastName',
+    'patientName',
+    'patientPhone',
+    'document',
+    'externalPatientId',
+    'lastConsultationDate'
+  ].some((field) => findDirectValueByAliases(raw, ECURO_PATIENT_API_ALIASES[field] || []) !== undefined);
+  if (!hasDirectPatientSignal && Object.values(raw).some((value) => Array.isArray(value))) return null;
+
+  const directFirstName = stringifyEcuroApiField(findEcuroPatientApiValue(raw, 'patientFirstName'));
+  const directLastName = stringifyEcuroApiField(findEcuroPatientApiValue(raw, 'patientLastName'));
+  const directName = stringifyEcuroApiField(findEcuroPatientApiValue(raw, 'patientName'));
+  const nameParts = directName ? splitPatientName(directName) : { patientFirstName: '', patientLastName: '' };
+  const patientFirstName = directFirstName || nameParts.patientFirstName;
+  const patientLastName = directLastName || nameParts.patientLastName;
+  const patientName = [patientFirstName, patientLastName].filter(Boolean).join(' ').trim() || directName;
+  const patientPhoneRaw = stringifyEcuroApiField(findEcuroPatientApiValue(raw, 'patientPhone'));
+  const normalizedPhone = normalizePhone(patientPhoneRaw || '');
+  const clinicName = stringifyEcuroApiField(findEcuroPatientApiValue(raw, 'clinicName'), ['name', 'nome', 'label']) || context.clinicName || '';
+  const clinicCode = stringifyEcuroApiField(findEcuroPatientApiValue(raw, 'clinicCode'), ['code', 'codigo', 'id']) || context.clinicCode || '';
+  const birthDate = normalizeBrazilianDate(stringifyEcuroApiField(findEcuroPatientApiValue(raw, 'birthDate')));
+  const registrationDate = normalizeBrazilianDate(stringifyEcuroApiField(findEcuroPatientApiValue(raw, 'registrationDate')));
+  const lastConsultationDate = normalizeBrazilianDate(stringifyEcuroApiField(findEcuroPatientApiValue(raw, 'lastConsultationDate')));
+  const nextConsultationDate = normalizeBrazilianDate(stringifyEcuroApiField(findEcuroPatientApiValue(raw, 'nextConsultationDate')));
+  const document = stringifyEcuroApiField(findEcuroPatientApiValue(raw, 'document'));
+  const externalPatientId = stringifyEcuroApiField(findEcuroPatientApiValue(raw, 'externalPatientId'));
+
+  if (!patientName && !patientPhoneRaw && !document && !externalPatientId && !lastConsultationDate) {
+    return null;
+  }
+
+  return {
+    patientName,
+    patientFirstName,
+    patientLastName,
+    patientPhone: normalizedPhone.valid ? normalizedPhone.normalized : patientPhoneRaw,
+    document: document || null,
+    externalPatientId: externalPatientId || null,
+    clinicCode: clinicCode || null,
+    clinicName: clinicName || null,
+    birthDate: birthDate || null,
+    registrationDate: registrationDate || null,
+    lastConsultationDate: lastConsultationDate || null,
+    nextConsultationDate: nextConsultationDate || null,
+    rawPayloadJson: JSON.stringify(maskSensitiveObject(raw))
+  };
+}
+
+function evaluateNpsEligibility(patient = {}, targetDate = '', options = {}) {
+  const normalizedTargetDate = normalizeBrazilianDate(targetDate);
+  const lastConsultationDate = normalizeBrazilianDate(patient.lastConsultationDate || '');
+  const normalizedPhone = normalizePhone(patient.patientPhone || '');
+  const duplicateKey = [
+    patient.clinicCode || patient.clinicName || '',
+    patient.externalPatientId || '',
+    normalizedPhone.normalized || patient.patientPhone || '',
+    lastConsultationDate || ''
+  ].map((part) => normalizeText(part)).join('|');
+
+  let eligibilityStatus = 'eligible';
+  if (!lastConsultationDate) eligibilityStatus = 'missing_last_consultation';
+  else if (normalizedTargetDate && lastConsultationDate !== normalizedTargetDate) eligibilityStatus = 'out_of_date';
+  else if (!normalizedPhone.valid) eligibilityStatus = 'invalid_phone';
+  else if (!patient.clinicName && !patient.clinicCode) eligibilityStatus = 'parse_error';
+  else if (options.seenKeys && options.seenKeys.has(duplicateKey)) eligibilityStatus = 'duplicate';
+
+  if (eligibilityStatus === 'eligible' && options.seenKeys) {
+    options.seenKeys.add(duplicateKey);
+  }
+
+  return eligibilityStatus;
+}
+
+function normalizeNetworkPatientRecord(raw = {}, context = {}) {
+  const patient = normalizeEcuroPatientFromApi(raw, context);
+  if (!patient) return null;
+  const eligibilityStatus = evaluateNpsEligibility(patient, context.targetDate, { seenKeys: context.seenKeys });
+  return {
+    ...patient,
+    eligibilityStatus,
+    completionStatus: mapEligibilityToCompletionStatus(eligibilityStatus),
+    externalStatus: eligibilityStatus,
+    matchedBy: patient.externalPatientId ? 'external_id' : (normalizePhone(patient.patientPhone || '').valid ? 'phone' : 'manual_review'),
+    confidenceScore: eligibilityStatus === 'eligible'
+      ? 100
+      : eligibilityStatus === 'out_of_date'
+        ? 92
+        : eligibilityStatus === 'invalid_phone'
+          ? 88
+          : eligibilityStatus === 'missing_last_consultation'
+            ? 72
+            : 0,
+    source: context.source || 'ecuro_network_patients',
+    rawPayloadJson: patient.rawPayloadJson || JSON.stringify(maskSensitiveObject(raw))
+  };
+}
+
+function scoreNetworkResponseCandidate({ url = '', json = null, status = 0, contentType = '' }) {
+  const keys = Array.from(getAllJsonKeys(json)).map((key) => normalizeApiFieldKey(key));
+  const objects = collectJsonObjects(json, [], 0, 800);
+  const patientLikeCount = objects
+    .map((item) => normalizeEcuroPatientFromApi(item))
+    .filter((item) => item && (item.patientName || item.patientPhone || item.externalPatientId) && (item.lastConsultationDate || item.patientPhone))
+    .length;
+  const clinicLikeCount = objects.filter((item) => {
+    if (!item || typeof item !== 'object') return false;
+    const label = stringifyEcuroApiField(findNestedValueByAliases(item, ECURO_PATIENT_API_ALIASES.clinicName), ['name', 'nome', 'label']);
+    const code = stringifyEcuroApiField(findNestedValueByAliases(item, ECURO_PATIENT_API_ALIASES.clinicCode), ['code', 'codigo', 'id']);
+    return Boolean(label && (code || isLikelyClinicName(label)));
+  }).length;
+  const normalizedUrl = normalizeText(url);
+  let confidenceScore = 0;
+  if (status >= 200 && status < 300) confidenceScore += 5;
+  if (contentType.includes('json')) confidenceScore += 5;
+  if (['patient', 'patients', 'paciente', 'pacientes', 'client', 'customer'].some((term) => normalizedUrl.includes(term))) confidenceScore += 25;
+  if (['clinic', 'clinics', 'clinica', 'unidade'].some((term) => normalizedUrl.includes(term))) confidenceScore += 12;
+  if (patientLikeCount > 0) confidenceScore += Math.min(45, 20 + patientLikeCount);
+  if (clinicLikeCount > 0) confidenceScore += Math.min(25, 10 + clinicLikeCount);
+  if (keys.some((key) => ['ultimaconsulta', 'dataultimaconsulta', 'lastconsultation', 'lastappointment', 'lastvisit'].includes(key))) confidenceScore += 15;
+  if (keys.some((key) => ['telefone', 'phone', 'cellphone', 'whatsapp', 'mobile'].includes(key))) confidenceScore += 10;
+
+  return {
+    confidenceScore: Math.min(100, confidenceScore),
+    containsPatientLikeData: patientLikeCount > 0,
+    containsClinicLikeData: clinicLikeCount > 0,
+    patientLikeCount,
+    clinicLikeCount,
+    detectedFields: keys.slice(0, 120)
+  };
+}
+
+function safeRequestPayload(request) {
+  try {
+    if (typeof request.postDataJSON === 'function') return request.postDataJSON();
+  } catch (_error) {
+    // Fall back to text payload when the request body is not JSON.
+  }
+  try {
+    if (typeof request.postData === 'function') return request.postData();
+  } catch (_error) {
+    // Ignore optional payload extraction failures.
+  }
+  return null;
+}
+
+function buildNetworkEndpointCandidate(request, response, json, config = getEcuroRobotConfig()) {
+  const url = response.url();
+  const method = request.method();
+  const contentType = String(response.headers()?.['content-type'] || '').toLowerCase();
+  const shape = summarizeNetworkResponseShape(json);
+  const allKeys = Array.from(getAllJsonKeys(json)).slice(0, 120);
+  const sampleObjects = collectJsonObjects(json, [], 0, Number(config.networkMaxSampleItems || 3))
+    .filter((item) => item && typeof item === 'object')
+    .slice(0, Number(config.networkMaxSampleItems || 3));
+  const scoring = scoreNetworkResponseCandidate({ url, json, status: response.status(), contentType });
+  const candidate = {
+    url,
+    method,
+    status: response.status(),
+    contentType,
+    queryParams: parseNetworkQueryParams(url),
+    requestPayload: maskSensitiveObject(safeRequestPayload(request)),
+    responseShape: shape,
+    sampleKeys: allKeys,
+    sampleSize: Array.isArray(json) ? json.length : collectJsonObjects(json, [], 0, 2000).length,
+    containsPatientLikeData: scoring.containsPatientLikeData,
+    containsClinicLikeData: scoring.containsClinicLikeData,
+    confidenceScore: scoring.confidenceScore,
+    detectedFields: scoring.detectedFields,
+    sample: config.networkSaveSamples ? maskSensitiveObject(sampleObjects) : undefined
+  };
+  Object.defineProperty(candidate, '_rawJson', { value: json, enumerable: false });
+  Object.defineProperty(candidate, '_requestHeaders', { value: sanitizeNetworkHeaders(request.headers()), enumerable: false });
+  return candidate;
+}
+
+function extractPatientsFromNetworkResponses(responses = [], context = {}) {
+  const seenKeys = context.seenKeys || new Set();
+  const candidates = [];
+  const rawObjects = [];
+
+  responses.forEach((response) => {
+    const json = response?._rawJson || response?.rawJson || null;
+    if (!json) return;
+    collectJsonObjects(json, rawObjects, 0, 5000);
+  });
+
+  rawObjects.forEach((item) => {
+    const record = normalizeNetworkPatientRecord(item, {
+      ...context,
+      seenKeys
+    });
+    if (!record) return;
+    const hasPatientSignal = Boolean(record.patientName || record.patientPhone || record.externalPatientId || record.document);
+    const hasClinicalSignal = Boolean(record.lastConsultationDate || record.nextConsultationDate || record.registrationDate);
+    if (!hasPatientSignal || !hasClinicalSignal) return;
+    candidates.push(record);
+  });
+
+  const unique = [];
+  const seenRows = new Set();
+  candidates.forEach((row) => {
+    const key = [
+      row.clinicCode || row.clinicName || '',
+      row.externalPatientId || '',
+      row.patientPhone || '',
+      row.patientName || '',
+      row.lastConsultationDate || ''
+    ].map((part) => normalizeText(part)).join('|');
+    if (seenRows.has(key)) return;
+    seenRows.add(key);
+    unique.push(row);
+  });
+
+  return unique;
 }
 
 function isEcuroPaginationSummaryLine(value = '') {
@@ -2202,6 +2694,350 @@ async function collectPatientDirectoryRows(page, config, payload = {}) {
   };
 }
 
+function selectBestNetworkEndpoint(candidates = [], type = 'patient') {
+  const scored = candidates
+    .filter((candidate) => type === 'clinic' ? candidate.containsClinicLikeData : candidate.containsPatientLikeData)
+    .slice()
+    .sort((left, right) => Number(right.confidenceScore || 0) - Number(left.confidenceScore || 0));
+  return scored[0]?.url || '';
+}
+
+function buildNetworkDiscoverySummary(candidates = []) {
+  const patientEndpoints = candidates
+    .filter((candidate) => candidate.containsPatientLikeData)
+    .sort((left, right) => Number(right.confidenceScore || 0) - Number(left.confidenceScore || 0));
+  const clinicEndpoints = candidates
+    .filter((candidate) => candidate.containsClinicLikeData)
+    .sort((left, right) => Number(right.confidenceScore || 0) - Number(left.confidenceScore || 0));
+  const detectedFields = Array.from(new Set(
+    candidates.flatMap((candidate) => Array.isArray(candidate.detectedFields) ? candidate.detectedFields : [])
+  )).slice(0, 200);
+  const confidenceScore = Math.max(0, ...candidates.map((candidate) => Number(candidate.confidenceScore || 0)));
+
+  return {
+    patientEndpoints,
+    clinicEndpoints,
+    candidateResponses: candidates,
+    selectedPatientEndpoint: selectBestNetworkEndpoint(candidates, 'patient'),
+    selectedClinicEndpoint: selectBestNetworkEndpoint(candidates, 'clinic'),
+    detectedFields,
+    confidenceScore
+  };
+}
+
+async function discoverEcuroNetworkEndpoints(page, config = getEcuroRobotConfig(), payload = {}) {
+  const candidateResponses = [];
+  const capturedRequests = [];
+  const pendingCaptures = [];
+  const maxResponses = Number(config.networkMaxResponses || 80);
+
+  const captureResponse = async (response) => {
+    if (candidateResponses.length >= maxResponses) return;
+    const request = response.request();
+    const resourceType = request.resourceType();
+    if (!['xhr', 'fetch'].includes(resourceType)) return;
+    const url = response.url();
+    const contentType = String(response.headers()?.['content-type'] || '').toLowerCase();
+    if (!contentType.includes('json')) return;
+    if (!isEcuroNetworkCandidateUrl(url)) return;
+
+    try {
+      const json = await response.json();
+      const candidate = buildNetworkEndpointCandidate(request, response, json, config);
+      if (candidate.confidenceScore > 0 || candidate.containsPatientLikeData || candidate.containsClinicLikeData) {
+        candidateResponses.push(candidate);
+      }
+    } catch (_error) {
+      // Some XHRs are JSON-like but not parseable; ignore and keep listening.
+    }
+  };
+
+  page.on('request', (request) => {
+    try {
+      if (capturedRequests.length >= maxResponses) return;
+      if (!['xhr', 'fetch'].includes(request.resourceType())) return;
+      const url = request.url();
+      if (!isEcuroNetworkCandidateUrl(url)) return;
+      capturedRequests.push({
+        url,
+        method: request.method(),
+        queryParams: parseNetworkQueryParams(url),
+        headers: sanitizeNetworkHeaders(request.headers()),
+        requestPayload: maskSensitiveObject(safeRequestPayload(request))
+      });
+    } catch (_error) {
+      // Request diagnostics are best-effort only.
+    }
+  });
+
+  page.on('response', (response) => {
+    const pending = captureResponse(response);
+    pendingCaptures.push(pending);
+  });
+
+  const destination = String(config.selectors.navigation.completedPagePath || `${config.baseUrl}/dashboard/patients`).trim();
+  const targetUrl = destination.startsWith('http')
+    ? destination
+    : `${config.baseUrl}${destination.startsWith('/') ? '' : '/'}${destination}`;
+
+  await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: config.timeoutMs });
+  await Promise.race([
+    page.waitForLoadState('networkidle').catch(() => null),
+    page.waitForTimeout(Number(config.networkWaitMs || 6000))
+  ]);
+  await waitForEcuroPatientsPageReady(page, config).catch(() => null);
+
+  // Opening the clinic selector often triggers the endpoint that feeds available units.
+  if (config.captureNetwork || payload.captureClinics !== false) {
+    await clickEcuroClinicSelector(page, config).catch(() => false);
+    await page.waitForTimeout(1200);
+    await page.keyboard.press('Escape').catch(() => null);
+  }
+
+  await page.waitForTimeout(Math.min(2500, Number(config.networkWaitMs || 6000)));
+  await Promise.allSettled(pendingCaptures);
+
+  const uniqueCandidates = Array.from(new Map(
+    candidateResponses
+      .sort((left, right) => Number(right.confidenceScore || 0) - Number(left.confidenceScore || 0))
+      .map((candidate) => [`${candidate.method}:${candidate.url}`, candidate])
+  ).values()).slice(0, maxResponses);
+
+  return {
+    ...buildNetworkDiscoverySummary(uniqueCandidates),
+    capturedRequests: capturedRequests.slice(0, 40),
+    requestCount: capturedRequests.length
+  };
+}
+
+async function tryFetchSelectedNetworkEndpoint(page, endpointUrl = '', config = getEcuroRobotConfig()) {
+  if (!endpointUrl) return null;
+  try {
+    const result = await page.evaluate(async (url) => {
+      const response = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          Accept: 'application/json'
+        }
+      });
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.toLowerCase().includes('json')) {
+        return { ok: response.ok, status: response.status, contentType, json: null };
+      }
+      return {
+        ok: response.ok,
+        status: response.status,
+        contentType,
+        json: await response.json()
+      };
+    }, endpointUrl);
+
+    if (!result?.json) return result;
+    const request = {
+      method: () => 'GET',
+      resourceType: () => 'fetch',
+      headers: () => ({}),
+      postData: () => null
+    };
+    const response = {
+      url: () => endpointUrl,
+      status: () => result.status,
+      headers: () => ({ 'content-type': result.contentType || 'application/json' }),
+      request: () => request
+    };
+    return {
+      ...result,
+      candidate: buildNetworkEndpointCandidate(request, response, result.json, config)
+    };
+  } catch (error) {
+    return { ok: false, status: 0, error: error.message };
+  }
+}
+
+function buildNetworkJobTotals(results = []) {
+  const summary = summarizeCompletionResults(results);
+  return {
+    totalRead: summary.totalChecked,
+    totalChecked: summary.totalChecked,
+    totalEligible: summary.totalEligible,
+    totalCompleted: summary.totalCompleted,
+    totalOutOfDate: summary.totalOutOfDate,
+    totalInvalidPhone: summary.totalInvalidPhone,
+    totalDuplicate: summary.totalDuplicate,
+    totalMissingLastConsultation: summary.totalMissingLastConsultation,
+    totalFailed: summary.totalFailed,
+    totalNotFound: summary.totalNotFound,
+    totalAmbiguous: summary.totalAmbiguous
+  };
+}
+
+async function executeBrowserNetworkDiscovery(job, payload = {}, config = getEcuroRobotConfig()) {
+  const playwright = await loadPlaywright();
+  ensureDir(config.profileDir);
+  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
+    headless: config.headless,
+    viewport: { width: 1440, height: 960 },
+    args: ['--disable-dev-shm-usage', '--no-sandbox'],
+    userAgent: config.userAgent || undefined
+  });
+  const page = context.pages()[0] || await context.newPage();
+  page.setDefaultTimeout(config.timeoutMs);
+  page.setDefaultNavigationTimeout(config.timeoutMs);
+
+  try {
+    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'login', currentStep: 'login', message: 'Login do robo Ecuro iniciado para descoberta Network.' });
+    await performEcuroBrowserLogin(page, config);
+    logRobotJobEvent(job.id, { level: 'info', step: 'network_discovery', action: 'capturing', currentStep: 'network_discovery', message: 'Capturando requisicoes XHR/Fetch da tela de pacientes.' });
+    const discovery = await discoverEcuroNetworkEndpoints(page, config, payload);
+    const artifacts = config.debugCapture || config.captureNetwork
+      ? await capturePatientExtractionArtifacts(page, config, job.id, 'network-discovery', {
+        currentUrl: page.url(),
+        discovery: maskSensitiveObject(discovery),
+        bodyText: await page.locator('body').innerText().catch(() => ''),
+        candidateRowTexts: (discovery.candidateResponses || []).slice(0, 10).map((candidate) => `${candidate.method} ${candidate.status} ${candidate.url} score=${candidate.confidenceScore}`)
+      })
+      : [];
+    if (artifacts.length) jobStore.addArtifacts(job.id, artifacts);
+
+    logRobotJobEvent(job.id, {
+      level: discovery.selectedPatientEndpoint ? 'info' : 'warning',
+      step: 'network_discovery',
+      action: 'completed',
+      currentStep: 'network_discovery',
+      currentUrl: page.url(),
+      totalRowsRead: Number(discovery.candidateResponses?.length || 0),
+      eligibleFound: Number(discovery.patientEndpoints?.length || 0),
+      message: `Descoberta Network concluida com ${discovery.candidateResponses?.length || 0} respostas candidatas.`
+    });
+
+    return {
+      status: discovery.selectedPatientEndpoint ? 'completed' : 'partial',
+      discovery,
+      artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+      currentUrl: page.url(),
+      errorMessage: discovery.selectedPatientEndpoint ? null : 'Robo autenticou no Ecuro, mas nao identificou endpoint de pacientes via Network.'
+    };
+  } catch (error) {
+    const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'network-discovery-error');
+    if (artifacts.length) jobStore.addArtifacts(job.id, artifacts);
+    return {
+      status: error.code === 'manual_action_required' ? 'manual_action_required' : 'failed',
+      discovery: buildNetworkDiscoverySummary([]),
+      artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+      currentUrl: page.url(),
+      errorMessage: error.message
+    };
+  } finally {
+    await context.close().catch(() => null);
+  }
+}
+
+async function executeBrowserNetworkCompletionCheck(job, payload = {}, config = getEcuroRobotConfig()) {
+  const playwright = await loadPlaywright();
+  ensureDir(config.profileDir);
+  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
+    headless: config.headless,
+    viewport: { width: 1440, height: 960 },
+    args: ['--disable-dev-shm-usage', '--no-sandbox'],
+    userAgent: config.userAgent || undefined
+  });
+  const page = context.pages()[0] || await context.newPage();
+  page.setDefaultTimeout(config.timeoutMs);
+  page.setDefaultNavigationTimeout(config.timeoutMs);
+
+  try {
+    const targetDate = resolveEcuroTargetDate(payload);
+    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'login', currentStep: 'login', message: 'Login do robo Ecuro iniciado para coleta Network.' });
+    await performEcuroBrowserLogin(page, config);
+    logRobotJobEvent(job.id, { level: 'info', step: 'network_collect', action: 'capturing', currentStep: 'network_collect', message: 'Capturando endpoints e respostas JSON da tela de pacientes.' });
+    const discovery = await discoverEcuroNetworkEndpoints(page, config, payload);
+    const directFetch = await tryFetchSelectedNetworkEndpoint(page, discovery.selectedPatientEndpoint, config);
+    const responseSources = directFetch?.candidate
+      ? [directFetch.candidate, ...(discovery.candidateResponses || [])]
+      : (discovery.candidateResponses || []);
+    const capturedClinicName = await extractCurrentClinicName(page, config).catch(() => payload.clinicName || '');
+    const parsedClinic = parseEcuroClinicLabel(capturedClinicName);
+    const extractedRows = extractPatientsFromNetworkResponses(responseSources, {
+      targetDate,
+      clinicName: payload.clinicName || capturedClinicName || '',
+      clinicCode: payload.clinicCode || parsedClinic?.clinicCode || '',
+      source: payload.source || 'ecuro_network_patients'
+    });
+    const matchedResults = Array.isArray(payload.patients) && payload.patients.length
+      ? matchCompletionRows(payload.patients || [], extractedRows)
+      : matchCompletionRows([], extractedRows);
+    const totals = buildNetworkJobTotals(matchedResults);
+    const artifacts = config.debugCapture || config.captureNetwork || !extractedRows.length
+      ? await capturePatientExtractionArtifacts(page, config, job.id, !extractedRows.length ? 'network-empty-extraction' : 'network-debug-capture', {
+        currentUrl: page.url(),
+        clinicName: capturedClinicName || '',
+        targetDate: formatDateKeyToBrazilian(targetDate),
+        discovery: maskSensitiveObject(discovery),
+        directFetch: maskSensitiveObject(directFetch),
+        candidateRowTexts: extractedRows.slice(0, 10).map((row) => `${row.patientName || ''} | ${row.patientPhone || ''} | ${formatDateKeyToBrazilian(row.lastConsultationDate || '')} | ${row.eligibilityStatus || ''}`),
+        bodyText: await page.locator('body').innerText().catch(() => '')
+      })
+      : [];
+    if (artifacts.length) jobStore.addArtifacts(job.id, artifacts);
+
+    const status = !discovery.selectedPatientEndpoint || !extractedRows.length ? 'partial' : 'completed';
+    const errorMessage = !discovery.selectedPatientEndpoint
+      ? 'Robo autenticou no Ecuro, mas nao identificou endpoint de pacientes via Network.'
+      : !extractedRows.length
+        ? 'Robo autenticou no Ecuro e capturou endpoints, mas nao extraiu pacientes do JSON.'
+        : null;
+
+    logRobotJobEvent(job.id, {
+      level: status === 'completed' ? 'info' : 'warning',
+      step: 'network_collect',
+      action: 'completed',
+      currentStep: 'network_collect',
+      currentUrl: page.url(),
+      totalRowsRead: totals.totalRead,
+      eligibleFound: totals.totalEligible,
+      message: `Coleta Network concluida com ${totals.totalRead} pacientes lidos e ${totals.totalEligible} elegiveis.`
+    });
+
+    return {
+      status,
+      extractionMode: 'network',
+      targetDate,
+      extractedRows,
+      results: matchedResults,
+      discovery,
+      selectedPatientEndpoint: discovery.selectedPatientEndpoint || '',
+      selectedClinicEndpoint: discovery.selectedClinicEndpoint || '',
+      capturedClinicName,
+      directFetchStatus: directFetch ? {
+        ok: Boolean(directFetch.ok),
+        status: directFetch.status || 0,
+        error: directFetch.error || null
+      } : null,
+      artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+      currentUrl: page.url(),
+      errorMessage,
+      ...totals
+    };
+  } catch (error) {
+    const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'network-error');
+    if (artifacts.length) jobStore.addArtifacts(job.id, artifacts);
+    return {
+      status: error.code === 'manual_action_required' ? 'manual_action_required' : 'failed',
+      extractionMode: 'network',
+      targetDate: resolveEcuroTargetDate(payload),
+      extractedRows: [],
+      results: [],
+      discovery: buildNetworkDiscoverySummary([]),
+      artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+      currentUrl: page.url(),
+      errorMessage: error.message
+    };
+  } finally {
+    await context.close().catch(() => null);
+  }
+}
+
 function resolveEcuroSameOriginUrl(baseUrl = '', href = '') {
   const raw = String(href || '').trim();
   if (!raw || raw.startsWith('javascript:') || raw.startsWith('#')) return '';
@@ -3238,6 +4074,118 @@ async function runEcuroAllClinicsNpsAutomation(payload = {}, config = getEcuroRo
   return updated;
 }
 
+async function runDiscoverNetworkJob(payload = {}, config = getEcuroRobotConfig()) {
+  const job = jobStore.create({
+    jobType: payload.jobType || 'network_discovery',
+    clinicId: payload.clinicId || null,
+    clinicName: payload.clinicName || '',
+    appointmentDate: payload.appointmentDate || '',
+    payload: {
+      ...payload,
+      source: payload.source || 'ecuro_network_discovery',
+      dryRun: true
+    }
+  });
+
+  jobStore.update(job.id, {
+    status: 'running',
+    startedAt: new Date().toISOString()
+  });
+  updateRobotJobStep(job.id, {
+    currentStep: 'starting_network_discovery',
+    action: 'starting_network_discovery',
+    status: 'running'
+  });
+
+  const result = await executeBrowserNetworkDiscovery(job, {
+    ...payload,
+    source: payload.source || 'ecuro_network_discovery',
+    dryRun: true
+  }, {
+    ...config,
+    captureNetwork: true,
+    discoveryMode: 'network'
+  });
+
+  const updated = jobStore.update(job.id, {
+    status: result.status,
+    finishedAt: new Date().toISOString(),
+    errorMessage: result.errorMessage || null,
+    artifacts: result.artifacts || [],
+    discovery: result.discovery || buildNetworkDiscoverySummary([]),
+    results: result.discovery?.candidateResponses || [],
+    totalRowsRead: Number(result.discovery?.candidateResponses?.length || 0),
+    totalRead: Number(result.discovery?.candidateResponses?.length || 0),
+    totalChecked: Number(result.discovery?.candidateResponses?.length || 0),
+    currentUrl: result.currentUrl || '',
+    selectedPatientEndpoint: result.discovery?.selectedPatientEndpoint || '',
+    selectedClinicEndpoint: result.discovery?.selectedClinicEndpoint || '',
+    confidenceScore: Number(result.discovery?.confidenceScore || 0)
+  });
+  jobStore.resetRuntime();
+  return updated;
+}
+
+async function runCheckCompletedNetworkJob(payload = {}, config = getEcuroRobotConfig()) {
+  const job = jobStore.create({
+    jobType: payload.jobType || 'network_patients',
+    clinicId: payload.clinicId || null,
+    clinicName: payload.clinicName || '',
+    appointmentDate: payload.targetDate || payload.appointmentDate || '',
+    payload: {
+      ...payload,
+      source: payload.source || 'ecuro_network_patients',
+      dateMode: payload.dateMode || 'today',
+      dryRun: payload.dryRun !== undefined ? Boolean(payload.dryRun) : true
+    }
+  });
+
+  jobStore.update(job.id, {
+    status: 'running',
+    startedAt: new Date().toISOString()
+  });
+  updateRobotJobStep(job.id, {
+    currentStep: 'starting_network_collect',
+    action: 'starting_network_collect',
+    status: 'running'
+  });
+
+  const result = await executeBrowserNetworkCompletionCheck(job, {
+    ...payload,
+    source: payload.source || 'ecuro_network_patients',
+    dateMode: payload.dateMode || 'today',
+    dryRun: payload.dryRun !== undefined ? Boolean(payload.dryRun) : true
+  }, {
+    ...config,
+    captureNetwork: true,
+    discoveryMode: 'network'
+  });
+  const summary = summarizeCompletionResults(result.results || []);
+  const updated = jobStore.update(job.id, {
+    status: result.status,
+    finishedAt: new Date().toISOString(),
+    errorMessage: result.errorMessage || null,
+    artifacts: result.artifacts || [],
+    extractedRows: result.extractedRows || [],
+    results: result.results || [],
+    discovery: result.discovery || buildNetworkDiscoverySummary([]),
+    extractionMode: 'network',
+    targetDate: result.targetDate || resolveEcuroTargetDate(payload),
+    detectedClinicName: result.capturedClinicName || payload.clinicName || '',
+    capturedClinicName: result.capturedClinicName || payload.clinicName || '',
+    selectedPatientEndpoint: result.selectedPatientEndpoint || '',
+    selectedClinicEndpoint: result.selectedClinicEndpoint || '',
+    directFetchStatus: result.directFetchStatus || null,
+    totalRowsRead: Number(result.totalRead || summary.totalChecked || 0),
+    totalRead: Number(result.totalRead || summary.totalChecked || 0),
+    currentUrl: result.currentUrl || '',
+    ...summary,
+    totalFailed: Number(result.totalFailed || summary.totalFailed || 0)
+  });
+  jobStore.resetRuntime();
+  return updated;
+}
+
 async function runLoginTest(_payload = {}, config = getEcuroRobotConfig()) {
   if (config.mode !== 'browser') {
     return {
@@ -3446,8 +4394,11 @@ module.exports = {
   buildJobId,
   buildPatientDirectoryRecord,
   detectManualActionRequired,
+  discoverEcuroNetworkEndpoints,
   discoverEcuroClinics,
+  evaluateNpsEligibility,
   extractEcuroPatientRowsFromText,
+  extractPatientsFromNetworkResponses,
   extractPatientsFromEcuroPatientsPage,
   getNpsEligibleDates,
   getRobotLiveState,
@@ -3462,12 +4413,15 @@ module.exports = {
   matchCompletionRows,
   normalizeBrazilianDate,
   normalizeEcuroCompletionStatus,
+  normalizeEcuroPatientFromApi,
   resolveEcuroTargetDate,
   runDiscoverClinicsJob,
+  runDiscoverNetworkJob,
   runEcuroAllClinicsNpsAutomation,
   retryRobotJob,
   runCheckCompletedBatch,
   runCheckCompletedJob,
+  runCheckCompletedNetworkJob,
   runMappingJob,
   runLoginTest,
   startRobotVncSession,
