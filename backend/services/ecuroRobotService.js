@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const XLSX = require('xlsx');
 
 const { normalizePhone, normalizeText } = require('./patientEnrichmentService');
 
@@ -60,6 +61,31 @@ const DEFAULT_SELECTORS = {
     headers: ['thead th', 'thead td'],
     rows: ['tbody tr'],
     emptyStates: ['text=/nenhum registro/i', 'text=/sem registros/i', 'text=/no results/i']
+  },
+  export: {
+    excelButtons: [
+      'button:has-text("Excel")',
+      'button:has-text("XLS")',
+      'button:has-text("XLSX")',
+      'a:has-text("Excel")',
+      'a:has-text("XLS")',
+      '[role="button"]:has-text("Excel")',
+      '[aria-label*="Excel" i]',
+      '[aria-label*="XLS" i]',
+      '[title*="Excel" i]',
+      '[title*="XLS" i]',
+      '[download*=".xlsx" i]',
+      '[download*=".xls" i]'
+    ],
+    exportMenus: [
+      'button:has-text("Exportar")',
+      'button:has-text("Export")',
+      '[role="button"]:has-text("Exportar")',
+      '[aria-label*="Export" i]',
+      '[aria-label*="Exportar" i]',
+      '[title*="Export" i]',
+      '[title*="Exportar" i]'
+    ]
   }
 };
 
@@ -87,9 +113,11 @@ const ELIGIBILITY_TO_COMPLETION_STATUS = {
   eligible: 'completed',
   out_of_date: 'not_completed',
   invalid_phone: 'not_completed',
+  missing_phone: 'not_completed',
   duplicate: 'ambiguous',
   missing_last_consultation: 'not_found',
   clinic_mismatch: 'error',
+  parse_error: 'error',
   error: 'error'
 };
 
@@ -176,6 +204,7 @@ function getEcuroRobotConfig(env = process.env) {
   const screenshotDir = path.resolve(String(env.ECURO_ROBOT_SCREENSHOT_DIR || path.join(process.cwd(), 'runtime', 'ecuro-screenshots')).trim());
   const htmlDir = path.resolve(String(env.ECURO_ROBOT_HTML_DIR || path.join(process.cwd(), 'runtime', 'ecuro-html')).trim());
   const debugDir = path.resolve(String(env.ECURO_ROBOT_DEBUG_DIR || path.join(process.cwd(), 'runtime', 'ecuro-debug')).trim());
+  const exportDir = path.resolve(String(env.ECURO_ROBOT_EXPORT_DIR || '/var/log/ecuro-robot/exports').trim());
   const apiKey = String(env.ECURO_ROBOT_API_KEY || '').trim();
 
   return {
@@ -193,6 +222,7 @@ function getEcuroRobotConfig(env = process.env) {
     screenshotDir,
     htmlDir,
     debugDir,
+    exportDir,
     apiKey,
     host: String(env.ECURO_ROBOT_HOST || '127.0.0.1').trim() || '127.0.0.1',
     port: Math.max(1, Number(env.ECURO_ROBOT_PORT || 3010) || 3010),
@@ -235,7 +265,17 @@ function getEcuroRobotConfig(env = process.env) {
     networkMaskSensitive: toBoolean(env.ECURO_ROBOT_NETWORK_MASK_SENSITIVE, true),
     networkWaitMs: Math.max(1000, Number(env.ECURO_ROBOT_NETWORK_WAIT_MS || 6000) || 6000),
     networkMaxResponses: Math.max(10, Number(env.ECURO_ROBOT_NETWORK_MAX_RESPONSES || 80) || 80),
-    networkMaxSampleItems: Math.max(1, Number(env.ECURO_ROBOT_NETWORK_MAX_SAMPLE_ITEMS || 3) || 3)
+    networkMaxSampleItems: Math.max(1, Number(env.ECURO_ROBOT_NETWORK_MAX_SAMPLE_ITEMS || 3) || 3),
+    collectionMode: String(env.ECURO_COLLECTION_MODE || 'excel_export').trim().toLowerCase() || 'excel_export',
+    excelExportMode: String(env.ECURO_EXCEL_EXPORT_MODE || 'click_download').trim().toLowerCase() || 'click_download',
+    patientsExportUrl: String(env.ECURO_PATIENTS_EXPORT_URL || '').trim(),
+    patientsExportMethod: String(env.ECURO_PATIENTS_EXPORT_METHOD || 'GET').trim().toUpperCase() || 'GET',
+    patientsExportPayload: String(env.ECURO_PATIENTS_EXPORT_PAYLOAD || '').trim(),
+    patientsExportClinicParam: String(env.ECURO_PATIENTS_EXPORT_CLINIC_PARAM || '').trim(),
+    patientsExportDateParam: String(env.ECURO_PATIENTS_EXPORT_DATE_PARAM || '').trim(),
+    patientsExportPageSizeParam: String(env.ECURO_PATIENTS_EXPORT_PAGE_SIZE_PARAM || '').trim(),
+    excelDownloadTimeoutMs: Math.max(5000, Number(env.ECURO_EXCEL_DOWNLOAD_TIMEOUT_MS || env.ROBOT_TIMEOUT_MS || 60000) || 60000),
+    maxClinicsPerRunHomolog: Math.max(1, Number(env.ECURO_MAX_CLINICS_PER_RUN_HOMOLOG || 2) || 2)
   };
 }
 
@@ -261,6 +301,7 @@ function getEcuroRobotConfigStatus(env = process.env) {
     screenshotDir: config.screenshotDir,
     htmlDir: config.htmlDir,
     debugDir: config.debugDir,
+    exportDir: config.exportDir,
     apiKeyConfigured: Boolean(config.apiKey),
     maxPagesPerRun: config.maxPagesPerRun,
     maxPatientsPerRun: config.maxPatientsPerRun,
@@ -297,7 +338,16 @@ function getEcuroRobotConfigStatus(env = process.env) {
     networkMaskSensitive: config.networkMaskSensitive,
     networkWaitMs: config.networkWaitMs,
     networkMaxResponses: config.networkMaxResponses,
-    networkMaxSampleItems: config.networkMaxSampleItems
+    networkMaxSampleItems: config.networkMaxSampleItems,
+    collectionMode: config.collectionMode,
+    excelExportMode: config.excelExportMode,
+    patientsExportUrlConfigured: Boolean(config.patientsExportUrl),
+    patientsExportMethod: config.patientsExportMethod,
+    patientsExportClinicParamConfigured: Boolean(config.patientsExportClinicParam),
+    patientsExportDateParamConfigured: Boolean(config.patientsExportDateParam),
+    patientsExportPageSizeParamConfigured: Boolean(config.patientsExportPageSizeParam),
+    excelDownloadTimeoutMs: config.excelDownloadTimeoutMs,
+    maxClinicsPerRunHomolog: config.maxClinicsPerRunHomolog
   };
 }
 
@@ -305,10 +355,10 @@ function normalizeEcuroCompletionStatus(value) {
   const normalized = normalizeText(value || '');
   if (!normalized) return 'unknown';
   if (['eligible', 'completed', 'concluido', 'concluida', 'atendido', 'atendida', 'compareceu'].some((token) => normalized.includes(token))) return 'completed';
-  if (['out_of_date', 'not_completed', 'invalid_phone'].some((token) => normalized.includes(token))) return 'not_completed';
+  if (['out_of_date', 'not_completed', 'invalid_phone', 'missing_phone'].some((token) => normalized.includes(token))) return 'not_completed';
   if (['missing_last_consultation', 'not_found'].some((token) => normalized.includes(token))) return 'not_found';
   if (['duplicate', 'ambiguous', 'ambiguo'].some((token) => normalized.includes(token))) return 'ambiguous';
-  if (['clinic_mismatch', 'error', 'manual_action_required'].some((token) => normalized.includes(token))) return 'error';
+  if (['clinic_mismatch', 'parse_error', 'error', 'manual_action_required'].some((token) => normalized.includes(token))) return 'error';
   return 'unknown';
 }
 
@@ -1217,6 +1267,229 @@ function normalizeNetworkPatientRecord(raw = {}, context = {}) {
             : 0,
     source: context.source || 'ecuro_network_patients',
     rawPayloadJson: patient.rawPayloadJson || JSON.stringify(maskSensitiveObject(raw))
+  };
+}
+
+function normalizeExcelDate(value) {
+  if (value === null || value === undefined || value === '') return '';
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return `${String(value.getUTCDate()).padStart(2, '0')}/${String(value.getUTCMonth() + 1).padStart(2, '0')}/${String(value.getUTCFullYear()).padStart(4, '0')}`;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    const parsed = XLSX.SSF.parse_date_code(value);
+    if (parsed?.y && parsed?.m && parsed?.d) {
+      return `${String(parsed.d).padStart(2, '0')}/${String(parsed.m).padStart(2, '0')}/${String(parsed.y).padStart(4, '0')}`;
+    }
+  }
+
+  const text = normalizeEcuroCellText(value);
+  if (!text || text === '-') return '';
+  const normalized = normalizeBrazilianDate(text);
+  return normalized ? formatDateKeyToBrazilian(normalized) : '';
+}
+
+const ECURO_EXCEL_COLUMN_ALIASES = {
+  patientFirstName: ['primeiro nome', 'nome', 'first name', 'firstname'],
+  patientLastName: ['sobrenome', 'ultimo nome', 'last name', 'lastname'],
+  document: ['cpf', 'documento', 'document'],
+  externalPatientId: ['id', 'codigo', 'codigo paciente', 'codigo externo', 'external id'],
+  patientPhone: ['numero de telefone', 'número de telefone', 'telefone', 'celular', 'whatsapp', 'numero de telef', 'número de telef'],
+  birthDate: ['data de nascimento', 'data nascimento', 'nascimento', 'birth date'],
+  registrationDate: ['data de cadastro', 'cadastro', 'registration date', 'created at'],
+  lastConsultationDate: ['ultima consulta', 'última consulta', 'data ultima consulta', 'data última consulta', 'data da ultima consulta', 'data da última consulta', 'last consultation', 'last appointment', 'last visit'],
+  nextConsultationDate: ['proxima consulta', 'próxima consulta', 'data proxima consulta', 'data próxima consulta', 'next consultation', 'next appointment']
+};
+
+function normalizeExcelHeader(value = '') {
+  return normalizeText(value || '').replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function resolveEcuroExcelHeaderIndexes(headerRow = []) {
+  const normalizedHeaders = headerRow.map((header) => normalizeExcelHeader(header));
+  const entries = Object.entries(ECURO_EXCEL_COLUMN_ALIASES).map(([field, aliases]) => {
+    const index = normalizedHeaders.findIndex((header) => aliases.some((alias) => {
+      const normalizedAlias = normalizeExcelHeader(alias);
+      return header === normalizedAlias || header.includes(normalizedAlias);
+    }));
+    return [field, index];
+  });
+  return Object.fromEntries(entries);
+}
+
+function findEcuroExcelHeaderRow(rows = []) {
+  let best = { index: -1, score: 0, indexes: {} };
+  rows.slice(0, 25).forEach((row, index) => {
+    const indexes = resolveEcuroExcelHeaderIndexes(row || []);
+    const requiredScore = ['patientFirstName', 'patientPhone', 'lastConsultationDate'].filter((field) => indexes[field] >= 0).length;
+    const totalScore = Object.values(indexes).filter((fieldIndex) => fieldIndex >= 0).length + (requiredScore * 4);
+    if (totalScore > best.score) best = { index, score: totalScore, indexes };
+  });
+  return best.score >= 8 ? best : { index: -1, score: 0, indexes: {} };
+}
+
+function safeExcelCell(row = [], index = -1) {
+  if (!Array.isArray(row) || index < 0 || index >= row.length) return '';
+  return row[index];
+}
+
+function buildEcuroExcelPatientRecord(row = [], context = {}) {
+  const indexes = context.headerIndexes || {};
+  const patientFirstName = normalizeEcuroCellText(safeExcelCell(row, indexes.patientFirstName));
+  const patientLastName = normalizeEcuroCellText(safeExcelCell(row, indexes.patientLastName));
+  const fallbackName = normalizeEcuroCellText(patientFirstName && patientLastName ? '' : safeExcelCell(row, indexes.patientFirstName));
+  const splitFallback = !patientLastName && fallbackName ? splitPatientName(fallbackName) : { patientFirstName: '', patientLastName: '' };
+  const firstName = patientFirstName || splitFallback.patientFirstName;
+  const lastName = patientLastName || splitFallback.patientLastName;
+  const patientName = [firstName, lastName].filter(Boolean).join(' ').trim();
+  const patientPhoneRaw = normalizeEcuroCellText(safeExcelCell(row, indexes.patientPhone));
+  const normalizedPhone = normalizePhone(patientPhoneRaw || '');
+  const lastConsultationDateBr = normalizeExcelDate(safeExcelCell(row, indexes.lastConsultationDate));
+  const nextConsultationDateBr = normalizeExcelDate(safeExcelCell(row, indexes.nextConsultationDate));
+  const birthDateBr = normalizeExcelDate(safeExcelCell(row, indexes.birthDate));
+  const registrationDateBr = normalizeExcelDate(safeExcelCell(row, indexes.registrationDate));
+  const document = normalizeEcuroCellText(safeExcelCell(row, indexes.document));
+  const externalPatientId = normalizeEcuroCellText(safeExcelCell(row, indexes.externalPatientId));
+
+  if (!patientName && !patientPhoneRaw && !document && !externalPatientId && !lastConsultationDateBr) {
+    return null;
+  }
+
+  const patient = {
+    patientName,
+    patientFirstName: firstName,
+    patientLastName: lastName,
+    patientPhone: normalizedPhone.valid ? normalizedPhone.normalized : patientPhoneRaw,
+    document: document || null,
+    externalPatientId: externalPatientId || null,
+    clinicCode: context.clinicCode || null,
+    clinicName: context.clinicName || null,
+    birthDate: normalizeBrazilianDate(birthDateBr) || null,
+    registrationDate: normalizeBrazilianDate(registrationDateBr) || null,
+    lastConsultationDate: normalizeBrazilianDate(lastConsultationDateBr) || null,
+    nextConsultationDate: normalizeBrazilianDate(nextConsultationDateBr) || null
+  };
+
+  const eligibilityStatus = evaluateNpsEligibilityFromExcel(patient, context.targetDate, {
+    seenKeys: context.seenKeys
+  });
+
+  return {
+    ...patient,
+    eligibilityStatus,
+    completionStatus: mapEligibilityToCompletionStatus(eligibilityStatus),
+    externalStatus: eligibilityStatus,
+    matchedBy: externalPatientId ? 'external_id' : (normalizedPhone.valid ? 'phone' : 'manual_review'),
+    confidenceScore: eligibilityStatus === 'eligible'
+      ? 100
+      : eligibilityStatus === 'out_of_date'
+        ? 92
+        : eligibilityStatus === 'invalid_phone' || eligibilityStatus === 'missing_phone'
+          ? 82
+          : eligibilityStatus === 'missing_last_consultation'
+            ? 72
+            : 0,
+    source: context.source || 'ecuro_excel_export',
+    rawPayloadJson: JSON.stringify(maskSensitiveObject({
+      rawCells: row,
+      patientFirstName: firstName,
+      patientLastName: lastName,
+      patientName,
+      patientPhone: patientPhoneRaw || null,
+      document: document || null,
+      externalPatientId: externalPatientId || null,
+      clinicCode: context.clinicCode || null,
+      clinicName: context.clinicName || null,
+      birthDate: birthDateBr || null,
+      registrationDate: registrationDateBr || null,
+      lastConsultationDate: lastConsultationDateBr || null,
+      nextConsultationDate: nextConsultationDateBr || null,
+      eligibilityStatus,
+      source: context.source || 'ecuro_excel_export'
+    }))
+  };
+}
+
+function evaluateNpsEligibilityFromExcel(patient = {}, targetDate = '', options = {}) {
+  const normalizedTargetDate = normalizeBrazilianDate(targetDate);
+  const lastConsultationDate = normalizeBrazilianDate(patient.lastConsultationDate || '');
+  const phoneText = String(patient.patientPhone || '').trim();
+  const normalizedPhone = normalizePhone(phoneText || '');
+  const duplicateKey = [
+    patient.clinicCode || patient.clinicName || '',
+    patient.externalPatientId || '',
+    normalizedPhone.normalized || phoneText || '',
+    patient.patientName || '',
+    lastConsultationDate || ''
+  ].map((part) => normalizeText(part)).join('|');
+
+  let eligibilityStatus = 'eligible';
+  if (!lastConsultationDate) eligibilityStatus = 'missing_last_consultation';
+  else if (normalizedTargetDate && lastConsultationDate !== normalizedTargetDate) eligibilityStatus = 'out_of_date';
+  else if (!phoneText) eligibilityStatus = 'missing_phone';
+  else if (!normalizedPhone.valid) eligibilityStatus = 'invalid_phone';
+  else if (!patient.clinicName && !patient.clinicCode) eligibilityStatus = 'parse_error';
+  else if (options.seenKeys && options.seenKeys.has(duplicateKey)) eligibilityStatus = 'duplicate';
+
+  if (eligibilityStatus === 'eligible' && options.seenKeys) {
+    options.seenKeys.add(duplicateKey);
+  }
+
+  return eligibilityStatus;
+}
+
+function parseEcuroPatientsExcel(filePath, clinic = {}, config = getEcuroRobotConfig(), options = {}) {
+  const workbook = XLSX.readFile(filePath, { cellDates: true, raw: true });
+  const targetDate = resolveEcuroTargetDate(options);
+  const seenKeys = options.seenKeys || new Set();
+  let selectedSheetName = '';
+  let headerInfo = { index: -1, score: 0, indexes: {} };
+  let sheetRows = [];
+
+  for (const sheetName of workbook.SheetNames || []) {
+    const worksheet = workbook.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(worksheet, {
+      header: 1,
+      raw: true,
+      defval: ''
+    });
+    const candidateHeader = findEcuroExcelHeaderRow(rows);
+    if (candidateHeader.score > headerInfo.score) {
+      selectedSheetName = sheetName;
+      headerInfo = candidateHeader;
+      sheetRows = rows;
+    }
+  }
+
+  if (headerInfo.index < 0) {
+    const error = new Error('Nao foi possivel identificar os cabecalhos do Excel exportado pelo Ecuro.');
+    error.code = 'excel_headers_not_found';
+    throw error;
+  }
+
+  const dataRows = sheetRows.slice(headerInfo.index + 1);
+  const patients = dataRows
+    .map((row) => buildEcuroExcelPatientRecord(row, {
+      headerIndexes: headerInfo.indexes,
+      clinicCode: clinic.clinicCode || '',
+      clinicName: clinic.fullLabel || clinic.clinicName || '',
+      targetDate,
+      seenKeys,
+      source: options.source || 'ecuro_excel_export'
+    }))
+    .filter(Boolean);
+  const summary = summarizeCompletionResults(patients);
+
+  return {
+    filePath,
+    sheetName: selectedSheetName,
+    headerRowIndex: headerInfo.index,
+    headers: sheetRows[headerInfo.index] || [],
+    headerIndexes: headerInfo.indexes,
+    targetDate,
+    targetDateBr: formatDateKeyToBrazilian(targetDate),
+    rowsRead: patients.length,
+    patients,
+    summary
   };
 }
 
@@ -2486,9 +2759,12 @@ function summarizeCompletionResults(results = []) {
       summary.totalEligible += 1;
       summary.totalCompleted += 1;
     }
-    if (eligibilityStatus === 'invalid_phone') {
+    if (eligibilityStatus === 'invalid_phone' || eligibilityStatus === 'missing_phone') {
       summary.totalInvalidPhone += 1;
       summary.totalNotCompleted += 1;
+    }
+    if (eligibilityStatus === 'missing_phone') {
+      summary.totalMissingPhone += 1;
     }
     if (eligibilityStatus === 'out_of_date') {
       summary.totalOutOfDate += 1;
@@ -2504,6 +2780,9 @@ function summarizeCompletionResults(results = []) {
     }
     if (eligibilityStatus === 'clinic_mismatch') {
       summary.totalClinicMismatch += 1;
+      summary.totalFailed += 1;
+    }
+    if (eligibilityStatus === 'parse_error') {
       summary.totalFailed += 1;
     }
     if (!eligibilityStatus && completionStatus === 'not_completed') {
@@ -2529,6 +2808,7 @@ function summarizeCompletionResults(results = []) {
     totalOutOfDate: 0,
     totalDuplicate: 0,
     totalMissingLastConsultation: 0,
+    totalMissingPhone: 0,
     totalClinicMismatch: 0
   });
 }
@@ -2692,6 +2972,242 @@ async function collectPatientDirectoryRows(page, config, payload = {}) {
     diagnostics,
     results
   };
+}
+
+function getEcuroExportClinicDir(config, clinic = {}, targetDate = getDateKeyInSaoPaulo()) {
+  const clinicSlug = String(clinic.clinicCode || clinic.clinicName || clinic.fullLabel || 'clinic')
+    .replace(/[^a-z0-9_-]+/gi, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80) || 'clinic';
+  const dirPath = path.join(config.exportDir, targetDate, clinicSlug);
+  ensureDir(dirPath);
+  return dirPath;
+}
+
+function buildEcuroExportFilePath(config, clinic = {}, targetDate = getDateKeyInSaoPaulo(), suggestedName = '') {
+  const exportDir = getEcuroExportClinicDir(config, clinic, targetDate);
+  const clinicCode = String(clinic.clinicCode || 'clinic').replace(/[^a-z0-9_-]+/gi, '-');
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const extension = path.extname(String(suggestedName || '')).toLowerCase() || '.xlsx';
+  const safeExtension = ['.xlsx', '.xls', '.csv'].includes(extension) ? extension : '.xlsx';
+  return path.join(exportDir, `ecuro-patients-${clinicCode}-${targetDate}-${timestamp}${safeExtension}`);
+}
+
+function saveEcuroExcelJsonArtifact(config, clinic = {}, targetDate = getDateKeyInSaoPaulo(), fileName = 'normalized-patients.json', payload = {}) {
+  const exportDir = getEcuroExportClinicDir(config, clinic, targetDate);
+  const filePath = path.join(exportDir, fileName);
+  fs.writeFileSync(filePath, JSON.stringify(maskSensitiveObject(payload), null, 2), 'utf8');
+  return filePath;
+}
+
+function isExcelExportResponse(url = '', headers = {}) {
+  const normalizedUrl = normalizeText(url || '');
+  const contentType = String(headers?.['content-type'] || '').toLowerCase();
+  const disposition = String(headers?.['content-disposition'] || '').toLowerCase();
+  return normalizedUrl.includes('excel')
+    || normalizedUrl.includes('xlsx')
+    || normalizedUrl.includes('xls')
+    || normalizedUrl.includes('export')
+    || contentType.includes('spreadsheet')
+    || contentType.includes('excel')
+    || disposition.includes('.xlsx')
+    || disposition.includes('.xls');
+}
+
+function buildExcelExportEndpointInfo(request, response, download = null) {
+  if (!request || !response) return null;
+  const url = response.url();
+  const headers = response.headers?.() || {};
+  const disposition = String(headers['content-disposition'] || '');
+  const fileNameMatch = disposition.match(/filename\*?=(?:UTF-8''|")?([^";]+)/i);
+  return {
+    exportUrl: url,
+    method: request.method?.() || 'GET',
+    queryParams: parseNetworkQueryParams(url),
+    payload: maskSensitiveObject(safeRequestPayload(request)),
+    contentType: headers['content-type'] || '',
+    fileName: download?.suggestedFilename?.() || (fileNameMatch ? decodeURIComponent(fileNameMatch[1].replace(/"/g, '').trim()) : ''),
+    status: response.status?.() || 0,
+    requiresAuthCookies: true
+  };
+}
+
+async function clickExcelExportButton(page, config) {
+  if (await clickFirstVisible(page, config.selectors.export?.excelButtons || [])) {
+    return { clicked: true, selector: 'configured_excel_button' };
+  }
+
+  const clickedByText = await page.evaluate(() => {
+    const textOf = (element) => String(
+      element?.innerText
+      || element?.textContent
+      || element?.getAttribute?.('aria-label')
+      || element?.getAttribute?.('title')
+      || element?.getAttribute?.('download')
+      || ''
+    ).replace(/\s+/g, ' ').trim();
+    const isVisible = (element) => {
+      if (!element) return false;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    };
+    const isExcelCandidate = (element) => /excel|xlsx|xls/i.test(textOf(element));
+    const elements = Array.from(document.querySelectorAll('button, a, [role="button"], [title], [aria-label], [download]'))
+      .filter((element) => isVisible(element));
+    const target = elements.find(isExcelCandidate);
+    if (!target) return false;
+    target.click();
+    return true;
+  }).catch(() => false);
+  if (clickedByText) return { clicked: true, selector: 'dom_excel_candidate' };
+
+  if (await clickFirstVisible(page, config.selectors.export?.exportMenus || [])) {
+    await page.waitForTimeout(800);
+    if (await clickFirstVisible(page, config.selectors.export?.excelButtons || [])) {
+      return { clicked: true, selector: 'export_menu_excel_button' };
+    }
+    const clickedMenuItem = await page.evaluate(() => {
+      const textOf = (element) => String(element?.innerText || element?.textContent || element?.getAttribute?.('aria-label') || element?.getAttribute?.('title') || '').replace(/\s+/g, ' ').trim();
+      const isVisible = (element) => {
+        if (!element) return false;
+        const style = window.getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+      };
+      const target = Array.from(document.querySelectorAll('button, a, [role="menuitem"], [role="option"], [role="button"]'))
+        .filter((element) => isVisible(element))
+        .find((element) => /excel|xlsx|xls/i.test(textOf(element)));
+      if (!target) return false;
+      target.click();
+      return true;
+    }).catch(() => false);
+    if (clickedMenuItem) return { clicked: true, selector: 'export_menu_dom_excel_candidate' };
+  }
+
+  return { clicked: false, selector: '' };
+}
+
+async function downloadPatientsExcelFromEcuro(page, clinic = {}, config = getEcuroRobotConfig(), options = {}) {
+  const targetDate = resolveEcuroTargetDate(options);
+  const exportResponses = [];
+  const responseListener = (response) => {
+    try {
+      const request = response.request();
+      if (!['xhr', 'fetch', 'document'].includes(request.resourceType())) return;
+      const headers = response.headers();
+      if (!isExcelExportResponse(response.url(), headers)) return;
+      exportResponses.push(buildExcelExportEndpointInfo(request, response));
+    } catch (_error) {
+      // Export endpoint discovery is best-effort.
+    }
+  };
+
+  page.on('response', responseListener);
+  try {
+    const downloadPromise = page.waitForEvent('download', { timeout: config.excelDownloadTimeoutMs });
+    const clickResult = await clickExcelExportButton(page, config);
+    if (!clickResult.clicked) {
+      downloadPromise.catch(() => null);
+      const error = new Error('Botao de exportacao Excel nao encontrado na tela de pacientes do Ecuro.');
+      error.code = 'excel_button_not_found';
+      throw error;
+    }
+    const download = await downloadPromise;
+    const filePath = buildEcuroExportFilePath(config, clinic, targetDate, download.suggestedFilename());
+    await download.saveAs(filePath);
+    const selectedExcelExportEndpoint = exportResponses.filter(Boolean).slice(-1)[0] || {
+      exportUrl: '',
+      method: 'GET',
+      queryParams: {},
+      payload: null,
+      contentType: '',
+      fileName: download.suggestedFilename(),
+      status: 0,
+      requiresAuthCookies: true
+    };
+    return {
+      filePath,
+      suggestedFilename: download.suggestedFilename(),
+      clickResult,
+      selectedExcelExportEndpoint,
+      exportResponses: exportResponses.filter(Boolean).slice(-10)
+    };
+  } finally {
+    page.off('response', responseListener);
+  }
+}
+
+async function downloadPatientsExcelDirect(page, clinic = {}, config = getEcuroRobotConfig(), options = {}) {
+  if (!config.patientsExportUrl) {
+    const error = new Error('ECURO_PATIENTS_EXPORT_URL nao configurada para direct_download.');
+    error.code = 'excel_export_url_missing';
+    throw error;
+  }
+  const targetDate = resolveEcuroTargetDate(options);
+  const payloadConfig = config.patientsExportPayload ? JSON.parse(config.patientsExportPayload) : null;
+  const result = await page.evaluate(async ({ url, method, payload, clinicParam, dateParam, pageSizeParam, clinicCode, clinicName, targetDateValue, pageSize }) => {
+    const requestUrl = new URL(url, window.location.origin);
+    if (clinicParam) requestUrl.searchParams.set(clinicParam, clinicCode || clinicName || '');
+    if (dateParam) requestUrl.searchParams.set(dateParam, targetDateValue || '');
+    if (pageSizeParam) requestUrl.searchParams.set(pageSizeParam, String(pageSize || 500));
+    const response = await fetch(requestUrl.toString(), {
+      method,
+      credentials: 'include',
+      headers: { Accept: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,*/*' },
+      body: method === 'GET' ? undefined : JSON.stringify(payload || {})
+    });
+    const buffer = await response.arrayBuffer();
+    return {
+      ok: response.ok,
+      status: response.status,
+      url: requestUrl.toString(),
+      contentType: response.headers.get('content-type') || '',
+      contentDisposition: response.headers.get('content-disposition') || '',
+      bytes: Array.from(new Uint8Array(buffer))
+    };
+  }, {
+    url: config.patientsExportUrl,
+    method: config.patientsExportMethod,
+    payload: payloadConfig,
+    clinicParam: config.patientsExportClinicParam,
+    dateParam: config.patientsExportDateParam,
+    pageSizeParam: config.patientsExportPageSizeParam,
+    clinicCode: clinic.clinicCode || '',
+    clinicName: clinic.fullLabel || clinic.clinicName || '',
+    targetDateValue: formatDateKeyToBrazilian(targetDate),
+    pageSize: config.patientsPageSize
+  });
+  if (!result.ok) {
+    const error = new Error(`Falha ao baixar Excel direto do Ecuro. Status ${result.status}.`);
+    error.code = 'excel_direct_download_failed';
+    throw error;
+  }
+  const filePath = buildEcuroExportFilePath(config, clinic, targetDate, 'ecuro-patients.xlsx');
+  fs.writeFileSync(filePath, Buffer.from(result.bytes || []));
+  return {
+    filePath,
+    suggestedFilename: path.basename(filePath),
+    clickResult: { clicked: false, selector: 'direct_download' },
+    selectedExcelExportEndpoint: {
+      exportUrl: result.url,
+      method: config.patientsExportMethod,
+      queryParams: parseNetworkQueryParams(result.url),
+      payload: maskSensitiveObject(payloadConfig),
+      contentType: result.contentType,
+      fileName: path.basename(filePath),
+      status: result.status,
+      requiresAuthCookies: true
+    },
+    exportResponses: []
+  };
+}
+
+async function downloadPatientsExcel(page, clinic = {}, config = getEcuroRobotConfig(), options = {}) {
+  if (config.excelExportMode === 'direct_download') {
+    return downloadPatientsExcelDirect(page, clinic, config, options);
+  }
+  return downloadPatientsExcelFromEcuro(page, clinic, config, options);
 }
 
 function selectBestNetworkEndpoint(candidates = [], type = 'patient') {
@@ -3597,8 +4113,15 @@ function buildClinicRunSummary(clinic = {}, patch = {}) {
     totalInvalidPhone: Number(patch.totalInvalidPhone || 0),
     totalDuplicate: Number(patch.totalDuplicate || 0),
     totalMissingLastConsultation: Number(patch.totalMissingLastConsultation || 0),
+    totalMissingPhone: Number(patch.totalMissingPhone || 0),
     totalSent: Number(patch.totalSent || 0),
     totalFailed: Number(patch.totalFailed || 0),
+    totalFilesDownloaded: Number(patch.totalFilesDownloaded || 0),
+    rowsRead: Number(patch.rowsRead || patch.totalRead || 0),
+    exportFilePath: patch.exportFilePath || null,
+    normalizedJsonPath: patch.normalizedJsonPath || null,
+    summaryJsonPath: patch.summaryJsonPath || null,
+    selectedExcelExportEndpoint: patch.selectedExcelExportEndpoint || null,
     pageSizeUsed: patch.pageSizeUsed || null,
     pagesRead: Number(patch.pagesRead || 0),
     errorMessage: patch.errorMessage || null
@@ -3614,6 +4137,7 @@ function summarizeClinicResults(results = []) {
     totalInvalidPhone: summary.totalInvalidPhone,
     totalDuplicate: summary.totalDuplicate,
     totalMissingLastConsultation: summary.totalMissingLastConsultation,
+    totalMissingPhone: summary.totalMissingPhone,
     totalFailed: summary.totalFailed,
     totalSent: 0
   };
@@ -3943,6 +4467,456 @@ async function executeBrowserAllClinicsNpsAutomation(job, payload = {}, config =
   } finally {
     await context.close().catch(() => null);
   }
+}
+
+function buildEcuroExportArtifact(jobId, type, filePath, step = 'excel_export', metadata = {}) {
+  return {
+    id: `${jobId}-${step}-${type}-${crypto.createHash('sha1').update(String(filePath || `${Date.now()}`)).digest('hex').slice(0, 10)}`,
+    type,
+    path: filePath,
+    step,
+    createdAt: new Date().toISOString(),
+    metadata
+  };
+}
+
+function buildExcelClinicSummaryPayload({ clinic = {}, download = {}, parsed = {}, clinicResults = [], status = 'completed', errorMessage = null } = {}) {
+  const summary = summarizeClinicResults(clinicResults);
+  return buildClinicRunSummary(clinic, {
+    ...summary,
+    status,
+    totalFilesDownloaded: download.filePath ? 1 : 0,
+    rowsRead: parsed.rowsRead || clinicResults.length || 0,
+    exportFilePath: download.filePath || null,
+    normalizedJsonPath: parsed.normalizedJsonPath || null,
+    summaryJsonPath: parsed.summaryJsonPath || null,
+    selectedExcelExportEndpoint: download.selectedExcelExportEndpoint || null,
+    errorMessage
+  });
+}
+
+async function executeBrowserExcelExportAllClinicsNpsJob(job, payload = {}, config = getEcuroRobotConfig()) {
+  const playwright = await loadPlaywright();
+  ensureDir(config.profileDir);
+  ensureDir(config.exportDir);
+  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
+    headless: config.headless,
+    viewport: { width: 1440, height: 960 },
+    args: ['--disable-dev-shm-usage', '--no-sandbox'],
+    userAgent: config.userAgent || undefined,
+    acceptDownloads: true
+  });
+
+  const page = context.pages()[0] || await context.newPage();
+  page.setDefaultTimeout(config.timeoutMs);
+  page.setDefaultNavigationTimeout(config.timeoutMs);
+
+  const source = payload.source || 'ecuro_excel_export';
+  const targetDate = resolveEcuroTargetDate({ ...payload, dateMode: payload.dateMode || 'today' });
+  const targetDateBr = formatDateKeyToBrazilian(targetDate);
+  const startedAt = new Date().toISOString();
+  const clinics = [];
+  const results = [];
+  const extractedRows = [];
+  const seenDuplicateKeys = new Set();
+  let discoveredClinics = [];
+  let totalFilesDownloaded = 0;
+  let totalRowsRead = 0;
+  let totalFailed = 0;
+
+  try {
+    logRobotJobEvent(job.id, {
+      level: 'info',
+      step: 'login',
+      action: 'login',
+      currentStep: 'login',
+      message: 'Login do robo Ecuro iniciado para exportacao Excel.'
+    });
+    await performEcuroBrowserLogin(page, config);
+    logRobotJobEvent(job.id, {
+      level: 'info',
+      step: 'login',
+      action: 'authenticated',
+      currentStep: 'authenticated',
+      currentUrl: page.url(),
+      message: 'Login do robo Ecuro concluido.'
+    });
+
+    await navigateToCompletionScreen(page, config);
+    await waitForEcuroPatientsPageReady(page, config);
+
+    logRobotJobEvent(job.id, {
+      level: 'info',
+      step: 'discover_clinics',
+      action: 'discovering',
+      currentStep: 'discover_clinics',
+      currentUrl: page.url(),
+      message: 'Descobrindo clinicas para exportacao Excel.'
+    });
+    discoveredClinics = await discoverEcuroClinics(page, config);
+    const filteredClinics = discoveredClinics.filter((clinic) => {
+      if (payload.clinicCode && normalizeText(clinic.clinicCode) !== normalizeText(payload.clinicCode)) return false;
+      if (payload.clinicName && !clinicOptionMatches(clinic, { clinicName: payload.clinicName })) return false;
+      return true;
+    });
+    const dryRun = payload.dryRun !== undefined ? Boolean(payload.dryRun) : config.dryRun;
+    const homologLimit = dryRun ? Number(config.maxClinicsPerRunHomolog || 0) : 0;
+    const maxClinics = Math.max(1, Number(payload.maxClinics || payload.max_clinics || homologLimit || config.maxClinicsPerRun || 1) || 1);
+    const clinicsToProcess = (filteredClinics.length ? filteredClinics : discoveredClinics).slice(0, maxClinics);
+
+    if (!clinicsToProcess.length) {
+      const artifacts = await capturePatientExtractionArtifacts(page, config, job.id, 'excel-clinics-not-found', {
+        currentUrl: page.url(),
+        clinicName: await extractCurrentClinicName(page, config).catch(() => ''),
+        targetDate: targetDateBr,
+        bodyText: await page.locator('body').innerText().catch(() => ''),
+        candidateRowTexts: []
+      });
+      if (artifacts.length) jobStore.addArtifacts(job.id, artifacts);
+      return {
+        status: 'partial',
+        jobType: 'excel_export_nps',
+        collectionMode: 'excel_export',
+        source,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        targetDate,
+        targetDateBr,
+        totalClinicsDiscovered: discoveredClinics.length,
+        totalClinicsProcessed: 0,
+        totalFilesDownloaded: 0,
+        totalRowsRead: 0,
+        totalRead: 0,
+        totalFailed: 1,
+        clinics: [],
+        results: [],
+        extractedRows: [],
+        artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+        errorMessage: 'Robo autenticou no Ecuro, mas nao conseguiu descobrir clinicas no seletor superior para exportacao Excel.'
+      };
+    }
+
+    logRobotJobEvent(job.id, {
+      level: 'info',
+      step: 'discover_clinics',
+      action: 'discovered',
+      currentStep: 'discover_clinics',
+      currentUrl: page.url(),
+      pageProgress: { current: 0, total: clinicsToProcess.length },
+      message: `Clinicas descobertas: ${discoveredClinics.length}. Clinicas selecionadas para exportacao Excel: ${clinicsToProcess.length}.`,
+      metadata: { discoveredClinics: discoveredClinics.slice(0, 30), targetDate: targetDateBr }
+    });
+
+    for (let index = 0; index < clinicsToProcess.length; index += 1) {
+      const clinic = clinicsToProcess[index];
+      updateRobotJobStep(job.id, {
+        currentStep: 'select_clinic',
+        action: 'selecting_clinic',
+        currentUrl: page.url(),
+        pageProgress: { current: index + 1, total: clinicsToProcess.length },
+        totalRowsRead,
+        eligibleFound: results.filter((row) => row.eligibilityStatus === 'eligible').length,
+        status: 'running'
+      });
+
+      try {
+        logRobotJobEvent(job.id, {
+          level: 'info',
+          step: 'select_clinic',
+          action: 'selecting_clinic',
+          currentStep: 'select_clinic',
+          currentUrl: page.url(),
+          message: `Selecionando clinica ${clinic.fullLabel || clinic.clinicName} para exportacao Excel.`,
+          metadata: { clinic }
+        });
+        // eslint-disable-next-line no-await-in-loop
+        const selection = await selectEcuroClinic(page, clinic, config);
+        if (!selection.selected) {
+          const summary = buildClinicRunSummary(clinic, {
+            status: 'clinic_selection_failed',
+            totalFailed: 1,
+            errorMessage: 'Nao foi possivel confirmar a selecao da clinica no topo da tela.'
+          });
+          clinics.push(summary);
+          totalFailed += 1;
+          continue;
+        }
+
+        // eslint-disable-next-line no-await-in-loop
+        const pageSize = await setPatientsPageSize(page, Number(payload.pageSize || config.patientsPageSize || 500) || 500).catch(() => ({
+          changed: false,
+          pageSizeBefore: null,
+          pageSizeAfter: null,
+          optionsFound: []
+        }));
+
+        logRobotJobEvent(job.id, {
+          level: 'info',
+          step: 'download_excel',
+          action: 'downloading_excel',
+          currentStep: 'download_excel',
+          currentUrl: page.url(),
+          pageProgress: { current: index + 1, total: clinicsToProcess.length },
+          message: `Baixando Excel da clinica ${selection.clinicName || clinic.fullLabel || clinic.clinicName}.`,
+          metadata: { clinic, pageSize }
+        });
+
+        const selectedClinic = {
+          ...clinic,
+          clinicCode: clinic.clinicCode || selection.clinicCode || '',
+          clinicName: selection.clinicName || clinic.clinicName || '',
+          fullLabel: selection.clinicName || clinic.fullLabel || clinic.clinicName || ''
+        };
+        // eslint-disable-next-line no-await-in-loop
+        const download = await downloadPatientsExcel(page, selectedClinic, config, {
+          ...payload,
+          dateMode: payload.dateMode || 'today',
+          targetDate
+        });
+        totalFilesDownloaded += download.filePath ? 1 : 0;
+        if (download.filePath) {
+          jobStore.addArtifacts(job.id, [buildEcuroExportArtifact(job.id, 'excel_export', download.filePath, 'excel_export', {
+            clinicCode: selectedClinic.clinicCode,
+            clinicName: selectedClinic.fullLabel || selectedClinic.clinicName,
+            targetDate: targetDateBr
+          })]);
+        }
+
+        // eslint-disable-next-line no-await-in-loop
+        const parsed = parseEcuroPatientsExcel(download.filePath, selectedClinic, config, {
+          ...payload,
+          source,
+          dateMode: payload.dateMode || 'today',
+          targetDate,
+          seenKeys: seenDuplicateKeys
+        });
+        const clinicResults = (parsed.patients || []).map((row) => ({
+          ...row,
+          clinicCode: selectedClinic.clinicCode || row.clinicCode || '',
+          clinicName: row.clinicName || selectedClinic.fullLabel || selectedClinic.clinicName || '',
+          source
+        }));
+        parsed.normalizedJsonPath = saveEcuroExcelJsonArtifact(config, selectedClinic, targetDate, 'normalized-patients.json', {
+          clinic: selectedClinic,
+          targetDate: targetDateBr,
+          rowsRead: parsed.rowsRead,
+          patients: clinicResults
+        });
+        const clinicSummaryForFile = summarizeClinicResults(clinicResults);
+        parsed.summaryJsonPath = saveEcuroExcelJsonArtifact(config, selectedClinic, targetDate, 'import-summary.json', {
+          clinic: selectedClinic,
+          targetDate: targetDateBr,
+          filePath: download.filePath,
+          rowsRead: parsed.rowsRead,
+          summary: clinicSummaryForFile,
+          selectedExcelExportEndpoint: download.selectedExcelExportEndpoint || null
+        });
+        jobStore.addArtifacts(job.id, [
+          buildEcuroExportArtifact(job.id, 'normalized_json', parsed.normalizedJsonPath, 'excel_parse', {
+            clinicCode: selectedClinic.clinicCode,
+            targetDate: targetDateBr
+          }),
+          buildEcuroExportArtifact(job.id, 'import_summary', parsed.summaryJsonPath, 'excel_parse', {
+            clinicCode: selectedClinic.clinicCode,
+            targetDate: targetDateBr
+          })
+        ]);
+
+        totalRowsRead += parsed.rowsRead || clinicResults.length || 0;
+        results.push(...clinicResults);
+        extractedRows.push(...clinicResults);
+        clinics.push(buildExcelClinicSummaryPayload({
+          clinic: selectedClinic,
+          download,
+          parsed,
+          clinicResults,
+          status: parsed.rowsRead > 0 ? 'completed' : 'partial',
+          errorMessage: parsed.rowsRead > 0 ? null : 'Excel baixado, mas nenhuma linha de paciente foi lida.'
+        }));
+
+        logRobotJobEvent(job.id, {
+          level: parsed.rowsRead > 0 ? 'info' : 'warning',
+          step: 'parse_excel',
+          action: 'clinic_excel_processed',
+          currentStep: 'parse_excel',
+          currentUrl: page.url(),
+          pageProgress: { current: index + 1, total: clinicsToProcess.length },
+          totalRowsRead,
+          eligibleFound: results.filter((row) => row.eligibilityStatus === 'eligible').length,
+          message: `Excel da clinica ${selectedClinic.fullLabel || selectedClinic.clinicName}: ${parsed.rowsRead || 0} linhas, ${clinicSummaryForFile.totalEligible || 0} elegiveis.`,
+          metadata: {
+            clinic: selectedClinic,
+            exportFilePath: download.filePath,
+            pageSize,
+            selectedExcelExportEndpoint: download.selectedExcelExportEndpoint || null
+          }
+        });
+      } catch (clinicError) {
+        totalFailed += 1;
+        clinics.push(buildClinicRunSummary(clinic, {
+          status: clinicError.code || 'error',
+          totalFailed: 1,
+          errorMessage: clinicError.message
+        }));
+        const artifacts = await capturePatientExtractionArtifacts(page, config, job.id, `excel-error-${clinic.clinicCode || index + 1}`, {
+          currentUrl: page.url(),
+          clinicName: clinic.fullLabel || clinic.clinicName || '',
+          clinicCode: clinic.clinicCode || '',
+          targetDate: targetDateBr,
+          bodyText: await page.locator('body').innerText().catch(() => ''),
+          candidateRowTexts: []
+        }).catch(() => []);
+        if (artifacts.length) jobStore.addArtifacts(job.id, artifacts);
+        logRobotJobEvent(job.id, {
+          level: 'error',
+          step: 'excel_export',
+          action: clinicError.code || 'clinic_excel_error',
+          currentStep: 'excel_export',
+          currentUrl: page.url(),
+          message: clinicError.message,
+          metadata: { clinic }
+        });
+      }
+    }
+
+    const summary = summarizeCompletionResults(results);
+    const failedByClinic = clinics.filter((clinic) => !['completed'].includes(clinic.status)).length;
+    return {
+      status: totalRowsRead > 0 && !failedByClinic ? 'completed' : (totalRowsRead > 0 ? 'partial' : 'partial'),
+      jobType: 'excel_export_nps',
+      collectionMode: 'excel_export',
+      source,
+      dateMode: payload.dateMode || payload.date_mode || 'today',
+      targetDate,
+      targetDateBr,
+      dryRun: payload.dryRun !== undefined ? Boolean(payload.dryRun) : config.dryRun,
+      totalClinicsDiscovered: discoveredClinics.length,
+      totalClinicsProcessed: clinics.length,
+      totalFilesDownloaded,
+      totalRowsRead,
+      totalRead: totalRowsRead,
+      totalSent: 0,
+      totalFailed: Number(summary.totalFailed || 0) + totalFailed,
+      totalEligible: summary.totalEligible,
+      totalOutOfDate: summary.totalOutOfDate,
+      totalInvalidPhone: summary.totalInvalidPhone,
+      totalDuplicate: summary.totalDuplicate,
+      totalMissingLastConsultation: summary.totalMissingLastConsultation,
+      totalMissingPhone: summary.totalMissingPhone,
+      totalCompleted: summary.totalCompleted,
+      totalNotCompleted: summary.totalNotCompleted,
+      totalNotFound: summary.totalNotFound,
+      totalAmbiguous: summary.totalAmbiguous,
+      extractionStrategyUsed: 'excel_export',
+      clinics,
+      results,
+      extractedRows,
+      discoveredClinics,
+      logs: (jobStore.get(job.id)?.logs || []).slice(),
+      artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      currentUrl: page.url(),
+      errorMessage: totalRowsRead > 0 ? null : 'Robo autenticou no Ecuro, mas nao conseguiu baixar/processar Excel com linhas de pacientes.'
+    };
+  } catch (error) {
+    const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'excel-export-error');
+    if (artifacts.length) jobStore.addArtifacts(job.id, artifacts);
+    logRobotJobEvent(job.id, {
+      level: 'error',
+      step: error.code === 'manual_action_required' ? 'manual_action_required' : 'excel_export_error',
+      action: 'failed',
+      currentStep: error.code === 'manual_action_required' ? 'manual_action_required' : 'excel_export_error',
+      currentUrl: page.url(),
+      message: error.message
+    });
+    return {
+      status: error.code === 'manual_action_required' ? 'manual_action_required' : 'failed',
+      jobType: 'excel_export_nps',
+      collectionMode: 'excel_export',
+      source,
+      targetDate,
+      targetDateBr,
+      totalClinicsDiscovered: discoveredClinics.length,
+      totalClinicsProcessed: clinics.length,
+      totalFilesDownloaded,
+      totalRowsRead,
+      totalRead: totalRowsRead,
+      totalFailed: totalFailed + 1,
+      clinics,
+      results,
+      extractedRows,
+      logs: (jobStore.get(job.id)?.logs || []).slice(),
+      artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+      startedAt,
+      finishedAt: new Date().toISOString(),
+      currentUrl: page.url(),
+      errorMessage: error.message
+    };
+  } finally {
+    await context.close().catch(() => null);
+  }
+}
+
+async function runEcuroExcelExportAllClinicsNpsJob(payload = {}, config = getEcuroRobotConfig()) {
+  const job = jobStore.create({
+    jobType: payload.jobType || 'excel_export_nps',
+    clinicId: payload.clinicId || null,
+    clinicName: payload.clinicName || '',
+    appointmentDate: payload.targetDate || payload.appointmentDate || '',
+    payload: {
+      ...payload,
+      source: payload.source || 'ecuro_excel_export',
+      dateMode: payload.dateMode || 'today',
+      dryRun: payload.dryRun !== undefined ? Boolean(payload.dryRun) : config.dryRun
+    }
+  });
+
+  jobStore.update(job.id, {
+    status: 'running',
+    startedAt: new Date().toISOString()
+  });
+  updateRobotJobStep(job.id, {
+    currentStep: 'starting_excel_export',
+    action: 'starting_excel_export',
+    status: 'running'
+  });
+
+  const result = await executeBrowserExcelExportAllClinicsNpsJob(job, {
+    ...payload,
+    source: payload.source || 'ecuro_excel_export',
+    dateMode: payload.dateMode || 'today',
+    dryRun: payload.dryRun !== undefined ? Boolean(payload.dryRun) : config.dryRun
+  }, config);
+  const summary = summarizeCompletionResults(result.results || []);
+  const updated = jobStore.update(job.id, {
+    status: result.status,
+    finishedAt: result.finishedAt || new Date().toISOString(),
+    errorMessage: result.errorMessage || null,
+    artifacts: result.artifacts || [],
+    logs: result.logs || (jobStore.get(job.id)?.logs || []),
+    extractedRows: result.extractedRows || [],
+    results: result.results || [],
+    clinics: result.clinics || [],
+    discoveredClinics: result.discoveredClinics || [],
+    collectionMode: 'excel_export',
+    jobType: 'excel_export_nps',
+    dateMode: result.dateMode || 'today',
+    targetDate: result.targetDate || resolveEcuroTargetDate({ ...payload, dateMode: 'today' }),
+    targetDateBr: result.targetDateBr || formatDateKeyToBrazilian(resolveEcuroTargetDate({ ...payload, dateMode: 'today' })),
+    totalClinicsDiscovered: Number(result.totalClinicsDiscovered || 0),
+    totalClinicsProcessed: Number(result.totalClinicsProcessed || 0),
+    totalFilesDownloaded: Number(result.totalFilesDownloaded || 0),
+    totalRowsRead: Number(result.totalRowsRead || result.totalRead || summary.totalChecked || 0),
+    totalRead: Number(result.totalRead || result.totalRowsRead || summary.totalChecked || 0),
+    totalSent: Number(result.totalSent || 0),
+    extractionStrategyUsed: 'excel_export',
+    currentUrl: result.currentUrl || '',
+    ...summary,
+    totalFailed: Number(result.totalFailed || summary.totalFailed || 0)
+  });
+  jobStore.resetRuntime();
+  return updated;
 }
 
 async function runDiscoverClinicsJob(payload = {}, config = getEcuroRobotConfig()) {
@@ -4397,6 +5371,7 @@ module.exports = {
   discoverEcuroNetworkEndpoints,
   discoverEcuroClinics,
   evaluateNpsEligibility,
+  evaluateNpsEligibilityFromExcel,
   extractEcuroPatientRowsFromText,
   extractPatientsFromNetworkResponses,
   extractPatientsFromEcuroPatientsPage,
@@ -4414,10 +5389,13 @@ module.exports = {
   normalizeBrazilianDate,
   normalizeEcuroCompletionStatus,
   normalizeEcuroPatientFromApi,
+  normalizeExcelDate,
+  parseEcuroPatientsExcel,
   resolveEcuroTargetDate,
   runDiscoverClinicsJob,
   runDiscoverNetworkJob,
   runEcuroAllClinicsNpsAutomation,
+  runEcuroExcelExportAllClinicsNpsJob,
   retryRobotJob,
   runCheckCompletedBatch,
   runCheckCompletedJob,

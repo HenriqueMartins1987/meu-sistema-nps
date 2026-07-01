@@ -1,5 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const XLSX = require('xlsx');
 
 const {
   buildNpsInviteIdempotencyKey,
@@ -18,6 +22,7 @@ const {
   getNpsEligibleDates,
   getEcuroRobotConfigStatus,
   evaluateNpsEligibility,
+  evaluateNpsEligibilityFromExcel,
   isEligibleByLastConsultationDate,
   isEligibleByLastConsultationDates,
   matchCompletionRows,
@@ -25,6 +30,8 @@ const {
   normalizeBrazilianDate,
   normalizeEcuroCompletionStatus,
   normalizeEcuroPatientFromApi,
+  normalizeExcelDate,
+  parseEcuroPatientsExcel,
   resolveEcuroTargetDate,
   summarizeCompletionResults
 } = require('../services/ecuroRobotService');
@@ -321,6 +328,69 @@ test('evaluateNpsEligibility blocks yesterday and invalid phone in network mode'
     clinicName: 'G0007 - Sorriso do Povo',
     lastConsultationDate: '2026-07-01'
   }, '2026-07-01'), 'invalid_phone');
+});
+
+test('normalizeExcelDate supports strings, ISO values and Excel serial numbers', () => {
+  assert.equal(normalizeExcelDate('01/07/2026'), '01/07/2026');
+  assert.equal(normalizeExcelDate('2026-07-01'), '01/07/2026');
+  assert.equal(normalizeExcelDate(46204), '01/07/2026');
+  assert.equal(normalizeExcelDate(new Date(Date.UTC(2026, 6, 1))), '01/07/2026');
+  assert.equal(normalizeExcelDate('-'), '');
+});
+
+test('parseEcuroPatientsExcel maps exported Ecuro columns and applies today eligibility', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ecuro-excel-'));
+  const filePath = path.join(tempDir, 'patients.xlsx');
+  const workbook = XLSX.utils.book_new();
+  const worksheet = XLSX.utils.aoa_to_sheet([
+    ['PRIMEIRO NOME', 'SOBRENOME', 'CPF', 'ID', 'NÚMERO DE TELEFONE', 'DATA DE NASCIMENTO', 'DATA DE CADASTRO', 'ÚLTIMA CONSULTA', 'PRÓXIMA CONSULTA'],
+    ['George', 'Marques De Freitas', '008.597.431-52', 'DPAWQ', '+5577998433088', '27/02/1984', '29/06/2026', '01/07/2026', '29/12/2026'],
+    ['Maria', 'Silva', '123.456.789-00', 'ABC12', '+5562999669966', '10/01/1990', '01/07/2026', '30/06/2026', '-'],
+    ['Sem', 'Telefone', '987.654.321-00', 'SEM01', '', '10/01/1991', '01/07/2026', '01/07/2026', '-']
+  ]);
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Pacientes');
+  XLSX.writeFile(workbook, filePath);
+
+  const parsed = parseEcuroPatientsExcel(filePath, {
+    clinicCode: 'G0007',
+    fullLabel: 'G0007 - Sorriso do Povo - Goiania II - Goias'
+  }, {}, {
+    targetDate: '2026-07-01',
+    source: 'ecuro_excel_export'
+  });
+
+  assert.equal(parsed.rowsRead, 3);
+  assert.equal(parsed.targetDate, '2026-07-01');
+  assert.equal(parsed.patients[0].patientName, 'George Marques De Freitas');
+  assert.equal(parsed.patients[0].patientPhone, '+5577998433088');
+  assert.equal(parsed.patients[0].lastConsultationDate, '2026-07-01');
+  assert.equal(parsed.patients[0].eligibilityStatus, 'eligible');
+  assert.equal(parsed.patients[1].eligibilityStatus, 'out_of_date');
+  assert.equal(parsed.patients[2].eligibilityStatus, 'missing_phone');
+  assert.equal(parsed.summary.totalEligible, 1);
+  assert.equal(parsed.summary.totalOutOfDate, 1);
+  assert.equal(parsed.summary.totalMissingPhone, 1);
+});
+
+test('evaluateNpsEligibilityFromExcel blocks duplicates and missing clinic context', () => {
+  const seenKeys = new Set();
+  const patient = {
+    patientName: 'George Marques',
+    patientPhone: '+5577998433088',
+    clinicCode: 'G0007',
+    clinicName: 'G0007 - Sorriso do Povo',
+    externalPatientId: 'DPAWQ',
+    lastConsultationDate: '2026-07-01'
+  };
+  assert.equal(evaluateNpsEligibilityFromExcel(patient, '2026-07-01', { seenKeys }), 'eligible');
+  assert.equal(evaluateNpsEligibilityFromExcel(patient, '2026-07-01', { seenKeys }), 'duplicate');
+  assert.equal(evaluateNpsEligibilityFromExcel({
+    ...patient,
+    clinicCode: '',
+    clinicName: '',
+    externalPatientId: 'NEW01',
+    patientPhone: '+5562999669966'
+  }, '2026-07-01'), 'parse_error');
 });
 
 test('computeRetryState stops after max attempts and handles manual action', () => {

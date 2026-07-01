@@ -86,6 +86,11 @@ const {
   callEcuroRobotCheckCompletedNetwork,
   callEcuroRobotDiscoverClinics,
   callEcuroRobotDiscoverNetwork,
+  callEcuroRobotExcelDiscoverExport,
+  callEcuroRobotExcelDownloadOneClinic,
+  callEcuroRobotExcelDryRunAllClinics,
+  callEcuroRobotExcelDryRunOneClinic,
+  callEcuroRobotExcelProcessLatest,
   callEcuroRobotJobDetail,
   callEcuroRobotJobs,
   callEcuroRobotLoginTest,
@@ -13199,7 +13204,17 @@ function buildEcuroRobotMasterConfigSnapshot() {
       networkMaskSensitive: robotConfig.networkMaskSensitive,
       networkWaitMs: robotConfig.networkWaitMs,
       networkMaxResponses: robotConfig.networkMaxResponses,
-      networkMaxSampleItems: robotConfig.networkMaxSampleItems
+      networkMaxSampleItems: robotConfig.networkMaxSampleItems,
+      collectionMode: robotConfig.collectionMode,
+      excelExportMode: robotConfig.excelExportMode,
+      exportDir: robotConfig.exportDir,
+      excelDownloadTimeoutMs: robotConfig.excelDownloadTimeoutMs,
+      maxClinicsPerRunHomolog: robotConfig.maxClinicsPerRunHomolog,
+      patientsExportUrlConfigured: robotConfig.patientsExportUrlConfigured,
+      patientsExportMethod: robotConfig.patientsExportMethod,
+      patientsExportClinicParamConfigured: robotConfig.patientsExportClinicParamConfigured,
+      patientsExportDateParamConfigured: robotConfig.patientsExportDateParamConfigured,
+      patientsExportPageSizeParamConfigured: robotConfig.patientsExportPageSizeParamConfigured
     },
     mapping: {
       ...mappingConfig,
@@ -14454,6 +14469,176 @@ async function runEcuroAllClinicsNpsAutomationAudit(options = {}) {
   }
 }
 
+async function runEcuroExcelExportNpsAutomationAudit(options = {}) {
+  const actor = options.user || null;
+  const actorName = options.createdBy || getActorName(actor) || 'Automação NPS Ecuro';
+  const npsConfig = getNpsAutomationConfig();
+  const dryRun = true;
+  const robotPayload = {
+    source: 'ecuro_excel_export',
+    dateMode: options.dateMode || options.date_mode || 'today',
+    targetDate: options.targetDate || options.target_date || options.appointmentDate || options.appointment_date || null,
+    dryRun: true,
+    clinicCode: options.clinicCode || options.clinic_code || null,
+    clinicName: options.clinicName || options.clinic_name || null,
+    maxClinics: options.maxClinics || options.max_clinics || null,
+    pageSize: options.pageSize || options.page_size || null,
+    patients: []
+  };
+  const jobId = await insertEcuroRobotJobAudit({
+    jobType: 'excel_export_nps',
+    clinicId: null,
+    clinicName: robotPayload.clinicName || null,
+    appointmentDate: normalizeEcuroAutomationDate(robotPayload.targetDate, null),
+    status: 'running',
+    createdBy: actorName,
+    triggeredByUserId: actor?.id || null,
+    payloadJson: JSON.stringify(robotPayload)
+  });
+  const startedAt = new Date();
+  const summary = {
+    candidateCount: 0,
+    groups: 0,
+    targetDate: robotPayload.targetDate || null,
+    jobs: [],
+    completionRowsInserted: 0,
+    completed: 0,
+    notCompleted: 0,
+    notFound: 0,
+    ambiguous: 0,
+    errors: 0,
+    eligible: 0,
+    outOfDate: 0,
+    invalidPhone: 0,
+    duplicateRows: 0,
+    missingLastConsultation: 0,
+    missingPhone: 0,
+    clinicMismatch: 0,
+    inviteCreated: 0,
+    duplicates: 0,
+    wouldSend: 0,
+    dryRun,
+    collectionMode: 'excel_export',
+    extractionMode: 'excel_export'
+  };
+
+  try {
+    let robotResult;
+    if (options.discoverExport) {
+      robotResult = await callEcuroRobotExcelDiscoverExport(robotPayload);
+    } else if (options.oneClinic || robotPayload.clinicCode || robotPayload.clinicName) {
+      robotResult = await callEcuroRobotExcelDryRunOneClinic(robotPayload);
+    } else {
+      robotResult = await callEcuroRobotExcelDryRunAllClinics(robotPayload);
+    }
+    const job = robotResult?.job || robotResult || {};
+    const jobResults = Array.isArray(job.results) ? job.results : [];
+    const totalChecked = Number(job.totalRowsRead || job.totalRead || job.totalChecked || jobResults.length || 0);
+    const totalCompleted = Number(job.totalCompleted || job.total_completed || job.totalEligible || 0);
+    const totalFailed = Number(job.totalFailed || job.total_failed || 0);
+    const totalEligible = Number(job.totalEligible || job.total_eligible || 0);
+    const robotArtifacts = Array.isArray(job.artifacts) ? job.artifacts : [];
+    const robotLogs = Array.isArray(job.logs) ? job.logs : [];
+
+    await updateEcuroRobotJobAudit(jobId, {
+      status: job.status || 'completed',
+      totalChecked,
+      totalCompleted,
+      totalFailed,
+      totalEligible,
+      totalSent: 0,
+      errorMessage: job.errorMessage || job.error_message || null,
+      artifactsJson: JSON.stringify(robotArtifacts),
+      resultJson: JSON.stringify(job || robotResult || {}),
+      currentStep: job.currentStep || job.current_step || 'excel_export',
+      currentUrl: job.currentUrl || job.current_url || null,
+      robotJobKey: job.id || null,
+      startedAt: toMysqlDateTime(startedAt),
+      finishedAt: toMysqlDateTime(new Date())
+    });
+    await replaceEcuroRobotLogs(jobId, 'excel_export_nps', robotLogs);
+    await replaceEcuroRobotArtifacts(jobId, job.id || null, robotArtifacts);
+
+    summary.candidateCount = totalChecked;
+    summary.groups = Number(job.totalClinicsProcessed || 0);
+    summary.totalClinicsDiscovered = Number(job.totalClinicsDiscovered || 0);
+    summary.totalClinicsProcessed = Number(job.totalClinicsProcessed || 0);
+    summary.totalFilesDownloaded = Number(job.totalFilesDownloaded || 0);
+    summary.totalRowsRead = totalChecked;
+    summary.targetDate = job.targetDateBr || job.targetDate || robotPayload.targetDate || null;
+    summary.clinics = Array.isArray(job.clinics) ? job.clinics : [];
+    summary.selectedExcelExportEndpoint = summary.clinics.find((clinic) => clinic.selectedExcelExportEndpoint)?.selectedExcelExportEndpoint || null;
+
+    for (const result of jobResults) {
+      const completionStatus = interpretEcuroCompletionStatus(result.completionStatus || result.completion_status || result.externalStatus || result.external_status);
+      const eligibilityStatus = String(result.eligibilityStatus || result.eligibility_status || '').trim().toLowerCase() || null;
+      await insertEcuroCompletionStatusRow(jobId, {
+        clinic_id: result.clinicId || result.clinic_id || null,
+        clinic_name: result.clinicName || result.clinic_name || null,
+        patient_name: result.patientName || result.patient_name || null,
+        patient_phone: result.patientPhone || result.patient_phone || null,
+        patient_document: result.document || result.patientDocument || result.patient_document || null,
+        appointment_date: result.appointmentDate || result.appointment_date || result.lastConsultationDate || result.last_consultation_date || null,
+        appointment_time: result.appointmentTime || result.appointment_time || null,
+        external_patient_id: result.externalPatientId || result.external_patient_id || null,
+        external_status: result.externalStatus || result.external_status || null,
+        completion_status: completionStatus,
+        eligibility_status: eligibilityStatus,
+        matched_by: result.matchedBy || result.matched_by || null,
+        confidence_score: result.confidenceScore === undefined ? null : Number(result.confidenceScore || 0),
+        agenda_item_id: result.agendaItemId || result.agenda_item_id || null,
+        last_consultation_date: result.lastConsultationDate || result.last_consultation_date || null,
+        next_consultation_date: result.nextConsultationDate || result.next_consultation_date || null,
+        source: result.source || 'ecuro_excel_export',
+        raw_payload_json: result.rawPayloadJson || result.raw_payload_json || JSON.stringify(result)
+      });
+      summary.completionRowsInserted += 1;
+      if (completionStatus === 'completed') summary.completed += 1;
+      else if (completionStatus === 'not_completed') summary.notCompleted += 1;
+      else if (completionStatus === 'not_found') summary.notFound += 1;
+      else if (completionStatus === 'ambiguous') summary.ambiguous += 1;
+      else summary.errors += 1;
+      if (eligibilityStatus === 'eligible') summary.eligible += 1;
+      else if (eligibilityStatus === 'out_of_date') summary.outOfDate += 1;
+      else if (eligibilityStatus === 'invalid_phone') summary.invalidPhone += 1;
+      else if (eligibilityStatus === 'missing_phone') summary.missingPhone += 1;
+      else if (eligibilityStatus === 'duplicate') summary.duplicateRows += 1;
+      else if (eligibilityStatus === 'missing_last_consultation') summary.missingLastConsultation += 1;
+      else if (eligibilityStatus === 'clinic_mismatch') summary.clinicMismatch += 1;
+    }
+
+    summary.jobs.push({
+      id: jobId,
+      clinic_id: null,
+      clinic_name: robotPayload.clinicName || 'Exportação Excel Ecuro',
+      appointment_date: robotPayload.targetDate || null,
+      patient_count: totalChecked,
+      status: job.status || 'completed'
+    });
+    summary.dispatch = {
+      skipped: true,
+      dryRun: true,
+      reason: npsConfig.dryRun || dryRun ? 'dry_run' : 'nps_dispatch_disabled',
+      processed: 0,
+      sent: 0
+    };
+
+    return summary;
+  } catch (error) {
+    await updateEcuroRobotJobAudit(jobId, {
+      status: 'failed',
+      totalChecked: 0,
+      totalCompleted: 0,
+      totalFailed: 1,
+      errorMessage: sanitizeRobotError(error),
+      resultJson: JSON.stringify({ error: sanitizeRobotError(error) }),
+      startedAt: toMysqlDateTime(startedAt),
+      finishedAt: toMysqlDateTime(new Date())
+    });
+    throw error;
+  }
+}
+
 async function runEcuroNetworkDiscoveryAudit(options = {}) {
   const actor = options.user || null;
   const actorName = options.createdBy || getActorName(actor) || 'Automação NPS Ecuro';
@@ -14699,6 +14884,14 @@ async function runEcuroNpsAutomation(options = {}) {
   const actor = options.user || null;
   const actorName = options.createdBy || getActorName(actor) || 'Automação NPS Ecuro';
   const clinicIds = Array.isArray(options.clinicIds) ? options.clinicIds.filter(Boolean) : [];
+
+  if (options.excelExport || String(options.source || '').includes('excel_export')) {
+    return runEcuroExcelExportNpsAutomationAudit({
+      ...options,
+      createdBy: actorName,
+      user: actor
+    });
+  }
 
   if (options.network || String(options.source || '').includes('network')) {
     return runEcuroNetworkNpsAutomationAudit({
@@ -34918,8 +35111,14 @@ app.post('/nps/automation/run', authenticate, async (req, res) => {
     const payload = await runEcuroNpsAutomation({
       user: req.user,
       createdBy: getActorName(req.user),
+      excelExport: true,
+      source: 'ecuro_excel_export',
       clinicIds,
       appointmentDate: req.body?.appointmentDate || req.body?.appointment_date || req.query?.appointmentDate || null,
+      targetDate: req.body?.targetDate || req.body?.target_date || req.query?.targetDate || null,
+      dateMode: req.body?.dateMode || req.body?.date_mode || 'today',
+      maxClinics: req.body?.maxClinics || req.body?.max_clinics || null,
+      pageSize: req.body?.pageSize || req.body?.page_size || null,
       dateFrom: req.body?.dateFrom || req.body?.date_from || null,
       dateTo: req.body?.dateTo || req.body?.date_to || null,
       limit: req.body?.limit || null,
@@ -35118,9 +35317,11 @@ app.post('/admin/robot/master/run-nps-dry-run', authenticate, requireEcuroRobotM
     const payload = await runEcuroNpsAutomation({
       user: req.user,
       createdBy: getActorName(req.user),
-      allClinics: true,
-      source: 'ecuro_all_clinics_last_consultation',
+      excelExport: true,
+      source: 'ecuro_excel_export',
       clinicIds,
+      clinicCode: req.body?.clinicCode || req.body?.clinic_code || null,
+      clinicName: req.body?.clinicName || req.body?.clinic_name || null,
       appointmentDate: req.body?.appointmentDate || req.body?.appointment_date || null,
       targetDate: req.body?.targetDate || req.body?.target_date || null,
       dateMode: req.body?.dateMode || req.body?.date_mode || 'today',
@@ -35141,6 +35342,130 @@ app.post('/admin/robot/master/run-nps-dry-run', authenticate, requireEcuroRobotM
     console.error(error);
     return res.status(error.statusCode || 500).json({
       error: error.statusCode ? error.message : 'Erro ao executar o dry-run do robô Ecuro.'
+    });
+  }
+});
+
+app.post('/admin/robot/master/run-excel-discover-export', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'run_excel_discover_export');
+    const payload = await runEcuroExcelExportNpsAutomationAudit({
+      user: req.user,
+      createdBy: getActorName(req.user),
+      discoverExport: true,
+      targetDate: req.body?.targetDate || req.body?.target_date || null,
+      dateMode: req.body?.dateMode || req.body?.date_mode || 'today',
+      clinicCode: req.body?.clinicCode || req.body?.clinic_code || null,
+      clinicName: req.body?.clinicName || req.body?.clinic_name || null,
+      maxClinics: req.body?.maxClinics || req.body?.max_clinics || 1,
+      pageSize: req.body?.pageSize || req.body?.page_size || null
+    });
+    return res.json({
+      success: true,
+      message: 'Descoberta da exportação Excel do Ecuro executada em modo seguro.',
+      payload
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao descobrir a exportação Excel do Ecuro.'
+    });
+  }
+});
+
+app.post('/admin/robot/master/run-excel-download-one', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'run_excel_download_one');
+    const robotResult = await callEcuroRobotExcelDownloadOneClinic({
+      source: 'ecuro_excel_export',
+      dateMode: req.body?.dateMode || req.body?.date_mode || 'today',
+      targetDate: req.body?.targetDate || req.body?.target_date || null,
+      clinicCode: req.body?.clinicCode || req.body?.clinic_code || null,
+      clinicName: req.body?.clinicName || req.body?.clinic_name || null,
+      maxClinics: 1,
+      dryRun: true
+    });
+    return res.json({
+      success: true,
+      message: 'Download Excel de uma clínica executado no robô em modo seguro.',
+      payload: robotResult
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao baixar Excel de uma clínica no Ecuro.'
+    });
+  }
+});
+
+app.post('/admin/robot/master/run-excel-dry-run-one', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'run_excel_dry_run_one');
+    const payload = await runEcuroExcelExportNpsAutomationAudit({
+      user: req.user,
+      createdBy: getActorName(req.user),
+      oneClinic: true,
+      targetDate: req.body?.targetDate || req.body?.target_date || null,
+      dateMode: req.body?.dateMode || req.body?.date_mode || 'today',
+      clinicCode: req.body?.clinicCode || req.body?.clinic_code || null,
+      clinicName: req.body?.clinicName || req.body?.clinic_name || null,
+      maxClinics: 1,
+      pageSize: req.body?.pageSize || req.body?.page_size || null
+    });
+    return res.json({
+      success: true,
+      message: 'Dry-run Excel de uma clínica executado. Nenhuma NPS foi enviada.',
+      payload
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao executar dry-run Excel de uma clínica.'
+    });
+  }
+});
+
+app.post('/admin/robot/master/run-excel-dry-run', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'run_excel_dry_run');
+    const payload = await runEcuroExcelExportNpsAutomationAudit({
+      user: req.user,
+      createdBy: getActorName(req.user),
+      targetDate: req.body?.targetDate || req.body?.target_date || null,
+      dateMode: req.body?.dateMode || req.body?.date_mode || 'today',
+      clinicCode: req.body?.clinicCode || req.body?.clinic_code || null,
+      clinicName: req.body?.clinicName || req.body?.clinic_name || null,
+      maxClinics: req.body?.maxClinics || req.body?.max_clinics || null,
+      pageSize: req.body?.pageSize || req.body?.page_size || null
+    });
+    return res.json({
+      success: true,
+      message: 'Dry-run Excel do Ecuro executado. Nenhuma NPS foi enviada.',
+      payload
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao executar dry-run Excel do Ecuro.'
+    });
+  }
+});
+
+app.post('/admin/robot/master/run-excel-process-latest', authenticate, requireEcuroRobotMaster, async (req, res) => {
+  try {
+    await auditEcuroRobotMasterAccess(req, 'run_excel_process_latest');
+    const payload = await callEcuroRobotExcelProcessLatest({
+      dryRun: true
+    });
+    return res.json({
+      success: true,
+      message: 'Último job Excel consultado em modo seguro.',
+      payload
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Erro ao consultar o último job Excel do Ecuro.'
     });
   }
 });
@@ -35199,9 +35524,11 @@ app.post('/admin/robot/master/run-nps-send', authenticate, requireEcuroRobotMast
     const payload = await runEcuroNpsAutomation({
       user: req.user,
       createdBy: getActorName(req.user),
-      allClinics: true,
-      source: 'ecuro_all_clinics_last_consultation',
+      excelExport: true,
+      source: 'ecuro_excel_export',
       clinicIds,
+      clinicCode: req.body?.clinicCode || req.body?.clinic_code || null,
+      clinicName: req.body?.clinicName || req.body?.clinic_name || null,
       appointmentDate: req.body?.appointmentDate || req.body?.appointment_date || null,
       targetDate: req.body?.targetDate || req.body?.target_date || null,
       dateMode: req.body?.dateMode || req.body?.date_mode || 'today',

@@ -4,6 +4,7 @@ import { isMasterAdmin, readUser } from './constants';
 
 const tabs = [
   { id: 'nps', label: 'NPS Automatica' },
+  { id: 'excel', label: 'Exportacao Excel Ecuro' },
   { id: 'network', label: 'Descoberta Network/F12' },
   { id: 'jobs', label: 'Jobs' },
   { id: 'logs', label: 'Logs' },
@@ -272,6 +273,14 @@ function RobotMasterMonitor() {
     () => jobs.filter((item) => String(item.job_type || '').includes('network')).slice(0, 8),
     [jobs]
   );
+  const excelJobs = useMemo(
+    () => jobs.filter((item) => String(item.job_type || '').includes('excel_export')).slice(0, 8),
+    [jobs]
+  );
+  const excelArtifacts = useMemo(
+    () => artifacts.filter((item) => ['excel_export', 'normalized_json', 'import_summary'].includes(String(item.artifact_type || ''))).slice(0, 12),
+    [artifacts]
+  );
 
   if (!isAllowed) {
     return (
@@ -403,6 +412,96 @@ function RobotMasterMonitor() {
                     </div>
                   ) : (
                     <EmptyState title="Nenhum evento recente" detail="A execucao em tempo real vai aparecer aqui quando o robo estiver ativo." />
+                  )}
+                </article>
+              </section>
+            )}
+
+            {activeTab === 'excel' && (
+              <section className="robot-master-panel">
+                <SectionHeader
+                  eyebrow="Exportacao Excel Ecuro"
+                  title="Coleta principal por planilha exportada"
+                  description="O robo seleciona a clinica, exporta o Excel de pacientes, normaliza colunas e filtra somente ULTIMA CONSULTA igual a data atual. O envio permanece bloqueado enquanto dry-run estiver ativo."
+                  action={(
+                    <div className="robot-master-inline-actions">
+                      <button type="button" className="outline-action" disabled={actionState === 'excel-discover'} onClick={() => runAction('excel-discover', () => api.post('/admin/robot/master/run-excel-discover-export'))}>
+                        {actionState === 'excel-discover' ? 'Descobrindo...' : 'Descobrir exportacao'}
+                      </button>
+                      <button type="button" className="outline-action" disabled={actionState === 'excel-one'} onClick={() => runAction('excel-one', () => api.post('/admin/robot/master/run-excel-dry-run-one'))}>
+                        {actionState === 'excel-one' ? 'Processando...' : 'Dry-run uma clinica'}
+                      </button>
+                      <button type="button" className="primary-action" disabled={actionState === 'excel-all'} onClick={() => runAction('excel-all', () => api.post('/admin/robot/master/run-excel-dry-run'))}>
+                        {actionState === 'excel-all' ? 'Executando...' : 'Dry-run todas'}
+                      </button>
+                    </div>
+                  )}
+                />
+
+                <div className="robot-master-two-column">
+                  <article className="robot-master-card">
+                    <h3>Ultimo job Excel</h3>
+                    <dl className="robot-master-definition-list">
+                      <div><dt>Status</dt><dd><StatusChip status={excelJobs[0]?.status || 'pending'} /></dd></div>
+                      <div><dt>Tipo</dt><dd>{excelJobs[0]?.job_type || 'N/D'}</dd></div>
+                      <div><dt>Linhas lidas</dt><dd>{formatNumber(excelJobs[0]?.total_checked)}</dd></div>
+                      <div><dt>Elegiveis</dt><dd>{formatNumber(excelJobs[0]?.total_eligible)}</dd></div>
+                      <div><dt>Falhas</dt><dd>{formatNumber(excelJobs[0]?.total_failed)}</dd></div>
+                      <div><dt>Ultima execucao</dt><dd>{formatDateTime(excelJobs[0]?.started_at || excelJobs[0]?.created_at)}</dd></div>
+                    </dl>
+                  </article>
+
+                  <article className="robot-master-card">
+                    <h3>Configuracao segura</h3>
+                    <dl className="robot-master-definition-list">
+                      <div><dt>Modo de coleta</dt><dd>{overview?.config?.robot?.collectionMode || 'excel_export'}</dd></div>
+                      <div><dt>Modo Excel</dt><dd>{overview?.config?.robot?.excelExportMode || 'click_download'}</dd></div>
+                      <div><dt>Timeout download</dt><dd>{formatNumber(overview?.config?.robot?.excelDownloadTimeoutMs)}ms</dd></div>
+                      <div><dt>Dry-run NPS</dt><dd>{overview?.config?.nps?.dryRun ? 'Ativo' : 'Inativo'}</dd></div>
+                      <div><dt>Envio automatico</dt><dd>{overview?.config?.nps?.dispatchEnabled ? 'Ativo' : 'Inativo'}</dd></div>
+                      <div><dt>Regra de data</dt><dd>Somente ULTIMA CONSULTA = hoje</dd></div>
+                    </dl>
+                  </article>
+                </div>
+
+                <article className="robot-master-card">
+                  <h3>Jobs Excel recentes</h3>
+                  {excelJobs.length ? (
+                    <div className="robot-master-page-list">
+                      {excelJobs.map((job) => (
+                        <div key={job.id} className="robot-master-page-item" onClick={() => { setSelectedJobId(job.id); setActiveTab('jobs'); }}>
+                          <div>
+                            <strong>#{job.id} - {job.job_type}</strong>
+                            <span>{compactText(job.error_message || job.current_url || 'Sem erro registrado.', 220)}</span>
+                          </div>
+                          <div className="robot-master-page-meta">
+                            <StatusChip status={job.status} />
+                            <em>{formatNumber(job.total_checked)} linhas</em>
+                            <em>{formatNumber(job.total_eligible)} elegiveis</em>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyState title="Nenhum job Excel ainda" detail="Execute um dry-run Excel para validar download, parser e elegibilidade antes de qualquer envio." />
+                  )}
+                </article>
+
+                <article className="robot-master-card">
+                  <h3>Artefatos Excel e JSON</h3>
+                  {excelArtifacts.length ? (
+                    <div className="robot-master-artifact-grid">
+                      {excelArtifacts.map((artifact) => (
+                        <article key={artifact.id} className="robot-master-artifact-card">
+                          <span>{artifact.artifact_type}</span>
+                          <strong>{artifact.file_name || `Artefato #${artifact.id}`}</strong>
+                          <small>{formatDateTime(artifact.created_at)}</small>
+                          <a href={artifact.file_url} target="_blank" rel="noreferrer">Abrir artefato</a>
+                        </article>
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyState title="Sem artefatos Excel" detail="Os arquivos exportados, JSON normalizado e resumo de importacao vao aparecer aqui apos o dry-run." />
                   )}
                 </article>
               </section>
@@ -758,6 +857,10 @@ function RobotMasterMonitor() {
                     <h3>Robo e mapeamento</h3>
                     <dl className="robot-master-definition-list">
                       <div><dt>Modo</dt><dd>{overview?.config?.robot?.mode || 'browser'}</dd></div>
+                      <div><dt>Coleta principal</dt><dd>{overview?.config?.robot?.collectionMode || 'excel_export'}</dd></div>
+                      <div><dt>Exportacao Excel</dt><dd>{overview?.config?.robot?.excelExportMode || 'click_download'}</dd></div>
+                      <div><dt>Endpoint direto Excel</dt><dd>{overview?.config?.robot?.patientsExportUrlConfigured ? 'Configurado' : 'Nao configurado'}</dd></div>
+                      <div><dt>Timeout Excel</dt><dd>{formatNumber(overview?.config?.robot?.excelDownloadTimeoutMs)}ms</dd></div>
                       <div><dt>Headless</dt><dd>{overview?.config?.robot?.headless ? 'Sim' : 'Nao'}</dd></div>
                       <div><dt>Visual mode</dt><dd>{overview?.config?.robot?.visualMode ? 'Sim' : 'Nao'}</dd></div>
                       <div><dt>Mapeamento habilitado</dt><dd>{overview?.config?.mapping?.enabled ? 'Sim' : 'Nao'}</dd></div>

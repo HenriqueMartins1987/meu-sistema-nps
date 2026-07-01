@@ -96,7 +96,10 @@ function interpretEcuroCompletionStatus(value) {
   if (['ambiguous', 'ambiguo', 'ambíguo'].some((token) => normalized.includes(token))) {
     return 'ambiguous';
   }
-  if (['error', 'erro', 'manual_action_required'].some((token) => normalized.includes(token))) {
+  if (['out_of_date', 'invalid_phone', 'missing_phone', 'not_completed'].some((token) => normalized.includes(token))) {
+    return 'not_completed';
+  }
+  if (['error', 'erro', 'parse_error', 'manual_action_required'].some((token) => normalized.includes(token))) {
     return normalized.includes('manual_action_required') ? 'manual_action_required' : 'error';
   }
   return 'not_completed';
@@ -233,6 +236,48 @@ async function callEcuroRobotCheckCompletedNetwork(payload = {}, env = process.e
   return response.data;
 }
 
+async function callEcuroRobotExcelDiscoverExport(payload = {}, env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.post('/ecuro/excel/discover-export', payload);
+  return response.data;
+}
+
+async function callEcuroRobotExcelDownloadOneClinic(payload = {}, env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.post('/ecuro/excel/download-one-clinic', payload);
+  return response.data;
+}
+
+async function callEcuroRobotExcelDryRunOneClinic(payload = {}, env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.post('/ecuro/excel/dry-run-one-clinic', payload);
+  return response.data;
+}
+
+async function callEcuroRobotExcelDryRunAllClinics(payload = {}, env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.post('/ecuro/excel/dry-run-all-clinics', payload);
+  return response.data;
+}
+
+async function callEcuroRobotExcelProcessLatest(payload = {}, env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.post('/ecuro/excel/process-latest', payload);
+  return response.data;
+}
+
+async function callEcuroRobotExcelJobs(env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.get('/ecuro/excel/jobs');
+  return response.data;
+}
+
+async function callEcuroRobotExcelJobDetail(jobId, env = process.env) {
+  const client = createEcuroRobotApiClient(env);
+  const response = await client.get(`/ecuro/excel/jobs/${encodeURIComponent(jobId)}`);
+  return response.data;
+}
+
 async function callEcuroRobotMappingRun(payload = {}, env = process.env) {
   const client = createEcuroRobotApiClient(env);
   const response = await client.post('/ecuro/mapping/run', payload);
@@ -326,6 +371,13 @@ module.exports = {
   callEcuroRobotCheckCompletedNetwork,
   callEcuroRobotDiscoverClinics,
   callEcuroRobotDiscoverNetwork,
+  callEcuroRobotExcelDiscoverExport,
+  callEcuroRobotExcelDownloadOneClinic,
+  callEcuroRobotExcelDryRunAllClinics,
+  callEcuroRobotExcelDryRunOneClinic,
+  callEcuroRobotExcelJobDetail,
+  callEcuroRobotExcelJobs,
+  callEcuroRobotExcelProcessLatest,
   callEcuroRobotArtifact,
   callEcuroRobotArtifactByPath,
   callEcuroRobotJobDetail,
