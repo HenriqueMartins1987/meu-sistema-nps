@@ -231,6 +231,20 @@ function buildEscalationInfo(item) {
     };
   }
 
+  if (status === complaintAttendanceFollowUpStatus && Number(item.appointment_sla_active || 0)) {
+    const appointmentDueAt = item.appointment_due_at || item.due_at;
+    const appointmentDeadline = buildDeadlineInfo({ ...item, due_at: appointmentDueAt });
+
+    return {
+      state: appointmentDeadline.state,
+      label: 'Agendado - aguardando atendimento',
+      owner: item.assigned_responsible_name || item.forwarded_to_label || 'Operação da unidade',
+      detail: `Agendado para ${formatShortDate(appointmentDueAt)}`,
+      dueAt: appointmentDueAt,
+      role: 'followup'
+    };
+  }
+
   if (status === complaintAttendanceFollowUpStatus) {
     return {
       state: 'warning',
@@ -458,6 +472,11 @@ function ComplaintListItem({ item, onOpen }) {
             <span className={`deadline-chip ${deadline.state}`}>
               {deadline.label} · {deadline.detail}
             </span>
+            {Boolean(Number(item.appointment_sla_active || 0) && item.appointment_due_at) && (
+              <span className="deadline-chip appointment">
+                Agendado · {formatShortDate(item.appointment_due_at)}
+              </span>
+            )}
             {shouldShowEscalationChip && (
               <span className={`deadline-chip ${escalation.state}`}>
                 {escalation.label} · {escalation.detail}
@@ -509,6 +528,7 @@ function DashboardManagement() {
     coordinator: '',
     manager: '',
     escalation: '',
+    appointment: '',
     search: ''
   });
   const [page, setPage] = useState(1);
@@ -579,6 +599,7 @@ function DashboardManagement() {
     const deadline = buildEscalationInfo(item);
     const matchesSla = !filters.sla || deadline.state === filters.sla;
     const matchesEscalation = !filters.escalation || deadline.role === filters.escalation;
+    const matchesAppointment = !filters.appointment || Boolean(Number(item.appointment_sla_active || 0) && item.appointment_due_at);
     const searchable = [
       item.protocol,
       item.patient_name,
@@ -591,7 +612,7 @@ function DashboardManagement() {
     ].map(normalizeText).join(' ');
     const matchesSearch = !filters.search || searchable.includes(normalizeText(filters.search));
 
-    return matchesStatus && matchesType && matchesClinic && matchesCoordinator && matchesManager && matchesSla && matchesEscalation && matchesSearch;
+    return matchesStatus && matchesType && matchesClinic && matchesCoordinator && matchesManager && matchesSla && matchesEscalation && matchesAppointment && matchesSearch;
   }).sort((a, b) => {
     const rankDiff = deadlineRank(a) - deadlineRank(b);
 
@@ -629,6 +650,7 @@ function DashboardManagement() {
     const resolved = finishedComplaints.length;
     const overdue = activeComplaints.filter((item) => buildEscalationInfo(item).state === 'overdue').length;
     const warning = activeComplaints.filter((item) => buildEscalationInfo(item).state === 'warning').length;
+    const appointmentWaiting = activeComplaints.filter((item) => Boolean(Number(item.appointment_sla_active || 0) && item.appointment_due_at)).length;
     const coordinator = activeComplaints.filter((item) => buildEscalationInfo(item).role === 'coordinator').length;
     const manager = activeComplaints.filter((item) => buildEscalationInfo(item).role === 'manager').length;
     const sacAudit = activeComplaints.filter((item) => (
@@ -636,7 +658,7 @@ function DashboardManagement() {
       && String(item.current_escalation_level || '').trim().toLowerCase() === 'sac_audit'
     )).length;
     const admin = activeComplaints.filter((item) => buildEscalationInfo(item).role === 'admin').length;
-    return { total, open, inProgress, resolved, overdue, warning, coordinator, manager, sacAudit, admin };
+    return { total, open, inProgress, resolved, overdue, warning, appointmentWaiting, coordinator, manager, sacAudit, admin };
   }, [activeComplaints, finishedComplaints, operationalComplaints]);
 
   const applyQuickFilter = (nextViewMode, nextFilters = {}) => {
@@ -650,6 +672,7 @@ function DashboardManagement() {
       coordinator: prev.coordinator,
       manager: prev.manager,
       escalation: '',
+      appointment: '',
       search: prev.search,
       ...nextFilters
     }));
@@ -675,6 +698,9 @@ function DashboardManagement() {
       coordenador_responsavel: item.coordinator_name || 'Não informado',
       gerente_responsavel: item.manager_name || 'Não informado',
       tipo: item.complaint_type || 'Não informado',
+      detalhe_tipo: item.complaint_type_other || '',
+      servico: item.service_type || 'Não informado',
+      detalhe_servico: item.service_type_other || '',
       origem: item.created_origin || 'Interno',
       cadastrado_por: getComplaintCreatorName(item),
       email_cadastrante: item.created_by_email || 'Não informado',
@@ -683,6 +709,7 @@ function DashboardManagement() {
       financeiro: item.financial_involved ? 'Sim' : 'Não',
       valor_financeiro: item.financial_involved ? formatCurrency(item.financial_amount) : 'Não envolve',
       sla: `${deadline.label} - ${deadline.detail}`,
+      sla_agendamento: item.appointment_sla_active ? formatFullDateTime(item.appointment_due_at) : '',
       etapa_hierarquica: escalation.label,
       responsavel_atual: escalation.owner || stage.owner,
       prazo_etapa: escalation.detail,
@@ -1030,6 +1057,11 @@ function DashboardManagement() {
           <span>Perto de vencer</span>
           <strong>{metrics.warning}</strong>
           <p>RETORNO CRÍTICO</p>
+        </button>
+        <button type="button" className="kpi-card success kpi-button" onClick={() => applyQuickFilter('active', { appointment: 'scheduled' })}>
+          <span>Agendados</span>
+          <strong>{metrics.appointmentWaiting}</strong>
+          <p>AGUARDANDO ATENDIMENTO</p>
         </button>
         <button type="button" className="kpi-card success kpi-button" onClick={() => applyQuickFilter('finished')}>
           <span>Fechadas</span>

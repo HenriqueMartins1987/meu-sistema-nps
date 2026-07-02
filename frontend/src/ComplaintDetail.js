@@ -502,6 +502,12 @@ function ComplaintDetail() {
   const protocol = useMemo(() => formatProtocol(complaint), [complaint]);
   const normalizedUserRole = normalizeRoleValue(user?.role);
   const deadline = useMemo(() => buildDeadlineInfo(complaint), [complaint]);
+  const hasAppointmentSla = Boolean(Number(complaint?.appointment_sla_active || 0) && complaint?.appointment_due_at);
+  const appointmentDeadline = useMemo(() => (
+    hasAppointmentSla
+      ? buildDeadlineInfo({ ...complaint, due_at: complaint.appointment_due_at })
+      : null
+  ), [complaint, hasAppointmentSla]);
   const stage = useMemo(() => buildOperationalStage(complaint), [complaint]);
   const priority = useMemo(() => getPriorityOption(complaint?.priority), [complaint]);
   const whatsappUrl = useMemo(() => buildWhatsappUrl(complaint?.patient_phone), [complaint]);
@@ -555,6 +561,10 @@ function ComplaintDetail() {
   const hasSacApproval = Boolean(complaint?.sac_approval_at);
   const hasPatientContact = Boolean(complaint?.patient_contacted_at);
   const isDeletedRecord = Boolean(complaint?.deleted_at);
+  const clinicResponsibleLabel = complaint?.assigned_responsible_name
+    || complaint?.coordinator_name
+    || complaint?.manager_name
+    || 'Responsável da clínica não definido';
   const canMarkPatientContact = accessFlag('canMarkPatientContact', hasActionPermission(user, 'patient_contact_register')
     && (isMasterUser || ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole)))
     && complaint?.status !== 'resolvida'
@@ -1108,6 +1118,7 @@ function ComplaintDetail() {
         note: ''
       });
       setFeedback(response.data?.message || 'Tratamento do paciente registrado com sucesso.');
+      await loadComplaint();
       await loadLinkedPatientTreatments();
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível registrar o tratamento do paciente.');
@@ -1388,6 +1399,13 @@ function ComplaintDetail() {
           <strong>{formatDate(complaint.due_at)}</strong>
           <p>{deadline.label} · {deadline.detail}</p>
         </article>
+        {hasAppointmentSla && appointmentDeadline && (
+          <article className={`deadline-card appointment-sla ${appointmentDeadline.state}`}>
+            <span>Agendamento</span>
+            <strong>{formatDate(complaint.appointment_due_at)}</strong>
+            <p>SLA de agendamento ativo · {appointmentDeadline.label}</p>
+          </article>
+        )}
         <article className={`deadline-card priority-${priority.value}`}>
           <span>Prioridade</span>
           <strong>{priority.label}</strong>
@@ -1466,6 +1484,14 @@ function ComplaintDetail() {
               <small>{complaint.complaint_type || 'Tipo não informado'}</small>
             </article>
           </div>
+
+          {(complaint.complaint_type_other || complaint.service_type_other) && (
+            <div className="other-detail-inline">
+              <strong>Detalhamento de Outros</strong>
+              {complaint.complaint_type_other && <span>Motivo: {complaint.complaint_type_other}</span>}
+              {complaint.service_type_other && <span>Serviço: {complaint.service_type_other}</span>}
+            </div>
+          )}
 
           {canChangeComplaintUnit && (
             <div className="unit-change-inline">
@@ -1727,6 +1753,52 @@ function ComplaintDetail() {
           ) : (
             <p className="permission-note">Este cadastro fica disponível apenas para Operador de SAC, Supervisor do CRC, Administrador e Administrador Master.</p>
           )}
+
+          {linkedPatientTreatments.length ? (
+            <div className="detail-table-scroll patient-treatment-table-wrap">
+              <table className="detail-data-table patient-treatment-table">
+                <thead>
+                  <tr>
+                    <th>Paciente</th>
+                    <th>Agendamento</th>
+                    <th>Tratativa</th>
+                    <th>Status</th>
+                    <th>Responsável</th>
+                    <th>Ação</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {linkedPatientTreatments.map((item) => (
+                    <tr key={`scheduled-${item.id}`}>
+                      <td>
+                        <strong>{item.patient || complaint.patient_name || 'Paciente não informado'}</strong>
+                        <small>{item.protocol || `PAC-${item.id}`}</small>
+                      </td>
+                      <td>{item.scheduledAt ? formatDate(item.scheduledAt) : 'Data não informada'}</td>
+                      <td>
+                        <strong>{item.procedureName || 'Procedimento não informado'}</strong>
+                        <small>{item.note || 'Sem observação complementar.'}</small>
+                      </td>
+                      <td>{item.status || 'Em tratamento'}</td>
+                      <td>
+                        <strong>{clinicResponsibleLabel}</strong>
+                        <small>{complaint.assigned_responsible_role || 'responsável da clínica'}</small>
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="table-inline-action"
+                          onClick={() => navigate(`/pacientes?abrir=${item.id}`)}
+                        >
+                          Abrir
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
 
           <div className="patient-treatment-linked-list">
             {linkedPatientTreatments.length ? linkedPatientTreatments.map((item) => (

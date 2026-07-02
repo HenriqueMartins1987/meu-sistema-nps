@@ -27,6 +27,7 @@ const initialForm = {
   complaint_type_other: '',
   priority: 'media',
   service_type: '',
+  service_type_other: '',
   financial_involved: 'nao',
   financial_description: '',
   financial_amount: '',
@@ -123,6 +124,16 @@ function ComplaintForm() {
     }));
   };
 
+  const handleServiceTypeChange = (event) => {
+    const value = event.target.value;
+
+    setForm((prev) => ({
+      ...prev,
+      service_type: value,
+      service_type_other: value === 'outros' ? prev.service_type_other : ''
+    }));
+  };
+
   const handleClinicChange = (event) => {
     const clinic = clinics.find((item) => String(item.id) === event.target.value);
 
@@ -145,12 +156,14 @@ function ComplaintForm() {
     try {
       const formData = new FormData();
       const complaintType = form.complaint_type === 'outros'
-        ? form.complaint_type_other || 'Outros'
+        ? 'Outros'
         : labelFrom(complaintTypes, form.complaint_type);
       const channel = form.channel === 'outros'
         ? form.channel_other || 'Outros'
         : labelFrom(channels, form.channel);
-      const serviceType = form.service_type ? labelFrom(serviceTypes, form.service_type) : '';
+      const serviceType = form.service_type === 'outros'
+        ? 'Outros'
+        : form.service_type ? labelFrom(serviceTypes, form.service_type) : '';
       const protocolLabel = 'Protocolo';
 
       if (form.file && form.file.size > maxUploadSizeBytes) {
@@ -165,14 +178,28 @@ function ComplaintForm() {
         return;
       }
 
+      if (form.complaint_type === 'outros' && !form.complaint_type_other.trim()) {
+        setFeedback('Descreva obrigatoriamente o motivo quando o tipo de registro for Outros.');
+        setLoading(false);
+        return;
+      }
+
+      if (form.service_type === 'outros' && !form.service_type_other.trim()) {
+        setFeedback('Descreva obrigatoriamente o servico quando o servico envolvido for Outros.');
+        setLoading(false);
+        return;
+      }
+
       Object.entries({
         clinic_id: form.clinic_id,
         patient_name: form.patient_name,
         patient_phone: form.patient_phone,
         channel,
         complaint_type: complaintType,
+        complaint_type_other: form.complaint_type === 'outros' ? form.complaint_type_other.trim() : '',
         priority: isSimpleManifestation ? 'baixa' : isFinancialComplaint ? 'alta' : form.priority,
         service_type: serviceType,
+        service_type_other: form.service_type === 'outros' ? form.service_type_other.trim() : '',
         description: form.description,
         created_origin: 'Interno',
         financial_involved: isFinancialComplaint ? 'sim' : 'nao',
@@ -445,7 +472,7 @@ function ComplaintForm() {
             <select
               className="field"
               value={form.service_type}
-              onChange={(event) => updateForm('service_type', event.target.value)}
+              onChange={handleServiceTypeChange}
               required={!isSimpleManifestation}
             >
               <option value="">{isSimpleManifestation ? 'Selecione o serviço, se houver' : 'Selecione o serviço'}</option>
@@ -454,6 +481,23 @@ function ComplaintForm() {
               ))}
             </select>
           </label>
+
+          {form.service_type === 'outros' && (
+            <label>
+              Descreva o outro serviÃ§o
+              <input
+                className="field"
+                value={form.service_type_other}
+                onChange={(event) => updateForm('service_type_other', event.target.value.slice(0, 200))}
+                placeholder="Informe o serviÃ§o envolvido"
+                maxLength={200}
+                required
+              />
+              <small className="field-counter">
+                {form.service_type_other.length}/200 caracteres
+              </small>
+            </label>
+          )}
         </section>
 
         <section className="form-section">

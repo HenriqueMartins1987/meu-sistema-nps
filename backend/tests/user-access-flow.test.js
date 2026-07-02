@@ -78,6 +78,15 @@ test('weekly demand reminder schedule runs once on Monday after configured hour'
   );
 });
 
+test('complaint appointment SLA reminder uses previous business day', () => {
+  const mondayAppointment = new Date('2026-07-06T13:00:00.000Z');
+  const fridayBefore = new Date('2026-07-03T12:00:00.000Z');
+  const thursdayBefore = new Date('2026-07-02T12:00:00.000Z');
+
+  assert.equal(serverModule.__testables.shouldSendAppointmentSlaReminder(mondayAppointment, fridayBefore), true);
+  assert.equal(serverModule.__testables.shouldSendAppointmentSlaReminder(mondayAppointment, thursdayBefore), false);
+});
+
 test('admin user creation keeps the user when welcome e-mail fails', async () => {
   let insertedUserParams = null;
 

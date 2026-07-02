@@ -43,9 +43,11 @@ const initialForm = {
   patient_phone: defaultBrazilPhone,
   manifestation_kind: 'reclamacao',
   complaint_category: '',
+  complaint_category_other: '',
   channel: 'Marketing',
   channel_other: '',
   service_type: '',
+  service_type_other: '',
   priority: 'media',
   financial_involved: 'nao',
   financial_description: '',
@@ -94,6 +96,7 @@ function MarketingIntakePage() {
       ...prev,
       manifestation_kind: value,
       complaint_category: value === 'reclamacao' ? prev.complaint_category : '',
+      complaint_category_other: value === 'reclamacao' ? prev.complaint_category_other : '',
       financial_involved: value === 'reclamacao' ? prev.financial_involved : 'nao',
       financial_description: value === 'reclamacao' ? prev.financial_description : '',
       financial_amount: value === 'reclamacao' ? prev.financial_amount : '',
@@ -105,8 +108,17 @@ function MarketingIntakePage() {
     setForm((prev) => ({
       ...prev,
       complaint_category: value,
+      complaint_category_other: value === 'outros' ? prev.complaint_category_other : '',
       financial_involved: value === 'financeiro' ? 'sim' : prev.financial_involved,
       priority: value === 'financeiro' ? 'alta' : prev.priority
+    }));
+  };
+
+  const handleServiceTypeChange = (value) => {
+    setForm((prev) => ({
+      ...prev,
+      service_type: value,
+      service_type_other: value === 'outros' ? prev.service_type_other : ''
     }));
   };
 
@@ -153,10 +165,25 @@ function MarketingIntakePage() {
         return;
       }
 
+      if (isComplaint && form.complaint_category === 'outros' && !form.complaint_category_other.trim()) {
+        setError('Descreva obrigatoriamente o motivo quando a classificacao for Outros.');
+        setLoading(false);
+        return;
+      }
+
+      if (form.service_type === 'outros' && !form.service_type_other.trim()) {
+        setError('Descreva obrigatoriamente o servico quando o servico envolvido for Outros.');
+        setLoading(false);
+        return;
+      }
+
       const formData = new FormData();
       const complaintType = isComplaint
-        ? labelFrom(complaintCategories, form.complaint_category)
+        ? form.complaint_category === 'outros' ? 'Outros' : labelFrom(complaintCategories, form.complaint_category)
         : manifestationLabels[form.manifestation_kind];
+      const serviceType = form.service_type === 'outros'
+        ? 'Outros'
+        : form.service_type ? labelFrom(serviceTypes, form.service_type) : '';
 
       Object.entries({
         clinic_id: form.clinic_id,
@@ -164,8 +191,10 @@ function MarketingIntakePage() {
         patient_phone: form.patient_phone,
         channel: form.channel === 'Outro' ? form.channel_other.trim() : form.channel,
         complaint_type: complaintType,
+        complaint_type_other: isComplaint && form.complaint_category === 'outros' ? form.complaint_category_other.trim() : '',
         priority: isComplaint ? (isFinancialComplaint ? 'alta' : form.priority) : 'baixa',
-        service_type: form.service_type ? labelFrom(serviceTypes, form.service_type) : '',
+        service_type: serviceType,
+        service_type_other: form.service_type === 'outros' ? form.service_type_other.trim() : '',
         description: form.description.trim(),
         created_origin: 'Marketing',
         financial_involved: isFinancialComplaint ? 'sim' : 'nao',
@@ -306,7 +335,7 @@ function MarketingIntakePage() {
 
                 <label>
                   Serviço envolvido
-                  <select className="field" value={form.service_type} onChange={(event) => updateForm('service_type', event.target.value)}>
+                  <select className="field" value={form.service_type} onChange={(event) => handleServiceTypeChange(event.target.value)}>
                     <option value="">Selecione o serviço</option>
                     {serviceTypes.map((service) => (
                       <option key={service.value} value={service.value}>{service.label}</option>
@@ -317,12 +346,38 @@ function MarketingIntakePage() {
             ) : (
               <label>
                 Serviço envolvido
-                <select className="field" value={form.service_type} onChange={(event) => updateForm('service_type', event.target.value)}>
+                <select className="field" value={form.service_type} onChange={(event) => handleServiceTypeChange(event.target.value)}>
                   <option value="">Selecione o serviço, se houver</option>
                   {serviceTypes.map((service) => (
                     <option key={service.value} value={service.value}>{service.label}</option>
                   ))}
                 </select>
+              </label>
+            )}
+            {form.complaint_category === 'outros' && (
+              <label>
+                Descreva o outro motivo
+                <input
+                  className="field"
+                  value={form.complaint_category_other}
+                  onChange={(event) => updateForm('complaint_category_other', event.target.value.slice(0, 200))}
+                  placeholder="Informe o motivo da reclamacao"
+                  maxLength={200}
+                  required
+                />
+              </label>
+            )}
+            {form.service_type === 'outros' && (
+              <label>
+                Descreva o outro servico
+                <input
+                  className="field"
+                  value={form.service_type_other}
+                  onChange={(event) => updateForm('service_type_other', event.target.value.slice(0, 200))}
+                  placeholder="Informe o servico envolvido"
+                  maxLength={200}
+                  required
+                />
               </label>
             )}
           </section>

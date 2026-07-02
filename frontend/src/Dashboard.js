@@ -531,6 +531,7 @@ function Dashboard() {
       unidade: item.clinic_name || 'Unidade não informada',
       localizacao: `${item.city || 'Cidade não informada'} / ${item.state || 'UF'} - ${item.region || 'Região não informada'}`,
       classificacao: item.complaint_type || 'Não informado',
+      detalhe_classificacao: item.complaint_type_other || '',
       prioridade_origem: `${priorityLabel(item.priority)} - ${item.created_origin || 'Interno'}`,
       status: statusLabels[item.status] || item.status || 'Aberta',
       prazo: deadline === 'overdue' ? 'Vencida' : deadline === 'warning' ? 'Perto de vencer' : deadline === 'closed' ? 'Fechada' : 'No prazo',
@@ -538,6 +539,8 @@ function Dashboard() {
       encaminhamento: item.forwarded_to_label || 'Sem encaminhamento',
       ultima_tratativa: lastComplaintActor(item),
       especialidade: item.service_type || 'Sem especialidade informada',
+      detalhe_servico: item.service_type_other || '',
+      sla_agendamento: item.appointment_sla_active ? formatShortDate(item.appointment_due_at) : '',
       cadastro: formatShortDate(item.created_at)
     };
   }), [baseRows]);

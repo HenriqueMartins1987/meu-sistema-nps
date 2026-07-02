@@ -120,6 +120,10 @@ function isWeeklyComplaintReportAllowed(user) {
 }
 
 function getWeeklyProfessionalLabel(item) {
+  if (item.service_type_other) {
+    return `${item.service_type || 'Outros'}: ${item.service_type_other}`;
+  }
+
   return (
     item.service_type
     || item.assigned_responsible_name
@@ -130,6 +134,10 @@ function getWeeklyProfessionalLabel(item) {
 }
 
 function getWeeklyReasonLabel(item) {
+  if (item.complaint_type_other) {
+    return formatShortText(`${item.complaint_type || 'Outros'}: ${item.complaint_type_other}`);
+  }
+
   return formatShortText(item.description || item.complaint_type || 'Nao informado');
 }
 
@@ -196,6 +204,8 @@ function buildSummaryRows(items) {
     responsavel_atual: getCurrentResponsibleLabel(item),
     profissional_envolvido: getWeeklyProfessionalLabel(item),
     motivo: getWeeklyReasonLabel(item),
+    detalhe_motivo: item.complaint_type_other || '',
+    detalhe_servico: item.service_type_other || '',
     status: getComplaintStatusLabel(item),
     status_tone: getComplaintStatusTone(item)
   }));
@@ -208,7 +218,11 @@ function buildHighlights(items) {
   const resolvedCount = items.filter((item) => isComplaintClosedStatus(item.status)).length;
   const overdueCount = items.filter((item) => deadlineTone(item) === 'overdue').length;
   const topClinic = buildTopLabel(items.map((item) => item.clinic_name).filter(Boolean));
-  const topReason = buildTopLabel(items.map((item) => item.complaint_type || item.description).filter(Boolean));
+  const topReason = buildTopLabel(items.map((item) => (
+    item.complaint_type_other
+      ? `${item.complaint_type || 'Outros'}: ${item.complaint_type_other}`
+      : item.complaint_type || item.description
+  )).filter(Boolean));
 
   items.forEach((item) => {
     if (item.clinic_name) clinics.add(item.clinic_name);

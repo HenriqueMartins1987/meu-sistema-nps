@@ -175,6 +175,7 @@ const appointmentReminderIntervalMinutes = Math.max(5, Number(process.env.APPOIN
 const complaintDueReminderIntervalMinutes = Math.max(5, Number(process.env.COMPLAINT_REMINDER_INTERVAL_MINUTES || 30));
 const complaintExpiredReminderIntervalHours = Math.max(1, Number(process.env.COMPLAINT_EXPIRED_REMINDER_INTERVAL_HOURS || 6));
 const complaintStalledTreatmentReminderHours = Math.max(1, Number(process.env.COMPLAINT_STALLED_TREATMENT_REMINDER_HOURS || 6));
+const complaintAppointmentReminderTimeZone = String(process.env.COMPLAINT_APPOINTMENT_REMINDER_TIMEZONE || 'America/Sao_Paulo').trim() || 'America/Sao_Paulo';
 const complaintStalledTreatmentThresholdHours = Math.max(1, Number(process.env.COMPLAINT_STALLED_TREATMENT_THRESHOLD_HOURS || 48));
 const weeklyDemandReminderEnabled = String(process.env.WEEKLY_DEMAND_REMINDER_ENABLED || 'true').trim().toLowerCase() !== 'false';
 const weeklyDemandReminderIntervalMinutes = Math.max(5, Number(process.env.WEEKLY_DEMAND_REMINDER_INTERVAL_MINUTES || 15));
@@ -1164,6 +1165,19 @@ function normalizeComparableText(value) {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '_')
     .replace(/^_+|_+$/g, '');
+}
+
+function isOtherOptionLabel(value) {
+  return normalizeComparableText(value) === 'outros';
+}
+
+function sanitizeOtherReason(value, maxLength = 500) {
+  const text = String(value || '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return text ? text.slice(0, maxLength) : '';
 }
 
 function isPlaceholderCoordinatorName(value) {
@@ -5214,6 +5228,8 @@ async function ensureDatabaseSchema() {
   await ensureColumn('complaints', 'complaint_type', 'VARCHAR(160) NULL');
   await ensureColumn('complaints', 'protocol', 'VARCHAR(40) NULL');
   await ensureColumn('complaints', 'operator_comment', 'TEXT NULL');
+  await ensureColumn('complaints', 'complaint_type_other', 'VARCHAR(500) NULL');
+  await ensureColumn('complaints', 'service_type_other', 'VARCHAR(500) NULL');
   await ensureColumn('complaints', 'priority', "VARCHAR(40) DEFAULT 'media'");
   await ensureColumn('complaints', 'due_at', 'DATETIME NULL');
   await ensureColumn('complaints', 'treatment_comment', 'TEXT NULL');
@@ -5267,6 +5283,12 @@ async function ensureDatabaseSchema() {
   await ensureColumn('complaints', 'financial_amount', 'DECIMAL(12,2) NULL');
   await ensureColumn('complaints', 'resolution_due_at', 'DATETIME NULL');
   await ensureColumn('complaints', 'due_warning_sent_at', 'TIMESTAMP NULL');
+  await ensureColumn('complaints', 'appointment_due_at', 'DATETIME NULL');
+  await ensureColumn('complaints', 'appointment_sla_active', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn('complaints', 'appointment_sla_started_at', 'TIMESTAMP NULL');
+  await ensureColumn('complaints', 'appointment_sla_set_by', 'VARCHAR(160) NULL');
+  await ensureColumn('complaints', 'appointment_sla_set_by_user_id', 'INT NULL');
+  await ensureColumn('complaints', 'appointment_sla_alert_sent_at', 'TIMESTAMP NULL');
   await ensureColumn('complaints', 'overdue_manager_notified_at', 'TIMESTAMP NULL');
   await ensureColumn('complaints', 'deleted_at', 'TIMESTAMP NULL');
   await ensureColumn('complaints', 'deleted_by', 'VARCHAR(160) NULL');
@@ -6657,8 +6679,10 @@ async function getComplaintRows(query = {}, user = null) {
       c.patient_phone,
       c.channel,
       c.complaint_type,
+      c.complaint_type_other,
       c.description,
       c.service_type,
+      c.service_type_other,
       c.attachment_url,
       c.status,
       c.operator_comment,
@@ -6714,6 +6738,12 @@ async function getComplaintRows(query = {}, user = null) {
       c.financial_involved,
       c.financial_description,
       c.financial_amount,
+      c.appointment_due_at,
+      c.appointment_sla_active,
+      c.appointment_sla_started_at,
+      c.appointment_sla_set_by,
+      c.appointment_sla_set_by_user_id,
+      c.appointment_sla_alert_sent_at,
       c.deleted_at,
       c.deleted_by,
       c.deletion_reason,
@@ -6877,11 +6907,17 @@ function toCsv(rows) {
     'patient_phone',
     'channel',
     'complaint_type',
+    'complaint_type_other',
     'service_type',
+    'service_type_other',
     'status',
     'priority',
     'due_at',
     'resolution_due_at',
+    'appointment_due_at',
+    'appointment_sla_active',
+    'appointment_sla_set_by',
+    'appointment_sla_alert_sent_at',
     'operator_comment',
     'treatment_by_role',
     'treatment_by_name',
@@ -9722,6 +9758,67 @@ async function dispatchUpcomingAppointmentReminders() {
   return results;
 }
 
+function getDateKeyInTimeZone(date = new Date(), timeZone = complaintAppointmentReminderTimeZone) {
+  const parts = getZonedDateParts(date, timeZone);
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`;
+}
+
+function shiftDateKey(dateKey, days) {
+  const [year, month, day] = String(dateKey || '').split('-').map((part) => Number(part));
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (Number.isNaN(date.getTime())) return null;
+
+  date.setUTCDate(date.getUTCDate() + Number(days || 0));
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+}
+
+function getPreviousBusinessDateKey(date, timeZone = complaintAppointmentReminderTimeZone) {
+  let cursor = getDateKeyInTimeZone(date, timeZone);
+
+  for (let index = 0; index < 10; index += 1) {
+    cursor = shiftDateKey(cursor, -1);
+    if (!cursor) return null;
+
+    const [year, month, day] = cursor.split('-').map((part) => Number(part));
+    const dayOfWeek = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+
+    if (dayOfWeek !== 0 && dayOfWeek !== 6) {
+      return cursor;
+    }
+  }
+
+  return cursor;
+}
+
+function shouldSendAppointmentSlaReminder(dueAt, now = new Date()) {
+  const dueDate = dueAt instanceof Date ? dueAt : new Date(dueAt);
+  if (Number.isNaN(dueDate.getTime()) || dueDate <= now) return false;
+
+  const todayKey = getDateKeyInTimeZone(now, complaintAppointmentReminderTimeZone);
+  const dueKey = getDateKeyInTimeZone(dueDate, complaintAppointmentReminderTimeZone);
+  const reminderKey = getPreviousBusinessDateKey(dueDate, complaintAppointmentReminderTimeZone);
+
+  return Boolean(reminderKey) && todayKey >= reminderKey && todayKey <= dueKey;
+}
+
+async function notifyUsersByIdsThroughChannels(userIds, type, title, message, link = null, payload = null) {
+  const ids = Array.from(new Set((userIds || []).map((id) => Number(id)).filter(Boolean)));
+  if (!ids.length) return [];
+
+  const [users] = await pool.query(
+    `SELECT id, name, email, whatsapp, phone, role
+       FROM users
+      WHERE active = 1
+        AND deleted_at IS NULL
+        AND id IN (?)`,
+    [ids]
+  );
+
+  await Promise.all(users.map((user) => notifyUserThroughChannels(user, type, title, message, link, payload, { role: user.role })));
+  return users.map((user) => user.id).filter(Boolean);
+}
+
 async function dispatchUpcomingComplaintDeadlineReminders() {
   const [rows] = await pool.query(
     `SELECT
@@ -9735,6 +9832,9 @@ async function dispatchUpcomingComplaintDeadlineReminders() {
        c.priority,
        c.created_origin,
        c.due_at,
+       c.appointment_due_at,
+       c.appointment_sla_active,
+       c.appointment_sla_set_by_user_id,
        cl.name AS clinic_name,
        cl.city,
        cl.state
@@ -9743,9 +9843,20 @@ async function dispatchUpcomingComplaintDeadlineReminders() {
       WHERE c.deleted_at IS NULL
         AND ${buildOpenComplaintStatusWhere('c')}
         AND c.due_at IS NOT NULL
-       AND c.due_warning_sent_at IS NULL
-       AND c.due_at > NOW()
-       AND c.due_at <= DATE_ADD(NOW(), INTERVAL 24 HOUR)`,
+        AND (
+          (
+            COALESCE(c.appointment_sla_active, 0) = 1
+            AND c.appointment_sla_alert_sent_at IS NULL
+            AND COALESCE(c.appointment_due_at, c.due_at) > NOW()
+            AND COALESCE(c.appointment_due_at, c.due_at) <= DATE_ADD(NOW(), INTERVAL 7 DAY)
+          )
+          OR (
+            COALESCE(c.appointment_sla_active, 0) = 0
+            AND c.due_warning_sent_at IS NULL
+            AND c.due_at > NOW()
+            AND c.due_at <= DATE_ADD(NOW(), INTERVAL 24 HOUR)
+          )
+        )`,
     []
   );
 
@@ -9754,11 +9865,20 @@ async function dispatchUpcomingComplaintDeadlineReminders() {
       continue;
     }
 
+    const isAppointmentSla = Number(complaint.appointment_sla_active || 0) === 1;
+    const deadlineAt = isAppointmentSla ? (complaint.appointment_due_at || complaint.due_at) : complaint.due_at;
+
+    if (isAppointmentSla && !shouldSendAppointmentSlaReminder(deadlineAt)) {
+      continue;
+    }
+
     const protocol = complaint.protocol || `GRC-${complaint.id}`;
     const clinic = complaint.clinic_name
       ? `${complaint.clinic_name}${complaint.city ? ` - ${complaint.city}/${complaint.state || 'UF'}` : ''}`
       : 'Unidade não informada';
-    const title = `Prazo próximo de vencimento - ${protocol}`;
+    const title = isAppointmentSla
+      ? `Agendamento próximo do vencimento - ${protocol}`
+      : `Prazo próximo de vencimento - ${protocol}`;
     const link = `${frontendUrl}/gestao/${complaint.id}`;
     const message = [
       `${title}`,
@@ -9766,10 +9886,30 @@ async function dispatchUpcomingComplaintDeadlineReminders() {
       `Unidade: ${clinic}`,
       `Tipo: ${complaint.complaint_type || 'Não informado'}`,
       `Prioridade: ${complaint.priority || 'Não informada'}`,
-      `Vencimento: ${formatMessageDateTime(complaint.due_at)}`
+      `${isAppointmentSla ? 'Agendamento/SLA atual' : 'Vencimento'}: ${formatMessageDateTime(deadlineAt)}`
     ].join('\n');
-    const payload = { complaintId: complaint.id, protocol, dueAt: complaint.due_at };
+    const payload = {
+      complaintId: complaint.id,
+      protocol,
+      dueAt: deadlineAt,
+      appointmentSla: isAppointmentSla
+    };
     const notifiedUserIds = [];
+
+    if (isAppointmentSla) {
+      const directIds = await notifyUsersByIdsThroughChannels(
+        [complaint.appointment_sla_set_by_user_id, complaint.assigned_responsible_user_id || complaint.assigned_coordinator_user_id],
+        'complaint_appointment_deadline_warning',
+        title,
+        message,
+        link,
+        payload
+      ).catch((error) => {
+        console.warn('Não foi possível avisar usuários diretos sobre agendamento próximo:', error.message);
+        return [];
+      });
+      notifiedUserIds.push(...directIds);
+    }
 
     await notifyAdminsThroughChannels('complaint_deadline_warning', title, message, link, payload).catch((error) => {
       console.warn('Não foi possível avisar administradores sobre prazo próximo:', error.message);
@@ -9800,7 +9940,12 @@ async function dispatchUpcomingComplaintDeadlineReminders() {
       console.warn('Não foi possível avisar o grupo de WhatsApp sobre prazo próximo:', error.message);
     });
 
-    await pool.query('UPDATE complaints SET due_warning_sent_at = NOW() WHERE id = ?', [complaint.id]);
+    await pool.query(
+      isAppointmentSla
+        ? 'UPDATE complaints SET appointment_sla_alert_sent_at = NOW() WHERE id = ?'
+        : 'UPDATE complaints SET due_warning_sent_at = NOW() WHERE id = ?',
+      [complaint.id]
+    );
   }
 
   return rows.length;
@@ -10607,6 +10752,38 @@ async function resolveManagerAssignment(clinicId) {
   return {
     managerUserId: rows[0]?.id || null,
     managerName: rows[0]?.name || 'Gerente da unidade'
+  };
+}
+
+async function resolveClinicAppointmentResponsibleAssignment(clinicId) {
+  const [manager, coordinator] = await Promise.all([
+    resolveManagerAssignment(clinicId),
+    resolveCoordinatorAssignment(clinicId)
+  ]);
+
+  if (manager.managerUserId) {
+    return {
+      userId: manager.managerUserId,
+      name: manager.managerName || 'Gerente da unidade',
+      role: 'manager',
+      label: manager.managerName || 'Gerente da unidade'
+    };
+  }
+
+  if (coordinator.coordinatorUserId) {
+    return {
+      userId: coordinator.coordinatorUserId,
+      name: coordinator.coordinatorName || 'Coordenador da unidade',
+      role: 'coordinator',
+      label: coordinator.coordinatorName || 'Coordenador da unidade'
+    };
+  }
+
+  return {
+    userId: null,
+    name: coordinator.coordinatorName || manager.managerName || 'Responsável da clínica',
+    role: 'coordinator',
+    label: coordinator.coordinatorName || manager.managerName || 'Responsável da clínica'
   };
 }
 
@@ -36073,6 +36250,47 @@ app.post('/complaints/:id/patient-treatment', authenticate, async (req, res) => 
       req.user
     );
 
+    const clinicResponsible = await resolveClinicAppointmentResponsibleAssignment(complaint.clinic_id);
+    const scheduledMysqlDate = toMysqlDateTime(scheduledDate);
+    await pool.query(
+      `UPDATE complaints
+          SET due_at = ?,
+              resolution_due_at = ?,
+              appointment_due_at = ?,
+              appointment_sla_active = 1,
+              appointment_sla_started_at = NOW(),
+              appointment_sla_set_by = ?,
+              appointment_sla_set_by_user_id = ?,
+              appointment_sla_alert_sent_at = NULL,
+              overdue_manager_notified_at = NULL,
+              deadline_locked_at = COALESCE(deadline_locked_at, NOW()),
+              status = ?,
+              forwarded_to_role = ?,
+              forwarded_to_label = ?,
+              forwarded_at = NOW(),
+              forwarded_by = ?,
+              assigned_responsible_user_id = ?,
+              assigned_responsible_name = ?,
+              assigned_responsible_role = ?,
+              current_escalation_level = 'appointment_followup'
+        WHERE id = ?`,
+      [
+        scheduledMysqlDate,
+        scheduledMysqlDate,
+        scheduledMysqlDate,
+        getActorName(req.user),
+        req.user?.id || null,
+        complaintAttendanceFollowUpStatus,
+        clinicResponsible.role,
+        clinicResponsible.label || clinicResponsible.name || 'Responsável da clínica',
+        getActorName(req.user),
+        clinicResponsible.userId || null,
+        clinicResponsible.name || clinicResponsible.label || 'Responsável da clínica',
+        clinicResponsible.role || 'coordinator',
+        Number(req.params.id)
+      ]
+    );
+
     await insertComplaintLog(
       req.params.id,
       'patient_treatment_created',
@@ -36080,10 +36298,28 @@ app.post('/complaints/:id/patient-treatment', authenticate, async (req, res) => 
       req.user
     );
 
+    await insertComplaintLog(
+      req.params.id,
+      'appointment_sla_started',
+      `SLA primário substituído pelo SLA de agendamento em ${formatMessageDateTime(scheduledDate)}. Responsável atual da clínica: ${clinicResponsible.name || clinicResponsible.label || 'Responsável da clínica'}. Tratativas permanecem sob registro do SAC.`,
+      req.user,
+      {
+        previousStatus: complaint.status,
+        newStatus: complaintAttendanceFollowUpStatus,
+        previousDueAt: complaint.due_at || null,
+        newDueAt: scheduledMysqlDate,
+        responsibleUserId: clinicResponsible.userId || null,
+        responsibleName: clinicResponsible.name || clinicResponsible.label || null,
+        responsibleRole: clinicResponsible.role || null
+      }
+    );
+
     return res.status(201).json({
-      message: 'Tratamento do paciente registrado com sucesso na gestão de pacientes.',
+      message: 'Tratamento registrado. SLA alterado para a data do agendamento e responsável da clínica definido.',
       interactionId: result.insertId,
-      protocol
+      protocol,
+      appointmentDueAt: scheduledMysqlDate,
+      responsible: clinicResponsible
     });
   } catch (error) {
     console.error(error);
@@ -36142,8 +36378,10 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
       patient_phone,
       channel,
       complaint_type,
+      complaint_type_other,
       description,
       service_type,
+      service_type_other,
       priority,
       created_origin,
       financial_involved,
@@ -36162,6 +36400,21 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
 
     if (!clinic_id || !patient_name || !channel || !complaint_type || !description) {
       return res.status(400).json({ error: 'Preencha clínica, paciente, canal, classificação e descrição.' });
+    }
+
+    const cleanedComplaintTypeOther = sanitizeOtherReason(complaint_type_other);
+    const cleanedServiceTypeOther = sanitizeOtherReason(service_type_other);
+    const isOtherComplaintType = isOtherOptionLabel(complaint_type);
+    const isOtherServiceType = isOtherOptionLabel(service_type);
+    const storedComplaintType = isOtherComplaintType ? 'Outros' : String(complaint_type || '').trim();
+    const storedServiceType = isOtherServiceType ? 'Outros' : String(service_type || '').trim();
+
+    if (isOtherComplaintType && !cleanedComplaintTypeOther) {
+      return res.status(400).json({ error: 'Descreva obrigatoriamente o motivo quando a classificação for Outros.' });
+    }
+
+    if (isOtherServiceType && !cleanedServiceTypeOther) {
+      return res.status(400).json({ error: 'Descreva obrigatoriamente o serviço quando o serviço envolvido for Outros.' });
     }
 
     if (!isCompleteBrazilPhone(patient_phone)) {
@@ -36186,16 +36439,18 @@ app.post('/complaints', optionalAuthenticate, upload.single('file'), async (req,
 
     const [result] = await pool.query(
       `INSERT INTO complaints 
-      (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, attachment_url, status, priority, due_at, resolution_due_at, created_origin, created_by_user_id, created_by_name, created_by_role, created_by_email, financial_involved, financial_description, financial_amount)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'aberta', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (clinic_id, patient_name, patient_phone, channel, complaint_type, complaint_type_other, description, service_type, service_type_other, attachment_url, status, priority, due_at, resolution_due_at, created_origin, created_by_user_id, created_by_name, created_by_role, created_by_email, financial_involved, financial_description, financial_amount)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'aberta', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         clinic_id,
         patient_name,
         normalizedPatientPhone,
         channel,
-        complaint_type,
+        storedComplaintType,
+        isOtherComplaintType ? cleanedComplaintTypeOther : null,
         description,
-        service_type,
+        storedServiceType,
+        isOtherServiceType ? cleanedServiceTypeOther : null,
         file_url,
         normalizedPriority,
         toMysqlDateTime(dueAt),
@@ -40150,6 +40405,7 @@ module.exports = {
     runScheduledDailyCoordinatorDeliveryReport,
     runScheduledWeeklyAdminComplaintReport,
     renderGenericWhatsAppTemplate,
+    shouldSendAppointmentSlaReminder,
     shouldRunWeeklyUserDemandReminders,
     shouldRunDailyCoordinatorDemandReminders,
     shouldRunDailyCoordinatorDeliveryReport,
