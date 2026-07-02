@@ -604,8 +604,32 @@ function Dashboard() {
     setFilters((prev) => ({ ...prev, [field]: value }));
   };
 
-  const applyFilters = (updates = {}) => {
-    setFilters((prev) => ({ ...prev, ...updates }));
+  const toggleFilter = (field, value, clearValue = '') => {
+    setFilters((prev) => ({
+      ...prev,
+      [field]: prev[field] === value ? clearValue : value
+    }));
+  };
+
+  const applyToggleFilters = (updates = {}) => {
+    setFilters((prev) => {
+      const entries = Object.entries(updates);
+      const allActive = entries.length > 0 && entries.every(([field, value]) => prev[field] === value);
+      const next = { ...prev };
+
+      entries.forEach(([field, value]) => {
+        next[field] = allActive ? '' : value;
+      });
+
+      return next;
+    });
+  };
+
+  const clearFilters = (fields = []) => {
+    setFilters((prev) => fields.reduce((next, field) => ({
+      ...next,
+      [field]: ''
+    }), { ...prev }));
   };
 
   const toggleCoordinatorFilter = (label) => {
@@ -857,22 +881,22 @@ function Dashboard() {
           <strong>{formatDaysMetric(metrics.avgOpenAgingDays)}</strong>
           <p>{metrics.open} protocolos ainda em aberto</p>
         </article>
-        <button className="kpi-card warning kpi-button" type="button" onClick={() => updateFilter('status', 'aberta')}>
+        <button className={`kpi-card warning kpi-button ${filters.status === 'aberta' ? 'active' : ''}`} type="button" onClick={() => toggleFilter('status', 'aberta')}>
           <span>Abertas</span>
           <strong>{metrics.opened}</strong>
           <p>{percentOf(metrics.total, metrics.opened)} DO CENÁRIO</p>
         </button>
-        <button className="kpi-card progress kpi-button" type="button" onClick={() => updateFilter('status', 'em_andamento')}>
+        <button className={`kpi-card progress kpi-button ${filters.status === 'em_andamento' ? 'active' : ''}`} type="button" onClick={() => toggleFilter('status', 'em_andamento')}>
           <span>Em andamento</span>
           <strong>{metrics.inProgress}</strong>
           <p>{percentOf(metrics.total, metrics.inProgress)} DO CENÁRIO</p>
         </button>
-        <button className="kpi-card danger kpi-button" type="button" onClick={() => updateFilter('sla', 'overdue')}>
+        <button className={`kpi-card danger kpi-button ${filters.sla === 'overdue' ? 'active' : ''}`} type="button" onClick={() => toggleFilter('sla', 'overdue')}>
           <span>Vencidas</span>
           <strong>{metrics.overdue}</strong>
           <p>{percentOf(metrics.total, metrics.overdue)} DO CENÁRIO</p>
         </button>
-        <button className="kpi-card success kpi-button" type="button" onClick={() => updateFilter('status', 'resolvida')}>
+        <button className={`kpi-card success kpi-button ${filters.status === 'resolvida' ? 'active' : ''}`} type="button" onClick={() => toggleFilter('status', 'resolvida')}>
           <span>Fechadas</span>
           <strong>{metrics.closed}</strong>
           <p>{formatPercent(metrics.closeRate)} DE RESOLUÇÃO</p>
@@ -1184,14 +1208,21 @@ function Dashboard() {
             <div className="dashboard-base-summary">
               {baseTableHighlights.map((item) => {
                 let onClick = () => {};
-                if (item.label === 'Protocolos') onClick = () => applyFilters({ status: '', sla: '' });
-                if (item.label === 'Unidades') onClick = () => applyFilters({ clinic: '' });
-                if (item.label === 'Coordenadores') onClick = () => applyFilters({ coordinator: '' });
-                if (item.label === 'Alta prioridade') onClick = () => applyFilters({ priority: 'alta' });
-                if (item.label === 'Vencidos') onClick = () => applyFilters({ sla: 'overdue' });
+                let isActive = false;
+                if (item.label === 'Protocolos') onClick = () => clearFilters(['status', 'sla', 'priority']);
+                if (item.label === 'Unidades') onClick = () => clearFilters(['clinic']);
+                if (item.label === 'Coordenadores') onClick = () => clearFilters(['coordinator']);
+                if (item.label === 'Alta prioridade') {
+                  onClick = () => applyToggleFilters({ priority: 'alta' });
+                  isActive = filters.priority === 'alta';
+                }
+                if (item.label === 'Vencidos') {
+                  onClick = () => applyToggleFilters({ sla: 'overdue' });
+                  isActive = filters.sla === 'overdue';
+                }
 
                 return (
-                <button className="dashboard-summary-card dashboard-summary-button" key={item.label} type="button" onClick={onClick}>
+                <button className={`dashboard-summary-card dashboard-summary-button ${isActive ? 'active' : ''}`} key={item.label} type="button" onClick={onClick}>
                   <span>{item.label}</span>
                   <strong>{item.value}</strong>
                 </button>

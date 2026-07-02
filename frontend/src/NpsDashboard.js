@@ -270,8 +270,32 @@ function NpsDashboard() {
     setFilters((prev) => ({ ...prev, [field]: value }));
   };
 
-  const applyFilters = (updates = {}) => {
-    setFilters((prev) => ({ ...prev, ...updates }));
+  const toggleFilter = (field, value, clearValue = '') => {
+    setFilters((prev) => ({
+      ...prev,
+      [field]: prev[field] === value ? clearValue : value
+    }));
+  };
+
+  const applyToggleFilters = (updates = {}) => {
+    setFilters((prev) => {
+      const entries = Object.entries(updates);
+      const allActive = entries.length > 0 && entries.every(([field, value]) => prev[field] === value);
+      const next = { ...prev };
+
+      entries.forEach(([field, value]) => {
+        next[field] = allActive ? '' : value;
+      });
+
+      return next;
+    });
+  };
+
+  const clearFilters = (fields = []) => {
+    setFilters((prev) => fields.reduce((next, field) => ({
+      ...next,
+      [field]: ''
+    }), { ...prev }));
   };
 
   const exportBaseExcel = () => {
@@ -468,27 +492,27 @@ function NpsDashboard() {
           <strong>{metrics.detractorVsPromoter}%</strong>
           <p>COMPARATIVO DO CENÁRIO</p>
         </button>
-        <button className="kpi-card kpi-button" type="button" onClick={() => updateFilter('profile', '')}>
+        <button className="kpi-card kpi-button" type="button" onClick={() => clearFilters(['profile', 'status'])}>
           <span>Respostas</span>
           <strong>{metrics.total}</strong>
           <p>{percentOf(rows.length, metrics.total)} DA BASE</p>
         </button>
-        <button className="kpi-card success kpi-button" type="button" onClick={() => updateFilter('profile', 'promotor')}>
+        <button className={`kpi-card success kpi-button ${filters.profile === 'promotor' ? 'active' : ''}`} type="button" onClick={() => toggleFilter('profile', 'promotor')}>
           <span>Promotores</span>
           <strong>{metrics.promoters}</strong>
           <p>{percentOf(metrics.total, metrics.promoters)} DO CENÁRIO</p>
         </button>
-        <button className="kpi-card danger kpi-button" type="button" onClick={() => updateFilter('profile', 'detrator')}>
+        <button className={`kpi-card danger kpi-button ${filters.profile === 'detrator' ? 'active' : ''}`} type="button" onClick={() => toggleFilter('profile', 'detrator')}>
           <span>Detratores</span>
           <strong>{metrics.detractors}</strong>
           <p>{percentOf(metrics.total, metrics.detractors)} DO CENÁRIO</p>
         </button>
-        <button className="kpi-card progress kpi-button" type="button" onClick={() => updateFilter('profile', 'neutro')}>
+        <article className="kpi-card progress kpi-static">
           <span>NPS</span>
           <strong>{metrics.nps}</strong>
           <p>ÍNDICE FILTRADO</p>
-        </button>
-        <button className="kpi-card warning kpi-button" type="button" onClick={() => updateFilter('status', 'tratado')}>
+        </article>
+        <button className={`kpi-card warning kpi-button ${filters.status === 'tratado' ? 'active' : ''}`} type="button" onClick={() => toggleFilter('status', 'tratado')}>
           <span>Tratados</span>
           <strong>{metrics.treated}</strong>
           <p>{metrics.pendingDetractors} DETRATORES EM ABERTO</p>
@@ -574,14 +598,27 @@ function NpsDashboard() {
                 { label: 'Tratados', value: metrics.treated }
               ].map((item) => {
                 let onClick = () => {};
-                if (item.label === 'Respostas') onClick = () => applyFilters({ profile: '', status: '' });
-                if (item.label === 'Promotores') onClick = () => applyFilters({ profile: 'promotor' });
-                if (item.label === 'Detratores') onClick = () => applyFilters({ profile: 'detrator' });
-                if (item.label === 'Em tratamento') onClick = () => applyFilters({ status: 'em_tratativa' });
-                if (item.label === 'Tratados') onClick = () => applyFilters({ status: 'tratado' });
+                let isActive = false;
+                if (item.label === 'Respostas') onClick = () => clearFilters(['profile', 'status']);
+                if (item.label === 'Promotores') {
+                  onClick = () => applyToggleFilters({ profile: 'promotor' });
+                  isActive = filters.profile === 'promotor';
+                }
+                if (item.label === 'Detratores') {
+                  onClick = () => applyToggleFilters({ profile: 'detrator' });
+                  isActive = filters.profile === 'detrator';
+                }
+                if (item.label === 'Em tratamento') {
+                  onClick = () => applyToggleFilters({ status: 'em_tratativa' });
+                  isActive = filters.status === 'em_tratativa';
+                }
+                if (item.label === 'Tratados') {
+                  onClick = () => applyToggleFilters({ status: 'tratado' });
+                  isActive = filters.status === 'tratado';
+                }
 
                 return (
-                <button className="dashboard-summary-card dashboard-summary-button" key={item.label} type="button" onClick={onClick}>
+                <button className={`dashboard-summary-card dashboard-summary-button ${isActive ? 'active' : ''}`} key={item.label} type="button" onClick={onClick}>
                   <span>{item.label}</span>
                   <strong>{item.value}</strong>
                 </button>

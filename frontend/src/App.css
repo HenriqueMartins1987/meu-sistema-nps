@@ -18152,3 +18152,168 @@ a {
     overflow-x: auto;
   }
 }
+
+.complaints-dashboard-page .dashboard-kpi-grid,
+.nps-dashboard-page .nps-kpi-grid,
+.complaint-management-page .management-kpi-grid {
+  align-items: stretch;
+  grid-template-columns: repeat(auto-fit, minmax(188px, 1fr));
+}
+
+.complaints-dashboard-page .kpi-card,
+.nps-dashboard-page .kpi-card,
+.complaint-management-page .management-kpi-grid .kpi-card {
+  min-height: 154px;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  text-align: center;
+  border-radius: 22px;
+}
+
+.nps-dashboard-page .kpi-static {
+  cursor: default;
+}
+
+.kpi-button.active,
+.dashboard-summary-button.active {
+  border-color: rgba(11, 111, 95, 0.72);
+  background:
+    linear-gradient(135deg, rgba(11, 111, 95, 0.12), rgba(200, 154, 87, 0.1)),
+    rgba(255, 255, 255, 0.98);
+  box-shadow: 0 18px 34px rgba(11, 111, 95, 0.14);
+}
+
+.kpi-button.active::after,
+.dashboard-summary-button.active::after {
+  content: "Filtro ativo";
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 24px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(11, 111, 95, 0.12);
+  color: var(--brand-strong);
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.complaints-dashboard-page .dashboard-base-panel,
+.nps-dashboard-page .dashboard-base-panel {
+  overflow: hidden;
+  border-radius: 26px;
+  background:
+    radial-gradient(circle at 8% 0%, rgba(200, 154, 87, 0.12), transparent 30%),
+    radial-gradient(circle at 96% 18%, rgba(11, 111, 95, 0.1), transparent 28%),
+    rgba(255, 255, 255, 0.97);
+}
+
+.complaints-dashboard-page .dashboard-base-panel .panel-heading,
+.nps-dashboard-page .dashboard-base-panel .panel-heading {
+  align-items: center;
+  gap: 18px;
+}
+
+.complaints-dashboard-page .dashboard-base-panel .export-actions,
+.nps-dashboard-page .dashboard-base-panel .export-actions {
+  justify-content: flex-end;
+}
+
+.complaints-dashboard-page .dashboard-base-summary,
+.nps-dashboard-page .dashboard-base-summary {
+  grid-template-columns: repeat(auto-fit, minmax(176px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.complaints-dashboard-page .dashboard-summary-card,
+.nps-dashboard-page .dashboard-summary-card {
+  min-height: 118px;
+  align-content: center;
+  justify-items: center;
+  padding: 18px;
+  border-radius: 20px;
+  text-align: center;
+}
+
+.complaints-dashboard-page .dashboard-table-wrap,
+.nps-dashboard-page .dashboard-table-wrap {
+  border-radius: 22px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    0 18px 34px rgba(42, 33, 23, 0.08);
+}
+
+.complaints-dashboard-page .dashboard-clean-table,
+.nps-dashboard-page .dashboard-clean-table {
+  min-width: 1120px;
+  table-layout: fixed;
+}
+
+.complaints-dashboard-page .dashboard-clean-table th,
+.nps-dashboard-page .dashboard-clean-table th {
+  padding: 15px 14px;
+  color: #6b4c20;
+  background: linear-gradient(180deg, #fff6e8, #efe2d0);
+}
+
+.complaints-dashboard-page .dashboard-clean-table td,
+.nps-dashboard-page .dashboard-clean-table td {
+  padding: 16px 14px;
+  vertical-align: top;
+}
+
+.complaints-dashboard-page .dashboard-clean-table tbody tr,
+.nps-dashboard-page .dashboard-clean-table tbody tr {
+  transition: background 0.18s ease, box-shadow 0.18s ease;
+}
+
+.complaints-dashboard-page .dashboard-clean-table tbody tr:hover,
+.nps-dashboard-page .dashboard-clean-table tbody tr:hover {
+  background: rgba(11, 111, 95, 0.055);
+}
+
+.complaints-dashboard-page .dashboard-clean-table .table-cell-stack,
+.nps-dashboard-page .dashboard-clean-table .table-cell-stack {
+  min-width: 0;
+  gap: 7px;
+  align-content: start;
+}
+
+.complaints-dashboard-page .dashboard-clean-table .cell-primary,
+.nps-dashboard-page .dashboard-clean-table .cell-primary {
+  display: block;
+  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.complaints-dashboard-page .dashboard-clean-table .cell-secondary,
+.nps-dashboard-page .dashboard-clean-table .cell-secondary {
+  display: block;
+  color: #6b7280;
+  font-size: 12px;
+  line-height: 1.42;
+  overflow-wrap: anywhere;
+}
+
+.complaints-dashboard-page .pagination-bar,
+.nps-dashboard-page .pagination-bar {
+  align-items: center;
+  border-radius: 18px;
+  background: rgba(255, 250, 242, 0.74);
+  padding: 14px 16px;
+}
+
+@media (max-width: 860px) {
+  .complaints-dashboard-page .dashboard-base-panel .panel-heading,
+  .nps-dashboard-page .dashboard-base-panel .panel-heading,
+  .complaints-dashboard-page .pagination-bar,
+  .nps-dashboard-page .pagination-bar {
+    align-items: stretch;
+  }
+}

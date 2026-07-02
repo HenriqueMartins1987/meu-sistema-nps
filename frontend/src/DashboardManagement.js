@@ -644,7 +644,7 @@ function DashboardManagement() {
   ), [complaints]);
 
   const metrics = useMemo(() => {
-    const total = operationalComplaints.length;
+    const total = activeComplaints.length;
     const open = activeComplaints.filter((item) => item.status === 'aberta').length;
     const inProgress = activeComplaints.filter((item) => ['em_andamento', 'em_analise_sac'].includes(item.status)).length;
     const resolved = finishedComplaints.length;
@@ -659,10 +659,21 @@ function DashboardManagement() {
     )).length;
     const admin = activeComplaints.filter((item) => buildEscalationInfo(item).role === 'admin').length;
     return { total, open, inProgress, resolved, overdue, warning, appointmentWaiting, coordinator, manager, sacAudit, admin };
-  }, [activeComplaints, finishedComplaints, operationalComplaints]);
+  }, [activeComplaints, finishedComplaints]);
+
+  const quickFilterFields = ['status', 'type', 'sla', 'escalation', 'appointment'];
+  const isQuickFilterActive = (targetViewMode, targetFilters = {}) => (
+    viewMode === targetViewMode
+    && quickFilterFields.every((field) => (filters[field] || '') === (targetFilters[field] || ''))
+  );
+  const quickFilterClass = (baseClassName, targetViewMode, targetFilters = {}) => {
+    const shouldShowActiveState = targetViewMode !== 'active' || Object.keys(targetFilters).length > 0;
+    return `${baseClassName} ${shouldShowActiveState && isQuickFilterActive(targetViewMode, targetFilters) ? 'active' : ''}`;
+  };
 
   const applyQuickFilter = (nextViewMode, nextFilters = {}) => {
-    setViewMode(nextViewMode);
+    const shouldClearQuickFilter = isQuickFilterActive(nextViewMode, nextFilters);
+    setViewMode(shouldClearQuickFilter ? 'active' : nextViewMode);
     setFilters((prev) => ({
       ...prev,
       status: '',
@@ -674,7 +685,7 @@ function DashboardManagement() {
       escalation: '',
       appointment: '',
       search: prev.search,
-      ...nextFilters
+      ...(shouldClearQuickFilter ? {} : nextFilters)
     }));
   };
 
@@ -1013,57 +1024,57 @@ function DashboardManagement() {
       </header>
 
       <section className="kpi-grid management-kpi-grid" aria-label="Resumo operacional">
-        <button type="button" className="kpi-card kpi-button" onClick={() => applyQuickFilter('active')}>
+        <button type="button" className={quickFilterClass('kpi-card kpi-button', 'active')} onClick={() => applyQuickFilter('active')}>
           <span>Total</span>
           <strong>{metrics.total}</strong>
-          <p>PROTOCOLOS REGISTRADOS</p>
+          <p>PROTOCOLOS ATIVOS</p>
         </button>
-        <button type="button" className="kpi-card warning kpi-button" onClick={() => applyQuickFilter('active', { status: 'aberta' })}>
+        <button type="button" className={quickFilterClass('kpi-card warning kpi-button', 'active', { status: 'aberta' })} onClick={() => applyQuickFilter('active', { status: 'aberta' })}>
           <span>Abertas</span>
           <strong>{metrics.open}</strong>
           <p>AGUARDANDO TRATATIVA</p>
         </button>
-        <button type="button" className="kpi-card progress kpi-button" onClick={() => applyQuickFilter('active', { status: 'em_andamento' })}>
+        <button type="button" className={quickFilterClass('kpi-card progress kpi-button', 'active', { status: 'em_andamento' })} onClick={() => applyQuickFilter('active', { status: 'em_andamento' })}>
           <span>Em andamento</span>
           <strong>{metrics.inProgress}</strong>
           <p>COM ACOMPANHAMENTO</p>
         </button>
-        <button type="button" className="kpi-card kpi-button" onClick={() => applyQuickFilter('active', { escalation: 'coordinator' })}>
+        <button type="button" className={quickFilterClass('kpi-card kpi-button', 'active', { escalation: 'coordinator' })} onClick={() => applyQuickFilter('active', { escalation: 'coordinator' })}>
           <span>Coordenador</span>
           <strong>{metrics.coordinator}</strong>
           <p>PRAZO INTERNO DE 15 DIAS</p>
         </button>
-        <button type="button" className="kpi-card progress kpi-button" onClick={() => applyQuickFilter('active', { escalation: 'manager' })}>
+        <button type="button" className={quickFilterClass('kpi-card progress kpi-button', 'active', { escalation: 'manager' })} onClick={() => applyQuickFilter('active', { escalation: 'manager' })}>
           <span>Gerente</span>
           <strong>{metrics.manager}</strong>
           <p>PRAZO INTERNO DE 5 DIAS</p>
         </button>
-        <button type="button" className="kpi-card warning kpi-button" onClick={() => applyQuickFilter('active', { escalation: 'sac_operator' })}>
+        <button type="button" className={quickFilterClass('kpi-card warning kpi-button', 'active', { escalation: 'sac_operator' })} onClick={() => applyQuickFilter('active', { escalation: 'sac_operator' })}>
           <span>Auditoria SAC</span>
           <strong>{metrics.sacAudit}</strong>
           <p>VALIDAÇÃO FINAL</p>
         </button>
-        <button type="button" className="kpi-card danger kpi-button" onClick={() => applyQuickFilter('active', { escalation: 'admin' })}>
+        <button type="button" className={quickFilterClass('kpi-card danger kpi-button', 'active', { escalation: 'admin' })} onClick={() => applyQuickFilter('active', { escalation: 'admin' })}>
           <span>Administração</span>
           <strong>{metrics.admin}</strong>
           <p>ESCALONAMENTO EXECUTIVO</p>
         </button>
-        <button type="button" className="kpi-card danger kpi-button" onClick={() => applyQuickFilter('active', { sla: 'overdue' })}>
+        <button type="button" className={quickFilterClass('kpi-card danger kpi-button', 'active', { sla: 'overdue' })} onClick={() => applyQuickFilter('active', { sla: 'overdue' })}>
           <span>Vencidas</span>
           <strong>{metrics.overdue}</strong>
           <p>FORA DO SLA</p>
         </button>
-        <button type="button" className="kpi-card warning kpi-button" onClick={() => applyQuickFilter('active', { sla: 'warning' })}>
+        <button type="button" className={quickFilterClass('kpi-card warning kpi-button', 'active', { sla: 'warning' })} onClick={() => applyQuickFilter('active', { sla: 'warning' })}>
           <span>Perto de vencer</span>
           <strong>{metrics.warning}</strong>
           <p>RETORNO CRÍTICO</p>
         </button>
-        <button type="button" className="kpi-card success kpi-button" onClick={() => applyQuickFilter('active', { appointment: 'scheduled' })}>
+        <button type="button" className={quickFilterClass('kpi-card success kpi-button', 'active', { appointment: 'scheduled' })} onClick={() => applyQuickFilter('active', { appointment: 'scheduled' })}>
           <span>Agendados</span>
           <strong>{metrics.appointmentWaiting}</strong>
           <p>AGUARDANDO ATENDIMENTO</p>
         </button>
-        <button type="button" className="kpi-card success kpi-button" onClick={() => applyQuickFilter('finished')}>
+        <button type="button" className={quickFilterClass('kpi-card success kpi-button', 'finished')} onClick={() => applyQuickFilter('finished')}>
           <span>Fechadas</span>
           <strong>{metrics.resolved}</strong>
           <p>PROTOCOLOS ENCERRADOS</p>
