@@ -76,10 +76,11 @@ const roleLabels = {
 const forwardingOptions = [
   { value: 'coordinator', label: 'Coordenador' },
   { value: 'manager', label: 'Gerente' },
+  { value: 'admin', label: 'Administrador' },
   { value: 'supervisor_crc', label: 'Supervisor do CRC' }
 ];
 
-const reassignForwardingOptions = forwardingOptions.filter((option) => ['coordinator', 'manager'].includes(option.value));
+const reassignForwardingOptions = forwardingOptions.filter((option) => ['coordinator', 'manager', 'admin'].includes(option.value));
 const returnToSacOption = [{ value: 'sac_operator', label: 'Operador de SAC' }];
 const channelIconMap = {
   whatsapp: '💬',
@@ -2131,7 +2132,7 @@ function ComplaintDetail() {
               {forwardModalMode === 'reassign'
                 ? canReturnToSac
                   ? 'Ao confirmar, a demanda voltará para o Operador de SAC e o histórico da tratativa ficará registrado.'
-                  : 'Ao confirmar, a reclamação será enviada novamente para o coordenador ou gerente da unidade e o histórico ficará registrado.'
+                  : 'Ao confirmar, a reclamação será enviada novamente para Coordenador, Gerente ou Administrador e o histórico ficará registrado.'
                 : 'Ao confirmar, o contato com o paciente será registrado e a reclamação será encaminhada para o responsável escolhido.'}
             </p>
 

@@ -1396,6 +1396,106 @@ test('coordinator can return assigned complaint to SAC after saved treatment', a
   assert.match(complaintLogParams[2], /Operador SAC/);
 });
 
+test('SAC operator can reassign complaint directly to administration', async () => {
+  let updateComplaintSql = null;
+  let updateComplaintParams = null;
+  let complaintLogParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes('WHERE c.id = ?'),
+      reply: async () => [[{
+        id: 89,
+        protocol: 'GRC-2026-000089',
+        clinic_id: 5,
+        patient_name: 'Paciente Administrativo',
+        patient_phone: '+5562999999999',
+        status: 'em_andamento',
+        priority: 'media',
+        forwarded_to_role: 'manager',
+        forwarded_to_label: 'Gerente Teste',
+        assigned_coordinator_user_id: 17,
+        assigned_coordinator_name: 'Coordenador Teste',
+        assigned_responsible_user_id: 23,
+        assigned_responsible_name: 'Gerente Teste',
+        assigned_responsible_role: 'manager',
+        operator_comment: null,
+        attachment_url: null,
+        deleted_at: null,
+        created_at: new Date(),
+        updated_at: new Date()
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_evidences') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_logs') && sql.includes('complaint_id IN (?)'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM users') && sql.includes("role IN ('admin', 'master_admin')"),
+      reply: async () => [[{
+        id: 1,
+        name: 'Administrador Master',
+        role: 'master_admin'
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE complaints') && sql.includes('forwarded_to_role = ?'),
+      reply: async (sql, params) => {
+        updateComplaintSql = sql;
+        updateComplaintParams = params;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO complaint_logs'),
+      reply: async (_sql, params) => {
+        complaintLogParams = params;
+        return [{ insertId: 5 }];
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/complaints/89')
+    .set('Authorization', `Bearer ${signToken({
+      id: 9,
+      email: 'sac@example.com',
+      role: 'sac_operator',
+      name: 'Operador SAC',
+      permissions: ['complaints_management'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({
+      status: 'em_andamento',
+      reassign_forward: true,
+      forward_to_role: 'admin'
+    });
+
+  assert.equal(response.status, 200);
+  assert.match(updateComplaintSql, /forwarded_to_role = \?/);
+  assert.match(updateComplaintSql, /admin_escalated_at = COALESCE\(admin_escalated_at, NOW\(\)\)/);
+  assert.ok(updateComplaintParams.includes('admin'));
+  assert.ok(updateComplaintParams.includes('Administrador Master'));
+  assert.ok(updateComplaintParams.includes('escalonada_administracao'));
+  assert.equal(updateComplaintParams.at(-1), '89');
+  assert.equal(complaintLogParams[1], 'reassigned_forward');
+  assert.match(complaintLogParams[2], /Administrador Master/);
+  assert.equal(complaintLogParams[6], 'escalonada_administracao');
+});
+
 test('manager keeps visibility of complaints inside selected clinics', async () => {
   let complaintQuerySql = '';
   let complaintQueryParams = null;

@@ -10979,6 +10979,19 @@ async function resolveComplaintResponsibleAssignment(clinicId, forwardRole, opti
     };
   }
 
+  if (forwardRole === 'admin') {
+    const administrators = await getActiveComplaintAdministrators();
+    const administrator = administrators[0] || null;
+
+    return {
+      userId: administrator?.id || null,
+      name: administrator?.name || 'Administração',
+      role: 'admin',
+      label: administrator?.name || 'Administração',
+      clinicSnapshotName: null
+    };
+  }
+
   if (forwardRole === 'sac_operator') {
     const preferredName = String(options.preferredName || '').trim();
     const [rows] = await pool.query(
@@ -11120,6 +11133,14 @@ function appendComplaintForwardingUpdates({
     values.push(managerEscalationSlaDays);
     updates.push('manager_treated_at = NULL');
     updates.push("current_escalation_level = 'manager'");
+    updates.push('returned_to_sac_at = NULL');
+    updates.push('sac_audit_status = NULL');
+    updates.push('sac_audit_comment = NULL');
+  } else if (role === 'admin') {
+    updates.push('status = ?');
+    values.push('escalonada_administracao');
+    updates.push('admin_escalated_at = COALESCE(admin_escalated_at, NOW())');
+    updates.push("current_escalation_level = 'admin'");
     updates.push('returned_to_sac_at = NULL');
     updates.push('sac_audit_status = NULL');
     updates.push('sac_audit_comment = NULL');
@@ -37335,11 +37356,12 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       const patientContactForwardRoles = {
         coordinator: 'Coordenador',
         manager: 'Gerente',
+        admin: 'Administrador',
         supervisor_crc: 'Supervisor do CRC'
       };
 
       if (requiresForwardSelection && !first_attendance && !patientContactForwardRoles[forward_to_role]) {
-        return res.status(400).json({ error: 'Selecione Coordenador, Gerente ou Supervisor do CRC para receber a reclamação.' });
+        return res.status(400).json({ error: 'Selecione Coordenador, Gerente, Administrador ou Supervisor do CRC para receber a reclamação.' });
       }
 
       updates.push('patient_contacted_at = COALESCE(patient_contacted_at, NOW())');
@@ -37377,7 +37399,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
           action: 'patient_contact_forwarded',
           message: `Contato com paciente registrado e protocolo encaminhado para ${forwardedLabel}.`,
           previousStatus: complaint.status,
-          newStatus: forward_to_role === 'coordinator' ? 'enviada_coordenador' : forward_to_role === 'manager' ? 'escalonada_gerente' : nextStatus,
+          newStatus: forward_to_role === 'coordinator' ? 'enviada_coordenador' : forward_to_role === 'manager' ? 'escalonada_gerente' : forward_to_role === 'admin' ? 'escalonada_administracao' : nextStatus,
           reason: 'Encaminhamento após contato inicial do SAC.'
         });
       }
@@ -37391,6 +37413,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       const allowedForwardRoles = {
         coordinator: 'Coordenador',
         manager: 'Gerente',
+        admin: 'Administrador',
         supervisor_crc: 'Supervisor do CRC'
       };
 
@@ -37427,7 +37450,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         action: 'first_attendance_forwarded',
         message: `Primeiro atendimento registrado. Deadline travado e protocolo enviado para ${forwardedLabel}.`,
         previousStatus: complaint.status,
-        newStatus: forward_to_role === 'coordinator' ? 'enviada_coordenador' : forward_to_role === 'manager' ? 'escalonada_gerente' : nextStatus,
+        newStatus: forward_to_role === 'coordinator' ? 'enviada_coordenador' : forward_to_role === 'manager' ? 'escalonada_gerente' : forward_to_role === 'admin' ? 'escalonada_administracao' : nextStatus,
         reason: 'Primeiro encaminhamento do SAC para tratativa.'
       });
     }
@@ -37445,13 +37468,16 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
           : { sac_operator: 'Operador de SAC' })
         : {
             coordinator: 'Coordenador',
-            manager: 'Gerente'
-          };
+            manager: 'Gerente',
+            admin: 'Administrador'
+      };
       const willSaveCoordinatorManagerTreatment = Boolean(cleanedComment) && canAddTreatment(req.user);
-      const hasCoordinatorManagerTreatment = await complaintHasCoordinatorOrManagerTreatment(
-        complaint,
-        willSaveCoordinatorManagerTreatment ? req.user : null
-      );
+      const hasCoordinatorManagerTreatment = requesterIsOperational
+        ? await complaintHasCoordinatorOrManagerTreatment(
+          complaint,
+          willSaveCoordinatorManagerTreatment ? req.user : null
+        )
+        : false;
 
       if (!allowedReassignRoles[forward_to_role]) {
         return res.status(400).json({
@@ -37459,7 +37485,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
             ? (requesterRole === 'manager'
               ? 'Selecione o Operador de SAC ou o Coordenador para devolver a demanda.'
               : 'Selecione o Operador de SAC para devolver a demanda.')
-            : 'Selecione Coordenador ou Gerente para reencaminhar a demanda.'
+            : 'Selecione Coordenador, Gerente ou Administrador para reencaminhar a demanda.'
         });
       }
 
@@ -37495,6 +37521,8 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
           ? 'enviada_coordenador'
           : forward_to_role === 'manager'
           ? 'escalonada_gerente'
+          : forward_to_role === 'admin'
+          ? 'escalonada_administracao'
           : nextStatus,
         reason: requesterIsOperational ? 'Devolução operacional após tratativa.' : 'Reencaminhamento manual.'
       });
@@ -37551,7 +37579,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       insertComplaintLog(id, entry.action, entry.message, req.user, entry)
     )));
 
-    if ((first_attendance || reassign_forward) && ['coordinator', 'manager'].includes(String(forward_to_role || '').toLowerCase())) {
+    if ((first_attendance || reassign_forward) && ['coordinator', 'manager', 'admin'].includes(String(forward_to_role || '').toLowerCase())) {
       try {
         await notifyComplaintAssigned(id, complaint.protocol);
       } catch (error) {
