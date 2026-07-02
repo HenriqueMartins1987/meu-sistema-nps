@@ -1395,15 +1395,15 @@ function ComplaintDetail() {
           <p>Data fixa para controle do prazo.</p>
         </article>
         <article className={`deadline-card ${deadline.state}`}>
-          <span>Deadline</span>
+          <span>Prazo atual</span>
           <strong>{formatDate(complaint.due_at)}</strong>
           <p>{deadline.label} · {deadline.detail}</p>
         </article>
         {hasAppointmentSla && appointmentDeadline && (
           <article className={`deadline-card appointment-sla ${appointmentDeadline.state}`}>
-            <span>Agendamento</span>
+            <span>SLA de agendamento</span>
             <strong>{formatDate(complaint.appointment_due_at)}</strong>
-            <p>SLA de agendamento ativo · {appointmentDeadline.label}</p>
+            <p>{appointmentDeadline.label} · prazo substitui o SLA primário</p>
           </article>
         )}
         <article className={`deadline-card priority-${priority.value}`}>

@@ -1836,6 +1836,42 @@ a {
   color: var(--brand);
 }
 
+.complaint-management-page .management-kpi-grid {
+  align-items: stretch;
+}
+
+.complaint-management-page .kpi-card {
+  min-height: 154px;
+  align-content: center;
+  justify-items: center;
+  gap: 10px;
+  padding: 18px 14px;
+  text-align: center;
+}
+
+.complaint-management-page .kpi-card span,
+.complaint-management-page .kpi-card strong,
+.complaint-management-page .kpi-card p {
+  width: 100%;
+  max-width: 18ch;
+  margin-left: auto;
+  margin-right: auto;
+  text-align: center;
+}
+
+.complaint-management-page .kpi-card span {
+  min-height: 28px;
+  display: grid;
+  place-items: center;
+  line-height: 1.2;
+}
+
+.complaint-management-page .kpi-card p {
+  min-height: 34px;
+  display: grid;
+  place-items: center;
+}
+
 .chart-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
@@ -3693,22 +3729,24 @@ a {
   width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
   margin: 0 auto 14px;
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(182px, 1fr));
+  align-items: stretch;
+  gap: 12px;
 }
 
 .deadline-card {
-  min-height: 104px;
+  min-height: 128px;
   background: linear-gradient(180deg, rgba(33, 34, 39, 0.96), rgba(53, 44, 35, 0.96));
   border: 1px solid rgba(212, 167, 100, 0.22);
   border-radius: 8px;
-  padding: 12px;
+  padding: 16px 14px;
   box-shadow: var(--shadow-md);
   display: grid;
   align-content: center;
   justify-items: center;
-  gap: 7px;
+  gap: 9px;
   text-align: center;
+  overflow: hidden;
 }
 
 .deadline-card span,
@@ -3718,22 +3756,34 @@ a {
   font-size: 10px;
   font-weight: 900;
   text-transform: uppercase;
+  line-height: 1.25;
+  text-align: center;
 }
 
 .deadline-card strong {
+  display: block;
+  width: 100%;
+  max-width: 100%;
   color: #fff;
-  font-size: 18px;
-  line-height: 1.1;
+  font-size: clamp(16px, 1.7vw, 19px);
+  line-height: 1.14;
+  text-align: center;
   overflow-wrap: anywhere;
 }
 
 .deadline-card p,
 .approval-card p {
-  margin: 0;
+  width: 100%;
+  max-width: 24ch;
+  min-height: 34px;
+  margin: 0 auto;
   color: rgba(227, 220, 210, 0.78);
   font-size: 12px;
   line-height: 1.35;
   font-weight: 700;
+  display: grid;
+  place-items: center;
+  text-align: center;
 }
 
 .deadline-card.ontime,

@@ -6166,6 +6166,155 @@ async function backfillComplaintDeadlines() {
   }));
 }
 
+async function backfillComplaintAppointmentSlaFromPatientInteractions(batchSize = 500, maxPasses = 20) {
+  const limit = Math.max(1, Math.min(1000, Number(batchSize || 500)));
+  const maxLoops = Math.max(1, Math.min(100, Number(maxPasses || 20)));
+  let checked = 0;
+  let migrated = 0;
+  let failed = 0;
+  let passes = 0;
+
+  while (passes < maxLoops) {
+    passes += 1;
+    const [rows] = await pool.query(
+      `SELECT
+         c.id,
+         c.protocol,
+         c.clinic_id,
+         c.status,
+         c.due_at,
+         c.appointment_due_at,
+         c.appointment_sla_active,
+         pi.id AS interaction_id,
+         pi.protocol AS patient_protocol,
+         pi.scheduled_at,
+         pi.procedure_name,
+         pi.created_by_name
+       FROM complaints c
+       INNER JOIN (
+         SELECT complaint_id, MAX(scheduled_at) AS scheduled_at
+           FROM patient_interactions
+          WHERE complaint_id IS NOT NULL
+            AND scheduled_at IS NOT NULL
+            AND COALESCE(status, '') <> 'Cancelado'
+          GROUP BY complaint_id
+       ) latest ON latest.complaint_id = c.id
+       INNER JOIN patient_interactions pi
+          ON pi.complaint_id = latest.complaint_id
+         AND pi.scheduled_at = latest.scheduled_at
+       WHERE c.deleted_at IS NULL
+         AND ${buildOpenComplaintStatusWhere('c')}
+         AND (
+           COALESCE(c.appointment_sla_active, 0) = 0
+           OR c.appointment_due_at IS NULL
+           OR ABS(TIMESTAMPDIFF(SECOND, c.appointment_due_at, latest.scheduled_at)) > 60
+         )
+       ORDER BY c.id ASC, pi.id DESC
+       LIMIT ?`,
+      [limit]
+    );
+
+    if (!rows.length) {
+      break;
+    }
+
+    checked += rows.length;
+    const seenComplaintIds = new Set();
+    let passMigrated = 0;
+
+    for (const row of rows) {
+      if (seenComplaintIds.has(Number(row.id))) {
+        continue;
+      }
+
+      seenComplaintIds.add(Number(row.id));
+      const scheduledDate = new Date(row.scheduled_at);
+
+      if (Number.isNaN(scheduledDate.getTime())) {
+        failed += 1;
+        continue;
+      }
+
+      try {
+        const clinicResponsible = await resolveClinicAppointmentResponsibleAssignment(row.clinic_id);
+        const scheduledMysqlDate = toMysqlDateTime(scheduledDate);
+        const actor = {
+          name: 'Migração automática de agendamento',
+          role: 'system'
+        };
+
+        await pool.query(
+          `UPDATE complaints
+              SET due_at = ?,
+                  resolution_due_at = ?,
+                  appointment_due_at = ?,
+                  appointment_sla_active = 1,
+                  appointment_sla_started_at = COALESCE(appointment_sla_started_at, NOW()),
+                  appointment_sla_set_by = COALESCE(appointment_sla_set_by, ?),
+                  appointment_sla_alert_sent_at = NULL,
+                  overdue_manager_notified_at = NULL,
+                  deadline_locked_at = COALESCE(deadline_locked_at, NOW()),
+                  status = ?,
+                  forwarded_to_role = ?,
+                  forwarded_to_label = ?,
+                  forwarded_at = COALESCE(forwarded_at, NOW()),
+                  forwarded_by = COALESCE(forwarded_by, ?),
+                  assigned_responsible_user_id = ?,
+                  assigned_responsible_name = ?,
+                  assigned_responsible_role = ?,
+                  current_escalation_level = 'appointment_followup'
+            WHERE id = ?`,
+          [
+            scheduledMysqlDate,
+            scheduledMysqlDate,
+            scheduledMysqlDate,
+            row.created_by_name || 'Migração automática',
+            complaintAttendanceFollowUpStatus,
+            clinicResponsible.role,
+            clinicResponsible.label || clinicResponsible.name || 'Responsável da clínica',
+            row.created_by_name || 'Migração automática',
+            clinicResponsible.userId || null,
+            clinicResponsible.name || clinicResponsible.label || 'Responsável da clínica',
+            clinicResponsible.role || 'coordinator',
+            row.id
+          ]
+        );
+
+        await insertComplaintLog(
+          row.id,
+          'appointment_sla_backfilled',
+          `Protocolo migrado para SLA de agendamento em ${formatMessageDateTime(scheduledDate)} a partir do agendamento ${row.patient_protocol || `PAC-${row.interaction_id}`}. Responsável atual da clínica: ${clinicResponsible.name || clinicResponsible.label || 'Responsável da clínica'}.`,
+          actor,
+          {
+            previousStatus: row.status,
+            newStatus: complaintAttendanceFollowUpStatus,
+            previousDueAt: row.due_at || null,
+            newDueAt: scheduledMysqlDate,
+            reason: 'Migração automática de agendamentos existentes para a nova regra de SLA.'
+          }
+        );
+
+        migrated += 1;
+        passMigrated += 1;
+      } catch (error) {
+        failed += 1;
+        console.warn(`Não foi possível migrar SLA de agendamento da reclamação ${row.id}:`, error.message);
+      }
+    }
+
+    if (rows.length < limit) {
+      break;
+    }
+
+    if (passMigrated === 0) {
+      console.warn('Migração automática de SLA de agendamento interrompida: nenhum registro do lote atual foi atualizado.');
+      break;
+    }
+  }
+
+  return { checked, migrated, failed, passes };
+}
+
 async function backfillComplaintAssignments() {
   const [rows] = await pool.query(
     `SELECT id, clinic_id, first_attendance_at, forwarded_to_role, forwarded_to_label, forwarded_at, forwarded_by, assigned_coordinator_user_id, assigned_coordinator_name, assigned_responsible_user_id, assigned_responsible_name, assigned_responsible_role, coordinator_id, coordinator_name, manager_id, manager_name, clinic_snapshot_name
@@ -40235,9 +40384,10 @@ async function startServer() {
       await syncClinicLeadershipNamesFromUserLinks();
       await syncDefaultWhatsAppSessionsWithClinics();
       const escalationBackfill = await backfillComplaintEscalationDeadlines();
+      const appointmentSlaBackfill = await backfillComplaintAppointmentSlaFromPatientInteractions();
 
       if (!startupDataBackfillsEnabled) {
-        console.log(`Backfills leves validados. Usernames reparados: ${repairedUsernames}. Prazos hierarquicos revisados: C${escalationBackfill.coordinator}/G${escalationBackfill.manager}`);
+        console.log(`Backfills leves validados. Usernames reparados: ${repairedUsernames}. Prazos hierarquicos revisados: C${escalationBackfill.coordinator}/G${escalationBackfill.manager}. Agendamentos migrados: ${appointmentSlaBackfill.migrated}/${appointmentSlaBackfill.checked}.`);
         return;
       }
 
@@ -40247,7 +40397,7 @@ async function startServer() {
       await backfillComplaintDeadlines();
       await backfillComplaintAssignments();
       const coordinatorRepair = await repairPendingCoordinatorAssignments();
-      console.log(`Backfills operacionais validados. Usernames reparados: ${repairedUsernames}. Coordenadores revisados: ${coordinatorRepair.updated}/${coordinatorRepair.checked}. Prazos hierarquicos revisados: C${escalationBackfill.coordinator}/G${escalationBackfill.manager}`);
+      console.log(`Backfills operacionais validados. Usernames reparados: ${repairedUsernames}. Coordenadores revisados: ${coordinatorRepair.updated}/${coordinatorRepair.checked}. Prazos hierarquicos revisados: C${escalationBackfill.coordinator}/G${escalationBackfill.manager}. Agendamentos migrados: ${appointmentSlaBackfill.migrated}/${appointmentSlaBackfill.checked}.`);
     } catch (error) {
       console.warn('Não foi possível executar os backfills:', error.message);
     }
