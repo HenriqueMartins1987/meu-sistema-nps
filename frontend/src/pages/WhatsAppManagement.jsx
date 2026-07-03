@@ -379,7 +379,7 @@ function WhatsAppManagement() {
     acc[group].push(item);
     return acc;
   }, {}), [allowedSections]);
-  const allowed = hasPermission(user, 'whatsapp_management') || isMasterAdmin(user) || ['admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator'].includes(role);
+  const allowed = hasPermission(user, 'whatsapp_management') || isMasterAdmin(user) || ['admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator', 'nps_operator'].includes(role);
   const canConfigure = isMasterAdmin(user) || hasActionPermission(user, 'whatsapp_config_manage') || ['admin', 'supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager'].includes(role);
   const canManageComplaintAlerts = isMasterAdmin(user) || hasActionPermission(user, 'whatsapp_config_manage') || ['admin', 'supervisor_crc', 'crc_leader', 'crc_manager'].includes(role);
   const canRouteAttendance = canConfigure && role !== 'crc_operator';
@@ -2399,8 +2399,8 @@ function WhatsAppManagement() {
             </article>
             <article className="campaign-readiness-card">
               <span>Escopo do operador</span>
-              <strong>{normalizeRoleValue(user?.role) === 'crc_operator' ? 'Clinicas vinculadas' : 'Gestao ampliada'}</strong>
-              <p>{normalizeRoleValue(user?.role) === 'crc_operator' ? 'O operador CRC nao consegue visualizar nem disparar para clinicas fora do proprio cadastro.' : 'Liderancas e perfis administrativos mantem visao consolidada da operacao.'}</p>
+              <strong>{role === 'crc_operator' ? 'Clinicas vinculadas' : (role === 'nps_operator' ? 'Todas as clinicas NPS' : 'Gestao ampliada')}</strong>
+              <p>{role === 'crc_operator' ? 'O operador CRC nao consegue visualizar nem disparar para clinicas fora do proprio cadastro.' : (role === 'nps_operator' ? 'O perfil NPS pode preparar e enviar campanhas para todas as clinicas ativas, sem acessar configuracoes sensiveis.' : 'Liderancas e perfis administrativos mantem visao consolidada da operacao.')}</p>
             </article>
             <article className="campaign-readiness-card">
               <span>Persistencia</span>

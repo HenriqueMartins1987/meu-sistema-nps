@@ -9,7 +9,7 @@ function canOpenWeeklyComplaintReport(user) {
 
 function canAccessWhatsApp(user) {
   const role = normalizeRoleValue(user?.role);
-  return hasPermission(user, 'whatsapp_management') || ['crc_leader', 'crc_manager', 'crc_operator', 'admin', 'supervisor_crc', 'sac_operator'].includes(role);
+  return hasPermission(user, 'whatsapp_management') || ['crc_leader', 'crc_manager', 'crc_operator', 'nps_operator', 'admin', 'supervisor_crc', 'sac_operator'].includes(role);
 }
 
 function buildReportGroups(user) {

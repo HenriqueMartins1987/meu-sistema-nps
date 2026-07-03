@@ -92,6 +92,7 @@ export const accessProfiles = [
   { value: 'crc_leader', label: 'Lider de CRC' },
   { value: 'crc_manager', label: 'Gerente de CRC' },
   { value: 'crc_operator', label: 'Operador de CRC' },
+  { value: 'nps_operator', label: 'Operador NPS' },
   { value: 'partner', label: 'Parceiro' },
   { value: 'coordinator', label: 'Coordenador' },
   { value: 'manager', label: 'Gerente' },
@@ -119,6 +120,11 @@ export function normalizeRoleValue(role) {
     lider_de_crc: 'crc_leader',
     gerente_crc: 'crc_manager',
     gerente_de_crc: 'crc_manager',
+    operador_nps: 'nps_operator',
+    operador_de_nps: 'nps_operator',
+    analista_nps: 'nps_operator',
+    qualidade_nps: 'nps_operator',
+    nps: 'nps_operator',
     parceiro: 'partner',
     dentista_parceiro: 'partner',
     parceiro_dentista: 'partner',
@@ -245,6 +251,10 @@ export function defaultActionPermissionsForRole(role) {
     return [];
   }
 
+  if (role === 'nps_operator') {
+    return [];
+  }
+
   if (role === 'partner') {
     return [
       'receber_notificacao_video',
@@ -367,6 +377,7 @@ export function hasPermission(user, permission) {
   const coordinatorDefaults = ['home', 'complaints_management', 'complaints_dashboard', 'nps_management', 'nps_dashboard', 'patient_management', 'crm_relationship'];
   const crcLeaderDefaults = ['home', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_instances', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'whatsapp_reports', 'whatsapp_complaint_alerts', 'dental_card'];
   const crcOperatorDefaults = ['home', 'whatsapp_management', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'dental_card'];
+  const npsOperatorDefaults = ['home', 'nps_management', 'nps_dashboard', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_history', 'whatsapp_reports'];
 
   if (['manager', 'coordinator', 'viewer'].includes(role) && permission.startsWith('whatsapp')) {
     return false;
@@ -378,6 +389,10 @@ export function hasPermission(user, permission) {
 
   if (role === 'crc_operator') {
     return crcOperatorDefaults.includes(permission);
+  }
+
+  if (role === 'nps_operator') {
+    return npsOperatorDefaults.includes(permission);
   }
 
   if (role === 'sac_operator' && sacOperatorDefaults.includes(permission)) {

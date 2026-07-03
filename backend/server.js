@@ -1071,6 +1071,7 @@ const accessProfiles = {
   crc_leader: 'Líder de CRC',
   crc_manager: 'Gerente de CRC',
   crc_operator: 'Operador de CRC',
+  nps_operator: 'Operador NPS',
   partner: 'Parceiro',
   coordinator: 'Coordenador',
   manager: 'Gerente',
@@ -1100,6 +1101,11 @@ function normalizeAccessRole(role) {
     lider_de_crc: 'crc_leader',
     gerente_crc: 'crc_manager',
     gerente_de_crc: 'crc_manager',
+    operador_nps: 'nps_operator',
+    operador_de_nps: 'nps_operator',
+    analista_nps: 'nps_operator',
+    qualidade_nps: 'nps_operator',
+    nps: 'nps_operator',
     parceiro: 'partner',
     dentista_parceiro: 'partner',
     parceiro_dentista: 'partner',
@@ -1197,6 +1203,7 @@ const whatsappOperatorRoleAliases = [
   'crc_manager',
   'supervisor_crc',
   'sac_operator',
+  'nps_operator',
   'operador_crc',
   'operador_de_crc',
   'operador crc',
@@ -1208,12 +1215,18 @@ const whatsappOperatorRoleAliases = [
   'supervisor de crc',
   'operador_sac',
   'operador de sac',
+  'operador_nps',
+  'operador de nps',
+  'analista_nps',
+  'analista nps',
   'Operador CRC',
   'Operador de CRC',
   'Lider CRC',
   'Gerente CRC',
   'Supervisor de CRC',
-  'Operador de SAC'
+  'Operador de SAC',
+  'Operador NPS',
+  'Analista NPS'
 ];
 const whatsappOperatorNormalizedRoleAliases = [
   'crc_operator',
@@ -1221,6 +1234,7 @@ const whatsappOperatorNormalizedRoleAliases = [
   'crc_manager',
   'supervisor_crc',
   'sac_operator',
+  'nps_operator',
   'operador_crc',
   'operador_de_crc',
   'lider_crc',
@@ -1229,7 +1243,10 @@ const whatsappOperatorNormalizedRoleAliases = [
   'gerente_de_crc',
   'supervisor_de_crc',
   'operador_sac',
-  'operador_de_sac'
+  'operador_de_sac',
+  'operador_nps',
+  'operador_de_nps',
+  'analista_nps'
 ];
 
 function buildWhatsAppOperatorRoleWhere(alias = '') {
@@ -1796,6 +1813,10 @@ function defaultPermissionsForRole(role) {
     return ['home', 'whatsapp_management', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'dental_card'];
   }
 
+  if (role === 'nps_operator') {
+    return ['home', 'nps_management', 'nps_dashboard', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_history', 'whatsapp_reports'];
+  }
+
   if (role === 'partner') {
     return ['home'];
   }
@@ -1887,6 +1908,10 @@ function defaultActionPermissionsForRole(role) {
   }
 
   if (role === 'crc_operator') {
+    return [];
+  }
+
+  if (role === 'nps_operator') {
     return [];
   }
 
@@ -2031,6 +2056,9 @@ function hasScreenPermission(user, permission) {
   if (role === 'crc_operator') {
     return ['home', 'whatsapp_management', 'whatsapp_attendance', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_chatbot', 'whatsapp_absent', 'whatsapp_history', 'dental_card'].includes(permission);
   }
+  if (role === 'nps_operator') {
+    return ['home', 'nps_management', 'nps_dashboard', 'whatsapp_management', 'whatsapp_dashboard', 'whatsapp_send', 'whatsapp_templates', 'whatsapp_history', 'whatsapp_reports'].includes(permission);
+  }
   if (['manager', 'coordinator', 'viewer'].includes(role) && String(permission || '').startsWith('whatsapp')) return false;
   return getUserScreenPermissions(user).includes(permission);
 }
@@ -2077,7 +2105,7 @@ function canDeleteCrcCollaborators(user) {
 function canViewWhatsAppManagement(user) {
   const role = normalizeAccessRole(user?.role);
   return isAdminUser(user)
-    || ['supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator'].includes(role)
+    || ['supervisor_crc', 'sac_operator', 'crc_leader', 'crc_manager', 'crc_operator', 'nps_operator'].includes(role)
     || (hasScreenPermission(user, 'whatsapp_management') && !['manager', 'coordinator', 'viewer'].includes(role));
 }
 
@@ -2088,7 +2116,7 @@ function canConfigureWhatsAppManagement(user) {
 }
 
 function canViewAllWhatsAppAttendance(user) {
-  return isAdminUser(user) || ['supervisor_crc', 'crc_leader', 'crc_manager'].includes(normalizeAccessRole(user?.role));
+  return isAdminUser(user) || ['supervisor_crc', 'crc_leader', 'crc_manager', 'nps_operator'].includes(normalizeAccessRole(user?.role));
 }
 
 function canRenotifyComplaint(user) {
@@ -11447,7 +11475,7 @@ async function runComplaintEscalationSweep(now = new Date()) {
 async function getClinicsForUser(user) {
   if (!user) return [];
 
-  if (isAdminUser(user) || ['supervisor_crc', 'crc_leader', 'crc_manager'].includes(normalizeAccessRole(user?.role))) {
+  if (isAdminUser(user) || ['supervisor_crc', 'crc_leader', 'crc_manager', 'nps_operator'].includes(normalizeAccessRole(user?.role))) {
     const [rows] = await pool.query(
       `SELECT
          id,

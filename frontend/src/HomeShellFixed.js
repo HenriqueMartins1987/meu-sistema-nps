@@ -201,7 +201,7 @@ function canAccessFinancialManagement(user) {
 function canAccessWhatsAppManagement(user) {
   const role = normalizeRoleValue(user?.role);
   if (['manager', 'coordinator', 'viewer'].includes(role)) return false;
-  if (['crc_leader', 'crc_manager', 'crc_operator'].includes(role)) return true;
+  if (['crc_leader', 'crc_manager', 'crc_operator', 'nps_operator'].includes(role)) return true;
   return hasPermission(user, 'whatsapp_management');
 }
 
