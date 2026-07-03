@@ -335,6 +335,10 @@ function canAccessSection(user, item) {
   if (item.restrictedConfig) {
     return hasPermission(user, item.permission) || ['admin', 'supervisor_crc', 'crc_leader', 'crc_manager'].includes(role);
   }
+  if (role === 'nps_operator') {
+    return ['dashboard', 'send', 'templates', 'campaigns', 'history', 'reports'].includes(item.id)
+      && hasPermission(user, item.permission);
+  }
   if (role === 'crc_operator') return Boolean(item.operator);
   if (role === 'crc_leader' || role === 'crc_manager') return item.id !== 'settings';
   if (hasPermission(user, item.permission)) return true;

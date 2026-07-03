@@ -13,6 +13,8 @@ function canAccessWhatsApp(user) {
 }
 
 function buildReportGroups(user) {
+  const role = normalizeRoleValue(user?.role);
+  const isNpsOperator = role === 'nps_operator';
   const whatsappVisible = canAccessWhatsApp(user);
 
   const groups = [
@@ -56,10 +58,10 @@ function buildReportGroups(user) {
       title: 'Relatorios e Operacao WhatsApp',
       description: 'BI de sessoes, confirmacoes, historico de mensagens e filas de disparo.',
       items: [
-        { label: 'Dashboard WhatsApp CRC', path: '/home/whatsapp-management/dashboard', visible: whatsappVisible, meta: 'BI operacional' },
-        { label: 'Confirmacao e Agendamento', path: '/home/whatsapp-management/confirmation', visible: whatsappVisible, meta: 'confirmacoes' },
-        { label: 'Historico de mensagens', path: '/home/whatsapp-management/history', visible: whatsappVisible, meta: 'auditoria' },
-        { label: 'Sessoes / QR Code', path: '/home/whatsapp-management/instances', visible: whatsappVisible, meta: 'conexoes' }
+        { label: 'Dashboard WhatsApp CRC', path: '/home/whatsapp-management/dashboard', visible: whatsappVisible && hasPermission(user, 'whatsapp_dashboard'), meta: 'BI operacional' },
+        { label: 'Confirmacao e Agendamento', path: '/home/whatsapp-management/confirmation', visible: whatsappVisible && !isNpsOperator && hasPermission(user, 'whatsapp_reports'), meta: 'confirmacoes' },
+        { label: 'Historico de mensagens', path: '/home/whatsapp-management/history', visible: whatsappVisible && hasPermission(user, 'whatsapp_history'), meta: 'auditoria' },
+        { label: 'Sessoes / QR Code', path: '/home/whatsapp-management/instances', visible: whatsappVisible && hasPermission(user, 'whatsapp_instances'), meta: 'conexoes' }
       ]
     },
     {

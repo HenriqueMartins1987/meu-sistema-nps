@@ -39,6 +39,8 @@ function canAccessWhatsApp(user) {
 
 function buildMenuSections(user) {
   const master = isMasterAdmin(user);
+  const role = normalizeRoleValue(user?.role);
+  const isNpsOperator = role === 'nps_operator';
   const whatsappVisible = canAccessWhatsApp(user);
   const showReports = canOpenWeeklyComplaintReport(user)
     || hasPermission(user, 'complaints_dashboard')
@@ -88,8 +90,8 @@ function buildMenuSections(user) {
       label: 'WhatsApp',
       items: [
         { key: 'whatsapp-management', label: 'Gestao WhatsApp CRC', icon: 'whatsapp', path: '/home/whatsapp-management/dashboard', visible: whatsappVisible },
-        { key: 'whatsapp-confirmation', label: 'Confirmacao e Agendamento', icon: 'whatsapp', path: '/home/whatsapp-management/confirmation', visible: whatsappVisible },
-        { key: 'whatsapp-instances', label: 'Sessoes / QR Code', icon: 'settings', path: '/home/whatsapp-management/instances', visible: whatsappVisible }
+        { key: 'whatsapp-confirmation', label: 'Confirmacao e Agendamento', icon: 'whatsapp', path: '/home/whatsapp-management/confirmation', visible: whatsappVisible && !isNpsOperator && hasPermission(user, 'whatsapp_reports') },
+        { key: 'whatsapp-instances', label: 'Sessoes / QR Code', icon: 'settings', path: '/home/whatsapp-management/instances', visible: whatsappVisible && hasPermission(user, 'whatsapp_instances') }
       ]
     },
     {
