@@ -7,6 +7,7 @@ import {
   formatBrazilPhoneInput,
   isCompleteBrazilPhone,
   isMasterAdmin,
+  normalizeRoleValue,
   readUser,
   screenPermissions
 } from './constants';
@@ -120,9 +121,13 @@ function isValidCpf(value) {
   return calculateDigit(9) === Number(cpf[9]) && calculateDigit(10) === Number(cpf[10]);
 }
 
-function AdminPanel() {
+function AdminPanel({ clinicLinksOnly = false }) {
   const navigate = useNavigate();
   const currentUser = useMemo(() => readUser(), []);
+  const currentUserRole = normalizeRoleValue(currentUser?.role);
+  const canManageFullAdmin = isMasterAdmin(currentUser);
+  const isClinicLinksOnlyMode = clinicLinksOnly || (!canManageFullAdmin && currentUserRole === 'sac_operator');
+  const canManageUserClinicLinks = canManageFullAdmin || currentUserRole === 'sac_operator';
   const [users, setUsers] = useState([]);
   const [registrationRequests, setRegistrationRequests] = useState([]);
   const [clinics, setClinics] = useState([]);
@@ -167,6 +172,16 @@ function AdminPanel() {
       user.authorization_status
     ].join(' ').toLowerCase().includes(term));
   }, [users, userSearch]);
+
+  const visibleFilteredUsers = useMemo(() => {
+    if (!isClinicLinksOnlyMode) return filteredUsers;
+
+    return filteredUsers.filter((user) => {
+      const role = normalizeRoleValue(user.role);
+      const email = String(user.email || '').trim().toLowerCase();
+      return role !== 'master_admin' && role !== 'admin' && email !== masterAdminEmail;
+    });
+  }, [filteredUsers, isClinicLinksOnlyMode]);
 
   const authorizationItems = useMemo(() => {
     const registrationItems = registrationRequests.map((request) => ({
@@ -253,8 +268,10 @@ function AdminPanel() {
     try {
       const [usersRes, clinicsRes, registrationRes] = await Promise.all([
         api.get('/admin/users'),
-        api.get('/clinics'),
-        api.get('/admin/registration-requests', { params: { status: 'todos' } }).catch(() => ({ data: [] }))
+        api.get('/clinics', { params: isClinicLinksOnlyMode ? { scope: 'user-clinic-links' } : {} }),
+        canManageFullAdmin
+          ? api.get('/admin/registration-requests', { params: { status: 'todos' } }).catch(() => ({ data: [] }))
+          : Promise.resolve({ data: [] })
       ]);
       const userRows = Array.isArray(usersRes.data) ? usersRes.data : [];
       setUsers(userRows);
@@ -269,16 +286,16 @@ function AdminPanel() {
     } finally {
       setLoading(false);
     }
-  }, [selectedUserId]);
+  }, [canManageFullAdmin, isClinicLinksOnlyMode, selectedUserId]);
 
   useEffect(() => {
-    if (!isMasterAdmin(currentUser)) {
+    if (!canManageUserClinicLinks) {
       navigate('/home');
       return;
     }
 
     loadData();
-  }, [currentUser, navigate, loadData]);
+  }, [canManageUserClinicLinks, navigate, loadData]);
 
   useEffect(() => {
     if (!selectedUser) {
@@ -395,6 +412,18 @@ function AdminPanel() {
 
   const saveUser = async () => {
     setFeedback('');
+
+    if (isClinicLinksOnlyMode) {
+      try {
+        await api.patch(`/admin/users/${selectedUser.id}`, { clinicIds: draft.clinicIds || [] });
+        await loadData();
+        setFeedback('Clínicas vinculadas ao usuário atualizadas com sucesso.');
+      } catch (error) {
+        setFeedback(error.response?.data?.error || 'Não foi possível atualizar as clínicas vinculadas.');
+      }
+      return;
+    }
+
     const draftIsCrcOperator = isCrcOperatorRole(draft.role);
     const draftEmail = String(draft.email || '').trim();
 
@@ -755,46 +784,59 @@ function AdminPanel() {
     }
   };
 
-  if (!isMasterAdmin(currentUser)) {
+  if (!canManageUserClinicLinks) {
     return null;
   }
 
   const isSelectedMaster = String(selectedUser?.email || '').toLowerCase() === masterAdminEmail;
+  const isSelectedAdminProtected = isSelectedMaster || ['admin', 'master_admin'].includes(normalizeRoleValue(selectedUser?.role));
+  const pageEyebrow = isClinicLinksOnlyMode ? 'Agenda Telefônica' : 'Painel Gerencial';
+  const pageTitle = isClinicLinksOnlyMode ? 'Vínculo de Clínicas dos Usuários' : 'Gestão de Usuários';
+  const pageSubtitle = isClinicLinksOnlyMode
+    ? 'Operador de SAC pode ajustar somente as clínicas vinculadas aos usuários permitidos. Administradores e Master ficam protegidos.'
+    : 'Controle quem acessa cada tela e quais clínicas ficam sob responsabilidade do parceiro.';
 
   return (
     <main className="app-page">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">Painel Gerencial</p>
-          <h1>Gestão de Usuários</h1>
-          <p>Controle quem acessa cada tela e quais clínicas ficam sob responsabilidade do parceiro.</p>
+          <p className="eyebrow">{pageEyebrow}</p>
+          <h1>{pageTitle}</h1>
+          <p>{pageSubtitle}</p>
         </div>
 
         <div className="heading-actions">
-          <button className="outline-action" onClick={() => navigate('/admin/controle-master')}>Centro Master</button>
-          <button className="outline-action" onClick={() => navigate('/admin/configuracoes/whatsapp')}>Configurações WhatsApp</button>
-          <button className="primary-action" onClick={() => setCreateOpen(true)}>Cadastrar novo usuário</button>
+          {canManageFullAdmin && (
+            <>
+              <button className="outline-action" onClick={() => navigate('/admin/controle-master')}>Centro Master</button>
+              <button className="outline-action" onClick={() => navigate('/admin/robot-master')}>Monitor Robo Ecuro</button>
+              <button className="outline-action" onClick={() => navigate('/admin/configuracoes/whatsapp')}>Configurações WhatsApp</button>
+              <button className="primary-action" onClick={() => setCreateOpen(true)}>Cadastrar novo usuário</button>
+            </>
+          )}
           <button className="outline-action" onClick={() => navigate('/home')}>Home</button>
         </div>
       </header>
 
       {feedback && <p className="form-feedback admin-feedback">{feedback}</p>}
 
-      <nav className="admin-panel-tabs" aria-label="Gestão de usuários">
-        {adminPanelTabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className={activeAdminTab === tab.id ? 'active' : ''}
-            onClick={() => setActiveAdminTab(tab.id)}
-          >
-            {tab.label}
-            {tab.id === 'authorizations' && pendingRegistrationCount > 0 ? <span>{pendingRegistrationCount}</span> : null}
-          </button>
-        ))}
-      </nav>
+      {canManageFullAdmin && (
+        <nav className="admin-panel-tabs" aria-label="Gestão de usuários">
+          {adminPanelTabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              className={activeAdminTab === tab.id ? 'active' : ''}
+              onClick={() => setActiveAdminTab(tab.id)}
+            >
+              {tab.label}
+              {tab.id === 'authorizations' && pendingRegistrationCount > 0 ? <span>{pendingRegistrationCount}</span> : null}
+            </button>
+          ))}
+        </nav>
+      )}
 
-      {activeAdminTab === 'authorizations' ? (
+      {canManageFullAdmin && activeAdminTab === 'authorizations' ? (
         <section className="management-panel admin-authorization-panel">
           <div className="panel-heading">
             <div>
@@ -878,23 +920,25 @@ function AdminPanel() {
         </section>
       ) : (
         <>
-      <section className="admin-export-toolbar">
-        <div>
-          <p className="eyebrow">Exportacao</p>
-          <strong>Relacao completa de usuarios</strong>
-          <span>Inclui dados cadastrais, perfil, cargo, clinicas vinculadas, telas liberadas e botoes autorizados.</span>
-        </div>
-        <div className="row-actions">
-          <button className="outline-action icon-action" onClick={() => exportUsers('excel')} disabled={exportingUsers}>
-            <span className="file-icon xls">XLS</span>
-            Exportar Excel
-          </button>
-          <button className="outline-action icon-action" onClick={() => exportUsers('pdf')} disabled={exportingUsers}>
-            <span className="file-icon pdf">PDF</span>
-            Exportar PDF
-          </button>
-        </div>
-      </section>
+      {canManageFullAdmin && (
+        <section className="admin-export-toolbar">
+          <div>
+            <p className="eyebrow">Exportacao</p>
+            <strong>Relacao completa de usuarios</strong>
+            <span>Inclui dados cadastrais, perfil, cargo, clinicas vinculadas, telas liberadas e botoes autorizados.</span>
+          </div>
+          <div className="row-actions">
+            <button className="outline-action icon-action" onClick={() => exportUsers('excel')} disabled={exportingUsers}>
+              <span className="file-icon xls">XLS</span>
+              Exportar Excel
+            </button>
+            <button className="outline-action icon-action" onClick={() => exportUsers('pdf')} disabled={exportingUsers}>
+              <span className="file-icon pdf">PDF</span>
+              Exportar PDF
+            </button>
+          </div>
+        </section>
+      )}
 
       {loading ? (
         <section className="management-panel">
@@ -919,8 +963,8 @@ function AdminPanel() {
                 placeholder="Pesquisar por nome, e-mail, cargo ou perfil"
               />
               <select className="field" value={selectedUserId} onChange={(event) => setSelectedUserId(event.target.value)}>
-                {filteredUsers.length === 0 && <option value="">Nenhum parceiro encontrado</option>}
-                {filteredUsers.map((user) => (
+                {visibleFilteredUsers.length === 0 && <option value="">Nenhum parceiro encontrado</option>}
+                {visibleFilteredUsers.map((user) => (
                   <option key={user.id} value={user.id}>
                     {user.name} · {user.username || user.email || '-'} · {authorizationStatusLabel(normalizeAuthorizationStatus(user))}
                   </option>
@@ -943,184 +987,199 @@ function AdminPanel() {
                 <div>
                   <p className="eyebrow">Alçada</p>
                   <h2>{selectedUser.name}</h2>
-                  <p className="base-subtitle">Defina dados cadastrais, acessos, clínicas vinculadas e testes operacionais.</p>
+                  <p className="base-subtitle">
+                    {isClinicLinksOnlyMode
+                      ? 'Altere apenas as clínicas vinculadas a este usuário. Perfis administrativos ficam protegidos.'
+                      : 'Defina dados cadastrais, acessos, clínicas vinculadas e testes operacionais.'}
+                  </p>
                 </div>
 
                 <div className="heading-actions admin-heading-actions">
-                  <div className="admin-test-menu">
-                    <button
-                      className="outline-action"
-                      type="button"
-                      onClick={() => setTestMenuOpen((prev) => !prev)}
-                      disabled={testingChannels}
-                      aria-expanded={testMenuOpen}
-                    >
-                      {testingChannels ? 'Enviando...' : 'Teste'}
-                    </button>
+                  {canManageFullAdmin && (
+                    <div className="admin-test-menu">
+                      <button
+                        className="outline-action"
+                        type="button"
+                        onClick={() => setTestMenuOpen((prev) => !prev)}
+                        disabled={testingChannels}
+                        aria-expanded={testMenuOpen}
+                      >
+                        {testingChannels ? 'Enviando...' : 'Teste'}
+                      </button>
 
-                    {testMenuOpen && (
-                      <div className="admin-test-menu-panel">
-                        <button className="ghost-action" type="button" onClick={sendRecurringEmailTest} disabled={testingChannels}>
-                          E-mail
-                        </button>
-                        <button className="ghost-action" type="button" onClick={sendRecurringWhatsAppTest} disabled={testingChannels}>
-                          WhatsApp
-                        </button>
-                      </div>
-                    )}
-                  </div>
+                      {testMenuOpen && (
+                        <div className="admin-test-menu-panel">
+                          <button className="ghost-action" type="button" onClick={sendRecurringEmailTest} disabled={testingChannels}>
+                            E-mail
+                          </button>
+                          <button className="ghost-action" type="button" onClick={sendRecurringWhatsAppTest} disabled={testingChannels}>
+                            WhatsApp
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
-                  {!isSelectedMaster && (
+                  {canManageFullAdmin && !isSelectedMaster && (
                     selectedUser.active
                       ? <button className="outline-action" onClick={disableUser}>Bloquear acesso</button>
                       : <button className="outline-action" onClick={enableUser}>Liberar acesso</button>
                   )}
-                  {!isSelectedMaster && <button className="outline-action" onClick={resetPassword}>Reiniciar senha</button>}
-                  {!isSelectedMaster && <button className="outline-action danger-action" onClick={deleteUser}>Excluir</button>}
-                  <button className="primary-action" onClick={saveUser}>Salvar alterações</button>
+                  {canManageFullAdmin && !isSelectedMaster && <button className="outline-action" onClick={resetPassword}>Reiniciar senha</button>}
+                  {canManageFullAdmin && !isSelectedMaster && <button className="outline-action danger-action" onClick={deleteUser}>Excluir</button>}
+                  <button className="primary-action" onClick={saveUser} disabled={isClinicLinksOnlyMode && isSelectedAdminProtected}>
+                    {isClinicLinksOnlyMode ? 'Salvar clínicas' : 'Salvar alterações'}
+                  </button>
                 </div>
               </div>
 
-              <section className="admin-identity-section">
-                <div className="admin-section-heading">
-                  <div>
-                    <p className="eyebrow">Cadastro</p>
-                    <h3>Dados do parceiro</h3>
-                  </div>
-                </div>
+              {canManageFullAdmin && (
+                <>
+                  <section className="admin-identity-section">
+                    <div className="admin-section-heading">
+                      <div>
+                        <p className="eyebrow">Cadastro</p>
+                        <h3>Dados do parceiro</h3>
+                      </div>
+                    </div>
 
-                <div className="admin-form-grid">
-                  <label>
-                    Nome completo
-                    <input className="field" value={draft.name} onChange={(event) => updateDraft('name', event.target.value)} />
-                  </label>
-                  <label>
-                    E-mail
-                    <input
-                      className="field"
-                      type="email"
-                      value={draft.email}
-                      onChange={(event) => updateDraft('email', event.target.value)}
-                      disabled={isSelectedMaster}
-                      required={!isCrcOperatorRole(draft.role)}
-                    />
-                  </label>
-                  {isCrcOperatorRole(draft.role) && (
-                    <>
+                    <div className="admin-form-grid">
                       <label>
-                        CPF
+                        Nome completo
+                        <input className="field" value={draft.name} onChange={(event) => updateDraft('name', event.target.value)} />
+                      </label>
+                      <label>
+                        E-mail
                         <input
                           className="field"
-                          value={draft.cpf || ''}
-                          onChange={(event) => updateDraft('cpf', formatCpfInput(event.target.value))}
+                          type="email"
+                          value={draft.email}
+                          onChange={(event) => updateDraft('email', event.target.value)}
+                          disabled={isSelectedMaster}
+                          required={!isCrcOperatorRole(draft.role)}
+                        />
+                      </label>
+                      {isCrcOperatorRole(draft.role) && (
+                        <>
+                          <label>
+                            CPF
+                            <input
+                              className="field"
+                              value={draft.cpf || ''}
+                              onChange={(event) => updateDraft('cpf', formatCpfInput(event.target.value))}
+                              maxLength={14}
+                              required
+                            />
+                          </label>
+                          <label>
+                            Área de atuação CRC
+                            <select
+                              className="field"
+                              value={draft.crcOperatorArea || ''}
+                              onChange={(event) => updateDraft('crcOperatorArea', event.target.value)}
+                              required
+                            >
+                              <option value="">Selecione</option>
+                              {crcOperatorAreaOptions.map((option) => (
+                                <option key={option.value} value={option.value}>{option.label}</option>
+                              ))}
+                            </select>
+                          </label>
+                        </>
+                      )}
+                      <label>
+                        Perfil
+                        <select className="field" value={draft.role} onChange={(event) => updateDraft('role', event.target.value)} disabled={isSelectedMaster}>
+                          {isSelectedMaster && <option value="master_admin">Administrador Master</option>}
+                          {accessProfiles.map((profile) => (
+                            <option key={profile.value} value={profile.value}>{profile.label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label>
+                        Cargo
+                        <input className="field" value={draft.position} onChange={(event) => updateDraft('position', event.target.value)} />
+                      </label>
+                      <label>
+                        Telefone
+                        <input
+                          className="field"
+                          value={draft.phone || defaultBrazilPhone}
+                          onChange={(event) => updateDraft('phone', formatBrazilPhoneInput(event.target.value))}
+                          minLength={14}
                           maxLength={14}
                           required
                         />
                       </label>
                       <label>
-                        Área de atuação CRC
-                        <select
+                        WhatsApp
+                        <input
                           className="field"
-                          value={draft.crcOperatorArea || ''}
-                          onChange={(event) => updateDraft('crcOperatorArea', event.target.value)}
+                          value={draft.whatsapp || defaultBrazilPhone}
+                          onChange={(event) => updateDraft('whatsapp', formatBrazilPhoneInput(event.target.value))}
+                          minLength={14}
+                          maxLength={14}
                           required
-                        >
-                          <option value="">Selecione</option>
-                          {crcOperatorAreaOptions.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                          ))}
-                        </select>
+                        />
                       </label>
-                    </>
-                  )}
-                  <label>
-                    Perfil
-                    <select className="field" value={draft.role} onChange={(event) => updateDraft('role', event.target.value)} disabled={isSelectedMaster}>
-                      {isSelectedMaster && <option value="master_admin">Administrador Master</option>}
-                      {accessProfiles.map((profile) => (
-                        <option key={profile.value} value={profile.value}>{profile.label}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Cargo
-                    <input className="field" value={draft.position} onChange={(event) => updateDraft('position', event.target.value)} />
-                  </label>
-                  <label>
-                    Telefone
-                    <input
-                      className="field"
-                      value={draft.phone || defaultBrazilPhone}
-                      onChange={(event) => updateDraft('phone', formatBrazilPhoneInput(event.target.value))}
-                      minLength={14}
-                      maxLength={14}
-                      required
-                    />
-                  </label>
-                  <label>
-                    WhatsApp
-                    <input
-                      className="field"
-                      value={draft.whatsapp || defaultBrazilPhone}
-                      onChange={(event) => updateDraft('whatsapp', formatBrazilPhoneInput(event.target.value))}
-                      minLength={14}
-                      maxLength={14}
-                      required
-                    />
-                  </label>
-                  <label>
-                    Área ou unidade
-                    <input className="field" value={draft.department} onChange={(event) => updateDraft('department', event.target.value)} />
-                  </label>
-                </div>
-              </section>
+                      <label>
+                        Área ou unidade
+                        <input className="field" value={draft.department} onChange={(event) => updateDraft('department', event.target.value)} />
+                      </label>
+                    </div>
+                  </section>
 
-              <div className="admin-switch-row">
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={isSelectedMaster ? true : draft.active}
-                    onChange={(event) => updateDraft('active', event.target.checked)}
-                    disabled={isSelectedMaster}
-                  />
-                  Usuário habilitado
-                </label>
-              </div>
-
-              <section className="admin-check-section">
-                <div className="admin-section-heading">
-                  <div>
-                    <p className="eyebrow">Telas liberadas</p>
-                    <h3>Fluxo de alçada por tela</h3>
-                  </div>
-                  <div className="mini-actions">
-                    <button type="button" className="outline-action" onClick={selectAllPermissions}>Selecionar todas</button>
-                    <button type="button" className="ghost-action" onClick={clearPermissions}>Limpar</button>
-                  </div>
-                </div>
-                <div className="admin-check-grid">
-                  {screenPermissions.map((permission) => (
-                    <label key={permission.value}>
+                  <div className="admin-switch-row">
+                    <label>
                       <input
                         type="checkbox"
-                        checked={draft.permissions.includes(permission.value)}
-                        onChange={() => togglePermission(permission.value)}
+                        checked={isSelectedMaster ? true : draft.active}
+                        onChange={(event) => updateDraft('active', event.target.checked)}
+                        disabled={isSelectedMaster}
                       />
-                      {permission.label}
+                      Usuário habilitado
                     </label>
-                  ))}
-                </div>
-              </section>
+                  </div>
+
+                  <section className="admin-check-section">
+                    <div className="admin-section-heading">
+                      <div>
+                        <p className="eyebrow">Telas liberadas</p>
+                        <h3>Fluxo de alçada por tela</h3>
+                      </div>
+                      <div className="mini-actions">
+                        <button type="button" className="outline-action" onClick={selectAllPermissions}>Selecionar todas</button>
+                        <button type="button" className="ghost-action" onClick={clearPermissions}>Limpar</button>
+                      </div>
+                    </div>
+                    <div className="admin-check-grid">
+                      {screenPermissions.map((permission) => (
+                        <label key={permission.value}>
+                          <input
+                            type="checkbox"
+                            checked={draft.permissions.includes(permission.value)}
+                            onChange={() => togglePermission(permission.value)}
+                          />
+                          {permission.label}
+                        </label>
+                      ))}
+                    </div>
+                  </section>
+                </>
+              )}
 
               <section className="admin-check-section">
                 <div className="admin-section-heading">
                   <div>
                     <p className="eyebrow">Clínicas vinculadas</p>
-                    <h3>Responsabilidade por unidade</h3>
+                    <h3>{isClinicLinksOnlyMode ? 'Clínicas liberadas para o usuário' : 'Responsabilidade por unidade'}</h3>
+                    {isClinicLinksOnlyMode && (
+                      <p className="base-subtitle">Marque somente as clínicas que este usuário deve acessar. Dados cadastrais, permissões e perfis não podem ser alterados por esta alçada.</p>
+                    )}
                   </div>
                   <div className="mini-actions">
-                    <button type="button" className="outline-action" onClick={selectAllClinics}>Selecionar todas</button>
-                    <button type="button" className="ghost-action" onClick={clearClinics}>Limpar</button>
+                    <button type="button" className="outline-action" onClick={selectAllClinics} disabled={isClinicLinksOnlyMode && isSelectedAdminProtected}>Selecionar todas</button>
+                    <button type="button" className="ghost-action" onClick={clearClinics} disabled={isClinicLinksOnlyMode && isSelectedAdminProtected}>Limpar</button>
                   </div>
                 </div>
                 <div className="admin-check-grid clinic-check-grid">
@@ -1130,6 +1189,7 @@ function AdminPanel() {
                         type="checkbox"
                         checked={draft.clinicIds.includes(clinic.id)}
                         onChange={() => toggleClinic(clinic.id)}
+                        disabled={isClinicLinksOnlyMode && isSelectedAdminProtected}
                       />
                       {clinic.name} · {clinic.city || 'Cidade'} / {clinic.state || 'UF'}
                     </label>
@@ -1137,90 +1197,92 @@ function AdminPanel() {
                 </div>
               </section>
 
-              <section className="admin-check-section admin-broadcast-section">
-                <div className="admin-section-heading">
-                  <div>
-                    <p className="eyebrow">Comunicação em massa</p>
-                    <h3>Disparo administrativo por e-mail</h3>
-                    <p className="base-subtitle">Envio direto para todos os usuários ativos com e-mail válido, usando o layout oficial do sistema.</p>
+              {canManageFullAdmin && (
+                <section className="admin-check-section admin-broadcast-section">
+                  <div className="admin-section-heading">
+                    <div>
+                      <p className="eyebrow">Comunicação em massa</p>
+                      <h3>Disparo administrativo por e-mail</h3>
+                      <p className="base-subtitle">Envio direto para todos os usuários ativos com e-mail válido, usando o layout oficial do sistema.</p>
+                    </div>
+                    <div className="admin-broadcast-meta">
+                      <strong>{selectedBulkEmailCount}</strong>
+                      <span>selecionados de {bulkEmailRecipients}</span>
+                    </div>
                   </div>
-                  <div className="admin-broadcast-meta">
-                    <strong>{selectedBulkEmailCount}</strong>
-                    <span>selecionados de {bulkEmailRecipients}</span>
-                  </div>
-                </div>
 
-                <div className="admin-section-heading">
-                  <div>
-                    <p className="eyebrow">Destinatários</p>
-                    <h3>Selecionar usuários</h3>
+                  <div className="admin-section-heading">
+                    <div>
+                      <p className="eyebrow">Destinatários</p>
+                      <h3>Selecionar usuários</h3>
+                    </div>
+                    <div className="mini-actions">
+                      <button type="button" className="outline-action" onClick={selectAllBulkEmailUsers}>Selecionar todos</button>
+                      <button type="button" className="ghost-action" onClick={clearBulkEmailUsers}>Limpar</button>
+                    </div>
                   </div>
-                  <div className="mini-actions">
-                    <button type="button" className="outline-action" onClick={selectAllBulkEmailUsers}>Selecionar todos</button>
-                    <button type="button" className="ghost-action" onClick={clearBulkEmailUsers}>Limpar</button>
-                  </div>
-                </div>
 
-                <div className="admin-broadcast-user-list">
-                  {bulkEmailEligibleUsers.map((user) => (
-                    <label key={user.id} className="admin-broadcast-user-item">
+                  <div className="admin-broadcast-user-list">
+                    {bulkEmailEligibleUsers.map((user) => (
+                      <label key={user.id} className="admin-broadcast-user-item">
+                        <input
+                          type="checkbox"
+                          checked={bulkEmailUserIds.includes(String(user.id))}
+                          onChange={() => toggleBulkEmailUser(user.id)}
+                        />
+                        <span>
+                          <strong>{user.name}</strong>
+                          <small>{user.email}</small>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+
+                  <div className="admin-form-grid">
+                    <label className="admin-form-span">
+                      Assunto
                       <input
-                        type="checkbox"
-                        checked={bulkEmailUserIds.includes(String(user.id))}
-                        onChange={() => toggleBulkEmailUser(user.id)}
+                        className="field"
+                        value={bulkEmailDraft.subject}
+                        onChange={(event) => updateBulkEmailDraft('subject', event.target.value)}
+                        maxLength={160}
                       />
-                      <span>
-                        <strong>{user.name}</strong>
-                        <small>{user.email}</small>
-                      </span>
                     </label>
-                  ))}
-                </div>
 
-                <div className="admin-form-grid">
-                  <label className="admin-form-span">
-                    Assunto
-                    <input
-                      className="field"
-                      value={bulkEmailDraft.subject}
-                      onChange={(event) => updateBulkEmailDraft('subject', event.target.value)}
-                      maxLength={160}
-                    />
-                  </label>
-
-                  <label className="admin-form-span">
-                    Mensagem
-                    <textarea
-                      className="field admin-message-field"
-                      value={bulkEmailDraft.message}
-                      onChange={(event) => updateBulkEmailDraft('message', event.target.value)}
-                      rows={8}
-                    />
-                  </label>
-                </div>
-
-                <div className="admin-broadcast-footer">
-                  <p>O link da plataforma é anexado automaticamente no corpo do e-mail e no botão de acesso.</p>
-                  <div className="heading-actions">
-                    <button
-                      type="button"
-                      className="ghost-action"
-                      onClick={() => setBulkEmailDraft(buildBulkEmailDraft())}
-                      disabled={sendingBulkEmail}
-                    >
-                      Restaurar texto padrão
-                    </button>
-                    <button
-                      type="button"
-                      className="primary-action"
-                      onClick={sendBulkEmail}
-                      disabled={sendingBulkEmail || bulkEmailRecipients === 0 || selectedBulkEmailCount === 0}
-                    >
-                      {sendingBulkEmail ? 'Enviando comunicado...' : 'Enviar comunicado'}
-                    </button>
+                    <label className="admin-form-span">
+                      Mensagem
+                      <textarea
+                        className="field admin-message-field"
+                        value={bulkEmailDraft.message}
+                        onChange={(event) => updateBulkEmailDraft('message', event.target.value)}
+                        rows={8}
+                      />
+                    </label>
                   </div>
-                </div>
-              </section>
+
+                  <div className="admin-broadcast-footer">
+                    <p>O link da plataforma é anexado automaticamente no corpo do e-mail e no botão de acesso.</p>
+                    <div className="heading-actions">
+                      <button
+                        type="button"
+                        className="ghost-action"
+                        onClick={() => setBulkEmailDraft(buildBulkEmailDraft())}
+                        disabled={sendingBulkEmail}
+                      >
+                        Restaurar texto padrão
+                      </button>
+                      <button
+                        type="button"
+                        className="primary-action"
+                        onClick={sendBulkEmail}
+                        disabled={sendingBulkEmail || bulkEmailRecipients === 0 || selectedBulkEmailCount === 0}
+                      >
+                        {sendingBulkEmail ? 'Enviando comunicado...' : 'Enviar comunicado'}
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              )}
             </section>
           )}
         </section>
@@ -1228,7 +1290,7 @@ function AdminPanel() {
         </>
       )}
 
-      {createOpen && (
+      {canManageFullAdmin && createOpen && (
         <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => { setCreateOpen(false); setNewUser(buildNewUserDraft()); }}>
           <section className="modal-panel create-user-modal" onClick={(event) => event.stopPropagation()}>
             <div>

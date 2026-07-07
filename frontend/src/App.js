@@ -129,6 +129,7 @@ function App() {
         <Route element={<PermissionRoute permission="complaints_management" />}>
           <Route path="/gestao" element={<DashboardManagement />} />
           <Route path="/gestao/relatorio-semanal" element={<WeeklyComplaintReport />} />
+          <Route path="/admin/usuarios-clinicas" element={<AdminPanel clinicLinksOnly />} />
         </Route>
         <Route element={<PermissionRoute permission="complaints_dashboard" />}>
           <Route path="/dashboard" element={<Dashboard />} />

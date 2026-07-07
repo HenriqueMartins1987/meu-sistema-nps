@@ -16765,6 +16765,18 @@ function requireMasterAdmin(req, res, next) {
   return sendAuthorizationError(req, res, 403, 'AUTH_FORBIDDEN_MASTER', 'Acesso restrito ao Administrador Master');
 }
 
+function canManageUserClinicLinks(user) {
+  return isMasterAdminUser(user) || normalizeAccessRole(user?.role) === 'sac_operator';
+}
+
+function requireUserClinicLinkManager(req, res, next) {
+  if (canManageUserClinicLinks(req.user)) {
+    return next();
+  }
+
+  return sendAuthorizationError(req, res, 403, 'AUTH_FORBIDDEN_USER_CLINICS', 'Acesso restrito ao Administrador Master ou Operador de SAC.');
+}
+
 function requireEcuroRobotMaster(req, res, next) {
   if (isMasterAdminUser(req.user)) {
     return next();
@@ -32802,7 +32814,10 @@ app.get('/clinics', authenticate, async (req, res) => {
     res.set('Expires', '0');
     res.set('Surrogate-Control', 'no-store');
 
-    const rows = await getClinicsForUser(req.user);
+    const clinicLinkManagementScope = String(req.query.scope || '').trim() === 'user-clinic-links';
+    const rows = clinicLinkManagementScope && normalizeAccessRole(req.user?.role) === 'sac_operator'
+      ? await getClinicsForUser({ ...req.user, role: 'admin' })
+      : await getClinicsForUser(req.user);
 
     if (!rows.length) {
       console.warn('[GET /clinics] Nenhuma clínica encontrada.', {
@@ -33293,13 +33308,24 @@ app.delete('/admin/registration-requests/:id', authenticate, requireMasterAdmin,
   }
 });
 
-app.get('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
+app.get('/admin/users', authenticate, requireUserClinicLinkManager, async (req, res) => {
   try {
+    const clinicLinksOnly = !isMasterAdminUser(req.user) && normalizeAccessRole(req.user?.role) === 'sac_operator';
+    const userWhere = ['deleted_at IS NULL'];
+    const userParams = [];
+
+    if (clinicLinksOnly) {
+      userWhere.push("LOWER(TRIM(COALESCE(role, ''))) NOT IN ('master_admin', 'admin')");
+      userWhere.push("LOWER(TRIM(COALESCE(email, ''))) NOT IN (?, ?, ?)");
+      userParams.push(masterAdminEmail, defaultAdminEmail, 'admin@sorria.com');
+    }
+
     const [users] = await pool.query(
       `SELECT id, name, username, email, role, position, phone, whatsapp, cpf, crc_operator_area, department, permissions, action_permissions, active, authorization_status, must_change_password, created_at, updated_at
        FROM users
-       WHERE deleted_at IS NULL
-       ORDER BY name ASC`
+       WHERE ${userWhere.join(' AND ')}
+       ORDER BY name ASC`,
+      userParams
     );
     const [links] = await pool.query('SELECT user_id, clinic_id, can_edit FROM user_clinics');
     const clinicsByUser = links.reduce((acc, link) => {
@@ -33324,11 +33350,29 @@ app.get('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
         actionPermissionList = defaultActionPermissionsForRole(user.role);
       }
 
+      const userClinics = clinicsByUser[user.id] || [];
+
+      if (clinicLinksOnly) {
+        return {
+          id: user.id,
+          name: user.name,
+          username: user.username,
+          email: user.email,
+          role: user.role,
+          position: user.position,
+          active: user.active,
+          authorization_status: user.authorization_status,
+          created_at: user.created_at,
+          updated_at: user.updated_at,
+          clinics: userClinics
+        };
+      }
+
       return {
         ...user,
         permissions,
         actionPermissions: Array.isArray(actionPermissionList) ? actionPermissionList : defaultActionPermissionsForRole(user.role),
-        clinics: clinicsByUser[user.id] || []
+        clinics: userClinics
       };
     }));
   } catch (error) {
@@ -33798,7 +33842,7 @@ app.post('/admin/users', authenticate, requireMasterAdmin, async (req, res) => {
     res.status(500).json({ error: 'Erro ao criar usuário.' });
   }
 });
-app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res) => {
+app.patch('/admin/users/:id', authenticate, requireUserClinicLinkManager, async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL', [req.params.id]);
 
@@ -33807,6 +33851,59 @@ app.patch('/admin/users/:id', authenticate, requireMasterAdmin, async (req, res)
     }
 
     const current = rows[0];
+    const isSacClinicLinkUpdate = !isMasterAdminUser(req.user) && normalizeAccessRole(req.user?.role) === 'sac_operator';
+
+    if (isSacClinicLinkUpdate) {
+      const bodyKeys = Object.keys(req.body || {});
+      const targetRole = normalizeAccessRole(current.role);
+      const targetEmail = String(current.email || '').trim().toLowerCase();
+
+      if (!bodyKeys.length || bodyKeys.some((key) => key !== 'clinicIds')) {
+        return res.status(403).json({ error: 'Operador de SAC pode alterar apenas as clínicas vinculadas ao usuário.' });
+      }
+
+      if (targetRole === 'master_admin' || targetRole === 'admin' || targetEmail === masterAdminEmail || targetEmail === defaultAdminEmail || targetEmail === 'admin@sorria.com') {
+        return res.status(403).json({ error: 'Operador de SAC não pode alterar vínculos de Administrador Master ou Administradores.' });
+      }
+
+      const previousClinicIds = await getUserClinicIds(current.id);
+      const normalizedNextClinicIds = normalizeClinicIds(req.body.clinicIds);
+
+      if (normalizedNextClinicIds.length) {
+        const [validClinics] = await pool.query(
+          'SELECT id FROM clinics WHERE active = 1 AND id IN (?)',
+          [normalizedNextClinicIds]
+        );
+        const validIds = new Set(validClinics.map((clinic) => Number(clinic.id)));
+        if (normalizedNextClinicIds.some((clinicId) => !validIds.has(clinicId))) {
+          return res.status(400).json({ error: 'Uma ou mais clínicas informadas não estão ativas.' });
+        }
+      }
+
+      await pool.query('DELETE FROM user_clinics WHERE user_id = ?', [current.id]);
+      await Promise.all(normalizedNextClinicIds.map((clinicId) => (
+        pool.query(
+          'INSERT INTO user_clinics (user_id, clinic_id, can_edit) VALUES (?, ?, 1)',
+          [current.id, clinicId]
+        )
+      )));
+      await syncOperatorClinicLinks(current.id, normalizedNextClinicIds, getActorName(req.user));
+      await syncClinicLeadershipForUser({
+        userId: current.id,
+        previousRole: current.role,
+        nextRole: current.role,
+        previousName: current.name,
+        nextName: current.name,
+        previousClinicIds,
+        nextClinicIds: normalizedNextClinicIds
+      });
+
+      return res.json({
+        message: 'Clínicas vinculadas ao usuário atualizadas com sucesso.',
+        clinicIds: normalizedNextClinicIds
+      });
+    }
+
     const requestedRole = normalizeAccessRole(req.body.role || current.role);
     const currentEmail = String(current.email || '').toLowerCase();
     const requestedEmail = Object.prototype.hasOwnProperty.call(req.body || {}, 'email')

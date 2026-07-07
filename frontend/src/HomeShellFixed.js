@@ -312,6 +312,8 @@ function HomeShellFixed() {
         { label: 'Painel Gerencial', path: '/admin', permission: 'admin_panel', adminOnly: true },
         { label: 'Monitoria Master', path: '/admin/monitoria', permission: 'admin_panel', adminOnly: true },
         { label: 'Configurações > WhatsApps Conectados', path: '/home/whatsapp-management/instances', permission: 'whatsapp_management', adminOnly: true },
+        { label: 'Agenda Telefônica', path: '/dashboard', permission: 'complaints_dashboard', sacOnly: true },
+        { label: 'Vínculo de Clínicas', path: '/admin/usuarios-clinicas', permission: 'complaints_management', sacOnly: true },
         { label: 'Minha conta', path: '/perfil', permission: 'home' }
       ]
     }
@@ -338,6 +340,10 @@ function HomeShellFixed() {
         }
 
         if (item.whatsappOnly && !canAccessWhatsAppManagement(user)) {
+          return false;
+        }
+
+        if (item.sacOnly && normalizeRoleValue(user?.role) !== 'sac_operator') {
           return false;
         }
 
