@@ -115,7 +115,7 @@ function groupCount(items, key) {
 
   return Array.from(map.entries())
     .map(([label, total]) => ({ label, total }))
-    .sort((a, b) => b.total - a.total);
+    .sort((a, b) => b.total - a.total || String(a.label).localeCompare(String(b.label), 'pt-BR'));
 }
 
 function buildBarData(rows, color = '#0b6f5f') {
@@ -289,17 +289,103 @@ function getComplaintServiceLabel(item) {
 }
 
 function getCurrentResponsibleName(item) {
-  return (
-    item?.assigned_responsible_name
-    || item?.forwarded_to_label
-    || item?.coordinator_name
-    || item?.manager_name
-    || 'Nao informado'
-  );
+  return getPartnerInfo(item).label;
+}
+
+function roleLabelForRanking(role, fallbackName = '') {
+  const normalizedRole = normalizeRoleValue(role);
+  if (normalizedRole === 'coordinator') return 'Coordenador';
+  if (normalizedRole === 'manager') return 'Gerente';
+  if (normalizedRole === 'sac_operator') return 'Operador de SAC';
+  if (normalizedRole === 'supervisor_crc') return 'Supervisor CRC';
+  if (normalizedRole === 'admin') return 'Administrador';
+  if (normalizedRole === 'master_admin') return 'Administrador Master';
+  if (normalizeOptionKey(fallbackName).includes('administr')) return 'Administração';
+  return 'Responsável';
+}
+
+function isPlaceholderResponsibleName(value) {
+  const normalized = normalizeOptionKey(value);
+  return !normalized || [
+    'naoinformado',
+    'semresponsavel',
+    'responsavel',
+    'responsavelclinica',
+    'coordenador',
+    'coordenadordaunidade',
+    'semcoordenador',
+    'gerente',
+    'gerentedaclinica',
+    'semgerente'
+  ].includes(normalized);
+}
+
+function buildRankingLabel(name, roleLabel) {
+  const safeName = String(name || '').trim() || 'Nao informado';
+  const safeRole = String(roleLabel || '').trim();
+  if (!safeRole || safeName === 'Nao informado') return safeName;
+  return `${safeName} - ${safeRole}`;
+}
+
+function getPartnerInfo(item) {
+  const forwardedRole = normalizeRoleValue(item?.forwarded_to_role);
+  const assignedRole = normalizeRoleValue(item?.assigned_responsible_role || item?.forwarded_to_role);
+
+  const candidates = [
+    {
+      name: item?.assigned_responsible_name,
+      role: assignedRole,
+      phone: item?.assigned_responsible_whatsapp || item?.assigned_responsible_phone
+    },
+    forwardedRole === 'manager' ? {
+      name: item?.manager_name,
+      role: 'manager',
+      phone: item?.manager_phone
+    } : null,
+    forwardedRole === 'coordinator' ? {
+      name: item?.coordinator_name,
+      role: 'coordinator',
+      phone: item?.coordinator_phone
+    } : null,
+    forwardedRole === 'admin' || forwardedRole === 'master_admin' ? {
+      name: item?.forwarded_to_label || 'Administração',
+      role: forwardedRole,
+      phone: item?.assigned_responsible_whatsapp || item?.assigned_responsible_phone
+    } : null,
+    {
+      name: item?.coordinator_name,
+      role: 'coordinator',
+      phone: item?.coordinator_phone
+    },
+    {
+      name: item?.manager_name,
+      role: 'manager',
+      phone: item?.manager_phone
+    },
+    {
+      name: item?.forwarded_to_label,
+      role: forwardedRole,
+      phone: item?.assigned_responsible_whatsapp || item?.assigned_responsible_phone
+    }
+  ].filter(Boolean);
+
+  const selected = candidates.find((candidate) => !isPlaceholderResponsibleName(candidate.name))
+    || candidates.find((candidate) => String(candidate.name || '').trim())
+    || {};
+  const roleLabel = roleLabelForRanking(selected.role, selected.name);
+  const name = String(selected.name || '').trim() || 'Nao informado';
+
+  return {
+    name,
+    role: selected.role || '',
+    roleLabel,
+    label: buildRankingLabel(name, roleLabel),
+    phone: selected.phone || ''
+  };
 }
 
 function getPartnerLabel(item) {
-  return item?.coordinator_name || 'Nao informado';
+  return getPartnerInfo(item).label;
 }
 
 function getComplaintSummary(item, maxLength = 280) {
@@ -502,7 +588,7 @@ function Dashboard() {
     cities: mergeValues(uniqueValues(clinics, 'city'), uniqueValues(rows, 'city')),
     states: mergeValues(uniqueValues(clinics, 'state'), uniqueValues(rows, 'state')),
     regions: mergeValues(uniqueValues(clinics, 'region'), uniqueValues(rows, 'region')),
-    coordinators: mergeValues(uniqueValues(clinics, 'coordinator_name'), uniqueValues(rows, 'coordinator_name')),
+    coordinators: mergeValues(rows.map(getPartnerLabel).filter(Boolean)),
     types: mergeValues(complaintTypes.map((item) => item.label), uniqueValues(rows, 'complaint_type')),
     channels: orderOtherLast(dedupeDisplayValues(mergeValues(channels.map((item) => item.label), uniqueValues(rows, 'channel')))),
     years: Array.from(new Set(rows
@@ -528,6 +614,10 @@ function Dashboard() {
       item.state,
       item.region,
       item.coordinator_name,
+      item.assigned_responsible_name,
+      item.forwarded_to_label,
+      item.manager_name,
+      getPartnerLabel(item),
       item.complaint_type,
       item.channel
     ].map(normalizeText).join(' ');
@@ -537,7 +627,7 @@ function Dashboard() {
       && (!filters.city || item.city === filters.city)
       && (!filters.state || item.state === filters.state)
       && (!filters.region || item.region === filters.region)
-      && (!filters.coordinator || item.coordinator_name === filters.coordinator)
+      && (!filters.coordinator || getPartnerLabel(item) === filters.coordinator)
       && (!filters.status || item.status === filters.status)
       && (!filters.type || item.complaint_type === filters.type)
       && (!filters.priority || item.priority === filters.priority)
@@ -653,7 +743,7 @@ function Dashboard() {
       prioridade_origem: `${priorityLabel(item.priority)} - ${item.created_origin || 'Interno'}`,
       status: statusLabels[item.status] || item.status || 'Aberta',
       prazo: deadline === 'overdue' ? 'Vencida' : deadline === 'warning' ? 'Perto de vencer' : deadline === 'closed' ? 'Fechada' : 'No prazo',
-      responsavel: item.coordinator_name || 'Não vinculado',
+      responsavel: getCurrentResponsibleName(item),
       encaminhamento: item.forwarded_to_label || 'Sem encaminhamento',
       ultima_tratativa: lastComplaintActor(item),
       especialidade: item.service_type || 'Sem especialidade informada',
@@ -664,14 +754,14 @@ function Dashboard() {
   }), [baseRows]);
   const baseTableHighlights = useMemo(() => {
     const units = new Set(filteredRows.map((item) => item.clinic_name).filter(Boolean)).size;
-    const coordinators = new Set(filteredRows.map((item) => item.coordinator_name).filter(Boolean)).size;
+    const responsibleCount = new Set(filteredRows.map(getPartnerLabel).filter((value) => value && value !== 'Nao informado')).size;
     const highPriority = filteredRows.filter((item) => item.priority === 'alta').length;
     const overdue = filteredRows.filter((item) => buildDeadlineInfo(item) === 'overdue').length;
 
     return [
       { label: 'Protocolos', value: filteredRows.length },
       { label: 'Unidades', value: units },
-      { label: 'Coordenadores', value: coordinators },
+      { label: 'Responsáveis', value: responsibleCount },
       { label: 'Alta prioridade', value: highPriority },
       { label: 'Vencidos', value: overdue }
     ];
@@ -749,14 +839,16 @@ function Dashboard() {
   const partnerRankingDetails = useMemo(() => {
     const total = filteredRows.length || 1;
 
-    return byCoordinatorAll.slice(0, 12).map((item, index) => {
+    return byCoordinatorAll.map((item, index) => {
       const matchingRows = filteredRows.filter((row) => getPartnerLabel(row) === item.label);
-      const phones = Array.from(new Set(matchingRows.map((row) => row.coordinator_phone).filter(Boolean)));
+      const partnerInfo = getPartnerInfo(matchingRows[0] || {});
+      const phones = Array.from(new Set(matchingRows.map((row) => getPartnerInfo(row).phone).filter(Boolean)));
       const clinicsServed = Array.from(new Set(matchingRows.map((row) => row.clinic_name).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'pt-BR'));
 
       return {
         ...item,
         rank: index + 1,
+        roleLabel: partnerInfo.roleLabel,
         share: Math.round((item.total / total) * 100),
         phone: phones[0] || '',
         phoneDisplay: formatPhoneForDisplay(phones[0]),
@@ -1241,14 +1333,16 @@ function Dashboard() {
           <tr>
             <td>${String(partner.rank).padStart(2, '0')}</td>
             <td>${escapeHtml(partner.label)}</td>
+            <td>${escapeHtml(partner.roleLabel || 'Responsável')}</td>
             <td>${escapeHtml(partner.phoneDisplay)}</td>
+            <td>${escapeHtml(partner.clinicsServed.slice(0, 5).join(', ') || 'Unidade nao informada')}</td>
             <td>${escapeHtml(String(partner.total))}</td>
             <td>${escapeHtml(`${partner.share}%`)}</td>
             <td>${escapeHtml(String(partner.inProgress))}</td>
             <td>${escapeHtml(String(partner.overdue))}</td>
           </tr>
         `).join('')
-        : '<tr><td colspan="7">Nenhum parceiro encontrado no cenario filtrado.</td></tr>'
+        : '<tr><td colspan="9">Nenhum parceiro encontrado no cenario filtrado.</td></tr>'
     );
     const renderBreakdownRows = (rows) => (
       rows.length
@@ -1267,7 +1361,7 @@ function Dashboard() {
           <div>
             <p>Parceiro #${String(partner.rank).padStart(2, '0')}</p>
             <h2>${escapeHtml(partner.label)}</h2>
-            <span>${escapeHtml(partner.clinicsServed.slice(0, 8).join(', ') || 'Unidade nao informada')}</span>
+            <span>${escapeHtml(partner.roleLabel || 'Responsável')} · ${escapeHtml(partner.clinicsServed.slice(0, 8).join(', ') || 'Unidade nao informada')}</span>
           </div>
           <div class="partner-kpis">
             <article><strong>${escapeHtml(String(partner.total))}</strong><span>reclamacoes</span></article>
@@ -1369,7 +1463,7 @@ function Dashboard() {
                 <div>
                   <p class="report-kicker">Grupo Sorria - Dashboard de reclamacoes</p>
                   <h1>Ranking de parceiros com mais reclamacoes</h1>
-                  <p class="report-subtitle">Documento gerado com os filtros atuais do dashboard, incluindo classificacoes, servicos, status e amostra de protocolos por parceiro.</p>
+                  <p class="report-subtitle">Documento gerado com os filtros atuais do dashboard. O ranking considera o responsavel real do protocolo: responsavel atribuido, encaminhamento, coordenador ou gerente da unidade.</p>
                 </div>
                 <div class="summary-card"><span>Emitido em</span><strong>${escapeHtml(printDate.toLocaleString('pt-BR'))}</strong></div>
               </div>
@@ -1384,7 +1478,7 @@ function Dashboard() {
             <article class="report-block">
               <h3>Ranking consolidado</h3>
               <table>
-                <thead><tr><th>#</th><th>Parceiro</th><th>Telefone</th><th>Total</th><th>% carteira</th><th>Em andamento</th><th>Vencidas</th></tr></thead>
+                <thead><tr><th>#</th><th>Parceiro / responsavel</th><th>Alcada</th><th>Telefone</th><th>Unidades</th><th>Total</th><th>% carteira</th><th>Em andamento</th><th>Vencidas</th></tr></thead>
                 <tbody>${renderRankingRows()}</tbody>
               </table>
             </article>
@@ -1483,7 +1577,7 @@ function Dashboard() {
             {options.cities.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
           <select className="field" value={filters.coordinator} onChange={(event) => updateFilter('coordinator', event.target.value)}>
-            <option value="">Todos os coordenadores</option>
+            <option value="">Todos os responsáveis</option>
             {options.coordinators.map((value) => <option key={value} value={value}>{value}</option>)}
           </select>
           <select className="field" value={filters.status} onChange={(event) => updateFilter('status', event.target.value)}>
@@ -1947,7 +2041,7 @@ function Dashboard() {
               <div>
                 <p className="eyebrow">Ownership</p>
                 <h2>Responsaveis e parceiros pressionados</h2>
-                <p className="base-subtitle">Os graficos de ownership ficam isolados para facilitar a leitura de responsabilizacao e carga da carteira.</p>
+                <p className="base-subtitle">Ranking calculado pelo responsavel real do protocolo: atribuido, encaminhado, coordenador ou gerente da unidade.</p>
               </div>
               <button className="outline-action" onClick={exportPartnerRankingPdf} disabled={!partnerRankingDetails.length}>
                 <span className="export-badge pdf">PDF</span>
@@ -1960,7 +2054,7 @@ function Dashboard() {
             {canViewCollaboratorWorkload && (
               <>
                 <article className="chart-card">
-                  <h2>Carteira por parceiro</h2>
+                  <h2>Carteira por responsavel</h2>
                   <div className="chart-box">
                     <Bar data={buildBarData(byCoordinator, '#8a4f7d')} options={chartOptions} />
                   </div>
@@ -1980,7 +2074,7 @@ function Dashboard() {
                   <div>
                     <p className="eyebrow">Parceiros</p>
                     <h2>Parceiros com mais reclamações</h2>
-                    <p className="base-subtitle">Clique no nome do parceiro para filtrar a carteira e aprofundar a análise do responsável.</p>
+                    <p className="base-subtitle">Clique no parceiro/responsavel para filtrar a carteira e conferir classificacoes e prazos.</p>
                   </div>
                 </div>
                 <div className="dashboard-coordinator-list">
@@ -2042,7 +2136,7 @@ function Dashboard() {
                 let isActive = false;
                 if (item.label === 'Protocolos') onClick = () => clearFilters(['status', 'sla', 'priority']);
                 if (item.label === 'Unidades') onClick = () => clearFilters(['clinic']);
-                if (item.label === 'Coordenadores') onClick = () => clearFilters(['coordinator']);
+                if (item.label === 'Responsáveis') onClick = () => clearFilters(['coordinator']);
                 if (item.label === 'Alta prioridade') {
                   onClick = () => applyToggleFilters({ priority: 'alta' });
                   isActive = filters.priority === 'alta';
@@ -2117,8 +2211,10 @@ function Dashboard() {
                       </td>
                       <td>
                         <div className="table-cell-stack">
-                          <span className="cell-primary">{item.coordinator_name || 'Não vinculado'}</span>
-                          <span className="cell-secondary">{item.forwarded_to_label || 'Sem encaminhamento'}</span>
+                          <span className="cell-primary">{getCurrentResponsibleName(item)}</span>
+                          <span className="cell-secondary">
+                            Coord.: {item.coordinator_name || 'Não informado'} · Ger.: {item.manager_name || 'Não informado'}
+                          </span>
                         </div>
                       </td>
                       <td>

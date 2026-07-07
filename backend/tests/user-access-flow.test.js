@@ -498,6 +498,125 @@ test('master admin cannot update a user to duplicated e-mail', async () => {
   assert.equal(updateAttempted, false);
 });
 
+test('SAC operator can update only clinic links for non-admin users', async () => {
+  const insertedClinics = [];
+  let deletedUserClinicLinks = false;
+  let operatorClinicSyncUpdated = false;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL'),
+      reply: async () => [[{
+        id: 44,
+        name: 'Maria Silva',
+        email: 'maria@example.com',
+        role: 'viewer',
+        active: 1
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[{ clinic_id: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT id FROM clinics WHERE active = 1 AND id IN (?)'),
+      reply: async () => [[{ id: 2 }, { id: 3 }]]
+    },
+    {
+      match: (sql) => sql.includes('DELETE FROM user_clinics WHERE user_id = ?'),
+      reply: async () => {
+        deletedUserClinicLinks = true;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO user_clinics'),
+      reply: async (sql, params) => {
+        insertedClinics.push(params[1]);
+        return [{ insertId: insertedClinics.length }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE operator_clinics SET active = 0'),
+      reply: async () => {
+        operatorClinicSyncUpdated = true;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO operator_clinics'),
+      reply: async () => [{ insertId: 1 }]
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/admin/users/44')
+    .set('Authorization', `Bearer ${signToken({
+      id: 7,
+      email: 'sac@example.com',
+      role: 'sac_operator',
+      name: 'Operador SAC',
+      permissions: ['complaints_management'],
+      clinicIds: [1],
+      mustChangePassword: false
+    })}`)
+    .send({ clinicIds: [2, 3] });
+
+  assert.equal(response.status, 200);
+  assert.equal(deletedUserClinicLinks, true);
+  assert.equal(operatorClinicSyncUpdated, true);
+  assert.deepEqual(insertedClinics, [2, 3]);
+  assert.deepEqual(response.body.clinicIds, [2, 3]);
+});
+
+test('SAC operator cannot change clinic links for admin users', async () => {
+  let clinicUpdateAttempted = false;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL'),
+      reply: async () => [[{
+        id: 45,
+        name: 'Administrador',
+        email: 'admin@sorria.com',
+        role: 'admin',
+        active: 1
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('DELETE FROM user_clinics') || sql.includes('INSERT INTO user_clinics'),
+      reply: async () => {
+        clinicUpdateAttempted = true;
+        return [{ affectedRows: 1 }];
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/admin/users/45')
+    .set('Authorization', `Bearer ${signToken({
+      id: 7,
+      email: 'sac@example.com',
+      role: 'sac_operator',
+      name: 'Operador SAC',
+      permissions: ['complaints_management'],
+      clinicIds: [1],
+      mustChangePassword: false
+    })}`)
+    .send({ clinicIds: [2, 3] });
+
+  assert.equal(response.status, 403);
+  assert.equal(clinicUpdateAttempted, false);
+});
+
 test('login reports first access requirement and blocks protected routes', async () => {
   const temporaryPassword = 'Tmp@12345';
   const passwordHash = await bcrypt.hash(temporaryPassword, 10);
