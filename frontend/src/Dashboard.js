@@ -37,6 +37,12 @@ const evolutionGranularityOptions = [
   { value: 'week', label: 'Semanal' },
   { value: 'day', label: 'Diaria' }
 ];
+const executiveReportPeriodOptions = [
+  { value: 'all', label: 'Diario, semanal e mensal' },
+  { value: 'day', label: 'Somente diario' },
+  { value: 'week', label: 'Somente semanal' },
+  { value: 'month', label: 'Somente mensal' }
+];
 
 const initialFilters = {
   clinic: '',
@@ -230,6 +236,81 @@ function formatDaysMetric(value) {
   return `${formatDecimal(safeValue, safeValue >= 10 ? 0 : 1)} dia${safeValue >= 1.5 ? 's' : ''}`;
 }
 
+function formatDateOnly(value) {
+  if (!value) return 'Nao informado';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Nao informado';
+  return new Intl.DateTimeFormat('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  }).format(date);
+}
+
+function formatPeriodRange(start, end) {
+  return `${formatDateOnly(start)} a ${formatDateOnly(end)}`;
+}
+
+function getCurrentPeriodRange(period) {
+  const now = new Date();
+  if (period === 'day') {
+    return { start: startOfDay(now), end: endOfDay(now) };
+  }
+  if (period === 'week') {
+    const start = startOfWeek(now);
+    return { start, end: endOfDay(addDays(start, 6)) };
+  }
+  const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+  return { start, end };
+}
+
+function isWithinPeriod(item, range) {
+  const createdAt = toDateOrNull(item?.created_at);
+  return Boolean(createdAt && range?.start && range?.end && createdAt >= range.start && createdAt <= range.end);
+}
+
+function isDateValueWithinPeriod(value, range) {
+  const date = toDateOrNull(value);
+  return Boolean(date && range?.start && range?.end && date >= range.start && date <= range.end);
+}
+
+function getComplaintReasonLabel(item) {
+  const type = item?.complaint_type_other
+    ? `${item.complaint_type || 'Outros'}: ${item.complaint_type_other}`
+    : item?.complaint_type;
+  return type || item?.description || 'Nao informado';
+}
+
+function getComplaintServiceLabel(item) {
+  return item?.service_type_other
+    ? `${item.service_type || 'Outros'}: ${item.service_type_other}`
+    : (item?.service_type || 'Nao informado');
+}
+
+function getCurrentResponsibleName(item) {
+  return (
+    item?.assigned_responsible_name
+    || item?.forwarded_to_label
+    || item?.coordinator_name
+    || item?.manager_name
+    || 'Nao informado'
+  );
+}
+
+function getComplaintSummary(item, maxLength = 280) {
+  const parts = [
+    item?.description,
+    item?.operator_comment ? `Obs. operador: ${item.operator_comment}` : '',
+    item?.treatment_comment ? `Tratativa: ${item.treatment_comment}` : '',
+    item?.sac_audit_comment ? `Auditoria SAC: ${item.sac_audit_comment}` : ''
+  ].filter(Boolean);
+  const text = parts.join(' | ').replace(/\s+/g, ' ').trim();
+  if (!text) return 'Resumo nao informado.';
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength).trimEnd()}...`;
+}
+
 function resolutionDateForItem(item) {
   if (item?.status !== 'resolvida') return null;
   return toDateOrNull(item?.closed_at || item?.resolved_at || item?.updated_at);
@@ -349,7 +430,8 @@ function Dashboard() {
   const currentUserRole = normalizeRoleValue(currentUser?.role);
   const canViewCollaboratorWorkload = isMasterAdmin(currentUser)
     || isAdmin(currentUser)
-    || currentUserRole === 'manager';
+    || currentUserRole === 'manager'
+    || currentUserRole === 'sac_operator';
   const [rows, setRows] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [filters, setFilters] = useState(initialFilters);
@@ -358,6 +440,7 @@ function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState('');
   const [evolutionGranularity, setEvolutionGranularity] = useState('month');
+  const [executiveReportPeriod, setExecutiveReportPeriod] = useState('all');
 
   useEffect(() => {
     const loadRows = async () => {
@@ -504,6 +587,7 @@ function Dashboard() {
   const byType = useMemo(() => groupCount(filteredRows, (item) => item.complaint_type).slice(0, 10), [filteredRows]);
   const byService = useMemo(() => groupCount(filteredRows, (item) => serviceLabel(item.service_type)).slice(0, 10), [filteredRows]);
   const byClinic = useMemo(() => groupCount(filteredRows, (item) => item.clinic_name).slice(0, 10), [filteredRows]);
+  const byReason = useMemo(() => groupCount(filteredRows, getComplaintReasonLabel).slice(0, 10), [filteredRows]);
   const byCity = useMemo(() => groupCount(filteredRows, (item) => item.city).slice(0, 10), [filteredRows]);
   const byState = useMemo(() => groupCount(filteredRows, (item) => item.state).slice(0, 10), [filteredRows]);
   const byRegion = useMemo(() => groupCount(filteredRows, (item) => item.region), [filteredRows]);
@@ -586,6 +670,37 @@ function Dashboard() {
       };
     });
   }, [byCoordinator, filteredRows]);
+
+  const executiveReportSections = useMemo(() => {
+    const periodConfig = [
+      { key: 'day', label: 'Diario', range: getCurrentPeriodRange('day') },
+      { key: 'week', label: 'Semanal', range: getCurrentPeriodRange('week') },
+      { key: 'month', label: 'Mensal', range: getCurrentPeriodRange('month') }
+    ];
+    const selectedPeriods = executiveReportPeriod === 'all'
+      ? periodConfig
+      : periodConfig.filter((period) => period.key === executiveReportPeriod);
+
+    return selectedPeriods.map((period) => {
+      const periodRows = filteredRows.filter((item) => isWithinPeriod(item, period.range));
+      const scheduledRows = filteredRows
+        .filter((item) => (item.appointment_due_at || item.appointment_sla_active) && isDateValueWithinPeriod(item.appointment_due_at || item.due_at, period.range))
+        .sort((a, b) => new Date(a.appointment_due_at || 0).getTime() - new Date(b.appointment_due_at || 0).getTime());
+      const overdueRows = filteredRows
+        .filter((item) => buildDeadlineInfo(item) === 'overdue' && isDateValueWithinPeriod(item.due_at || item.appointment_due_at, period.range))
+        .sort((a, b) => new Date(a.due_at || 0).getTime() - new Date(b.due_at || 0).getTime());
+
+      return {
+        ...period,
+        periodLabel: formatPeriodRange(period.range.start, period.range.end),
+        rows: periodRows,
+        rankingClinics: groupCount(periodRows, (item) => item.clinic_name).slice(0, 12),
+        rankingReasons: groupCount(periodRows, getComplaintReasonLabel).slice(0, 12),
+        scheduledRows,
+        overdueRows
+      };
+    });
+  }, [executiveReportPeriod, filteredRows]);
 
   useEffect(() => {
     setTablePage(1);
@@ -755,6 +870,228 @@ function Dashboard() {
     reportWindow.print();
   };
 
+  const exportExecutiveComplaintPdf = () => {
+    const reportWindow = window.open('', '_blank');
+
+    if (!reportWindow) {
+      setFeedback('Permita pop-ups para gerar o PDF executivo.');
+      return;
+    }
+
+    const printDate = new Date();
+    const renderRankingRows = (rows) => (
+      rows.length
+        ? rows.map((row, index) => `
+          <tr>
+            <td>${String(index + 1).padStart(2, '0')}</td>
+            <td>${escapeHtml(row.label)}</td>
+            <td>${escapeHtml(String(row.total))}</td>
+          </tr>
+        `).join('')
+        : '<tr><td colspan="3">Nenhum registro no periodo.</td></tr>'
+    );
+    const renderScheduledRows = (rows) => (
+      rows.length
+        ? rows.slice(0, 20).map((item) => `
+          <tr>
+            <td>${escapeHtml(item.protocol || item.id)}</td>
+            <td>${escapeHtml(item.patient_name || 'Nao informado')}</td>
+            <td>${escapeHtml(item.clinic_name || 'Nao informado')}</td>
+            <td>${escapeHtml(formatShortDate(item.appointment_due_at || item.due_at))}</td>
+            <td>${escapeHtml(statusLabels[item.status] || item.status || 'Aberta')}</td>
+            <td>${escapeHtml(getCurrentResponsibleName(item))}</td>
+            <td>${escapeHtml(getComplaintServiceLabel(item))}</td>
+            <td>${escapeHtml(getComplaintSummary(item, 180))}</td>
+          </tr>
+        `).join('')
+        : '<tr><td colspan="8">Nenhum paciente agendado para continuidade do tratamento no periodo.</td></tr>'
+    );
+    const renderOverdueRows = (rows) => (
+      rows.length
+        ? rows.slice(0, 25).map((item) => `
+          <tr>
+            <td>${escapeHtml(item.protocol || item.id)}</td>
+            <td>${escapeHtml(item.patient_name || 'Nao informado')}</td>
+            <td>${escapeHtml(item.clinic_name || 'Nao informado')}</td>
+            <td>${escapeHtml(formatShortDate(item.due_at || item.appointment_due_at))}</td>
+            <td>${escapeHtml(item.coordinator_name || 'Nao informado')}</td>
+            <td>${escapeHtml(item.manager_name || 'Nao informado')}</td>
+            <td>${escapeHtml(getCurrentResponsibleName(item))}</td>
+            <td>${escapeHtml(getComplaintReasonLabel(item))}</td>
+            <td>${escapeHtml(getComplaintSummary(item, 220))}</td>
+          </tr>
+        `).join('')
+        : '<tr><td colspan="9">Nenhum prazo vencido no periodo.</td></tr>'
+    );
+
+    const periodSectionsHtml = executiveReportSections.map((section) => `
+      <section class="period-section">
+        <div class="section-title">
+          <div>
+            <p>${escapeHtml(section.label)}</p>
+            <h2>${escapeHtml(section.periodLabel)}</h2>
+          </div>
+          <div class="period-kpis">
+            <article><strong>${section.rows.length}</strong><span>reclamacoes</span></article>
+            <article><strong>${section.scheduledRows.length}</strong><span>agendados</span></article>
+            <article><strong>${section.overdueRows.length}</strong><span>vencidos</span></article>
+          </div>
+        </div>
+
+        <div class="two-columns">
+          <article class="report-block">
+            <h3>Ranking de unidades com mais reclamacoes</h3>
+            <table>
+              <thead><tr><th>#</th><th>Unidade</th><th>Total</th></tr></thead>
+              <tbody>${renderRankingRows(section.rankingClinics)}</tbody>
+            </table>
+          </article>
+          <article class="report-block">
+            <h3>Principais motivos</h3>
+            <table>
+              <thead><tr><th>#</th><th>Motivo</th><th>Total</th></tr></thead>
+              <tbody>${renderRankingRows(section.rankingReasons)}</tbody>
+            </table>
+          </article>
+        </div>
+
+        <article class="report-block">
+          <h3>Pacientes agendados para continuidade do tratamento</h3>
+          <table class="detail-table">
+            <thead>
+              <tr>
+                <th>Protocolo</th>
+                <th>Paciente</th>
+                <th>Unidade</th>
+                <th>Agendamento</th>
+                <th>Status</th>
+                <th>Responsavel atual</th>
+                <th>Tratamento/servico</th>
+                <th>Resumo</th>
+              </tr>
+            </thead>
+            <tbody>${renderScheduledRows(section.scheduledRows)}</tbody>
+          </table>
+        </article>
+
+        <article class="report-block">
+          <h3>Prazos vencidos com coordenador, gerente e resumo da reclamacao</h3>
+          <table class="detail-table">
+            <thead>
+              <tr>
+                <th>Protocolo</th>
+                <th>Paciente</th>
+                <th>Unidade</th>
+                <th>Prazo</th>
+                <th>Coordenador</th>
+                <th>Gerente</th>
+                <th>Responsavel atual</th>
+                <th>Motivo</th>
+                <th>Resumo</th>
+              </tr>
+            </thead>
+            <tbody>${renderOverdueRows(section.overdueRows)}</tbody>
+          </table>
+        </article>
+      </section>
+    `).join('');
+
+    reportWindow.document.write(`
+      <html>
+        <head>
+          <title>Relatorio executivo de reclamacoes</title>
+          <style>
+            @page { size: A4 landscape; margin: 10mm; }
+            * { box-sizing: border-box; }
+            body { margin: 0; font-family: Inter, Arial, sans-serif; color: #172033; background: #fff; }
+            .report-shell { display: flex; flex-direction: column; gap: 18px; }
+            .report-header {
+              border: 1px solid #d7b77e;
+              border-radius: 18px;
+              background: linear-gradient(135deg, #fff8eb 0%, #f0efe8 52%, #e6f3f0 100%);
+              padding: 22px 26px;
+            }
+            .report-header-top { display: flex; justify-content: space-between; gap: 26px; align-items: flex-start; }
+            .report-kicker { margin: 0 0 8px; color: #94651f; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: .1em; }
+            h1 { margin: 0 0 8px; font-size: 28px; color: #0f1f35; line-height: 1.1; }
+            .report-subtitle { margin: 0; color: #53606f; font-size: 13px; max-width: 780px; }
+            .report-meta {
+              min-width: 260px;
+              border: 1px solid #dfcba9;
+              border-radius: 14px;
+              background: rgba(255,255,255,.84);
+              padding: 14px 16px;
+            }
+            .report-meta strong, .summary-card strong, .period-kpis strong {
+              display: block;
+              color: #0f1f35;
+              font-size: 18px;
+              line-height: 1;
+            }
+            .report-meta span, .summary-card span, .period-kpis span {
+              display: block;
+              margin-top: 4px;
+              color: #6b7280;
+              font-size: 10px;
+              font-weight: 800;
+              text-transform: uppercase;
+              letter-spacing: .05em;
+            }
+            .summary-grid { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 10px; }
+            .summary-card { border: 1px solid #e4e7eb; border-radius: 14px; padding: 13px 14px; background: #fff; }
+            .period-section { page-break-inside: avoid; display: flex; flex-direction: column; gap: 12px; }
+            .section-title { display: flex; justify-content: space-between; gap: 18px; align-items: flex-end; border-bottom: 2px solid #0f766e; padding-bottom: 8px; }
+            .section-title p { margin: 0 0 4px; color: #0f766e; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: .08em; }
+            .section-title h2 { margin: 0; color: #111827; font-size: 19px; }
+            .period-kpis { display: grid; grid-template-columns: repeat(3, minmax(92px,1fr)); gap: 8px; }
+            .period-kpis article { border: 1px solid #dbe7e5; border-radius: 12px; padding: 10px 12px; background: #f8fbfa; }
+            .two-columns { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+            .report-block { border: 1px solid #e5e7eb; border-radius: 14px; overflow: hidden; background: #fff; }
+            .report-block h3 { margin: 0; padding: 11px 13px; background: #132238; color: #f8fafc; font-size: 12px; letter-spacing: .02em; }
+            table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 9px; }
+            th { background: #f3f5f7; color: #374151; text-align: left; padding: 8px 7px; font-size: 8px; text-transform: uppercase; letter-spacing: .04em; }
+            td { border-top: 1px solid #e5e7eb; padding: 8px 7px; vertical-align: top; word-break: break-word; }
+            tbody tr:nth-child(even) td { background: #fbf8f1; }
+            .detail-table th, .detail-table td { font-size: 8px; }
+            .report-footer { color: #6b7280; font-size: 10px; display: flex; justify-content: space-between; gap: 18px; }
+          </style>
+        </head>
+        <body>
+          <main class="report-shell">
+            <section class="report-header">
+              <div class="report-header-top">
+                <div>
+                  <p class="report-kicker">Grupo Sorria - Dashboard de reclamacoes</p>
+                  <h1>Relatorio executivo de reclamacoes</h1>
+                  <p class="report-subtitle">Ranking de unidades, principais motivos, pacientes agendados para continuidade do tratamento e prazos vencidos com coordenador, gerente e resumo detalhado da reclamacao. O documento respeita os filtros atuais do dashboard.</p>
+                </div>
+                <div class="report-meta">
+                  <span>Emitido em</span>
+                  <strong>${escapeHtml(printDate.toLocaleString('pt-BR'))}</strong>
+                </div>
+              </div>
+            </section>
+            <section class="summary-grid">
+              <article class="summary-card"><strong>${escapeHtml(String(filteredRows.length))}</strong><span>registros filtrados</span></article>
+              <article class="summary-card"><strong>${escapeHtml(String(byClinic.length))}</strong><span>unidades no ranking</span></article>
+              <article class="summary-card"><strong>${escapeHtml(String(byReason.length))}</strong><span>motivos mapeados</span></article>
+              <article class="summary-card"><strong>${escapeHtml(String(filteredRows.filter((item) => item.appointment_due_at || item.appointment_sla_active).length))}</strong><span>agendados</span></article>
+              <article class="summary-card"><strong>${escapeHtml(String(filteredRows.filter((item) => buildDeadlineInfo(item) === 'overdue').length))}</strong><span>prazos vencidos</span></article>
+            </section>
+            ${periodSectionsHtml}
+            <footer class="report-footer">
+              <span>Base: dashboard de reclamacoes filtrado pelo usuario.</span>
+              <span>Documento gerado automaticamente pelo sistema.</span>
+            </footer>
+          </main>
+        </body>
+      </html>
+    `);
+    reportWindow.document.close();
+    reportWindow.focus();
+    reportWindow.print();
+  };
+
   return (
     <main className="app-page complaints-dashboard-page">
       <header className="page-heading">
@@ -781,9 +1118,25 @@ function Dashboard() {
             <h2>Recorte executivo da carteira</h2>
             <p className="base-subtitle">Cruze filtros operacionais com mes, ano e periodo para ler a pressao real das reclamacoes.</p>
           </div>
-          <button className="outline-action" onClick={() => setFilters(initialFilters)}>
-            Limpar filtros
-          </button>
+          <div className="export-actions dashboard-report-actions">
+            <select
+              className="field"
+              value={executiveReportPeriod}
+              onChange={(event) => setExecutiveReportPeriod(event.target.value)}
+              aria-label="Periodo do relatorio executivo em PDF"
+            >
+              {executiveReportPeriodOptions.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            <button className="outline-action" onClick={exportExecutiveComplaintPdf} disabled={!filteredRows.length}>
+              <span className="export-badge pdf">PDF</span>
+              <span>Relatorio executivo</span>
+            </button>
+            <button className="outline-action" onClick={() => setFilters(initialFilters)}>
+              Limpar filtros
+            </button>
+          </div>
         </div>
 
         <div className="dashboard-filters">
@@ -909,6 +1262,110 @@ function Dashboard() {
         </section>
       ) : (
         <>
+          <section className="management-panel dashboard-stage-panel dashboard-ranking-report-panel">
+            <div className="panel-heading">
+              <div>
+                <p className="eyebrow">Ranking e relatorio</p>
+                <h2>Unidades, motivos, agendados e prazos vencidos</h2>
+                <p className="base-subtitle">Visao liberada para Operador de SAC com ranking das unidades que mais geram reclamacoes e leitura rapida dos pontos que entram no PDF executivo.</p>
+              </div>
+              <button className="outline-action" onClick={exportExecutiveComplaintPdf} disabled={!filteredRows.length}>
+                <span className="export-badge pdf">PDF</span>
+                <span>Baixar ranking executivo</span>
+              </button>
+            </div>
+
+            <div className="dashboard-ranking-grid">
+              <article className="chart-card dashboard-ranking-card">
+                <div className="dashboard-section-head">
+                  <div>
+                    <p className="eyebrow">Ranking</p>
+                    <h2>Unidades com mais reclamacoes</h2>
+                  </div>
+                </div>
+                <div className="dashboard-coordinator-list">
+                  {byClinic.length ? byClinic.map((item, index) => (
+                    <article className="dashboard-coordinator-item" key={item.label}>
+                      <div className="dashboard-coordinator-rank">{String(index + 1).padStart(2, '0')}</div>
+                      <div className="dashboard-coordinator-copy">
+                        <button className="dashboard-inline-filter" type="button" onClick={() => toggleFilter('clinic', item.label)}>
+                          {item.label}
+                        </button>
+                        <span>{item.total} reclamacao(oes) no cenario filtrado</span>
+                      </div>
+                    </article>
+                  )) : (
+                    <p className="empty-state">Sem unidades no cenario filtrado.</p>
+                  )}
+                </div>
+              </article>
+
+              <article className="chart-card dashboard-ranking-card">
+                <div className="dashboard-section-head">
+                  <div>
+                    <p className="eyebrow">Motivos</p>
+                    <h2>Principais motivos de reclamacao</h2>
+                  </div>
+                </div>
+                <div className="dashboard-coordinator-list">
+                  {byReason.length ? byReason.map((item, index) => (
+                    <article className="dashboard-coordinator-item" key={item.label}>
+                      <div className="dashboard-coordinator-rank">{String(index + 1).padStart(2, '0')}</div>
+                      <div className="dashboard-coordinator-copy">
+                        <strong>{item.label}</strong>
+                        <span>{item.total} ocorrencia(s) no cenario filtrado</span>
+                      </div>
+                    </article>
+                  )) : (
+                    <p className="empty-state">Sem motivos no cenario filtrado.</p>
+                  )}
+                </div>
+              </article>
+
+              <article className="chart-card dashboard-ranking-card compact">
+                <div className="dashboard-section-head">
+                  <div>
+                    <p className="eyebrow">Tratamento</p>
+                    <h2>Pacientes agendados</h2>
+                  </div>
+                </div>
+                <div className="dashboard-compact-list">
+                  {filteredRows.filter((item) => item.appointment_due_at || item.appointment_sla_active).slice(0, 6).map((item) => (
+                    <article key={item.id}>
+                      <strong>{item.patient_name || 'Paciente nao informado'}</strong>
+                      <span>{item.clinic_name || 'Unidade nao informada'} - {formatShortDate(item.appointment_due_at || item.due_at)}</span>
+                      <small>{statusLabels[item.status] || item.status || 'Aberta'} - {getComplaintServiceLabel(item)}</small>
+                    </article>
+                  ))}
+                  {!filteredRows.some((item) => item.appointment_due_at || item.appointment_sla_active) && (
+                    <p className="empty-state">Nenhum paciente agendado no cenario filtrado.</p>
+                  )}
+                </div>
+              </article>
+
+              <article className="chart-card dashboard-ranking-card compact">
+                <div className="dashboard-section-head">
+                  <div>
+                    <p className="eyebrow">SLA</p>
+                    <h2>Prazos vencidos</h2>
+                  </div>
+                </div>
+                <div className="dashboard-compact-list">
+                  {filteredRows.filter((item) => buildDeadlineInfo(item) === 'overdue').slice(0, 6).map((item) => (
+                    <article key={item.id}>
+                      <strong>{item.protocol || item.id} - {item.patient_name || 'Paciente nao informado'}</strong>
+                      <span>Coord.: {item.coordinator_name || 'Nao informado'} - Ger.: {item.manager_name || 'Nao informado'}</span>
+                      <small>{formatShortDate(item.due_at)} - {getComplaintReasonLabel(item)}</small>
+                    </article>
+                  ))}
+                  {!filteredRows.some((item) => buildDeadlineInfo(item) === 'overdue') && (
+                    <p className="empty-state">Nenhum prazo vencido no cenario filtrado.</p>
+                  )}
+                </div>
+              </article>
+            </div>
+          </section>
+
           <section className="management-panel dashboard-stage-panel">
             <div className="panel-heading">
               <div>
