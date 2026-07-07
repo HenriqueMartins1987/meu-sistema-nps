@@ -77,6 +77,12 @@ function isCrcOperatorRole(role) {
   return role === 'crc_operator';
 }
 
+const sacClinicLinkEditableRoles = new Set(['partner', 'coordinator', 'manager']);
+
+function isSacClinicLinkEditableUser(user) {
+  return sacClinicLinkEditableRoles.has(normalizeRoleValue(user?.role));
+}
+
 function normalizeUsernamePreview(value) {
   return String(value || '')
     .trim()
@@ -177,9 +183,8 @@ function AdminPanel({ clinicLinksOnly = false }) {
     if (!isClinicLinksOnlyMode) return filteredUsers;
 
     return filteredUsers.filter((user) => {
-      const role = normalizeRoleValue(user.role);
       const email = String(user.email || '').trim().toLowerCase();
-      return role !== 'master_admin' && role !== 'admin' && email !== masterAdminEmail;
+      return isSacClinicLinkEditableUser(user) && email !== masterAdminEmail;
     });
   }, [filteredUsers, isClinicLinksOnlyMode]);
 
@@ -790,10 +795,11 @@ function AdminPanel({ clinicLinksOnly = false }) {
 
   const isSelectedMaster = String(selectedUser?.email || '').toLowerCase() === masterAdminEmail;
   const isSelectedAdminProtected = isSelectedMaster || ['admin', 'master_admin'].includes(normalizeRoleValue(selectedUser?.role));
-  const pageEyebrow = isClinicLinksOnlyMode ? 'Agenda Telefônica' : 'Painel Gerencial';
-  const pageTitle = isClinicLinksOnlyMode ? 'Vínculo de Clínicas dos Usuários' : 'Gestão de Usuários';
+  const isSelectedClinicLinkProtected = isClinicLinksOnlyMode && (!isSacClinicLinkEditableUser(selectedUser) || isSelectedAdminProtected);
+  const pageEyebrow = isClinicLinksOnlyMode ? 'Configurações SAC' : 'Painel Gerencial';
+  const pageTitle = isClinicLinksOnlyMode ? 'Clínicas de Coordenadores, Gerentes e Parceiros' : 'Gestão de Usuários';
   const pageSubtitle = isClinicLinksOnlyMode
-    ? 'Operador de SAC pode ajustar somente as clínicas vinculadas aos usuários permitidos. Administradores e Master ficam protegidos.'
+    ? 'Operador de SAC pode ajustar somente as clínicas vinculadas a coordenadores, gerentes e parceiros. Administradores, Master e demais perfis ficam protegidos.'
     : 'Controle quem acessa cada tela e quais clínicas ficam sob responsabilidade do parceiro.';
 
   return (
@@ -1027,7 +1033,7 @@ function AdminPanel({ clinicLinksOnly = false }) {
                   )}
                   {canManageFullAdmin && !isSelectedMaster && <button className="outline-action" onClick={resetPassword}>Reiniciar senha</button>}
                   {canManageFullAdmin && !isSelectedMaster && <button className="outline-action danger-action" onClick={deleteUser}>Excluir</button>}
-                  <button className="primary-action" onClick={saveUser} disabled={isClinicLinksOnlyMode && isSelectedAdminProtected}>
+                  <button className="primary-action" onClick={saveUser} disabled={isSelectedClinicLinkProtected}>
                     {isClinicLinksOnlyMode ? 'Salvar clínicas' : 'Salvar alterações'}
                   </button>
                 </div>
@@ -1174,12 +1180,12 @@ function AdminPanel({ clinicLinksOnly = false }) {
                     <p className="eyebrow">Clínicas vinculadas</p>
                     <h3>{isClinicLinksOnlyMode ? 'Clínicas liberadas para o usuário' : 'Responsabilidade por unidade'}</h3>
                     {isClinicLinksOnlyMode && (
-                      <p className="base-subtitle">Marque somente as clínicas que este usuário deve acessar. Dados cadastrais, permissões e perfis não podem ser alterados por esta alçada.</p>
+                      <p className="base-subtitle">Marque somente as clínicas que este coordenador, gerente ou parceiro deve acessar. Dados cadastrais, permissões e perfis não podem ser alterados por esta alçada.</p>
                     )}
                   </div>
                   <div className="mini-actions">
-                    <button type="button" className="outline-action" onClick={selectAllClinics} disabled={isClinicLinksOnlyMode && isSelectedAdminProtected}>Selecionar todas</button>
-                    <button type="button" className="ghost-action" onClick={clearClinics} disabled={isClinicLinksOnlyMode && isSelectedAdminProtected}>Limpar</button>
+                    <button type="button" className="outline-action" onClick={selectAllClinics} disabled={isSelectedClinicLinkProtected}>Selecionar todas</button>
+                    <button type="button" className="ghost-action" onClick={clearClinics} disabled={isSelectedClinicLinkProtected}>Limpar</button>
                   </div>
                 </div>
                 <div className="admin-check-grid clinic-check-grid">
@@ -1189,7 +1195,7 @@ function AdminPanel({ clinicLinksOnly = false }) {
                         type="checkbox"
                         checked={draft.clinicIds.includes(clinic.id)}
                         onChange={() => toggleClinic(clinic.id)}
-                        disabled={isClinicLinksOnlyMode && isSelectedAdminProtected}
+                        disabled={isSelectedClinicLinkProtected}
                       />
                       {clinic.name} · {clinic.city || 'Cidade'} / {clinic.state || 'UF'}
                     </label>

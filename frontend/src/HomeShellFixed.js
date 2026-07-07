@@ -214,6 +214,7 @@ function HomeShellFixed() {
   const navigate = useNavigate();
   const user = useMemo(() => readUser(), []);
   const isCrcOperator = normalizeRoleValue(user?.role) === 'crc_operator';
+  const isSacOperator = normalizeRoleValue(user?.role) === 'sac_operator';
   const masterUser = isMasterAdmin(user);
   const canManageComplaints = hasPermission(user, 'complaints_management');
   const canManagePatients = hasPermission(user, 'patient_management');
@@ -312,8 +313,8 @@ function HomeShellFixed() {
         { label: 'Painel Gerencial', path: '/admin', permission: 'admin_panel', adminOnly: true },
         { label: 'Monitoria Master', path: '/admin/monitoria', permission: 'admin_panel', adminOnly: true },
         { label: 'Configurações > WhatsApps Conectados', path: '/home/whatsapp-management/instances', permission: 'whatsapp_management', adminOnly: true },
-        { label: 'Agenda Telefônica', path: '/dashboard', permission: 'complaints_dashboard', sacOnly: true },
-        { label: 'Vínculo de Clínicas', path: '/admin/usuarios-clinicas', permission: 'complaints_management', sacOnly: true },
+        { label: 'Agenda', path: '/agenda', permission: 'home', sacOnly: true },
+        { label: 'Alterar clínicas de coordenadores, gerentes e parceiros', path: '/admin/usuarios-clinicas', permission: 'complaints_management', sacOnly: true },
         { label: 'Minha conta', path: '/perfil', permission: 'home' }
       ]
     }
@@ -323,6 +324,10 @@ function HomeShellFixed() {
     .map((section) => ({
       ...section,
       items: section.items.filter((item) => {
+        if (isSacOperator && !item.sacOnly) {
+          return false;
+        }
+
         if (item.weeklyReportOnly && !canAccessWeeklyComplaintReport(user)) {
           return false;
         }
@@ -343,7 +348,7 @@ function HomeShellFixed() {
           return false;
         }
 
-        if (item.sacOnly && normalizeRoleValue(user?.role) !== 'sac_operator') {
+        if (item.sacOnly && !isSacOperator) {
           return false;
         }
 
@@ -932,8 +937,19 @@ function HomeShellFixed() {
 
         <div className="home-command-actions">
           <div className="home-account-row">
-            {masterUser && (
-              <button type="button" className="gear-action" onClick={() => navigate('/admin')} aria-label="Painel gerencial">
+            {(masterUser || isSacOperator) && (
+              <button
+                type="button"
+                className="gear-action"
+                onClick={() => {
+                  if (masterUser) {
+                    navigate('/admin');
+                    return;
+                  }
+                  setDrawerOpen(true);
+                }}
+                aria-label={masterUser ? 'Painel gerencial' : 'Configurações do SAC'}
+              >
                 ⚙
               </button>
             )}

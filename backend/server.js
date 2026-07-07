@@ -16769,6 +16769,27 @@ function canManageUserClinicLinks(user) {
   return isMasterAdminUser(user) || normalizeAccessRole(user?.role) === 'sac_operator';
 }
 
+const sacClinicLinkEditableRoleAliases = [
+  'partner',
+  'parceiro',
+  'dentista_parceiro',
+  'parceiro_dentista',
+  'coordinator',
+  'coordenador',
+  'coordenador_unidade',
+  'coordenador_de_unidade',
+  'manager',
+  'gerente',
+  'gerente_unidade',
+  'gerente_de_unidade'
+];
+
+const sacClinicLinkEditableRoles = new Set(['partner', 'coordinator', 'manager']);
+
+function canSacManageClinicLinksForTarget(user) {
+  return sacClinicLinkEditableRoles.has(normalizeAccessRole(user?.role));
+}
+
 function requireUserClinicLinkManager(req, res, next) {
   if (canManageUserClinicLinks(req.user)) {
     return next();
@@ -33315,7 +33336,8 @@ app.get('/admin/users', authenticate, requireUserClinicLinkManager, async (req, 
     const userParams = [];
 
     if (clinicLinksOnly) {
-      userWhere.push("LOWER(TRIM(COALESCE(role, ''))) NOT IN ('master_admin', 'admin')");
+      userWhere.push(buildRoleAliasWhere("COALESCE(role, '')", sacClinicLinkEditableRoleAliases));
+      userParams.push(...getRoleAliasParams(sacClinicLinkEditableRoleAliases));
       userWhere.push("LOWER(TRIM(COALESCE(email, ''))) NOT IN (?, ?, ?)");
       userParams.push(masterAdminEmail, defaultAdminEmail, 'admin@sorria.com');
     }
@@ -33334,7 +33356,11 @@ app.get('/admin/users', authenticate, requireUserClinicLinkManager, async (req, 
       return acc;
     }, {});
 
-    res.json(users.map((user) => {
+    const visibleUsers = clinicLinksOnly
+      ? users.filter((user) => canSacManageClinicLinksForTarget(user))
+      : users;
+
+    res.json(visibleUsers.map((user) => {
       let permissions = defaultPermissionsForRole(user.role);
       let actionPermissionList = defaultActionPermissionsForRole(user.role);
 
@@ -33864,6 +33890,10 @@ app.patch('/admin/users/:id', authenticate, requireUserClinicLinkManager, async 
 
       if (targetRole === 'master_admin' || targetRole === 'admin' || targetEmail === masterAdminEmail || targetEmail === defaultAdminEmail || targetEmail === 'admin@sorria.com') {
         return res.status(403).json({ error: 'Operador de SAC não pode alterar vínculos de Administrador Master ou Administradores.' });
+      }
+
+      if (!canSacManageClinicLinksForTarget(current)) {
+        return res.status(403).json({ error: 'Operador de SAC pode alterar clínicas apenas de coordenadores, gerentes e parceiros.' });
       }
 
       const previousClinicIds = await getUserClinicIds(current.id);

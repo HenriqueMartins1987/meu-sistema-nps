@@ -498,7 +498,7 @@ test('master admin cannot update a user to duplicated e-mail', async () => {
   assert.equal(updateAttempted, false);
 });
 
-test('SAC operator can update only clinic links for non-admin users', async () => {
+test('SAC operator can update only clinic links for partner/coordinator/manager users', async () => {
   const insertedClinics = [];
   let deletedUserClinicLinks = false;
   let operatorClinicSyncUpdated = false;
@@ -514,7 +514,7 @@ test('SAC operator can update only clinic links for non-admin users', async () =
         id: 44,
         name: 'Maria Silva',
         email: 'maria@example.com',
-        role: 'viewer',
+        role: 'partner',
         active: 1
       }]]
     },
@@ -571,6 +571,93 @@ test('SAC operator can update only clinic links for non-admin users', async () =
   assert.equal(operatorClinicSyncUpdated, true);
   assert.deepEqual(insertedClinics, [2, 3]);
   assert.deepEqual(response.body.clinicIds, [2, 3]);
+});
+
+test('SAC operator user-clinic screen lists only partner coordinator and manager users', async () => {
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT id, name, username') && sql.includes('FROM users') && sql.includes('ORDER BY name ASC'),
+      reply: async () => [[
+        { id: 1, name: 'Parceiro', email: 'parceiro@example.com', role: 'partner', active: 1 },
+        { id: 2, name: 'Coordenadora', email: 'coordenadora@example.com', role: 'coordinator', active: 1 },
+        { id: 3, name: 'Gerente', email: 'gerente@example.com', role: 'manager', active: 1 },
+        { id: 4, name: 'Operador CRC', email: 'crc@example.com', role: 'crc_operator', active: 1 },
+        { id: 5, name: 'Operador SAC', email: 'sac2@example.com', role: 'sac_operator', active: 1 },
+        { id: 6, name: 'Administrador', email: 'admin@sorria.com', role: 'admin', active: 1 }
+      ]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT user_id, clinic_id, can_edit FROM user_clinics'),
+      reply: async () => [[
+        { user_id: 1, clinic_id: 10, can_edit: 1 },
+        { user_id: 2, clinic_id: 11, can_edit: 1 },
+        { user_id: 3, clinic_id: 12, can_edit: 1 }
+      ]]
+    }
+  ]);
+
+  const response = await request(app)
+    .get('/admin/users')
+    .set('Authorization', `Bearer ${signToken({
+      id: 7,
+      email: 'sac@example.com',
+      role: 'sac_operator',
+      name: 'Operador SAC',
+      permissions: ['complaints_management'],
+      clinicIds: [1],
+      mustChangePassword: false
+    })}`);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.map((user) => user.role), ['partner', 'coordinator', 'manager']);
+});
+
+test('SAC operator cannot change clinic links for roles outside partner/coordinator/manager', async () => {
+  let clinicUpdateAttempted = false;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL'),
+      reply: async () => [[{
+        id: 46,
+        name: 'Operador CRC',
+        email: 'crc@example.com',
+        role: 'crc_operator',
+        active: 1
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('DELETE FROM user_clinics') || sql.includes('INSERT INTO user_clinics'),
+      reply: async () => {
+        clinicUpdateAttempted = true;
+        return [{ affectedRows: 1 }];
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/admin/users/46')
+    .set('Authorization', `Bearer ${signToken({
+      id: 7,
+      email: 'sac@example.com',
+      role: 'sac_operator',
+      name: 'Operador SAC',
+      permissions: ['complaints_management'],
+      clinicIds: [1],
+      mustChangePassword: false
+    })}`)
+    .send({ clinicIds: [2, 3] });
+
+  assert.equal(response.status, 403);
+  assert.equal(clinicUpdateAttempted, false);
 });
 
 test('SAC operator cannot change clinic links for admin users', async () => {
