@@ -298,6 +298,10 @@ function getCurrentResponsibleName(item) {
   );
 }
 
+function getPartnerLabel(item) {
+  return item?.coordinator_name || 'Nao informado';
+}
+
 function getComplaintSummary(item, maxLength = 280) {
   const parts = [
     item?.description,
@@ -309,6 +313,33 @@ function getComplaintSummary(item, maxLength = 280) {
   if (!text) return 'Resumo nao informado.';
   if (text.length <= maxLength) return text;
   return `${text.slice(0, maxLength).trimEnd()}...`;
+}
+
+function onlyPhoneDigits(value) {
+  return String(value || '').replace(/\D/g, '');
+}
+
+function formatPhoneForDisplay(value) {
+  const digits = onlyPhoneDigits(value);
+  if (!digits) return 'Telefone nao cadastrado';
+  if (digits.length === 13 && digits.startsWith('55')) {
+    return `+${digits.slice(0, 2)} ${digits.slice(2, 4)} ${digits.slice(4, 9)}-${digits.slice(9)}`;
+  }
+  if (digits.length === 12 && digits.startsWith('55')) {
+    return `+${digits.slice(0, 2)} ${digits.slice(2, 4)} ${digits.slice(4, 8)}-${digits.slice(8)}`;
+  }
+  if (digits.length === 11) return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+  if (digits.length === 10) return `(${digits.slice(0, 2)}) ${digits.slice(2, 6)}-${digits.slice(6)}`;
+  return value || 'Telefone nao cadastrado';
+}
+
+function buildPhoneBookNotification(contact) {
+  return [
+    `Alerta de reclamacoes - ${contact.clinicName}`,
+    `Responsavel: ${contact.roleLabel} ${contact.name}`,
+    `Cenario filtrado: ${contact.total} protocolo(s), ${contact.overdue} vencido(s), ${contact.warning} perto de vencer.`,
+    'Por favor, priorizar a tratativa e atualizar o andamento no sistema.'
+  ].join('\n');
 }
 
 function resolutionDateForItem(item) {
@@ -432,6 +463,7 @@ function Dashboard() {
     || isAdmin(currentUser)
     || currentUserRole === 'manager'
     || currentUserRole === 'sac_operator';
+  const canAccessPhoneBook = isMasterAdmin(currentUser) || currentUserRole === 'sac_operator';
   const [rows, setRows] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [filters, setFilters] = useState(initialFilters);
@@ -441,6 +473,7 @@ function Dashboard() {
   const [feedback, setFeedback] = useState('');
   const [evolutionGranularity, setEvolutionGranularity] = useState('month');
   const [executiveReportPeriod, setExecutiveReportPeriod] = useState('all');
+  const [showPhoneBook, setShowPhoneBook] = useState(false);
 
   useEffect(() => {
     const loadRows = async () => {
@@ -593,7 +626,8 @@ function Dashboard() {
   const byRegion = useMemo(() => groupCount(filteredRows, (item) => item.region), [filteredRows]);
   const byPriority = useMemo(() => groupCount(filteredRows, (item) => priorityLabel(item.priority)), [filteredRows]);
   const byChannel = useMemo(() => groupCount(filteredRows, (item) => item.channel).slice(0, 10), [filteredRows]);
-  const byCoordinator = useMemo(() => groupCount(filteredRows, (item) => item.coordinator_name).slice(0, 10), [filteredRows]);
+  const byCoordinatorAll = useMemo(() => groupCount(filteredRows, getPartnerLabel), [filteredRows]);
+  const byCoordinator = useMemo(() => byCoordinatorAll.slice(0, 10), [byCoordinatorAll]);
   const bySla = useMemo(() => groupCount(filteredRows, (item) => slaLabel(buildDeadlineInfo(item))), [filteredRows]);
   const evolutionSeries = useMemo(
     () => buildTimelineBuckets(filteredRows, evolutionGranularity),
@@ -661,7 +695,7 @@ function Dashboard() {
     const total = filteredRows.length || 1;
 
     return byCoordinator.slice(0, 8).map((item) => {
-      const matchingRows = filteredRows.filter((row) => (row.coordinator_name || 'Não informado') === item.label);
+      const matchingRows = filteredRows.filter((row) => getPartnerLabel(row) === item.label);
       return {
         ...item,
         share: Math.round((item.total / total) * 100),
@@ -670,6 +704,73 @@ function Dashboard() {
       };
     });
   }, [byCoordinator, filteredRows]);
+
+  const phoneBookContacts = useMemo(() => {
+    const contacts = new Map();
+
+    const addContact = (item, role, roleLabel, name, phone) => {
+      if (!name) return;
+      const clinicName = item.clinic_name || 'Unidade nao informada';
+      const key = `${role}|${name}|${onlyPhoneDigits(phone)}|${clinicName}`;
+      const existing = contacts.get(key) || {
+        key,
+        role,
+        roleLabel,
+        name,
+        phone: phone || '',
+        phoneDisplay: formatPhoneForDisplay(phone),
+        clinicName,
+        total: 0,
+        overdue: 0,
+        warning: 0,
+        open: 0
+      };
+      const deadline = buildDeadlineInfo(item);
+      existing.total += 1;
+      if (deadline === 'overdue') existing.overdue += 1;
+      if (deadline === 'warning') existing.warning += 1;
+      if (item.status !== 'resolvida') existing.open += 1;
+      contacts.set(key, existing);
+    };
+
+    filteredRows.forEach((item) => {
+      addContact(item, 'coordinator', 'Coordenador(a)', item.coordinator_name, item.coordinator_phone);
+      addContact(item, 'manager', 'Gerente', item.manager_name, item.manager_phone);
+    });
+
+    return Array.from(contacts.values())
+      .sort((a, b) => (
+        a.clinicName.localeCompare(b.clinicName, 'pt-BR')
+        || a.roleLabel.localeCompare(b.roleLabel, 'pt-BR')
+        || a.name.localeCompare(b.name, 'pt-BR')
+      ));
+  }, [filteredRows]);
+
+  const partnerRankingDetails = useMemo(() => {
+    const total = filteredRows.length || 1;
+
+    return byCoordinatorAll.slice(0, 12).map((item, index) => {
+      const matchingRows = filteredRows.filter((row) => getPartnerLabel(row) === item.label);
+      const phones = Array.from(new Set(matchingRows.map((row) => row.coordinator_phone).filter(Boolean)));
+      const clinicsServed = Array.from(new Set(matchingRows.map((row) => row.clinic_name).filter(Boolean))).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+
+      return {
+        ...item,
+        rank: index + 1,
+        share: Math.round((item.total / total) * 100),
+        phone: phones[0] || '',
+        phoneDisplay: formatPhoneForDisplay(phones[0]),
+        clinicsServed,
+        overdue: matchingRows.filter((row) => buildDeadlineInfo(row) === 'overdue').length,
+        warning: matchingRows.filter((row) => buildDeadlineInfo(row) === 'warning').length,
+        inProgress: matchingRows.filter((row) => row.status === 'em_andamento').length,
+        classificationRows: groupCount(matchingRows, getComplaintReasonLabel).slice(0, 8),
+        serviceRows: groupCount(matchingRows, getComplaintServiceLabel).slice(0, 6),
+        statusRows: groupCount(matchingRows, (row) => statusLabels[row.status] || row.status).slice(0, 6),
+        samples: matchingRows.slice(0, 6)
+      };
+    });
+  }, [byCoordinatorAll, filteredRows]);
 
   const executiveReportSections = useMemo(() => {
     const periodConfig = [
@@ -1092,6 +1193,211 @@ function Dashboard() {
     reportWindow.print();
   };
 
+  const copyToClipboard = async (text, successMessage = 'Conteudo copiado para a area de transferencia.') => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.setAttribute('readonly', 'true');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      }
+      setFeedback(successMessage);
+    } catch (error) {
+      setFeedback('Nao foi possivel copiar. Selecione o texto manualmente.');
+    }
+  };
+
+  const openPhoneBookWhatsApp = (contact) => {
+    const digits = onlyPhoneDigits(contact.phone);
+    const targetPhone = digits.length === 10 || digits.length === 11 ? `55${digits}` : digits;
+    if (!targetPhone || targetPhone.length < 12) {
+      setFeedback('Telefone nao cadastrado para este responsavel.');
+      return;
+    }
+
+    const message = encodeURIComponent(buildPhoneBookNotification(contact));
+    window.open(`https://wa.me/${targetPhone}?text=${message}`, '_blank', 'noopener,noreferrer');
+  };
+
+  const exportPartnerRankingPdf = () => {
+    const reportWindow = window.open('', '_blank');
+
+    if (!reportWindow) {
+      setFeedback('Permita pop-ups para gerar o PDF de parceiros.');
+      return;
+    }
+
+    const printDate = new Date();
+    const renderRankingRows = () => (
+      partnerRankingDetails.length
+        ? partnerRankingDetails.map((partner) => `
+          <tr>
+            <td>${String(partner.rank).padStart(2, '0')}</td>
+            <td>${escapeHtml(partner.label)}</td>
+            <td>${escapeHtml(partner.phoneDisplay)}</td>
+            <td>${escapeHtml(String(partner.total))}</td>
+            <td>${escapeHtml(`${partner.share}%`)}</td>
+            <td>${escapeHtml(String(partner.inProgress))}</td>
+            <td>${escapeHtml(String(partner.overdue))}</td>
+          </tr>
+        `).join('')
+        : '<tr><td colspan="7">Nenhum parceiro encontrado no cenario filtrado.</td></tr>'
+    );
+    const renderBreakdownRows = (rows) => (
+      rows.length
+        ? rows.map((row, index) => `
+          <tr>
+            <td>${String(index + 1).padStart(2, '0')}</td>
+            <td>${escapeHtml(row.label)}</td>
+            <td>${escapeHtml(String(row.total))}</td>
+          </tr>
+        `).join('')
+        : '<tr><td colspan="3">Sem classificacoes neste recorte.</td></tr>'
+    );
+    const partnerSections = partnerRankingDetails.map((partner) => `
+      <section class="partner-section">
+        <div class="partner-title">
+          <div>
+            <p>Parceiro #${String(partner.rank).padStart(2, '0')}</p>
+            <h2>${escapeHtml(partner.label)}</h2>
+            <span>${escapeHtml(partner.clinicsServed.slice(0, 8).join(', ') || 'Unidade nao informada')}</span>
+          </div>
+          <div class="partner-kpis">
+            <article><strong>${escapeHtml(String(partner.total))}</strong><span>reclamacoes</span></article>
+            <article><strong>${escapeHtml(String(partner.overdue))}</strong><span>vencidas</span></article>
+            <article><strong>${escapeHtml(String(partner.warning))}</strong><span>prazo critico</span></article>
+          </div>
+        </div>
+        <div class="three-columns">
+          <article class="report-block">
+            <h3>Classificacoes da reclamacao</h3>
+            <table><thead><tr><th>#</th><th>Classificacao / motivo</th><th>Total</th></tr></thead><tbody>${renderBreakdownRows(partner.classificationRows)}</tbody></table>
+          </article>
+          <article class="report-block">
+            <h3>Servicos envolvidos</h3>
+            <table><thead><tr><th>#</th><th>Servico</th><th>Total</th></tr></thead><tbody>${renderBreakdownRows(partner.serviceRows)}</tbody></table>
+          </article>
+          <article class="report-block">
+            <h3>Status dos protocolos</h3>
+            <table><thead><tr><th>#</th><th>Status</th><th>Total</th></tr></thead><tbody>${renderBreakdownRows(partner.statusRows)}</tbody></table>
+          </article>
+        </div>
+        <article class="report-block">
+          <h3>Amostra de protocolos para conferencia</h3>
+          <table class="detail-table">
+            <thead>
+              <tr>
+                <th>Protocolo</th>
+                <th>Paciente</th>
+                <th>Unidade</th>
+                <th>Classificacao</th>
+                <th>Status</th>
+                <th>Prazo</th>
+                <th>Resumo</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${partner.samples.length ? partner.samples.map((item) => `
+                <tr>
+                  <td>${escapeHtml(item.protocol || item.id)}</td>
+                  <td>${escapeHtml(item.patient_name || 'Nao informado')}</td>
+                  <td>${escapeHtml(item.clinic_name || 'Nao informado')}</td>
+                  <td>${escapeHtml(getComplaintReasonLabel(item))}</td>
+                  <td>${escapeHtml(statusLabels[item.status] || item.status || 'Aberta')}</td>
+                  <td>${escapeHtml(slaLabel(buildDeadlineInfo(item)))}</td>
+                  <td>${escapeHtml(getComplaintSummary(item, 220))}</td>
+                </tr>
+              `).join('') : '<tr><td colspan="7">Sem amostras neste recorte.</td></tr>'}
+            </tbody>
+          </table>
+        </article>
+      </section>
+    `).join('');
+
+    reportWindow.document.write(`
+      <html>
+        <head>
+          <title>Ranking de parceiros com mais reclamacoes</title>
+          <style>
+            @page { size: A4 landscape; margin: 10mm; }
+            * { box-sizing: border-box; }
+            body { margin: 0; font-family: Inter, Arial, sans-serif; color: #172033; background: #fff; }
+            main { display: flex; flex-direction: column; gap: 16px; }
+            .report-header {
+              border: 1px solid #d7b77e;
+              border-radius: 18px;
+              background: linear-gradient(135deg, #fff8eb 0%, #eef7f4 100%);
+              padding: 22px 26px;
+            }
+            .report-header-top, .partner-title { display: flex; justify-content: space-between; gap: 22px; align-items: flex-start; }
+            .report-kicker, .partner-title p { margin: 0 0 6px; color: #94651f; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: .1em; }
+            h1 { margin: 0 0 8px; font-size: 28px; color: #0f1f35; }
+            h2 { margin: 0; font-size: 18px; color: #0f1f35; }
+            .report-subtitle, .partner-title span { margin: 0; color: #53606f; font-size: 11px; }
+            .summary-grid { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 10px; }
+            .summary-card, .partner-kpis article {
+              border: 1px solid #e4e7eb;
+              border-radius: 14px;
+              padding: 12px 14px;
+              background: #fff;
+            }
+            .summary-card strong, .partner-kpis strong { display: block; color: #0f1f35; font-size: 18px; line-height: 1; }
+            .summary-card span, .partner-kpis span { display: block; margin-top: 4px; color: #6b7280; font-size: 9px; font-weight: 900; text-transform: uppercase; letter-spacing: .05em; }
+            .partner-section { page-break-inside: avoid; display: flex; flex-direction: column; gap: 11px; border-top: 2px solid #0f766e; padding-top: 12px; }
+            .partner-kpis { display: grid; grid-template-columns: repeat(3, minmax(90px,1fr)); gap: 8px; min-width: 320px; }
+            .three-columns { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; }
+            .report-block { border: 1px solid #e5e7eb; border-radius: 14px; overflow: hidden; background: #fff; }
+            .report-block h3 { margin: 0; padding: 10px 12px; background: #132238; color: #f8fafc; font-size: 11px; letter-spacing: .02em; }
+            table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 8px; }
+            th { background: #f3f5f7; color: #374151; text-align: left; padding: 7px 6px; font-size: 7px; text-transform: uppercase; letter-spacing: .04em; }
+            td { border-top: 1px solid #e5e7eb; padding: 7px 6px; vertical-align: top; word-break: break-word; }
+            tbody tr:nth-child(even) td { background: #fbf8f1; }
+            .detail-table th, .detail-table td { font-size: 8px; }
+          </style>
+        </head>
+        <body>
+          <main>
+            <section class="report-header">
+              <div class="report-header-top">
+                <div>
+                  <p class="report-kicker">Grupo Sorria - Dashboard de reclamacoes</p>
+                  <h1>Ranking de parceiros com mais reclamacoes</h1>
+                  <p class="report-subtitle">Documento gerado com os filtros atuais do dashboard, incluindo classificacoes, servicos, status e amostra de protocolos por parceiro.</p>
+                </div>
+                <div class="summary-card"><span>Emitido em</span><strong>${escapeHtml(printDate.toLocaleString('pt-BR'))}</strong></div>
+              </div>
+            </section>
+            <section class="summary-grid">
+              <article class="summary-card"><strong>${escapeHtml(String(filteredRows.length))}</strong><span>registros filtrados</span></article>
+              <article class="summary-card"><strong>${escapeHtml(String(partnerRankingDetails.length))}</strong><span>parceiros ranqueados</span></article>
+              <article class="summary-card"><strong>${escapeHtml(String(metrics.overdue))}</strong><span>vencidas</span></article>
+              <article class="summary-card"><strong>${escapeHtml(String(metrics.inProgress))}</strong><span>em andamento</span></article>
+              <article class="summary-card"><strong>${escapeHtml(formatDecimal(metrics.avgPerDay))}</strong><span>media por dia</span></article>
+            </section>
+            <article class="report-block">
+              <h3>Ranking consolidado</h3>
+              <table>
+                <thead><tr><th>#</th><th>Parceiro</th><th>Telefone</th><th>Total</th><th>% carteira</th><th>Em andamento</th><th>Vencidas</th></tr></thead>
+                <tbody>${renderRankingRows()}</tbody>
+              </table>
+            </article>
+            ${partnerSections}
+          </main>
+        </body>
+      </html>
+    `);
+    reportWindow.document.close();
+    reportWindow.focus();
+    reportWindow.print();
+  };
+
   return (
     <main className="app-page complaints-dashboard-page">
       <header className="page-heading">
@@ -1102,6 +1408,11 @@ function Dashboard() {
         </div>
 
         <div className="heading-actions">
+          {canAccessPhoneBook && (
+            <button className="primary-action dashboard-phonebook-trigger" onClick={() => setShowPhoneBook(true)}>
+              Agenda Telefonica
+            </button>
+          )}
           <button className="outline-action" onClick={() => navigate('/gestao')}>
             Gestão
           </button>
@@ -1212,6 +1523,65 @@ function Dashboard() {
       </section>
 
       {feedback && <p className="form-feedback">{feedback}</p>}
+
+      {canAccessPhoneBook && showPhoneBook && (
+        <section className="dashboard-phonebook-overlay" role="dialog" aria-modal="true" aria-labelledby="phonebook-title">
+          <div className="dashboard-phonebook-panel">
+            <div className="dashboard-phonebook-header">
+              <div>
+                <p className="eyebrow">Agenda Telefonica</p>
+                <h2 id="phonebook-title">Coordenadores e gerentes para notificacoes</h2>
+                <p className="base-subtitle">Lista montada pelo cenario filtrado do dashboard, com copia rapida de telefone e mensagem para WhatsApp.</p>
+              </div>
+              <button className="outline-action" onClick={() => setShowPhoneBook(false)}>Fechar</button>
+            </div>
+
+            <div className="dashboard-phonebook-summary">
+              <article>
+                <span>Contatos</span>
+                <strong>{phoneBookContacts.length}</strong>
+              </article>
+              <article>
+                <span>Protocolos filtrados</span>
+                <strong>{filteredRows.length}</strong>
+              </article>
+              <article>
+                <span>Vencidos</span>
+                <strong>{metrics.overdue}</strong>
+              </article>
+            </div>
+
+            <div className="dashboard-phonebook-list">
+              {phoneBookContacts.length ? phoneBookContacts.map((contact) => (
+                <article className="dashboard-phonebook-card" key={contact.key}>
+                  <div className="dashboard-phonebook-main">
+                    <span className={`dashboard-phonebook-role ${contact.role}`}>{contact.roleLabel}</span>
+                    <strong>{contact.name}</strong>
+                    <small>{contact.clinicName}</small>
+                  </div>
+                  <div className="dashboard-phonebook-phone">
+                    <span>{contact.phoneDisplay}</span>
+                    <small>{contact.total} protocolo(s) - {contact.overdue} vencido(s) - {contact.warning} perto de vencer</small>
+                  </div>
+                  <div className="dashboard-phonebook-actions">
+                    <button className="outline-action" onClick={() => copyToClipboard(contact.phone || contact.phoneDisplay, 'Telefone copiado.')}>
+                      Copiar telefone
+                    </button>
+                    <button className="outline-action" onClick={() => copyToClipboard(buildPhoneBookNotification(contact), 'Mensagem de notificacao copiada.')}>
+                      Copiar mensagem
+                    </button>
+                    <button className="primary-action" onClick={() => openPhoneBookWhatsApp(contact)} disabled={!onlyPhoneDigits(contact.phone)}>
+                      WhatsApp
+                    </button>
+                  </div>
+                </article>
+              )) : (
+                <p className="empty-state">Nenhum coordenador ou gerente com vinculo no cenario filtrado.</p>
+              )}
+            </div>
+          </div>
+        </section>
+      )}
 
       <section className="kpi-grid dashboard-kpi-grid" aria-label="Resumo filtrado">
         <button className="kpi-card kpi-button" type="button" onClick={() => setFilters(initialFilters)}>
@@ -1579,6 +1949,10 @@ function Dashboard() {
                 <h2>Responsaveis e parceiros pressionados</h2>
                 <p className="base-subtitle">Os graficos de ownership ficam isolados para facilitar a leitura de responsabilizacao e carga da carteira.</p>
               </div>
+              <button className="outline-action" onClick={exportPartnerRankingPdf} disabled={!partnerRankingDetails.length}>
+                <span className="export-badge pdf">PDF</span>
+                <span>Ranking parceiros</span>
+              </button>
             </div>
 
             <div className="chart-grid dashboard-chart-grid dashboard-chart-grid-ownership">
