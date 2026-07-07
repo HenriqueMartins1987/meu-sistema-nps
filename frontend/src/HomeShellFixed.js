@@ -941,13 +941,7 @@ function HomeShellFixed() {
               <button
                 type="button"
                 className="gear-action"
-                onClick={() => {
-                  if (masterUser) {
-                    navigate('/admin');
-                    return;
-                  }
-                  setDrawerOpen(true);
-                }}
+                onClick={() => navigate('/admin')}
                 aria-label={masterUser ? 'Painel gerencial' : 'Configurações do SAC'}
               >
                 ⚙

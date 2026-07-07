@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { Routes, Route } from 'react-router-dom';
+import { Navigate, Routes, Route } from 'react-router-dom';
 
 import Login from './Login';
 import Home from './HomeShellFixed';
@@ -33,6 +33,7 @@ import WhatsAppServiceSettings from './pages/WhatsAppServiceSettings';
 import ReportsHub from './pages/ReportsHub';
 import AgendaPage from './pages/AgendaPage';
 import { PermissionRoute, ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
+import { isMasterAdmin, normalizeRoleValue, readUser } from './constants';
 import './App.css';
 
 function enablePortugueseSpellcheck(root = document) {
@@ -54,6 +55,21 @@ function enablePortugueseSpellcheck(root = document) {
       field.setAttribute('title', 'O navegador sinaliza palavras possivelmente escritas de forma incorreta.');
     }
   });
+}
+
+function AdminEntry() {
+  const user = readUser();
+  const role = normalizeRoleValue(user?.role);
+
+  if (isMasterAdmin(user)) {
+    return <AdminPanel />;
+  }
+
+  if (role === 'sac_operator') {
+    return <AdminPanel clinicLinksOnly />;
+  }
+
+  return <Navigate to="/home" replace />;
 }
 
 function App() {
@@ -144,8 +160,8 @@ function App() {
         <Route element={<PermissionRoute permission="crm_relationship" />}>
           <Route path="/crm" element={<CrmWorkspace />} />
         </Route>
+        <Route path="/admin" element={<AdminEntry />} />
         <Route element={<PermissionRoute masterOnly />}>
-          <Route path="/admin" element={<AdminPanel />} />
           <Route path="/admin/controle-master" element={<MasterControlCenter />} />
           <Route path="/admin/monitoria" element={<MasterMonitoring />} />
           <Route path="/admin/configuracoes/whatsapp" element={<WhatsAppServiceSettings />} />
