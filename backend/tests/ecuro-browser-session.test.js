@@ -118,6 +118,8 @@ function createFakeChromium(scenario = {}) {
     routeHandler: null,
     browserClosed: false,
     contextClosed: false,
+    browserCloseCount: 0,
+    contextCloseCount: 0,
     page: null
   };
 
@@ -137,11 +139,13 @@ function createFakeChromium(scenario = {}) {
               return state.page;
             },
             close: async () => {
+              state.contextCloseCount += 1;
               state.contextClosed = true;
             }
           };
         },
         close: async () => {
+          state.browserCloseCount += 1;
           state.browserClosed = true;
         }
       };
@@ -259,4 +263,17 @@ test('createAuthenticatedEcuroSession adds Basic Authorization only to Ecuro ori
   assert.equal(ecuroContinuePayload.headers.Accept, 'application/json');
 
   await session.close();
+});
+
+test('createAuthenticatedEcuroSession close is safe and idempotent', async () => {
+  const config = buildConfig();
+  const session = await createAuthenticatedEcuroSession(config);
+
+  await session.close();
+  await session.close();
+
+  assert.equal(config.fakeState.contextClosed, true);
+  assert.equal(config.fakeState.browserClosed, true);
+  assert.equal(config.fakeState.contextCloseCount, 1);
+  assert.equal(config.fakeState.browserCloseCount, 1);
 });

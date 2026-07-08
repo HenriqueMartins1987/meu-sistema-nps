@@ -93,12 +93,12 @@ async function hasVisiblePasswordInput(page) {
 
 async function fillRequiredLoginFields(page, config) {
   const usernameSelectors = [
-    'input[autocomplete=username]',
-    'input[type=email]',
-    'input[name*=username]',
-    'input[name*=usuario]',
-    'input[name*=login]',
-    'input[type=text]:visible'
+    'input[autocomplete="username"]',
+    'input[type="email"]',
+    'input[name*="username" i]',
+    'input[name*="usuario" i]',
+    'input[name*="login" i]',
+    'input[type="text"]:visible'
   ];
   const username = await firstVisibleLocator(page, usernameSelectors, 1000);
   if (!username) {
@@ -186,6 +186,14 @@ async function createAuthenticatedEcuroSession(config = {}) {
   const chromium = config.chromium || getPlaywrightChromium();
   let browser;
   let context;
+  let closed = false;
+
+  const close = async () => {
+    if (closed) return;
+    closed = true;
+    await context?.close().catch(() => null);
+    await browser?.close().catch(() => null);
+  };
 
   try {
     browser = await chromium.launch({
@@ -232,11 +240,6 @@ async function createAuthenticatedEcuroSession(config = {}) {
     page.setDefaultNavigationTimeout(timeout);
     await ensureEcuroApplicationLogin(page, { ...config, baseUrl });
 
-    const close = async () => {
-      await context?.close().catch(() => null);
-      await browser?.close().catch(() => null);
-    };
-
     return {
       browser,
       context,
@@ -244,8 +247,7 @@ async function createAuthenticatedEcuroSession(config = {}) {
       close
     };
   } catch (error) {
-    await context?.close().catch(() => null);
-    await browser?.close().catch(() => null);
+    await close();
     throw error;
   }
 }

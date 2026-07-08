@@ -191,11 +191,6 @@ function resolveClinicsForSequentialRun(payload = {}) {
   return [];
 }
 
-async function loadPlaywright() {
-  const moduleRef = await import('playwright');
-  return moduleRef.chromium ? moduleRef : moduleRef.default;
-}
-
 async function firstVisibleLocator(page, selectors = [], timeout = 900) {
   for (const selector of selectors) {
     const locator = page.locator(selector).first();
@@ -227,29 +222,6 @@ async function waitForPageSettled(page, ms = 1200) {
     page.waitForLoadState('networkidle').catch(() => null),
     page.waitForTimeout(ms)
   ]);
-}
-
-async function performLogin(page, config) {
-  await page.goto(config.baseUrl, { waitUntil: 'domcontentloaded', timeout: config.timeoutMs });
-  await waitForPageSettled(page, 1200);
-  const bodyText = normalizeText(await page.locator('body').innerText().catch(() => ''));
-  if (!bodyText.includes('login') && !bodyText.includes('entrar') && (await page.locator('main, nav, aside').count().catch(() => 0))) {
-    return { authenticated: true, reusedSession: true };
-  }
-  const userFilled = await fillFirstVisible(page, config.selectors.login.level1Username, config.level1Username);
-  const passFilled = await fillFirstVisible(page, config.selectors.login.level1Password, config.level1Password);
-  if (userFilled || passFilled) {
-    await clickFirstVisible(page, config.selectors.login.level1Submit);
-    await waitForPageSettled(page, 1800);
-  }
-  const stillHasPassword = await firstVisibleLocator(page, config.selectors.login.level2Password, 700);
-  if (stillHasPassword) {
-    await fillFirstVisible(page, config.selectors.login.level2Username, config.level2Username || config.level1Username);
-    await fillFirstVisible(page, config.selectors.login.level2Password, config.level2Password || config.level1Password);
-    await clickFirstVisible(page, config.selectors.login.level2Submit);
-    await waitForPageSettled(page, 1800);
-  }
-  return { authenticated: true, reusedSession: false };
 }
 
 async function navigatePatients(page, config) {

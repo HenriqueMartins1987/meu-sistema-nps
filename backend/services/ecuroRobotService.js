@@ -378,11 +378,6 @@ function buildArtifactBaseName(jobId) {
   return `${jobId}-${new Date().toISOString().replace(/[:.]/g, '-')}`;
 }
 
-async function loadPlaywright() {
-  const moduleRef = await import('playwright');
-  return moduleRef.chromium ? moduleRef : moduleRef.default;
-}
-
 class EcuroRobotJobStore {
   constructor() {
     this.jobs = new Map();
@@ -720,20 +715,6 @@ async function waitForPostSubmit(page) {
   ]);
 }
 
-async function isAuthenticated(page, selectors) {
-  if (await hasAnyVisible(page, selectors.login.authenticatedIndicators)) {
-    return true;
-  }
-
-  const loginVisible = await hasAnyVisible(page, [
-    ...selectors.login.level1Username,
-    ...selectors.login.level1Password,
-    ...selectors.login.level2Username,
-    ...selectors.login.level2Password
-  ]);
-  return !loginVisible;
-}
-
 async function detectManualActionRequired(page, config) {
   const selectors = config.selectors.login.manualActionIndicators || [];
   if (await hasAnyVisible(page, selectors)) {
@@ -742,53 +723,6 @@ async function detectManualActionRequired(page, config) {
 
   const bodyText = normalizeText(await page.locator('body').innerText().catch(() => ''));
   return config.manualActionPattern.test(bodyText);
-}
-
-async function performEcuroBrowserLogin(page, config) {
-  if (config.mode !== 'browser') {
-    throw new Error(`Unsupported Ecuro robot mode: ${config.mode}.`);
-  }
-
-  await page.goto(config.baseUrl, { waitUntil: 'domcontentloaded', timeout: config.timeoutMs });
-  if (await detectManualActionRequired(page, config)) {
-    throw buildManualActionError();
-  }
-
-  if (await isAuthenticated(page, config.selectors)) {
-    return { authenticated: true, reusedSession: true };
-  }
-
-  const level1UserFilled = await fillFirstVisible(page, config.selectors.login.level1Username, config.level1Username);
-  const level1PassFilled = await fillFirstVisible(page, config.selectors.login.level1Password, config.level1Password);
-
-  if (level1UserFilled || level1PassFilled) {
-    await clickFirstVisible(page, config.selectors.login.level1Submit);
-    await waitForPostSubmit(page);
-  }
-
-  if (await detectManualActionRequired(page, config)) {
-    throw buildManualActionError();
-  }
-
-  if (!(await isAuthenticated(page, config.selectors))) {
-    const level2UserFilled = await fillFirstVisible(page, config.selectors.login.level2Username, config.level2Username);
-    const level2PassFilled = await fillFirstVisible(page, config.selectors.login.level2Password, config.level2Password);
-
-    if (level2UserFilled || level2PassFilled) {
-      await clickFirstVisible(page, config.selectors.login.level2Submit);
-      await waitForPostSubmit(page);
-    }
-  }
-
-  if (await detectManualActionRequired(page, config)) {
-    throw buildManualActionError();
-  }
-
-  if (!(await isAuthenticated(page, config.selectors))) {
-    throw new Error('Could not confirm Ecuro authentication.');
-  }
-
-  return { authenticated: true, reusedSession: false };
 }
 
 function getDateKeyInSaoPaulo(date = new Date()) {
