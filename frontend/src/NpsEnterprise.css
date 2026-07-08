@@ -89,17 +89,9 @@ button.nps-enterprise-kpi {
   background: linear-gradient(135deg, #fffaf2 0%, #f6eddd 100%);
 }
 
-.nps-enterprise-kpi.positive {
-  border-left: 5px solid #2f855a;
-}
-
-.nps-enterprise-kpi.neutral {
-  border-left: 5px solid #b7791f;
-}
-
-.nps-enterprise-kpi.negative {
-  border-left: 5px solid #c53030;
-}
+.nps-enterprise-kpi.positive { border-left: 5px solid #2f855a; }
+.nps-enterprise-kpi.neutral { border-left: 5px solid #b7791f; }
+.nps-enterprise-kpi.negative { border-left: 5px solid #c53030; }
 
 .nps-enterprise-thermometer {
   display: grid;
@@ -112,9 +104,7 @@ button.nps-enterprise-kpi {
   border-right: 1px solid #e5e7eb;
 }
 
-.nps-enterprise-thermometer article:last-child {
-  border-right: 0;
-}
+.nps-enterprise-thermometer article:last-child { border-right: 0; }
 
 .nps-enterprise-thermometer span {
   display: block;
@@ -135,17 +125,9 @@ button.nps-enterprise-kpi {
   gap: 18px;
 }
 
-.nps-enterprise-grid.two-columns {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.nps-enterprise-grid.three-columns {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.nps-enterprise-chart {
-  height: 320px;
-}
+.nps-enterprise-grid.two-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.nps-enterprise-grid.three-columns { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.nps-enterprise-chart { height: 320px; }
 
 .nps-enterprise-alert-list,
 .nps-enterprise-compact-list {
@@ -183,9 +165,7 @@ button.nps-enterprise-kpi {
   padding: 10px 0;
 }
 
-.nps-enterprise-compact-list > div:last-child {
-  border-bottom: 0;
-}
+.nps-enterprise-compact-list > div:last-child { border-bottom: 0; }
 
 .nps-enterprise-compact-list span:first-child {
   display: flex;
@@ -193,9 +173,7 @@ button.nps-enterprise-kpi {
   gap: 2px;
 }
 
-.nps-enterprise-compact-list small {
-  color: #667085;
-}
+.nps-enterprise-compact-list small { color: #667085; }
 
 .nps-enterprise-table-wrap {
   width: 100%;
@@ -252,49 +230,146 @@ button.nps-enterprise-kpi {
   color: #344054;
 }
 
-.nps-enterprise-score.promotor {
-  background: #e8f5ee;
-  color: #17643f;
-}
-
-.nps-enterprise-score.neutro {
-  background: #fff6df;
-  color: #8a5a0a;
-}
-
-.nps-enterprise-score.detrator {
-  background: #fff0f0;
-  color: #a61b1b;
-}
+.nps-enterprise-score.promotor { background: #e8f5ee; color: #17643f; }
+.nps-enterprise-score.neutro { background: #fff6df; color: #8a5a0a; }
+.nps-enterprise-score.detrator { background: #fff0f0; color: #a61b1b; }
 
 .small-action {
   padding: 7px 10px;
   font-size: .82rem;
 }
 
-.compact-field {
-  min-width: 130px;
+.compact-field { min-width: 130px; }
+
+.nps-management-chip {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  padding: 5px 9px;
+  border-radius: 999px;
+  background: #eef2f6;
+  color: #344054;
+  font-size: .75rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.nps-management-chip.critica,
+.nps-management-chip.overdue {
+  background: #fff0f0;
+  color: #a61b1b;
+}
+
+.nps-management-chip.alta,
+.nps-management-chip.warning {
+  background: #fff6df;
+  color: #8a5a0a;
+}
+
+.nps-management-chip.media {
+  background: #fff9eb;
+  color: #9a6b22;
+}
+
+.nps-management-chip.normal,
+.nps-management-chip.on_time,
+.nps-management-chip.closed {
+  background: #e8f5ee;
+  color: #17643f;
+}
+
+.nps-enterprise-management-modal {
+  width: min(1180px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.modal-summary {
+  box-shadow: none;
+}
+
+.nps-management-voice {
+  padding: 18px;
+  border: 1px solid #d9c4a0;
+  border-radius: 14px;
+  background: #fffaf2;
+}
+
+.nps-management-voice h3,
+.nps-management-timeline h3 {
+  margin: 0 0 10px;
+  color: #132238;
+}
+
+.nps-management-voice p {
+  margin: 0;
+  white-space: pre-wrap;
+  color: #344054;
+  line-height: 1.6;
+}
+
+.nps-enterprise-form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.nps-enterprise-form-grid label,
+.nps-enterprise-management-modal > label {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #344054;
+  font-size: .84rem;
+  font-weight: 700;
+}
+
+.nps-management-timeline {
+  padding: 18px;
+  border: 1px solid #e5e7eb;
+  border-radius: 14px;
+  background: #f8fafc;
+}
+
+.nps-management-timeline article {
+  padding: 12px 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.nps-management-timeline article:last-child { border-bottom: 0; }
+
+.nps-management-timeline article > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.nps-management-timeline article span,
+.nps-management-timeline article small {
+  color: #667085;
+}
+
+.nps-management-timeline article p {
+  margin: 7px 0 0;
+  color: #344054;
 }
 
 @media (max-width: 1280px) {
-  .nps-enterprise-kpi-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .nps-enterprise-thermometer {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .nps-enterprise-grid.three-columns {
-    grid-template-columns: 1fr;
-  }
+  .nps-enterprise-kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .nps-enterprise-thermometer { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .nps-enterprise-grid.three-columns { grid-template-columns: 1fr; }
+  .nps-enterprise-form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (max-width: 900px) {
   .nps-enterprise-filters,
   .nps-enterprise-kpi-grid,
   .nps-enterprise-thermometer,
-  .nps-enterprise-grid.two-columns {
+  .nps-enterprise-grid.two-columns,
+  .nps-enterprise-form-grid {
     grid-template-columns: 1fr;
   }
 
@@ -303,15 +378,7 @@ button.nps-enterprise-kpi {
     border-bottom: 1px solid #e5e7eb;
   }
 
-  .nps-enterprise-thermometer article:last-child {
-    border-bottom: 0;
-  }
-
-  .nps-enterprise-section-head {
-    flex-direction: column;
-  }
-
-  .nps-enterprise-chart {
-    height: 280px;
-  }
+  .nps-enterprise-thermometer article:last-child { border-bottom: 0; }
+  .nps-enterprise-section-head { flex-direction: column; }
+  .nps-enterprise-chart { height: 280px; }
 }
