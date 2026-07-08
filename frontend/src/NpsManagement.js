@@ -270,6 +270,10 @@ function NpsManagement() {
         item.improvement_comment,
         item.comment,
         item.nps_treatment_comment,
+        item.response_channel,
+        item.source,
+        item.referral_name,
+        item.referral_phone,
         ...(item.logs || []).map((log) => log.message)
       ].map(normalizeText).join(' ');
 
@@ -300,9 +304,11 @@ function NpsManagement() {
     const inTreatment = activeRows.filter((item) => getNpsStatus(item) === 'em_tratativa').length;
     const treated = finishedRows.length;
     const pendingDetractors = activeRows.filter((item) => Number(item.score) <= 6 && getNpsStatus(item) !== 'tratado').length;
+    const referralReceived = operationalRows.reduce((sum, item) => sum + Number(item.referral_count || (item.recommend_yes ? 1 : 0) || 0), 0);
+    const referralConverted = operationalRows.reduce((sum, item) => sum + Number(item.referral_converted_count || 0), 0);
     const nps = total ? Math.round(((promoters - detractors) / total) * 100) : 0;
 
-    return { total, promoters, neutrals, detractors, inTreatment, treated, pendingDetractors, nps };
+    return { total, promoters, neutrals, detractors, inTreatment, treated, pendingDetractors, referralReceived, referralConverted, nps };
   }, [activeRows, finishedRows, operationalRows]);
   const selectedNpsExecutiveSummary = useMemo(
     () => buildNpsExecutiveSummary(selectedNps),
@@ -604,7 +610,7 @@ function NpsManagement() {
         <button type="button" className="kpi-card danger kpi-button" onClick={() => applyQuickFilter('active', { profile: 'detrator' })}>
           <span>Detratores</span>
           <strong>{metrics.detractors}</strong>
-          <p>NOTAS 1 A 6</p>
+          <p>NOTAS 0 A 6</p>
         </button>
         <button type="button" className="kpi-card warning kpi-button" onClick={() => applyQuickFilter('active', { profile: 'detrator' })}>
           <span>Pendentes</span>
@@ -616,6 +622,11 @@ function NpsManagement() {
           <strong>{metrics.treated}</strong>
           <p>PROTOCOLOS NPS</p>
         </button>
+        <article className="kpi-card success kpi-static">
+          <span>Indicações</span>
+          <strong>{metrics.referralReceived}</strong>
+          <p>{metrics.referralConverted} convertidas</p>
+        </article>
       </section>
 
       <section className="management-panel nps-automation-panel">
@@ -893,6 +904,10 @@ function NpsManagement() {
                     <h3>{item.patient_name || 'Paciente não informado'}</h3>
                     <p>{item.clinic_name || 'Unidade não informada'} · {item.city || 'Cidade'} / {item.state || 'UF'}</p>
 
+                    <p className="cell-secondary">
+                      Canal: {item.response_channel || 'link'} · Origem: {item.source || 'manual'} · {Number(item.referral_count || 0) > 0 || item.recommend_yes ? 'Com indicação vinculada' : 'Sem indicação vinculada'}
+                    </p>
+
                     {item.detractor_feedback && <p className="nps-relato">{item.detractor_feedback}</p>}
                     {item.improvement_comment && <p className="nps-relato">{item.improvement_comment}</p>}
                     {item.comment && <p className="nps-relato">{item.comment}</p>}
@@ -1001,6 +1016,15 @@ function NpsManagement() {
                 </p>
               ) : (
                 <p className="history-note">Sem indicação registrada.</p>
+              )}
+              {Array.isArray(selectedNps.referrals) && selectedNps.referrals.length > 0 && (
+                <div className="nps-reason-row">
+                  {selectedNps.referrals.map((referral) => (
+                    <span key={referral.id}>
+                      {referral.referral_name || 'Indicação sem nome'} · {referral.referral_phone || 'telefone pendente'} · {referral.referral_status || 'received'}
+                    </span>
+                  ))}
+                </div>
               )}
               {selectedNps.deleted_at && (
                 <p className="history-note">

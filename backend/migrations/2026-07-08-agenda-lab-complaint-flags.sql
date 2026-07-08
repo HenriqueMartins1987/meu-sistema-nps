@@ -1,0 +1,8 @@
+ALTER TABLE agenda_items
+  ADD COLUMN IF NOT EXISTS prosthesis_not_delivered TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS prosthesis_laboratory VARCHAR(80) NULL,
+  ADD COLUMN IF NOT EXISTS prosthesis_laboratory_other VARCHAR(180) NULL,
+  ADD COLUMN IF NOT EXISTS patient_complained TINYINT(1) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS complaint_id INT NULL,
+  ADD COLUMN IF NOT EXISTS complaint_protocol VARCHAR(40) NULL,
+  ADD COLUMN IF NOT EXISTS complaint_created_at DATETIME NULL;

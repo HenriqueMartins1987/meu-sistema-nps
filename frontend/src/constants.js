@@ -38,6 +38,7 @@ export const channels = [
   { value: 'instagram', label: 'Instagram' },
   { value: 'reclame_aqui', label: 'Reclame Aqui' },
   { value: 'nps', label: 'NPS' },
+  { value: 'crc', label: 'CRC' },
   { value: 'presencial', label: 'Presencial' },
   { value: 'outros', label: 'Outros' }
 ];

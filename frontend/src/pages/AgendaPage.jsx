@@ -83,6 +83,8 @@ const agendaDuplicateStrategyOptions = [
   { value: 'import_anyway', label: 'Importar mesmo assim' }
 ];
 
+const agendaLaboratoryOptions = ['Astetic', 'Loyola', 'Marcos', 'Simão', 'Wilton', 'Outros'];
+
 const emptyDraft = {
   title: '',
   description: '',
@@ -94,6 +96,10 @@ const emptyDraft = {
   patient_has_scheduled: false,
   patient_scheduled_at: '',
   patient_fake_appointment: false,
+  prosthesis_not_delivered: false,
+  prosthesis_laboratory: '',
+  prosthesis_laboratory_other: '',
+  patient_complained: false,
   confirmation_status: 'pendente',
   confirmation_notes: '',
   free_notes: '',
@@ -167,6 +173,10 @@ function normalizeDraftFromItem(item = {}) {
     patient_has_scheduled: Boolean(item.patient_has_scheduled),
     patient_scheduled_at: toDatetimeLocal(item.patient_scheduled_at),
     patient_fake_appointment: Boolean(item.patient_fake_appointment),
+    prosthesis_not_delivered: Boolean(item.prosthesis_not_delivered),
+    prosthesis_laboratory: item.prosthesis_laboratory || '',
+    prosthesis_laboratory_other: item.prosthesis_laboratory_other || '',
+    patient_complained: Boolean(item.patient_complained || item.complaint_id),
     confirmation_status: item.confirmation_status || 'pendente',
     confirmation_notes: item.confirmation_notes || '',
     free_notes: item.free_notes || '',
@@ -530,6 +540,8 @@ function buildAgendaPreviewPayload(item = {}, source = 'task') {
       `Status do contato: ${getAgendaContactStatusLabel(item.contact_status || '')}`,
       `Data da agenda: ${getAgendaDateMatchLabel(item.appointment_date_match_status || '')}`,
       `Agendamento: ${item.patient_fake_appointment ? 'Fake' : 'Regular'}`,
+      `Peça: ${item.prosthesis_not_delivered ? `Não entregue - ${item.prosthesis_laboratory === 'Outros' ? (item.prosthesis_laboratory_other || 'Outros') : (item.prosthesis_laboratory || 'laboratório pendente')}` : 'Sem pendência'}`,
+      `Reclamação CRC: ${item.complaint_protocol || (item.patient_complained ? 'Paciente reclamou' : 'Não registrada')}`,
       `Observações: ${item.free_notes || '-'}`,
       `Fonte: ${item.contact_source || item.whatsapp_status_label || 'Aguardando atualização'}`,
       `Confiança: ${formatAgendaConfidence(item.contact_confidence_score || item.confidence_score)}`
@@ -622,7 +634,7 @@ function AgendaCard({
   };
   return (
     <article
-      className={`agenda-task-card priority-${item.priority || 'normal'} ${isOverdue(item.due_at) && item.status !== 'done' ? 'overdue' : ''} ${item.patient_fake_appointment ? 'fake-appointment' : ''}`}
+      className={`agenda-task-card priority-${item.priority || 'normal'} ${isOverdue(item.due_at) && item.status !== 'done' ? 'overdue' : ''} ${item.patient_fake_appointment ? 'fake-appointment' : ''} ${item.prosthesis_not_delivered ? 'prosthesis-pending' : ''} ${item.patient_complained || item.complaint_id ? 'patient-complaint' : ''}`}
       draggable
       role="button"
       tabIndex={0}
@@ -687,6 +699,24 @@ function AgendaCard({
             Agendamento fake
           </button>
         ) : null}
+        {item.prosthesis_not_delivered ? (
+          <button
+            type="button"
+            className="agenda-inline-pill agenda-inline-pill-button warning"
+            onClick={(event) => onPreviewPin(event, previewPayload)}
+          >
+            Peça não entregue
+          </button>
+        ) : null}
+        {item.patient_complained || item.complaint_id ? (
+          <button
+            type="button"
+            className="agenda-inline-pill agenda-inline-pill-button danger"
+            onClick={(event) => onPreviewPin(event, previewPayload)}
+          >
+            {item.complaint_protocol || 'Paciente reclamou'}
+          </button>
+        ) : null}
       </div>
       <div className="agenda-card-secondary-meta">
         {recurrenceSummary ? <small>{recurrenceSummary}</small> : null}
@@ -724,6 +754,8 @@ function AgendaCard({
         {item.patient_name ? <span>Paciente {item.patient_name}</span> : null}
         {item.patient_has_scheduled && item.patient_scheduled_at ? <span>Agendado para {formatDateTime(item.patient_scheduled_at)}</span> : null}
         {item.patient_fake_appointment ? <span className="agenda-fake-meta">Agendamento fake</span> : null}
+        {item.prosthesis_not_delivered ? <span className="agenda-lab-meta">Peça não entregue: {item.prosthesis_laboratory === 'Outros' ? (item.prosthesis_laboratory_other || 'Outros') : (item.prosthesis_laboratory || 'laboratório pendente')}</span> : null}
+        {item.complaint_protocol ? <span className="agenda-complaint-meta">Reclamação {item.complaint_protocol}</span> : null}
         {executionStamp ? <span>{executionStamp}</span> : null}
       </div>
       {tags.length ? (
@@ -842,6 +874,7 @@ export default function AgendaPage() {
   const [draggingId, setDraggingId] = useState(null);
   const [openingWhatsappId, setOpeningWhatsappId] = useState(null);
   const [reprocessingContactId, setReprocessingContactId] = useState(null);
+  const [convertingComplaintId, setConvertingComplaintId] = useState(null);
   const [previewPopover, setPreviewPopover] = useState(null);
   const previewPopoverRef = useRef(null);
   const notifiedReminderIds = useRef(new Set());
@@ -1317,6 +1350,9 @@ export default function AgendaPage() {
     { label: 'Taxa de execução', value: formatAgendaPercent(dashboard?.summary?.completion_rate_period || 0), helper: 'concluídas sobre programadas', tone: 'progress' },
     { label: 'Confirmação', value: formatAgendaPercent(dashboard?.summary?.patient_confirmation_rate || 0), helper: 'pacientes confirmados por operador', tone: 'progress' },
     { label: 'Evasão', value: dashboard?.summary?.patient_evasion || 0, helper: 'não confirmaram e exigem tratativa', tone: 'danger' },
+    { label: 'Agendamentos fake', value: dashboard?.summary?.fake_appointments || 0, helper: 'marcados para auditoria', tone: 'danger' },
+    { label: 'Peças pendentes', value: dashboard?.summary?.prosthesis_not_delivered || 0, helper: 'laboratório sem entrega', tone: 'warning' },
+    { label: 'Reclamações CRC', value: dashboard?.summary?.patient_complaints || 0, helper: 'migradas para protocolos', tone: 'danger' },
     { label: 'Rotinas recorrentes', value: dashboard?.summary?.recurring || 0, helper: 'voltam automaticamente ao fluxo', tone: 'neutral' }
   ]), [dashboard]);
 
@@ -1424,6 +1460,14 @@ export default function AgendaPage() {
       setFeedback('Informe o nome do paciente para a demanda.');
       return;
     }
+    if (draft.demand_type === 'patient' && draft.prosthesis_not_delivered && !draft.prosthesis_laboratory) {
+      setFeedback('Selecione o laboratório responsável pela peça não entregue.');
+      return;
+    }
+    if (draft.demand_type === 'patient' && draft.prosthesis_not_delivered && draft.prosthesis_laboratory === 'Outros' && !draft.prosthesis_laboratory_other.trim()) {
+      setFeedback('Informe o nome do laboratório quando selecionar Outros.');
+      return;
+    }
 
     setSaving(true);
     setFeedback('');
@@ -1439,6 +1483,9 @@ export default function AgendaPage() {
       patient_has_scheduled: draft.demand_type === 'patient' ? Boolean(draft.patient_has_scheduled) : false,
       patient_scheduled_at: draft.demand_type === 'patient' && draft.patient_has_scheduled ? (draft.patient_scheduled_at || null) : null,
       patient_fake_appointment: draft.demand_type === 'patient' ? Boolean(draft.patient_fake_appointment) : false,
+      prosthesis_not_delivered: draft.demand_type === 'patient' ? Boolean(draft.prosthesis_not_delivered) : false,
+      prosthesis_laboratory: draft.demand_type === 'patient' && draft.prosthesis_not_delivered ? draft.prosthesis_laboratory : null,
+      prosthesis_laboratory_other: draft.demand_type === 'patient' && draft.prosthesis_not_delivered && draft.prosthesis_laboratory === 'Outros' ? draft.prosthesis_laboratory_other : null,
       confirmation_status: draft.demand_type === 'patient' ? draft.confirmation_status : null,
       confirmation_notes: draft.demand_type === 'patient' ? draft.confirmation_notes : null,
       free_notes: draft.free_notes,
@@ -1465,6 +1512,37 @@ export default function AgendaPage() {
       setFeedback(getApiErrorMessage(error, 'Não foi possível salvar o item da agenda.'));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const convertSelectedItemToComplaint = async () => {
+    if (!selectedItem?.id) {
+      setFeedback('Salve a tarefa antes de abrir uma reclamação vinculada.');
+      return;
+    }
+    if (draft.demand_type !== 'patient' || !draft.patient_name.trim()) {
+      setFeedback('A reclamação automática exige uma tarefa de paciente com nome informado.');
+      return;
+    }
+
+    const confirmed = window.confirm('Abrir protocolo de reclamação para este paciente e mover a demanda para o painel de reclamações?');
+    if (!confirmed) return;
+
+    setConvertingComplaintId(selectedItem.id);
+    setFeedback('');
+    try {
+      const response = await api.post(`/api/agenda/items/${selectedItem.id}/complaint`);
+      const complaintId = response.data?.complaintId;
+      const protocol = response.data?.protocol;
+      await Promise.all([loadItems(), loadDashboard(), loadEnrichmentReport()]);
+      setFeedback(protocol ? `Protocolo ${protocol} aberto com sucesso.` : 'Reclamação aberta com sucesso.');
+      if (complaintId) {
+        window.location.assign(`/gestao/${complaintId}`);
+      }
+    } catch (error) {
+      setFeedback(getApiErrorMessage(error, 'Não foi possível abrir a reclamação a partir da agenda.'));
+    } finally {
+      setConvertingComplaintId(null);
     }
   };
 
@@ -2173,6 +2251,34 @@ export default function AgendaPage() {
               </div>
             </Card>
 
+            <Card className="agenda-daily-matrix-panel agenda-issue-period-panel">
+              <div className="agenda-panel-headline">
+                <div>
+                  <strong>Ocorrências por período</strong>
+                  <span>Médias e volumes diários, semanais e mensais por unidade e dentista para fake, peça não entregue e reclamação CRC.</span>
+                </div>
+              </div>
+              <div className="agenda-period-ranking-grid">
+                {[
+                  ['daily', 'Diário'],
+                  ['weekly', 'Semanal'],
+                  ['monthly', 'Mensal']
+                ].map(([key, label]) => (
+                  <section key={key}>
+                    <strong>{label}</strong>
+                    {(dashboard?.issue_period_rankings?.[key] || []).slice(0, 5).map((item) => (
+                      <article key={`${key}-${item.key}`}>
+                        <span>{item.clinic_name || 'Sem clínica'}</span>
+                        <strong>{item.total || 0}</strong>
+                        <small>{item.dentist_name || 'Dentista não informado'} · {item.prosthesis_not_delivered || 0} peça(s) · {item.fake || 0} fake · {item.complaints || 0} reclamação(ões)</small>
+                      </article>
+                    ))}
+                    {!dashboardLoading && !(dashboard?.issue_period_rankings?.[key] || []).length ? <p className="empty-state">Sem ocorrências.</p> : null}
+                  </section>
+                ))}
+              </div>
+            </Card>
+
             <div className="agenda-intelligence-grid">
               <Card className="agenda-collaborator-panel">
                 <div className="agenda-panel-headline">
@@ -2241,6 +2347,69 @@ export default function AgendaPage() {
                       </article>
                     ))}
                     {!dashboardLoading && !(dashboard?.top_performers || []).length ? <p className="empty-state">Sem destaques ainda.</p> : null}
+                  </div>
+                </Card>
+
+                <Card className="agenda-ranking-panel agenda-ranking-panel-warning">
+                  <div className="agenda-panel-headline">
+                    <div>
+                      <strong>Ranking de laboratórios</strong>
+                      <span>Peças não entregues por laboratório, unidade e dentista.</span>
+                    </div>
+                  </div>
+                  <div className="agenda-ranking-list">
+                    {(dashboard?.laboratory_error_ranking || []).slice(0, 5).map((item, index) => (
+                      <article key={`${item.laboratory || item.key}-lab`}>
+                        <span>{String(index + 1).padStart(2, '0')}</span>
+                        <div>
+                          <strong>{item.laboratory || 'Laboratório não informado'}</strong>
+                          <small>{item.prosthesis_not_delivered || 0} peça(s) · {item.clinic_name || 'Sem clínica'} · {item.dentist_name || 'Dentista não informado'}</small>
+                        </div>
+                      </article>
+                    ))}
+                    {!dashboardLoading && !(dashboard?.laboratory_error_ranking || []).length ? <p className="empty-state">Sem peças pendentes registradas.</p> : null}
+                  </div>
+                </Card>
+
+                <Card className="agenda-ranking-panel agenda-ranking-panel-danger">
+                  <div className="agenda-panel-headline">
+                    <div>
+                      <strong>Agendamentos fake por clínica</strong>
+                      <span>Unidades com maior volume de marcações sinalizadas como fake.</span>
+                    </div>
+                  </div>
+                  <div className="agenda-ranking-list">
+                    {(dashboard?.fake_appointment_ranking || []).slice(0, 5).map((item, index) => (
+                      <article key={`${item.clinic_name || item.key}-fake`}>
+                        <span>{String(index + 1).padStart(2, '0')}</span>
+                        <div>
+                          <strong>{item.clinic_name || 'Sem clínica definida'}</strong>
+                          <small>{item.fake || 0} agendamento(s) fake</small>
+                        </div>
+                      </article>
+                    ))}
+                    {!dashboardLoading && !(dashboard?.fake_appointment_ranking || []).length ? <p className="empty-state">Sem agendamentos fake registrados.</p> : null}
+                  </div>
+                </Card>
+
+                <Card className="agenda-ranking-panel">
+                  <div className="agenda-panel-headline">
+                    <div>
+                      <strong>Ocorrências por dentista</strong>
+                      <span>Consolida peça, fake e reclamações vinculadas à confirmação/agendamento.</span>
+                    </div>
+                  </div>
+                  <div className="agenda-ranking-list">
+                    {(dashboard?.dentist_issue_ranking || []).slice(0, 5).map((item, index) => (
+                      <article key={`${item.dentist_name || item.key}-dentist`}>
+                        <span>{String(index + 1).padStart(2, '0')}</span>
+                        <div>
+                          <strong>{item.dentist_name || 'Dentista não informado'}</strong>
+                          <small>{item.total || 0} ocorrência(s) · {item.prosthesis_not_delivered || 0} peça(s) · {item.fake || 0} fake · {item.complaints || 0} reclamação(ões)</small>
+                        </div>
+                      </article>
+                    ))}
+                    {!dashboardLoading && !(dashboard?.dentist_issue_ranking || []).length ? <p className="empty-state">Sem ocorrências por dentista.</p> : null}
                   </div>
                 </Card>
 
@@ -3187,6 +3356,10 @@ export default function AgendaPage() {
                       patient_has_scheduled: event.target.value === 'patient' ? current.patient_has_scheduled : false,
                       patient_scheduled_at: event.target.value === 'patient' ? current.patient_scheduled_at : '',
                       patient_fake_appointment: event.target.value === 'patient' ? current.patient_fake_appointment : false,
+                      prosthesis_not_delivered: event.target.value === 'patient' ? current.prosthesis_not_delivered : false,
+                      prosthesis_laboratory: event.target.value === 'patient' ? current.prosthesis_laboratory : '',
+                      prosthesis_laboratory_other: event.target.value === 'patient' ? current.prosthesis_laboratory_other : '',
+                      patient_complained: event.target.value === 'patient' ? current.patient_complained : false,
                       patient_name: event.target.value === 'patient' ? current.patient_name : '',
                       patient_phone: event.target.value === 'patient' ? current.patient_phone : '',
                       confirmation_notes: event.target.value === 'patient' ? current.confirmation_notes : ''
@@ -3233,6 +3406,66 @@ export default function AgendaPage() {
                     >
                       <strong>Agendamento Fake</strong>
                       <small>Marque quando a data informada não representar comparecimento real ou exigir revisão.</small>
+                    </button>
+                    <button
+                      type="button"
+                      className={`agenda-lab-pending-button ${draft.prosthesis_not_delivered ? 'active' : ''}`}
+                      onClick={() => setDraft((current) => ({
+                        ...current,
+                        prosthesis_not_delivered: !current.prosthesis_not_delivered,
+                        prosthesis_laboratory: !current.prosthesis_not_delivered ? (current.prosthesis_laboratory || 'Astetic') : '',
+                        prosthesis_laboratory_other: !current.prosthesis_not_delivered ? current.prosthesis_laboratory_other : ''
+                      }))}
+                      aria-pressed={Boolean(draft.prosthesis_not_delivered)}
+                    >
+                      <strong>Peça não entregue</strong>
+                      <small>Use quando o paciente não puder seguir por pendência do laboratório.</small>
+                    </button>
+                    {draft.prosthesis_not_delivered ? (
+                      <div className="agenda-lab-warning-box agenda-span-2">
+                        <div>
+                          <strong>Responsável pelo laboratório</strong>
+                          <small>Selecione o laboratório para alimentar ranking de erros e acionar correção operacional.</small>
+                        </div>
+                        <label>
+                          Laboratório
+                          <select
+                            className="field"
+                            value={draft.prosthesis_laboratory}
+                            onChange={(event) => setDraft((current) => ({
+                              ...current,
+                              prosthesis_laboratory: event.target.value,
+                              prosthesis_laboratory_other: event.target.value === 'Outros' ? current.prosthesis_laboratory_other : ''
+                            }))}
+                          >
+                            {agendaLaboratoryOptions.map((option) => (
+                              <option key={option} value={option}>{option}</option>
+                            ))}
+                          </select>
+                        </label>
+                        {draft.prosthesis_laboratory === 'Outros' ? (
+                          <label>
+                            Informe o laboratório
+                            <input
+                              className="field"
+                              value={draft.prosthesis_laboratory_other}
+                              onChange={(event) => setDraft((current) => ({ ...current, prosthesis_laboratory_other: event.target.value.slice(0, 180) }))}
+                              placeholder="Nome do laboratório responsável"
+                              required
+                            />
+                          </label>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    <button
+                      type="button"
+                      className={`agenda-patient-complaint-button ${draft.patient_complained || selectedItem?.complaint_id ? 'active' : ''}`}
+                      onClick={convertSelectedItemToComplaint}
+                      disabled={!selectedItem?.id || convertingComplaintId === selectedItem?.id || Boolean(selectedItem?.complaint_id)}
+                      title={!selectedItem?.id ? 'Salve a tarefa antes de abrir reclamação.' : selectedItem?.complaint_protocol ? `Protocolo já aberto: ${selectedItem.complaint_protocol}` : 'Abrir reclamação automaticamente no painel de SAC.'}
+                    >
+                      <strong>{convertingComplaintId === selectedItem?.id ? 'Abrindo protocolo...' : 'Paciente reclamou'}</strong>
+                      <small>{selectedItem?.complaint_protocol ? `Protocolo ${selectedItem.complaint_protocol}` : 'Abre protocolo no canal CRC e move a tratativa para Reclamações.'}</small>
                     </button>
                     <label>
                       Status da confirmação

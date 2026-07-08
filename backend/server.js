@@ -3438,6 +3438,39 @@ function inferNpsProfile(score) {
   return 'detrator';
 }
 
+function isValidNpsScore(score) {
+  if (score === null || score === undefined || typeof score === 'boolean') {
+    return false;
+  }
+
+  if (typeof score === 'string' && score.trim() === '') {
+    return false;
+  }
+
+  const numericScore = Number(score);
+  return Number.isInteger(numericScore) && numericScore >= 0 && numericScore <= 10;
+}
+
+function calculateNpsMetrics(rows = []) {
+  const validRows = (Array.isArray(rows) ? rows : []).filter((row) => isValidNpsScore(row?.score));
+  const total = validRows.length;
+  const promoters = validRows.filter((row) => Number(row.score) >= 9).length;
+  const neutrals = validRows.filter((row) => Number(row.score) >= 7 && Number(row.score) <= 8).length;
+  const detractors = validRows.filter((row) => Number(row.score) <= 6).length;
+  const percentage = (value) => (total ? Math.round((value * 1000) / total) / 10 : 0);
+
+  return {
+    total,
+    promoters,
+    neutrals,
+    detractors,
+    promoterPercent: percentage(promoters),
+    neutralPercent: percentage(neutrals),
+    detractorPercent: percentage(detractors),
+    nps: total ? Math.round((((promoters / total) * 100) - ((detractors / total) * 100))) : 0
+  };
+}
+
 function buildNpsNarrative(payload, classification, profile) {
   const notes = [`Registro originado da pesquisa NPS com classificação ${classification}.`];
   const comment = String(payload.comment || '').trim();
@@ -5170,6 +5203,7 @@ async function ensureDatabaseSchema() {
 
   await ensureColumn('nps_responses', 'feedback_type', 'VARCHAR(80) NULL');
   await ensureColumn('nps_responses', 'patient_phone', 'VARCHAR(40) NULL');
+  await ensureColumn('nps_responses', 'clinic_name', 'VARCHAR(180) NULL');
   await ensureColumn('nps_responses', 'nps_profile', 'VARCHAR(30) NULL');
   await ensureColumn('nps_responses', 'recommend_yes', 'TINYINT(1) NULL');
   await ensureColumn('nps_responses', 'referral_name', 'VARCHAR(160) NULL');
@@ -5196,8 +5230,36 @@ async function ensureDatabaseSchema() {
   await ensureColumn('nps_responses', 'whatsapp_nps_invite_id', 'INT NULL');
   await ensureColumn('nps_responses', 'ecuro_nps_invite_id', 'BIGINT NULL');
   await ensureColumn('nps_responses', 'whatsapp_inbound_message_id', 'VARCHAR(180) NULL');
+  await ensureColumn('nps_responses', 'response_channel', "VARCHAR(40) NOT NULL DEFAULT 'link'");
+  await ensureColumn('nps_responses', 'responded_at', 'DATETIME NULL');
   await ensureColumn('nps_responses', 'ip_address', 'VARCHAR(120) NULL');
   await ensureColumn('nps_responses', 'created_at', 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS nps_referrals (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      nps_response_id INT NULL,
+      nps_invite_id BIGINT NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      referrer_patient_name VARCHAR(180) NULL,
+      referrer_patient_phone VARCHAR(40) NULL,
+      referral_name VARCHAR(180) NULL,
+      referral_phone VARCHAR(40) NULL,
+      referral_status VARCHAR(40) NOT NULL DEFAULT 'received',
+      referral_accepted_at DATETIME NULL,
+      referral_received_at DATETIME NULL,
+      converted_at DATETIME NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_nps_referrals_response (nps_response_id),
+      INDEX idx_nps_referrals_invite (nps_invite_id),
+      INDEX idx_nps_referrals_clinic (clinic_id, created_at),
+      INDEX idx_nps_referrals_phone (referral_phone, created_at)
+    )
+  `);
+  await ensureIndex('nps_referrals', 'uniq_nps_referral_response_phone', 'UNIQUE KEY `uniq_nps_referral_response_phone` (nps_response_id, referral_phone)');
+  await ensureIndex('nps_referrals', 'idx_nps_referrals_status', 'INDEX `idx_nps_referrals_status` (referral_status, created_at)');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS nps_treatment_logs (
@@ -5484,6 +5546,13 @@ async function ensureDatabaseSchema() {
   await ensureColumn('agenda_items', 'patient_has_scheduled', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn('agenda_items', 'patient_scheduled_at', 'DATETIME NULL');
   await ensureColumn('agenda_items', 'patient_fake_appointment', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn('agenda_items', 'prosthesis_not_delivered', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn('agenda_items', 'prosthesis_laboratory', 'VARCHAR(80) NULL');
+  await ensureColumn('agenda_items', 'prosthesis_laboratory_other', 'VARCHAR(180) NULL');
+  await ensureColumn('agenda_items', 'patient_complained', 'TINYINT(1) NOT NULL DEFAULT 0');
+  await ensureColumn('agenda_items', 'complaint_id', 'INT NULL');
+  await ensureColumn('agenda_items', 'complaint_protocol', 'VARCHAR(40) NULL');
+  await ensureColumn('agenda_items', 'complaint_created_at', 'DATETIME NULL');
   await ensureColumn('agenda_items', 'confirmation_status', 'VARCHAR(40) NULL');
   await ensureColumn('agenda_items', 'confirmation_notes', 'TEXT NULL');
   await ensureColumn('agenda_items', 'confirmation_recorded_at', 'DATETIME NULL');
@@ -5517,6 +5586,8 @@ async function ensureDatabaseSchema() {
   await ensureIndex('agenda_items', 'idx_agenda_company_status', 'INDEX idx_agenda_company_status (company_id, status)');
   await ensureIndex('agenda_items', 'idx_agenda_assigned_status', 'INDEX idx_agenda_assigned_status (assigned_user_id, status)');
   await ensureIndex('agenda_items', 'idx_agenda_contact_status', 'INDEX idx_agenda_contact_status (contact_status, clinic_id)');
+  await ensureIndex('agenda_items', 'idx_agenda_lab_exception', 'INDEX idx_agenda_lab_exception (prosthesis_not_delivered, prosthesis_laboratory)');
+  await ensureIndex('agenda_items', 'idx_agenda_complaint_link', 'INDEX idx_agenda_complaint_link (patient_complained, complaint_id)');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS operator_clinics (
@@ -14138,6 +14209,161 @@ function buildInboundNpsComment(text = '', receivedAt = new Date()) {
   return `[WhatsApp ${timestamp}] ${normalized}`;
 }
 
+function parseNpsYesNo(text = '') {
+  const normalized = normalizeComparableText(text || '');
+  if (!normalized) return null;
+  if (/^(sim|s|yes|y|quero|pode|claro|aceito|ok|positivo)\b/.test(normalized)) return true;
+  if (/^(nao|n|no|negativo|nao quero|prefiro nao)\b/.test(normalized)) return false;
+  return null;
+}
+
+function parseNpsReferralText(text = '') {
+  const rawText = String(text || '').trim();
+  const normalizedPhoneMatch = rawText.match(/(?:\+?55)?[\s().-]*(?:\d[\s().-]*){10,13}/);
+  const referralPhone = normalizedPhoneMatch ? normalizeBrazilPhone(normalizedPhoneMatch[0]) : '';
+  const referralName = rawText
+    .replace(normalizedPhoneMatch?.[0] || '', ' ')
+    .replace(/(?:nome|telefone|fone|celular|whatsapp|zap)\s*[:=-]/gi, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return {
+    referralName: sanitizeFinancialString(referralName || rawText, 180) || null,
+    referralPhone: isCompleteBrazilPhone(referralPhone) ? referralPhone : null
+  };
+}
+
+async function saveNpsReferralRecord(responseRow = {}, inviteRow = {}, payload = {}) {
+  const responseId = Number(responseRow?.id || payload.npsResponseId || 0) || null;
+  const inviteId = Number(inviteRow?.id || responseRow?.ecuro_nps_invite_id || payload.npsInviteId || 0) || null;
+  const referralName = sanitizeFinancialString(payload.referralName || payload.referral_name || '', 180) || null;
+  const rawReferralPhone = payload.referralPhone || payload.referral_phone || '';
+  const referralPhone = isCompleteBrazilPhone(normalizeBrazilPhone(rawReferralPhone))
+    ? normalizeBrazilPhone(rawReferralPhone)
+    : null;
+  const clinicId = Number(responseRow?.clinic_id || inviteRow?.clinic_id || payload.clinicId || 0) || null;
+  const clinicName = sanitizeFinancialString(responseRow?.clinic_name || inviteRow?.clinic_name || payload.clinicName || '', 180) || null;
+  const referrerName = sanitizeFinancialString(responseRow?.patient_name || inviteRow?.patient_name || payload.referrerPatientName || '', 180) || null;
+  const referrerPhone = isCompleteBrazilPhone(normalizeBrazilPhone(responseRow?.patient_phone || inviteRow?.patient_phone || payload.referrerPatientPhone || ''))
+    ? normalizeBrazilPhone(responseRow?.patient_phone || inviteRow?.patient_phone || payload.referrerPatientPhone || '')
+    : null;
+  const referralStatus = sanitizeFinancialString(payload.referralStatus || payload.referral_status || 'received', 40) || 'received';
+  const receivedAt = normalizeNullableMysqlDateTime(payload.referralReceivedAt || payload.referral_received_at) || toMysqlDateTime(new Date());
+  const acceptedAt = normalizeNullableMysqlDateTime(payload.referralAcceptedAt || payload.referral_accepted_at) || receivedAt;
+
+  if (!responseId && !inviteId) {
+    return { saved: false, reason: 'missing_response_or_invite' };
+  }
+
+  if (!referralName && !referralPhone) {
+    return { saved: false, reason: 'missing_referral_data' };
+  }
+
+  const lookupSql = referralPhone
+    ? `SELECT * FROM nps_referrals
+        WHERE ((? IS NOT NULL AND nps_response_id = ?) OR (? IS NOT NULL AND nps_invite_id = ?))
+          AND referral_phone = ?
+        ORDER BY id DESC
+        LIMIT 1`
+    : `SELECT * FROM nps_referrals
+        WHERE ((? IS NOT NULL AND nps_response_id = ?) OR (? IS NOT NULL AND nps_invite_id = ?))
+        ORDER BY id DESC
+        LIMIT 1`;
+  const lookupParams = referralPhone
+    ? [responseId, responseId, inviteId, inviteId, referralPhone]
+    : [responseId, responseId, inviteId, inviteId];
+  const [existingRows] = await pool.query(lookupSql, lookupParams);
+  const existing = existingRows[0] || null;
+
+  if (existing?.id) {
+    await pool.query(
+      `UPDATE nps_referrals
+          SET nps_response_id = COALESCE(?, nps_response_id),
+              nps_invite_id = COALESCE(?, nps_invite_id),
+              clinic_id = COALESCE(?, clinic_id),
+              clinic_name = COALESCE(?, clinic_name),
+              referrer_patient_name = COALESCE(?, referrer_patient_name),
+              referrer_patient_phone = COALESCE(?, referrer_patient_phone),
+              referral_name = COALESCE(?, referral_name),
+              referral_phone = COALESCE(?, referral_phone),
+              referral_status = COALESCE(?, referral_status),
+              referral_accepted_at = COALESCE(?, referral_accepted_at),
+              referral_received_at = COALESCE(?, referral_received_at),
+              updated_at = NOW()
+        WHERE id = ?`,
+      [
+        responseId,
+        inviteId,
+        clinicId,
+        clinicName,
+        referrerName,
+        referrerPhone,
+        referralName,
+        referralPhone,
+        referralStatus,
+        acceptedAt,
+        receivedAt,
+        existing.id
+      ]
+    );
+
+    if (responseId) {
+      await pool.query(
+        `UPDATE nps_responses
+            SET recommend_yes = 1,
+                contact_share_allowed = 1,
+                referral_name = COALESCE(?, referral_name),
+                referral_phone = COALESCE(?, referral_phone)
+          WHERE id = ?`,
+        [referralName, referralPhone, responseId]
+      );
+    }
+
+    return { saved: true, duplicate: true, id: Number(existing.id) };
+  }
+
+  const [result] = await pool.query(
+    `INSERT INTO nps_referrals
+     (nps_response_id, nps_invite_id, clinic_id, clinic_name, referrer_patient_name, referrer_patient_phone, referral_name, referral_phone, referral_status, referral_accepted_at, referral_received_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      responseId,
+      inviteId,
+      clinicId,
+      clinicName,
+      referrerName,
+      referrerPhone,
+      referralName,
+      referralPhone,
+      referralStatus,
+      acceptedAt,
+      receivedAt
+    ]
+  );
+
+  if (responseId) {
+    await pool.query(
+      `UPDATE nps_responses
+          SET recommend_yes = 1,
+              contact_share_allowed = 1,
+              referral_name = COALESCE(?, referral_name),
+              referral_phone = COALESCE(?, referral_phone)
+        WHERE id = ?`,
+      [referralName, referralPhone, responseId]
+    );
+    await insertNpsLog(responseId, 'indicacao_registrada', 'Indicação do paciente promotor registrada no banco relacional.', {
+      name: 'WhatsApp NPS',
+      role: 'automacao'
+    });
+  }
+
+  return {
+    saved: true,
+    duplicate: false,
+    id: Number(result.insertId || 0) || null
+  };
+}
+
 async function findLatestNpsInviteByPhone(patientPhone = '', sessionId = '') {
   const normalizedPhone = normalizeBrazilPhone(patientPhone || '');
   if (!isCompleteBrazilPhone(normalizedPhone)) return null;
@@ -14244,12 +14470,14 @@ async function createNpsResponseFromInvite(inviteRow, numericScore, options = {}
     numericScore >= 9 ? 'elogio' : numericScore >= 7 ? 'sugestao' : 'reclamacao'
   );
   const npsProfile = inferNpsProfile(numericScore);
+  const respondedAt = toMysqlDateTime(options.receivedAt || new Date());
   const [insertResult] = await pool.query(
     `INSERT INTO nps_responses
-     (clinic_id, patient_name, patient_phone, score, comment, feedback_type, nps_profile, source, ecuro_nps_invite_id, whatsapp_inbound_message_id)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (clinic_id, clinic_name, patient_name, patient_phone, score, comment, feedback_type, nps_profile, source, ecuro_nps_invite_id, whatsapp_inbound_message_id, response_channel, nps_status, responded_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       inviteRow.clinic_id || null,
+      inviteRow.clinic_name || null,
       inviteRow.patient_name || null,
       inviteRow.patient_phone || null,
       numericScore,
@@ -14258,7 +14486,10 @@ async function createNpsResponseFromInvite(inviteRow, numericScore, options = {}
       npsProfile,
       inviteRow.source || 'ecuro_last_consultation',
       inviteRow.id,
-      options.whatsappInboundMessageId || null
+      options.whatsappInboundMessageId || null,
+      'whatsapp',
+      'registrado',
+      respondedAt
     ]
   );
   const responseId = Number(insertResult.insertId || 0) || null;
@@ -14269,7 +14500,7 @@ async function createNpsResponseFromInvite(inviteRow, numericScore, options = {}
   );
   await updateNpsInviteAuditRow(inviteRow.id, {
     status: 'responded',
-    responded_at: toMysqlDateTime(options.receivedAt || new Date())
+    responded_at: respondedAt
   });
   await insertNpsLog(responseId, 'created', `Resposta NPS recebida via WhatsApp e registrada no protocolo ${protocol}.`, {
     name: 'WhatsApp NPS',
@@ -14277,6 +14508,127 @@ async function createNpsResponseFromInvite(inviteRow, numericScore, options = {}
   });
   const [rows] = await pool.query('SELECT * FROM nps_responses WHERE id = ? LIMIT 1', [responseId]);
   return rows[0] || null;
+}
+
+async function processInboundNpsFollowUpMessage({ responseRow, inviteRow, text, receivedAt, inboundEventId }) {
+  const profile = responseRow?.nps_profile || inferNpsProfile(responseRow?.score);
+  const comment = buildInboundNpsComment(text, receivedAt);
+
+  if (profile === 'promotor') {
+    const yesNo = parseNpsYesNo(text);
+
+    if (responseRow.recommend_yes === null || responseRow.recommend_yes === undefined) {
+      if (yesNo === true) {
+        await pool.query(
+          `UPDATE nps_responses
+              SET recommend_yes = 1,
+                  contact_share_allowed = 1,
+                  comment = CASE WHEN ? IS NULL OR ? = '' THEN comment ELSE CONCAT(COALESCE(comment, ''), CASE WHEN comment IS NULL OR comment = '' THEN '' ELSE '\n\n' END, ?) END
+            WHERE id = ?`,
+          [comment, comment, comment, responseRow.id]
+        );
+        await insertNpsLog(responseRow.id, 'indicacao_aceita', 'Paciente promotor aceitou enviar uma indicação.', {
+          name: 'WhatsApp NPS',
+          role: 'automacao'
+        });
+        return {
+          success: true,
+          type: 'promoter_referral_consent',
+          nextPrompt: 'referral_details',
+          responseId: responseRow.id,
+          inboundEventId
+        };
+      }
+
+      if (yesNo === false) {
+        await pool.query(
+          `UPDATE nps_responses
+              SET recommend_yes = 0,
+                  contact_share_allowed = 0,
+                  comment = CASE WHEN ? IS NULL OR ? = '' THEN comment ELSE CONCAT(COALESCE(comment, ''), CASE WHEN comment IS NULL OR comment = '' THEN '' ELSE '\n\n' END, ?) END
+            WHERE id = ?`,
+          [comment, comment, comment, responseRow.id]
+        );
+        await insertNpsLog(responseRow.id, 'indicacao_recusada', 'Paciente promotor não informou indicação.', {
+          name: 'WhatsApp NPS',
+          role: 'automacao'
+        });
+        return {
+          success: true,
+          type: 'promoter_referral_declined',
+          nextPrompt: null,
+          responseId: responseRow.id,
+          inboundEventId
+        };
+      }
+    }
+
+    if (Number(responseRow.recommend_yes || 0) === 1 || yesNo === true) {
+      const referral = parseNpsReferralText(text);
+      const savedReferral = await saveNpsReferralRecord(responseRow, inviteRow, {
+        referralName: referral.referralName,
+        referralPhone: referral.referralPhone,
+        referralStatus: referral.referralPhone ? 'received' : 'pending_phone',
+        referralReceivedAt: receivedAt
+      });
+      return {
+        success: true,
+        type: 'promoter_referral',
+        referral: savedReferral,
+        responseId: responseRow.id,
+        inboundEventId
+      };
+    }
+  }
+
+  if (profile === 'neutro') {
+    const existingImprovement = String(responseRow.improvement_comment || '').trim();
+    const nextImprovement = existingImprovement ? `${existingImprovement}\n\n${comment}` : comment;
+    await pool.query(
+      'UPDATE nps_responses SET improvement_comment = ?, comment = COALESCE(comment, ?) WHERE id = ?',
+      [nextImprovement || null, comment || null, responseRow.id]
+    );
+    await insertNpsLog(responseRow.id, 'melhoria_whatsapp', 'Comentário de melhoria recebido via WhatsApp.', {
+      name: 'WhatsApp NPS',
+      role: 'automacao'
+    });
+    return {
+      success: true,
+      type: 'neutral_improvement',
+      responseId: responseRow.id,
+      inboundEventId
+    };
+  }
+
+  if (profile === 'detrator') {
+    const existingFeedback = String(responseRow.detractor_feedback || '').trim();
+    const nextFeedback = existingFeedback ? `${existingFeedback}\n\n${comment}` : comment;
+    await pool.query(
+      `UPDATE nps_responses
+          SET detractor_feedback = ?,
+              nps_status = COALESCE(NULLIF(nps_status, ''), 'registrado')
+        WHERE id = ?`,
+      [nextFeedback || null, responseRow.id]
+    );
+    await insertNpsLog(responseRow.id, 'motivo_detrator_whatsapp', 'Motivo do detrator recebido via WhatsApp.', {
+      name: 'WhatsApp NPS',
+      role: 'automacao'
+    });
+    return {
+      success: true,
+      type: 'detractor_feedback',
+      responseId: responseRow.id,
+      inboundEventId
+    };
+  }
+
+  const appended = await appendCommentToNpsResponse(responseRow, comment);
+  return {
+    success: true,
+    type: 'comment',
+    responseId: appended.id,
+    inboundEventId
+  };
 }
 
 async function processInboundNpsWhatsAppMessage(payload = {}) {
@@ -14344,20 +14696,25 @@ async function processInboundNpsWhatsAppMessage(payload = {}) {
       };
     }
 
-    const appended = await appendCommentToNpsResponse(
-      existingResponse,
-      buildInboundNpsComment(text, receivedAt)
-    );
+    const followUp = await processInboundNpsFollowUpMessage({
+      responseRow: existingResponse,
+      inviteRow,
+      text,
+      receivedAt,
+      inboundEventId: inboundEvent.id
+    });
     await updateNpsInboundEvent(inboundEvent.id, {
-      processedStatus: 'comment_recorded',
+      processedStatus: followUp.type || 'comment_recorded',
       npsInviteId: inviteRow.id,
-      npsResponseId: appended.id
+      npsResponseId: existingResponse.id
     });
     return {
       success: true,
-      type: 'comment',
+      type: followUp.type || 'comment',
+      nextPrompt: followUp.nextPrompt || null,
+      referral: followUp.referral || null,
       inviteId: inviteRow.id,
-      responseId: appended.id,
+      responseId: existingResponse.id,
       inboundEventId: inboundEvent.id
     };
   }
@@ -14390,6 +14747,12 @@ async function processInboundNpsWhatsAppMessage(payload = {}) {
   return {
     success: true,
     type: 'score',
+    npsProfile: responseRow?.nps_profile || inferNpsProfile(numericScore),
+    nextPrompt: numericScore >= 9
+      ? 'ask_referral'
+      : numericScore >= 7
+        ? 'ask_improvement_comment'
+        : 'ask_detractor_feedback',
     inviteId: inviteRow.id,
     responseId: responseRow?.id || null,
     score: numericScore,
@@ -16424,6 +16787,7 @@ async function getNpsRows(query = {}, user = null) {
       n.clinic_id,
       n.patient_name,
       n.patient_phone,
+      n.clinic_name AS stored_clinic_name,
       n.score,
       n.comment,
       n.feedback_type,
@@ -16446,16 +16810,26 @@ async function getNpsRows(query = {}, user = null) {
       n.converted_complaint_id,
       n.converted_at,
       n.converted_by,
+      n.response_channel,
+      n.responded_at,
+      n.ecuro_nps_invite_id,
+      n.whatsapp_inbound_message_id,
       n.created_at,
-      cl.name AS clinic_name,
+      COALESCE(n.clinic_name, cl.name) AS clinic_name,
       cl.city,
       cl.state,
       cl.region,
       cl.coordinator_name,
+      i.session_id AS invite_session_id,
+      i.status AS invite_status,
+      i.sent_at AS invite_sent_at,
+      i.responded_at AS invite_responded_at,
+      i.source AS invite_source,
       c.protocol AS converted_protocol,
       c.status AS converted_status
     FROM nps_responses n
     LEFT JOIN clinics cl ON cl.id = n.clinic_id
+    LEFT JOIN nps_invites i ON i.id = n.ecuro_nps_invite_id
     LEFT JOIN complaints c ON c.id = n.converted_complaint_id
     ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
     ORDER BY n.created_at DESC, n.id DESC`,
@@ -16486,11 +16860,45 @@ async function getNpsRows(query = {}, user = null) {
     acc[log.nps_response_id].push(log);
     return acc;
   }, {});
+  const [referrals] = await pool.query(
+    `SELECT
+      id,
+      nps_response_id,
+      nps_invite_id,
+      clinic_id,
+      clinic_name,
+      referrer_patient_name,
+      referrer_patient_phone,
+      referral_name,
+      referral_phone,
+      referral_status,
+      referral_accepted_at,
+      referral_received_at,
+      converted_at,
+      created_at
+     FROM nps_referrals
+     WHERE nps_response_id IN (?)
+     ORDER BY created_at DESC, id DESC`,
+    [npsIds]
+  );
+  const referralsByNps = referrals.reduce((acc, referral) => {
+    acc[referral.nps_response_id] = acc[referral.nps_response_id] || [];
+    acc[referral.nps_response_id].push(referral);
+    return acc;
+  }, {});
 
   return rows.map((row) => ({
     ...row,
     nps_protocol: row.nps_protocol || formatNpsProtocol(row.id, row.created_at),
     nps_status: normalizeNpsStatus(row.nps_status),
+    response_channel: row.response_channel || 'link',
+    responded_at: row.responded_at || row.created_at,
+    referrals: referralsByNps[row.id] || [],
+    referral_count: (referralsByNps[row.id] || []).length,
+    referral_converted_count: (referralsByNps[row.id] || []).filter((referral) => referral.converted_at).length,
+    referral_status: (referralsByNps[row.id] || [])[0]?.referral_status || null,
+    referral_name: row.referral_name || (referralsByNps[row.id] || [])[0]?.referral_name || null,
+    referral_phone: row.referral_phone || (referralsByNps[row.id] || [])[0]?.referral_phone || null,
     logs: logsByNps[row.id] || []
   }));
 }
@@ -27007,6 +27415,9 @@ function buildAgendaReplicatedInsertValues(row = {}, {
     row.checklist_json || JSON.stringify([]),
     Number(row.board_order || 0) || 0,
     demandType === 'patient' && normalizeAgendaBoolean(row.patient_fake_appointment, false) ? 1 : 0,
+    demandType === 'patient' && normalizeAgendaBoolean(row.prosthesis_not_delivered, false) ? 1 : 0,
+    demandType === 'patient' && normalizeAgendaBoolean(row.prosthesis_not_delivered, false) ? (row.prosthesis_laboratory || null) : null,
+    demandType === 'patient' && normalizeAgendaBoolean(row.prosthesis_not_delivered, false) ? (row.prosthesis_laboratory_other || null) : null,
     row.free_notes || null
   ];
 }
@@ -27142,6 +27553,13 @@ function serializeAgendaItem(row = {}) {
     patient_has_scheduled: normalizeAgendaBoolean(row.patient_has_scheduled, false),
     patient_scheduled_at: row.patient_scheduled_at || null,
     patient_fake_appointment: normalizeAgendaBoolean(row.patient_fake_appointment, false),
+    prosthesis_not_delivered: normalizeAgendaBoolean(row.prosthesis_not_delivered, false),
+    prosthesis_laboratory: row.prosthesis_laboratory || null,
+    prosthesis_laboratory_other: row.prosthesis_laboratory_other || null,
+    patient_complained: normalizeAgendaBoolean(row.patient_complained, false),
+    complaint_id: row.complaint_id ? Number(row.complaint_id) : null,
+    complaint_protocol: row.complaint_protocol || null,
+    complaint_created_at: row.complaint_created_at || null,
     confirmation_status: normalizeAgendaConfirmationStatus(row.confirmation_status, demandType),
     confirmation_notes: row.confirmation_notes || null,
     confirmation_recorded_at: row.confirmation_recorded_at || null,
@@ -28725,12 +29143,52 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
     patient_pending: 0,
     patient_evasion: 0,
     patient_scheduled: 0,
-    patient_confirmation_rate: 0
+    patient_confirmation_rate: 0,
+    fake_appointments: 0,
+    prosthesis_not_delivered: 0,
+    patient_complaints: 0
   };
   const urgentItems = [];
   const recentCompletions = [];
   const evasionItems = [];
   const pendingConfirmationItems = [];
+  const laboratoryRankingMap = new Map();
+  const fakeClinicRankingMap = new Map();
+  const dentistIssueRankingMap = new Map();
+  const issuePeriodMaps = {
+    daily: new Map(),
+    weekly: new Map(),
+    monthly: new Map()
+  };
+
+  const addAgendaAggregate = (map, key, seed = {}, increments = {}) => {
+    const safeKey = key || 'Sem informação';
+    if (!map.has(safeKey)) {
+      map.set(safeKey, { key: safeKey, ...seed, total: 0, fake: 0, prosthesis_not_delivered: 0, complaints: 0 });
+    }
+    const row = map.get(safeKey);
+    Object.entries(increments).forEach(([field, value]) => {
+      row[field] = Number(row[field] || 0) + Number(value || 0);
+    });
+    row.total = Number(row.fake || 0) + Number(row.prosthesis_not_delivered || 0) + Number(row.complaints || 0);
+    return row;
+  };
+
+  const addAgendaIssuePeriod = (scope, item, increments = {}) => {
+    const map = issuePeriodMaps[scope];
+    if (!map) return;
+    const clinicName = item.clinic_name || 'Sem clínica definida';
+    const dentistName = item.patient_dentist || 'Dentista não informado';
+    addAgendaAggregate(
+      map,
+      `${normalizeComparableText(clinicName)}|${normalizeComparableText(dentistName)}`,
+      {
+        clinic_name: clinicName,
+        dentist_name: dentistName
+      },
+      increments
+    );
+  };
 
   const ensureCollaborator = (identity = {}) => {
     if (!collaboratorMap.has(identity.key)) {
@@ -28907,6 +29365,51 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
           priority: item.priority,
           due_at: item.due_at || null
         });
+      }
+
+      const isFakeAppointment = normalizeAgendaBoolean(item.patient_fake_appointment, false);
+      const hasProsthesisIssue = normalizeAgendaBoolean(item.prosthesis_not_delivered, false);
+      const hasPatientComplaint = normalizeAgendaBoolean(item.patient_complained, false) || Boolean(item.complaint_id);
+      if (isFakeAppointment) {
+        summary.fake_appointments += 1;
+        addAgendaAggregate(fakeClinicRankingMap, item.clinic_name || 'Sem clínica definida', {
+          clinic_name: item.clinic_name || 'Sem clínica definida'
+        }, { fake: 1 });
+      }
+      if (hasProsthesisIssue) {
+        summary.prosthesis_not_delivered += 1;
+        const laboratoryLabel = item.prosthesis_laboratory === 'Outros'
+          ? (item.prosthesis_laboratory_other || 'Outros')
+          : (item.prosthesis_laboratory || 'Laboratório não informado');
+        addAgendaAggregate(laboratoryRankingMap, laboratoryLabel, {
+          laboratory: laboratoryLabel,
+          clinic_name: item.clinic_name || 'Sem clínica definida',
+          dentist_name: item.patient_dentist || 'Dentista não informado'
+        }, { prosthesis_not_delivered: 1 });
+      }
+      if (hasPatientComplaint) {
+        summary.patient_complaints += 1;
+      }
+      if (isFakeAppointment || hasProsthesisIssue || hasPatientComplaint) {
+        addAgendaAggregate(dentistIssueRankingMap, item.patient_dentist || 'Dentista não informado', {
+          dentist_name: item.patient_dentist || 'Dentista não informado',
+          clinic_name: item.clinic_name || 'Sem clínica definida'
+        }, {
+          fake: isFakeAppointment ? 1 : 0,
+          prosthesis_not_delivered: hasProsthesisIssue ? 1 : 0,
+          complaints: hasPatientComplaint ? 1 : 0
+        });
+
+        const referenceDate = new Date(item.patient_scheduled_at || item.due_at || item.created_at || now);
+        const ageMs = Number.isNaN(referenceDate.getTime()) ? 0 : now.getTime() - referenceDate.getTime();
+        const increments = {
+          fake: isFakeAppointment ? 1 : 0,
+          prosthesis_not_delivered: hasProsthesisIssue ? 1 : 0,
+          complaints: hasPatientComplaint ? 1 : 0
+        };
+        if (getSaoPauloDateKey(referenceDate) === getSaoPauloDateKey(now)) addAgendaIssuePeriod('daily', item, increments);
+        if (ageMs >= 0 && ageMs <= (7 * 86400000)) addAgendaIssuePeriod('weekly', item, increments);
+        if (ageMs >= 0 && ageMs <= (30 * 86400000)) addAgendaIssuePeriod('monthly', item, increments);
       }
     }
 
@@ -29104,6 +29607,20 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
       })
       .slice(0, 5),
     attention_required: collaborators.filter((item) => item.overdue || item.due_24h).slice(0, 5),
+    laboratory_error_ranking: Array.from(laboratoryRankingMap.values())
+      .sort((left, right) => right.prosthesis_not_delivered - left.prosthesis_not_delivered || left.laboratory.localeCompare(right.laboratory, 'pt-BR'))
+      .slice(0, 20),
+    fake_appointment_ranking: Array.from(fakeClinicRankingMap.values())
+      .sort((left, right) => right.fake - left.fake || left.clinic_name.localeCompare(right.clinic_name, 'pt-BR'))
+      .slice(0, 20),
+    dentist_issue_ranking: Array.from(dentistIssueRankingMap.values())
+      .sort((left, right) => right.total - left.total || left.dentist_name.localeCompare(right.dentist_name, 'pt-BR'))
+      .slice(0, 20),
+    issue_period_rankings: {
+      daily: Array.from(issuePeriodMaps.daily.values()).sort((left, right) => right.total - left.total).slice(0, 20),
+      weekly: Array.from(issuePeriodMaps.weekly.values()).sort((left, right) => right.total - left.total).slice(0, 20),
+      monthly: Array.from(issuePeriodMaps.monthly.values()).sort((left, right) => right.total - left.total).slice(0, 20)
+    },
     urgent_items: urgentItems.slice(0, 20),
     recent_completions: recentCompletions.slice(0, 20),
     evasion_items: evasionItems.slice(0, 50),
@@ -29193,6 +29710,18 @@ function getAgendaReportConfirmationLabel(value, demandType = 'general') {
   return normalized ? (labels[normalized] || normalized) : '-';
 }
 
+const agendaProsthesisLaboratories = new Set(['Astetic', 'Loyola', 'Marcos', 'Simão', 'Wilton', 'Outros']);
+
+function normalizeAgendaProsthesisLaboratory(value) {
+  const text = sanitizeFinancialString(value, 80);
+  if (!text) return null;
+  const normalized = normalizeComparableText(text);
+  for (const laboratory of agendaProsthesisLaboratories) {
+    if (normalizeComparableText(laboratory) === normalized) return laboratory;
+  }
+  return 'Outros';
+}
+
 function normalizeAgendaAssigneeFilter(value) {
   const normalized = String(value || '').trim().toLowerCase();
   if (!normalized || normalized === 'all') return { type: 'all' };
@@ -29274,6 +29803,8 @@ function summarizeAgendaTaskReport(items = []) {
     patient_not_confirmed: 0,
     patient_scheduled: 0,
     patient_fake_appointment: 0,
+    prosthesis_not_delivered: 0,
+    patient_complaints: 0,
     patient_today_total: 0,
     patient_today_confirmed: 0,
     patient_today_pending: 0,
@@ -29297,6 +29828,8 @@ function summarizeAgendaTaskReport(items = []) {
       summary.patient_total += 1;
       if (item.patient_has_scheduled) summary.patient_scheduled += 1;
       if (item.patient_fake_appointment) summary.patient_fake_appointment += 1;
+      if (item.prosthesis_not_delivered) summary.prosthesis_not_delivered += 1;
+      if (item.patient_complained || item.complaint_id) summary.patient_complaints += 1;
       const confirmationStatus = normalizeAgendaConfirmationStatus(item.confirmation_status, demandType);
       if (confirmationStatus === 'confirmado') summary.patient_confirmed += 1;
       else if (confirmationStatus === 'nao_confirmado') summary.patient_not_confirmed += 1;
@@ -29365,6 +29898,8 @@ function buildAgendaTaskClinicDemandSummary(items = []) {
         patient_pending: 0,
         patient_not_confirmed: 0,
         patient_fake_appointment: 0,
+        prosthesis_not_delivered: 0,
+        patient_complaints: 0,
         today_total: 0,
         today_confirmed: 0,
         today_pending: 0,
@@ -29391,7 +29926,9 @@ function buildAgendaTaskClinicDemandSummary(items = []) {
         patient_confirmed: 0,
         patient_pending: 0,
         patient_not_confirmed: 0,
-        patient_fake_appointment: 0
+        patient_fake_appointment: 0,
+        prosthesis_not_delivered: 0,
+        patient_complaints: 0
       });
     }
 
@@ -29424,6 +29961,14 @@ function buildAgendaTaskClinicDemandSummary(items = []) {
       if (item.patient_fake_appointment) {
         clinic.patient_fake_appointment += 1;
         demand.patient_fake_appointment += 1;
+      }
+      if (item.prosthesis_not_delivered) {
+        clinic.prosthesis_not_delivered += 1;
+        demand.prosthesis_not_delivered += 1;
+      }
+      if (item.patient_complained || item.complaint_id) {
+        clinic.patient_complaints += 1;
+        demand.patient_complaints += 1;
       }
       if (scheduledDateKey && scheduledDateKey === todayKey) {
         clinic.today_total += 1;
@@ -29500,6 +30045,8 @@ function buildAgendaTaskExcelBuffer(report = {}) {
     { indicador: 'Pacientes pendentes', valor: Number(summary.patient_pending || 0) },
     { indicador: 'Pacientes nao confirmados', valor: Number(summary.patient_not_confirmed || 0) },
     { indicador: 'Agendamentos fake', valor: Number(summary.patient_fake_appointment || 0) },
+    { indicador: 'Pecas nao entregues', valor: Number(summary.prosthesis_not_delivered || 0) },
+    { indicador: 'Pacientes que reclamaram', valor: Number(summary.patient_complaints || 0) },
     { indicador: 'Pacientes para hoje', valor: Number(summary.patient_today_total || 0) },
     { indicador: 'Confirmados para hoje', valor: Number(summary.patient_today_confirmed || 0) },
     { indicador: 'Pendentes para hoje', valor: Number(summary.patient_today_pending || 0) },
@@ -29538,6 +30085,12 @@ function buildAgendaTaskExcelBuffer(report = {}) {
       observacao_confirmacao: item.confirmation_notes || '-',
       observacoes_livres: item.free_notes || '-',
       agendamento_fake: item.patient_fake_appointment ? 'Sim' : 'Nao',
+      peca_nao_entregue: item.prosthesis_not_delivered ? 'Sim' : 'Nao',
+      laboratorio: item.prosthesis_laboratory === 'Outros'
+        ? (item.prosthesis_laboratory_other || 'Outros')
+        : (item.prosthesis_laboratory || '-'),
+      paciente_reclamou: item.patient_complained || item.complaint_id ? 'Sim' : 'Nao',
+      protocolo_reclamacao: item.complaint_protocol || '-',
       consulta: getAgendaReportDateLabel(item.patient_scheduled_at),
       vencimento: getAgendaReportDateLabel(item.due_at),
       lembrete: getAgendaReportDateLabel(item.reminder_at),
@@ -29571,6 +30124,8 @@ function buildAgendaTaskExcelBuffer(report = {}) {
       pendentes: clinic.patient_pending,
       nao_confirmados: clinic.patient_not_confirmed,
       agendamentos_fake: clinic.patient_fake_appointment,
+      pecas_nao_entregues: clinic.prosthesis_not_delivered,
+      pacientes_reclamaram: clinic.patient_complaints,
       pacientes_hoje: clinic.today_total,
       confirmados_hoje: clinic.today_confirmed,
       pendentes_hoje: clinic.today_pending,
@@ -29641,6 +30196,8 @@ function buildAgendaTaskPdfBuffer(report = {}) {
           ['Pendentes hoje', `${summary.patient_today_pending || 0} · ${summary.patient_today_pending_rate || 0}%`, amber],
           ['Não conf. hoje', `${summary.patient_today_not_confirmed || 0} · ${summary.patient_today_not_confirmed_rate || 0}%`, danger],
           ['Fake', summary.patient_fake_appointment || 0, danger],
+          ['Peça pendente', summary.prosthesis_not_delivered || 0, amber],
+          ['Reclamações CRC', summary.patient_complaints || 0, danger],
           ['Conf. dia seguinte', `${summary.patient_tomorrow_confirmed || 0} · ${summary.patient_tomorrow_confirmation_rate || 0}%`, '#1d4ed8']
         ];
         const gap = 8;
@@ -29685,6 +30242,8 @@ function buildAgendaTaskPdfBuffer(report = {}) {
           ['Pend.', 74],
           ['Não conf.', 78],
           ['Fake', 48],
+          ['Peça', 48],
+          ['Reclamou', 58],
           ['Dia seg.', 60],
           ['% dia seg.', 62]
         ];
@@ -29711,6 +30270,8 @@ function buildAgendaTaskPdfBuffer(report = {}) {
             `${clinic.today_pending} (${clinic.today_pending_rate || 0}%)`,
             `${clinic.today_not_confirmed} (${clinic.today_not_confirmed_rate || 0}%)`,
             clinic.patient_fake_appointment,
+            clinic.prosthesis_not_delivered,
+            clinic.patient_complaints,
             clinic.tomorrow_total,
             `${clinic.tomorrow_confirmation_rate || 0}%`
           ].forEach((value, columnIndex) => {
@@ -29731,7 +30292,7 @@ function buildAgendaTaskPdfBuffer(report = {}) {
           y += 30;
           (clinic.demands || []).forEach((demand) => {
             ensureSpace(30);
-            const label = `${demand.demand_label}: ${demand.total} total · ${demand.open} aberta(s) · ${demand.done} concluída(s) · ${demand.patient_confirmed} confirmada(s) · ${demand.patient_pending} pendente(s) · ${demand.patient_fake_appointment} fake`;
+            const label = `${demand.demand_label}: ${demand.total} total · ${demand.open} aberta(s) · ${demand.done} concluída(s) · ${demand.patient_confirmed} confirmada(s) · ${demand.patient_pending} pendente(s) · ${demand.patient_fake_appointment} fake · ${demand.prosthesis_not_delivered} peça(s) · ${demand.patient_complaints} reclamação(ões)`;
             doc.fillColor(muted).font('Helvetica').fontSize(8).text(label, pageLeft + 12, y, { width: pageWidth - 24 });
             y += 16;
           });
@@ -29758,7 +30319,10 @@ function buildAgendaTaskPdfBuffer(report = {}) {
             const firstLine = `${truncate(item.patient_name || item.title, 38)} · ${getAgendaReportConfirmationLabel(item.confirmation_status, demandType)} · ${getAgendaReportDateLabel(item.patient_scheduled_at || item.due_at)}`;
             const secondLine = [
               item.assigned_user_name || item.owner_name || 'Sem responsável',
+              item.patient_dentist ? `Dentista: ${truncate(item.patient_dentist, 28)}` : null,
+              item.prosthesis_not_delivered ? `Peça: ${item.prosthesis_laboratory === 'Outros' ? (item.prosthesis_laboratory_other || 'Outros') : (item.prosthesis_laboratory || 'laboratório não informado')}` : null,
               item.patient_fake_appointment ? 'AGENDAMENTO FAKE' : null,
+              item.complaint_protocol ? `Reclamação ${item.complaint_protocol}` : null,
               item.free_notes ? truncate(item.free_notes, 64) : null
             ].filter(Boolean).join(' · ');
             doc.fillColor(ink).font('Helvetica-Bold').fontSize(8).text(firstLine, pageLeft + 10, y, { width: pageWidth - 20 });
@@ -32513,6 +33077,21 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
     const patientFakeAppointment = demandType === 'patient'
       ? normalizeAgendaBoolean(req.body?.patient_fake_appointment ?? req.body?.patientFakeAppointment, false)
       : false;
+    const prosthesisNotDelivered = demandType === 'patient'
+      ? normalizeAgendaBoolean(req.body?.prosthesis_not_delivered ?? req.body?.prosthesisNotDelivered, false)
+      : false;
+    const prosthesisLaboratory = prosthesisNotDelivered
+      ? normalizeAgendaProsthesisLaboratory(req.body?.prosthesis_laboratory || req.body?.prosthesisLaboratory)
+      : null;
+    const prosthesisLaboratoryOther = prosthesisNotDelivered && prosthesisLaboratory === 'Outros'
+      ? sanitizeFinancialString(req.body?.prosthesis_laboratory_other || req.body?.prosthesisLaboratoryOther, 180) || null
+      : null;
+    if (prosthesisNotDelivered && !prosthesisLaboratory) {
+      return res.status(400).json({ error: 'Selecione o laboratório responsável pela peça não entregue.' });
+    }
+    if (prosthesisNotDelivered && prosthesisLaboratory === 'Outros' && !prosthesisLaboratoryOther) {
+      return res.status(400).json({ error: 'Informe o laboratório quando selecionar Outros.' });
+    }
     const confirmationStatus = normalizeAgendaConfirmationStatus(
       req.body?.confirmation_status || req.body?.confirmationStatus,
       demandType
@@ -32547,8 +33126,8 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
     const freeNotes = sanitizeFinancialString(req.body?.free_notes || req.body?.freeNotes, 5000) || null;
     const [result] = await pool.query(
       `INSERT INTO agenda_items
-       (company_id, owner_user_id, owner_name, assigned_user_id, assigned_user_name, assigned_user_email, clinic_id, clinic_name, demand_type, source_external_id, patient_name, patient_phone, patient_specialty, patient_dentist, patient_channel, patient_has_scheduled, patient_scheduled_at, confirmation_status, confirmation_notes, confirmation_recorded_at, confirmation_recorded_by_user_id, confirmation_recorded_by_name, source_label, source_batch_id, title, description, status, priority, is_daily_recurring, requires_completion, recurrence_base_status, recurrence_cycle_date, recurrence_weekdays_json, due_at, reminder_at, tags_json, checklist_json, board_order, patient_fake_appointment, free_notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )`,
+       (company_id, owner_user_id, owner_name, assigned_user_id, assigned_user_name, assigned_user_email, clinic_id, clinic_name, demand_type, source_external_id, patient_name, patient_phone, patient_specialty, patient_dentist, patient_channel, patient_has_scheduled, patient_scheduled_at, confirmation_status, confirmation_notes, confirmation_recorded_at, confirmation_recorded_by_user_id, confirmation_recorded_by_name, source_label, source_batch_id, title, description, status, priority, is_daily_recurring, requires_completion, recurrence_base_status, recurrence_cycle_date, recurrence_weekdays_json, due_at, reminder_at, tags_json, checklist_json, board_order, patient_fake_appointment, prosthesis_not_delivered, prosthesis_laboratory, prosthesis_laboratory_other, free_notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )`,
       [
         companyId,
         ownerUserId,
@@ -32589,6 +33168,9 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
         JSON.stringify(checklist),
         Number(req.body?.board_order || req.body?.boardOrder || 0) || 0,
         patientFakeAppointment ? 1 : 0,
+        prosthesisNotDelivered ? 1 : 0,
+        prosthesisLaboratory,
+        prosthesisLaboratoryOther,
         freeNotes
       ]
     );
@@ -32710,6 +33292,9 @@ app.post('/api/agenda/items/replicate', authenticate, async (req, res) => {
       'checklist_json',
       'board_order',
       'patient_fake_appointment',
+      'prosthesis_not_delivered',
+      'prosthesis_laboratory',
+      'prosthesis_laboratory_other',
       'free_notes'
     ];
     const insertSql = `INSERT INTO agenda_items (${insertColumns.join(', ')}) VALUES (${insertColumns.map(() => '?').join(', ')})`;
@@ -32955,11 +33540,59 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
         ? (normalizeAgendaBoolean(req.body.patient_fake_appointment ?? req.body.patientFakeAppointment, false) ? 1 : 0)
         : 0);
     }
+    const hasProsthesisNotDeliveredUpdate = Object.prototype.hasOwnProperty.call(req.body, 'prosthesis_not_delivered')
+      || Object.prototype.hasOwnProperty.call(req.body, 'prosthesisNotDelivered');
+    const hasProsthesisLaboratoryUpdate = Object.prototype.hasOwnProperty.call(req.body, 'prosthesis_laboratory')
+      || Object.prototype.hasOwnProperty.call(req.body, 'prosthesisLaboratory');
+    const hasProsthesisLaboratoryOtherUpdate = Object.prototype.hasOwnProperty.call(req.body, 'prosthesis_laboratory_other')
+      || Object.prototype.hasOwnProperty.call(req.body, 'prosthesisLaboratoryOther');
+    if (
+      hasProsthesisNotDeliveredUpdate
+      || hasProsthesisLaboratoryUpdate
+      || hasProsthesisLaboratoryOtherUpdate
+      || nextDemandType !== normalizeAgendaDemandType(currentItem.demand_type, currentItem)
+    ) {
+      const prosthesisNotDelivered = nextDemandType === 'patient'
+        ? normalizeAgendaBoolean(
+          req.body.prosthesis_not_delivered ?? req.body.prosthesisNotDelivered,
+          normalizeAgendaBoolean(currentItem.prosthesis_not_delivered, false)
+        )
+        : false;
+      const prosthesisLaboratory = prosthesisNotDelivered
+        ? normalizeAgendaProsthesisLaboratory(
+          req.body.prosthesis_laboratory
+          || req.body.prosthesisLaboratory
+          || currentItem.prosthesis_laboratory
+        )
+        : null;
+      const prosthesisLaboratoryOther = prosthesisNotDelivered && prosthesisLaboratory === 'Outros'
+        ? sanitizeFinancialString(
+          req.body.prosthesis_laboratory_other
+          || req.body.prosthesisLaboratoryOther
+          || currentItem.prosthesis_laboratory_other,
+          180
+        ) || null
+        : null;
+
+      if (prosthesisNotDelivered && !prosthesisLaboratory) {
+        return res.status(400).json({ error: 'Selecione o laboratório responsável pela peça não entregue.' });
+      }
+      if (prosthesisNotDelivered && prosthesisLaboratory === 'Outros' && !prosthesisLaboratoryOther) {
+        return res.status(400).json({ error: 'Informe o laboratório quando selecionar Outros.' });
+      }
+
+      assign('prosthesis_not_delivered', prosthesisNotDelivered ? 1 : 0);
+      assign('prosthesis_laboratory', prosthesisLaboratory);
+      assign('prosthesis_laboratory_other', prosthesisLaboratoryOther);
+    }
     if (nextDemandType !== 'patient' && (Object.prototype.hasOwnProperty.call(req.body, 'demand_type') || Object.prototype.hasOwnProperty.call(req.body, 'demandType'))) {
       assign('patient_specialty', null);
       assign('patient_dentist', null);
       assign('patient_channel', null);
       assign('patient_fake_appointment', 0);
+      assign('prosthesis_not_delivered', 0);
+      assign('prosthesis_laboratory', null);
+      assign('prosthesis_laboratory_other', null);
       assign('confirmation_status', null);
       assign('confirmation_notes', null);
       assign('confirmation_recorded_at', null);
@@ -33104,6 +33737,141 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
   } catch (error) {
     console.error(error);
     return res.status(error.statusCode || 400).json({ error: error.message || 'Erro ao atualizar item da agenda.' });
+  }
+});
+
+app.post('/api/agenda/items/:id/complaint', authenticate, async (req, res) => {
+  try {
+    const itemId = Number(req.params.id || 0);
+    if (!itemId) return res.status(400).json({ error: 'Item da agenda inválido.' });
+
+    await syncAgendaRecurringItemsForUser(req.user);
+    const visibility = buildAgendaVisibilityWhere(req.user);
+    const [currentRows] = await pool.query(
+      `SELECT *
+         FROM agenda_items
+        WHERE id = ?
+          AND deleted_at IS NULL
+          AND ${visibility.sql}
+        LIMIT 1`,
+      [itemId, ...visibility.params]
+    );
+
+    const item = currentRows[0];
+    if (!item) return res.status(404).json({ error: 'Item da agenda não encontrado.' });
+    if (item.complaint_id) {
+      return res.json({
+        success: true,
+        alreadyCreated: true,
+        complaintId: item.complaint_id,
+        protocol: item.complaint_protocol
+      });
+    }
+
+    const demandType = normalizeAgendaDemandType(item.demand_type, item);
+    if (demandType !== 'patient' && !item.patient_name) {
+      return res.status(400).json({ error: 'A conversão em reclamação exige uma tarefa de paciente.' });
+    }
+
+    const patientName = sanitizeFinancialString(item.patient_name || req.body?.patient_name || req.body?.patientName, 180) || 'Paciente não informado';
+    const rawPhone = item.patient_phone || req.body?.patient_phone || req.body?.patientPhone || '';
+    const patientPhone = isCompleteBrazilPhone(rawPhone) ? normalizeBrazilPhone(rawPhone) : null;
+    const priority = normalizePriority(req.body?.priority || 'alta');
+    const dueAt = calculateDueAt(priority);
+    const resolutionDueAt = calculateResolutionDueAt();
+    const creatorAudit = buildComplaintCreatorAudit(req.user, 'Interno');
+    const complaintDescription = sanitizeFinancialString(req.body?.description || req.body?.complaint_description || req.body?.complaintDescription, 4000)
+      || [
+        'Paciente informou reclamação durante atendimento de confirmação/agendamento pelo CRC.',
+        `Origem: agenda CRC item #${item.id}.`,
+        item.clinic_name ? `Unidade: ${item.clinic_name}.` : null,
+        item.patient_dentist ? `Dentista: ${item.patient_dentist}.` : null,
+        item.patient_specialty ? `Especialidade: ${item.patient_specialty}.` : null,
+        item.patient_scheduled_at ? `Agendamento vinculado: ${formatMessageDateTime(item.patient_scheduled_at)}.` : null,
+        item.confirmation_notes ? `Observação da confirmação: ${item.confirmation_notes}` : null,
+        item.free_notes ? `Observações livres da agenda: ${item.free_notes}` : null
+      ].filter(Boolean).join('\n');
+
+    const [result] = await pool.query(
+      `INSERT INTO complaints
+       (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, resolution_due_at, created_origin, created_by_user_id, created_by_name, created_by_role, created_by_email)
+       VALUES (?, ?, ?, 'CRC', 'Atendimento de confirmação e agendamento', ?, 'Confirmação e agendamento CRC', 'aberta', ?, ?, ?, 'Interno', ?, ?, ?, ?)`,
+      [
+        item.clinic_id || null,
+        patientName,
+        patientPhone,
+        complaintDescription,
+        priority,
+        toMysqlDateTime(dueAt),
+        toMysqlDateTime(resolutionDueAt),
+        creatorAudit.userId,
+        creatorAudit.name,
+        creatorAudit.role,
+        creatorAudit.email
+      ]
+    );
+
+    const protocol = `GRC-${new Date().getFullYear()}-${String(result.insertId).padStart(6, '0')}`;
+    await pool.query('UPDATE complaints SET protocol = ? WHERE id = ?', [protocol, result.insertId]);
+    await assignInitialComplaintEscalationResponsibles(result.insertId, item.clinic_id || null);
+    await insertComplaintLog(result.insertId, 'agenda_crc_complaint_created', `Protocolo ${protocol} aberto automaticamente a partir da agenda CRC item #${item.id}.`, req.user);
+
+    await pool.query(
+      `UPDATE agenda_items
+          SET patient_complained = 1,
+              complaint_id = ?,
+              complaint_protocol = ?,
+              complaint_created_at = NOW(),
+              status = 'done',
+              completed_at = COALESCE(completed_at, NOW()),
+              completed_by_user_id = COALESCE(completed_by_user_id, ?),
+              completed_by_name = COALESCE(completed_by_name, ?),
+              updated_at = NOW()
+        WHERE id = ?`,
+      [
+        result.insertId,
+        protocol,
+        Number(req.user?.id || 0) || null,
+        getActorName(req.user),
+        item.id
+      ]
+    );
+
+    try {
+      await notifyComplaintCreated(result.insertId, protocol);
+      await dispatchComplaintCreatedNotifications(result.insertId, protocol);
+    } catch (notificationError) {
+      console.warn('[Agenda:complaint_notification_error]', {
+        agendaItemId: item.id,
+        complaintId: result.insertId,
+        error: notificationError.message
+      });
+    }
+
+    await insertSecurityAuditLog({
+      req,
+      user: req.user,
+      module: 'agenda',
+      action: 'agenda_patient_complaint_created',
+      outcome: 'success',
+      recordType: 'agenda_item',
+      recordId: item.id,
+      previousValue: item,
+      newValue: {
+        complaintId: result.insertId,
+        protocol
+      },
+      origin: 'agenda'
+    });
+
+    return res.status(201).json({
+      success: true,
+      complaintId: result.insertId,
+      protocol
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(error.statusCode || 400).json({ error: error.message || 'Erro ao abrir reclamação a partir da agenda.' });
   }
 });
 
@@ -35388,12 +36156,16 @@ app.post('/nps', async (req, res) => {
 
     const classification = classifyNpsFeedback(score, feedback_type);
     const npsProfile = inferNpsProfile(numericScore);
+    const [clinicRows] = clinic_id
+      ? await pool.query('SELECT name FROM clinics WHERE id = ? LIMIT 1', [clinic_id])
+      : [[]];
+    const clinicName = clinicRows[0]?.name || null;
 
     const [npsInsert] = await pool.query(
       `INSERT INTO nps_responses
-       (clinic_id, patient_name, score, comment, feedback_type, nps_profile, source)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [clinic_id, patient_name, numericScore, comment, classification, npsProfile, 'interno']
+       (clinic_id, clinic_name, patient_name, score, comment, feedback_type, nps_profile, source, response_channel, nps_status, responded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
+      [clinic_id, clinicName, patient_name, numericScore, comment, classification, npsProfile, 'interno', 'manual', 'registrado']
     );
 
     const protocol = formatNpsProtocol(npsInsert.insertId);
@@ -35571,10 +36343,11 @@ app.post('/nps/public', async (req, res) => {
 
     const [npsInsert] = await pool.query(
       `INSERT INTO nps_responses
-       (clinic_id, patient_name, patient_phone, score, comment, feedback_type, nps_profile, recommend_yes, contact_share_allowed, referral_name, referral_phone, improvement_comment, detractor_reasons, detractor_feedback, source, ip_address, whatsapp_conversation_id, whatsapp_nps_invite_id, ecuro_nps_invite_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       (clinic_id, clinic_name, patient_name, patient_phone, score, comment, feedback_type, nps_profile, recommend_yes, contact_share_allowed, referral_name, referral_phone, improvement_comment, detractor_reasons, detractor_feedback, source, ip_address, whatsapp_conversation_id, whatsapp_nps_invite_id, ecuro_nps_invite_id, response_channel, nps_status, responded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())`,
       [
         clinic_id || null,
+        clinicName,
         patient_name || null,
         normalizedPatientPhone,
         numericScore,
@@ -35596,7 +36369,9 @@ app.post('/nps/public', async (req, res) => {
         requestIp || null,
         whatsappConversationId,
         whatsappNpsInviteId,
-        ecuroNpsInviteId
+        ecuroNpsInviteId,
+        source === 'whatsapp_atendimento' ? 'whatsapp' : 'link',
+        'registrado'
       ]
     );
 
@@ -35642,6 +36417,27 @@ app.post('/nps/public', async (req, res) => {
 
     const protocol = formatNpsProtocol(npsInsert.insertId);
     await pool.query('UPDATE nps_responses SET nps_protocol = ? WHERE id = ?', [protocol, npsInsert.insertId]);
+    if (npsProfile === 'promotor' && recommend_yes) {
+      await saveNpsReferralRecord({
+        id: npsInsert.insertId,
+        clinic_id: clinic_id || null,
+        clinic_name: clinicName,
+        patient_name,
+        patient_phone: normalizedPatientPhone,
+        ecuro_nps_invite_id: ecuroNpsInviteId
+      }, {
+        id: ecuroNpsInviteId,
+        clinic_id: clinic_id || null,
+        clinic_name: clinicName,
+        patient_name,
+        patient_phone: normalizedPatientPhone
+      }, {
+        referralName: referral_name,
+        referralPhone: normalizedReferralPhone,
+        referralStatus: 'received',
+        referralReceivedAt: new Date()
+      });
+    }
     if (whatsappNpsInviteId) {
       await pool.query(
         `UPDATE whatsapp_nps_invites
@@ -35737,20 +36533,10 @@ app.post('/nps/public', async (req, res) => {
 // ============================================
 app.get('/nps/score', async (req, res) => {
   try {
-    const [rows] = await pool.query('SELECT score FROM nps_responses');
+    const [rows] = await pool.query('SELECT score FROM nps_responses WHERE deleted_at IS NULL AND score BETWEEN 0 AND 10');
+    const metrics = calculateNpsMetrics(rows);
 
-    let promoters = 0;
-    let detractors = 0;
-
-    rows.forEach(r => {
-      if (r.score >= 9) promoters++;
-      else if (r.score <= 6) detractors++;
-    });
-
-    const total = rows.length;
-    const nps = total > 0 ? ((promoters - detractors) / total) * 100 : 0;
-
-    res.json({ total, promoters, detractors, nps });
+    res.json(metrics);
 
   } catch (error) {
     console.error(error);
@@ -41037,6 +41823,7 @@ module.exports = {
     canReceiveComplaintNotification,
     buildComplaintAssignedNotificationRecipients,
     buildConfiguredComplaintAlertRecipient,
+    calculateNpsMetrics,
     changeUserPassword,
     decodeUploadedText,
     extractWhatsAppServiceEventMessage,
@@ -41048,6 +41835,7 @@ module.exports = {
     getManagedComplaintAlertRecipients,
     buildWhatsAppDispatchSendLockName,
     isPasswordChangeRouteAllowed,
+    inferNpsProfile,
     isWhatsAppConnectedStatus,
     makeMysqlLockName,
     getStoredUploadFilename,

@@ -218,6 +218,336 @@ test('nps whatsapp inbound rejects requests without configured secret and accept
   });
 });
 
+test('nps whatsapp inbound records promoter score and relational referral flow', async () => {
+  const inviteRow = {
+    id: 301,
+    clinic_id: 7,
+    clinic_name: 'Clinica Teste',
+    patient_name: 'Paciente Promotor',
+    patient_phone: '5562999669966',
+    source: 'ecuro_last_consultation',
+    session_id: 'nps'
+  };
+  let insertedResponseParams = null;
+  let referralInsertParams = null;
+  let referralUpdateSeen = false;
+  let consentUpdateSeen = false;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('INSERT INTO nps_whatsapp_inbound_events'),
+      reply: async () => [{ insertId: 1001 }]
+    },
+    {
+      match: (sql) => sql.includes('FROM nps_invites') && sql.includes('patient_phone = ?'),
+      reply: async () => [[inviteRow]]
+    },
+    {
+      match: (sql) => sql.includes('FROM nps_responses') && sql.includes('ecuro_nps_invite_id = ?'),
+      reply: async (_sql, params) => {
+        if (params[0] === 301 && !insertedResponseParams) return [[]];
+        return [[{
+          id: 501,
+          clinic_id: 7,
+          clinic_name: 'Clinica Teste',
+          patient_name: 'Paciente Promotor',
+          patient_phone: '5562999669966',
+          score: 10,
+          nps_profile: 'promotor',
+          recommend_yes: consentUpdateSeen ? 1 : null,
+          ecuro_nps_invite_id: 301
+        }]];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO nps_responses'),
+      reply: async (_sql, params) => {
+        insertedResponseParams = params;
+        return [{ insertId: 501 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE nps_responses SET nps_protocol'),
+      reply: async () => [{ affectedRows: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE nps_invites'),
+      reply: async () => [{ affectedRows: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO nps_treatment_logs'),
+      reply: async () => [{ insertId: 900 }]
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM nps_responses WHERE id = ? LIMIT 1'),
+      reply: async () => [[{
+        id: 501,
+        clinic_id: 7,
+        clinic_name: 'Clinica Teste',
+        patient_name: 'Paciente Promotor',
+        patient_phone: '5562999669966',
+        score: 10,
+        nps_profile: 'promotor',
+        recommend_yes: null,
+        ecuro_nps_invite_id: 301
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE nps_whatsapp_inbound_events'),
+      reply: async () => [{ affectedRows: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE nps_responses') && sql.includes('recommend_yes = 1'),
+      reply: async (sql) => {
+        consentUpdateSeen = true;
+        if (sql.includes('referral_name')) {
+          referralUpdateSeen = true;
+        }
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('FROM nps_referrals'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO nps_referrals'),
+      reply: async (_sql, params) => {
+        referralInsertParams = params;
+        return [{ insertId: 701 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE nps_responses') && sql.includes('referral_name'),
+      reply: async () => {
+        referralUpdateSeen = true;
+        return [{ affectedRows: 1 }];
+      }
+    }
+  ]);
+
+  const scoreResponse = await request(app)
+    .post('/nps/whatsapp/inbound')
+    .send({
+      sessionId: 'nps',
+      phone: '+5562999669966',
+      message: '10',
+      messageId: 'promoter-score-1'
+    });
+
+  assert.equal(scoreResponse.status, 200);
+  assert.equal(scoreResponse.body.payload.type, 'score');
+  assert.equal(scoreResponse.body.payload.npsProfile, 'promotor');
+  assert.equal(scoreResponse.body.payload.nextPrompt, 'ask_referral');
+  assert.equal(insertedResponseParams[4], 10);
+  assert.equal(insertedResponseParams[7], 'promotor');
+  assert.equal(insertedResponseParams[11], 'whatsapp');
+  assert.equal(insertedResponseParams[12], 'registrado');
+
+  const consentResponse = await request(app)
+    .post('/nps/whatsapp/inbound')
+    .send({
+      sessionId: 'nps',
+      phone: '+5562999669966',
+      message: 'Sim',
+      messageId: 'promoter-consent-1'
+    });
+
+  assert.equal(consentResponse.status, 200);
+  assert.equal(consentResponse.body.payload.type, 'promoter_referral_consent');
+  assert.equal(consentResponse.body.payload.nextPrompt, 'referral_details');
+  assert.equal(consentUpdateSeen, true);
+
+  const referralResponse = await request(app)
+    .post('/nps/whatsapp/inbound')
+    .send({
+      sessionId: 'nps',
+      phone: '+5562999669966',
+      message: 'Maria Indicada +5562991112233',
+      messageId: 'promoter-referral-1'
+    });
+
+  assert.equal(referralResponse.status, 200);
+  assert.equal(referralResponse.body.payload.type, 'promoter_referral');
+  assert.equal(referralResponse.body.payload.referral.saved, true);
+  assert.equal(referralInsertParams[0], 501);
+  assert.equal(referralInsertParams[1], 301);
+  assert.equal(referralInsertParams[6], 'Maria Indicada');
+  assert.equal(referralInsertParams[7], '+5562991112233');
+  assert.equal(referralUpdateSeen, true);
+});
+
+test('nps whatsapp inbound records neutral improvement without detractor or referral', async () => {
+  const inviteRow = {
+    id: 302,
+    clinic_id: 8,
+    clinic_name: 'Clinica Neutra',
+    patient_name: 'Paciente Neutro',
+    patient_phone: '5562999669966',
+    source: 'ecuro_last_consultation',
+    session_id: 'nps'
+  };
+  let insertedResponseParams = null;
+  let improvementUpdateSeen = false;
+  let referralInsertSeen = false;
+
+  pool.query = buildQueryStub([
+    { match: (sql) => sql.includes('INSERT INTO nps_whatsapp_inbound_events'), reply: async () => [{ insertId: 1002 }] },
+    { match: (sql) => sql.includes('FROM nps_invites') && sql.includes('patient_phone = ?'), reply: async () => [[inviteRow]] },
+    {
+      match: (sql) => sql.includes('FROM nps_responses') && sql.includes('ecuro_nps_invite_id = ?'),
+      reply: async () => insertedResponseParams ? [[{
+        id: 502,
+        clinic_id: 8,
+        clinic_name: 'Clinica Neutra',
+        patient_name: 'Paciente Neutro',
+        patient_phone: '5562999669966',
+        score: 8,
+        nps_profile: 'neutro',
+        ecuro_nps_invite_id: 302
+      }]] : [[]]
+    },
+    { match: (sql) => sql.includes('INSERT INTO nps_responses'), reply: async (_sql, params) => { insertedResponseParams = params; return [{ insertId: 502 }]; } },
+    { match: (sql) => sql.includes('UPDATE nps_responses SET nps_protocol'), reply: async () => [{ affectedRows: 1 }] },
+    { match: (sql) => sql.includes('UPDATE nps_invites'), reply: async () => [{ affectedRows: 1 }] },
+    { match: (sql) => sql.includes('INSERT INTO nps_treatment_logs'), reply: async () => [{ insertId: 901 }] },
+    { match: (sql) => sql.includes('SELECT * FROM nps_responses WHERE id = ? LIMIT 1'), reply: async () => [[{ id: 502, score: 8, nps_profile: 'neutro' }]] },
+    { match: (sql) => sql.includes('UPDATE nps_whatsapp_inbound_events'), reply: async () => [{ affectedRows: 1 }] },
+    { match: (sql) => sql.includes('UPDATE nps_responses SET improvement_comment'), reply: async () => { improvementUpdateSeen = true; return [{ affectedRows: 1 }]; } },
+    { match: (sql) => sql.includes('INSERT INTO nps_referrals'), reply: async () => { referralInsertSeen = true; return [{ insertId: 1 }]; } }
+  ]);
+
+  const scoreResponse = await request(app)
+    .post('/nps/whatsapp/inbound')
+    .send({ sessionId: 'nps', phone: '+5562999669966', message: '8', messageId: 'neutral-score-1' });
+
+  assert.equal(scoreResponse.status, 200);
+  assert.equal(scoreResponse.body.payload.npsProfile, 'neutro');
+  assert.equal(scoreResponse.body.payload.nextPrompt, 'ask_improvement_comment');
+  assert.equal(insertedResponseParams[7], 'neutro');
+
+  const commentResponse = await request(app)
+    .post('/nps/whatsapp/inbound')
+    .send({ sessionId: 'nps', phone: '+5562999669966', message: 'Poderia melhorar o tempo de espera', messageId: 'neutral-comment-1' });
+
+  assert.equal(commentResponse.status, 200);
+  assert.equal(commentResponse.body.payload.type, 'neutral_improvement');
+  assert.equal(improvementUpdateSeen, true);
+  assert.equal(referralInsertSeen, false);
+});
+
+test('nps whatsapp inbound records detractor feedback as registered management item', async () => {
+  const inviteRow = {
+    id: 303,
+    clinic_id: 9,
+    clinic_name: 'Clinica Detratora',
+    patient_name: 'Paciente Detrator',
+    patient_phone: '5562999669966',
+    source: 'ecuro_last_consultation',
+    session_id: 'nps'
+  };
+  let insertedResponseParams = null;
+  let detractorFeedbackUpdateSeen = false;
+
+  pool.query = buildQueryStub([
+    { match: (sql) => sql.includes('INSERT INTO nps_whatsapp_inbound_events'), reply: async () => [{ insertId: 1003 }] },
+    { match: (sql) => sql.includes('FROM nps_invites') && sql.includes('patient_phone = ?'), reply: async () => [[inviteRow]] },
+    {
+      match: (sql) => sql.includes('FROM nps_responses') && sql.includes('ecuro_nps_invite_id = ?'),
+      reply: async () => insertedResponseParams ? [[{
+        id: 503,
+        clinic_id: 9,
+        clinic_name: 'Clinica Detratora',
+        patient_name: 'Paciente Detrator',
+        patient_phone: '5562999669966',
+        score: 5,
+        nps_profile: 'detrator',
+        nps_status: 'registrado',
+        ecuro_nps_invite_id: 303
+      }]] : [[]]
+    },
+    { match: (sql) => sql.includes('INSERT INTO nps_responses'), reply: async (_sql, params) => { insertedResponseParams = params; return [{ insertId: 503 }]; } },
+    { match: (sql) => sql.includes('UPDATE nps_responses SET nps_protocol'), reply: async () => [{ affectedRows: 1 }] },
+    { match: (sql) => sql.includes('UPDATE nps_invites'), reply: async () => [{ affectedRows: 1 }] },
+    { match: (sql) => sql.includes('INSERT INTO nps_treatment_logs'), reply: async () => [{ insertId: 902 }] },
+    { match: (sql) => sql.includes('SELECT * FROM nps_responses WHERE id = ? LIMIT 1'), reply: async () => [[{ id: 503, score: 5, nps_profile: 'detrator', nps_status: 'registrado' }]] },
+    { match: (sql) => sql.includes('UPDATE nps_whatsapp_inbound_events'), reply: async () => [{ affectedRows: 1 }] },
+    { match: (sql) => sql.includes('UPDATE nps_responses') && sql.includes('detractor_feedback'), reply: async () => { detractorFeedbackUpdateSeen = true; return [{ affectedRows: 1 }]; } }
+  ]);
+
+  const scoreResponse = await request(app)
+    .post('/nps/whatsapp/inbound')
+    .send({ sessionId: 'nps', phone: '+5562999669966', message: '5', messageId: 'detractor-score-1' });
+
+  assert.equal(scoreResponse.status, 200);
+  assert.equal(scoreResponse.body.payload.npsProfile, 'detrator');
+  assert.equal(scoreResponse.body.payload.nextPrompt, 'ask_detractor_feedback');
+  assert.equal(insertedResponseParams[7], 'detrator');
+  assert.equal(insertedResponseParams[12], 'registrado');
+
+  const feedbackResponse = await request(app)
+    .post('/nps/whatsapp/inbound')
+    .send({ sessionId: 'nps', phone: '+5562999669966', message: 'Demorou muito para ser atendido', messageId: 'detractor-feedback-1' });
+
+  assert.equal(feedbackResponse.status, 200);
+  assert.equal(feedbackResponse.body.payload.type, 'detractor_feedback');
+  assert.equal(detractorFeedbackUpdateSeen, true);
+});
+
+test('nps classification and formula ignore unanswered invites', () => {
+  assert.equal(serverModule.__testables.inferNpsProfile(0), 'detrator');
+  assert.equal(serverModule.__testables.inferNpsProfile(6), 'detrator');
+  assert.equal(serverModule.__testables.inferNpsProfile(7), 'neutro');
+  assert.equal(serverModule.__testables.inferNpsProfile(8), 'neutro');
+  assert.equal(serverModule.__testables.inferNpsProfile(9), 'promotor');
+  assert.equal(serverModule.__testables.inferNpsProfile(10), 'promotor');
+
+  const metrics = serverModule.__testables.calculateNpsMetrics([
+    { score: 10 },
+    { score: 9 },
+    { score: 8 },
+    { score: 5 },
+    { score: null },
+    { status: 'sent' }
+  ]);
+
+  assert.equal(metrics.total, 4);
+  assert.equal(metrics.promoters, 2);
+  assert.equal(metrics.neutrals, 1);
+  assert.equal(metrics.detractors, 1);
+  assert.equal(metrics.nps, 25);
+});
+
+test('nps whatsapp inbound suppresses duplicate message ids', async () => {
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('INSERT INTO nps_whatsapp_inbound_events'),
+      reply: async () => {
+        const error = new Error('Duplicate entry');
+        error.code = 'ER_DUP_ENTRY';
+        throw error;
+      }
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM nps_whatsapp_inbound_events WHERE message_id = ?'),
+      reply: async () => [[{ id: 4001, message_id: 'duplicate-msg' }]]
+    }
+  ]);
+
+  const response = await request(app)
+    .post('/nps/whatsapp/inbound')
+    .send({
+      sessionId: 'nps',
+      phone: '+5562999669966',
+      message: '10',
+      messageId: 'duplicate-msg'
+    });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.payload.duplicate, true);
+  assert.equal(response.body.payload.reason, 'duplicate_message');
+});
+
 test('dispatch queue does not retry after VPS accepted a message and history logging fails', async (t) => {
   const previousApiKey = process.env.WHATSAPP_API_KEY;
   process.env.WHATSAPP_API_KEY = previousApiKey || 'test-key';

@@ -108,6 +108,31 @@ function formatShortDate(value) {
   }).format(new Date(value));
 }
 
+function formatDateBucket(value, granularity = 'day') {
+  if (!value) return 'Sem data';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Sem data';
+  if (granularity === 'month') {
+    return new Intl.DateTimeFormat('pt-BR', { month: '2-digit', year: 'numeric' }).format(date);
+  }
+  if (granularity === 'week') {
+    const firstDay = new Date(date.getFullYear(), 0, 1);
+    const week = Math.ceil((((date - firstDay) / 86400000) + firstDay.getDay() + 1) / 7);
+    return `${date.getFullYear()}-S${String(week).padStart(2, '0')}`;
+  }
+  return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' }).format(date);
+}
+
+function listDetractorReasons(value) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed.filter(Boolean) : [String(value)];
+  } catch (_error) {
+    return [String(value)];
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')
@@ -143,6 +168,7 @@ function NpsDashboard() {
   const [tablePageSize, setTablePageSize] = useState(10);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState('');
+  const [automationOverview, setAutomationOverview] = useState(null);
 
   useEffect(() => {
     const loadRows = async () => {
@@ -156,6 +182,9 @@ function NpsDashboard() {
         ]);
         setRows(Array.isArray(npsRes.data) ? npsRes.data : []);
         setClinics(Array.isArray(clinicsRes.data) ? clinicsRes.data : []);
+        api.get('/nps/automation/overview')
+          .then((overviewRes) => setAutomationOverview(overviewRes.data || null))
+          .catch(() => setAutomationOverview(null));
       } catch (error) {
         setFeedback(error.response?.data?.error || 'Não foi possível carregar o dashboard NPS.');
       } finally {
@@ -212,13 +241,43 @@ function NpsDashboard() {
     const promoters = filteredRows.filter((item) => Number(item.score) >= 9).length;
     const neutrals = filteredRows.filter((item) => Number(item.score) >= 7 && Number(item.score) <= 8).length;
     const detractors = filteredRows.filter((item) => Number(item.score) <= 6).length;
+    const inTreatment = filteredRows.filter((item) => getNpsStatus(item) === 'em_tratativa').length;
     const treated = filteredRows.filter((item) => getNpsStatus(item) === 'tratado').length;
     const pendingDetractors = filteredRows.filter((item) => Number(item.score) <= 6 && getNpsStatus(item) !== 'tratado').length;
-    const detractorVsPromoter = promoters ? Math.round((detractors / promoters) * 100) : detractors ? 100 : 0;
+    const sentInvites = Number(automationOverview?.summary?.sentInvites || 0) + Number(automationOverview?.summary?.respondedInvites || 0);
+    const pendingInvites = Number(automationOverview?.summary?.pendingInvites || 0) + Number(automationOverview?.summary?.queuedInvites || 0);
+    const failedInvites = Number(automationOverview?.summary?.failedInvites || 0);
+    const responseRate = sentInvites ? Math.round((total / sentInvites) * 100) : 0;
+    const referralReceived = filteredRows.reduce((sum, item) => sum + Number(item.referral_count || (item.recommend_yes ? 1 : 0) || 0), 0);
+    const referralConverted = filteredRows.reduce((sum, item) => sum + Number(item.referral_converted_count || 0), 0);
+    const referralConversionRate = referralReceived ? Math.round((referralConverted / referralReceived) * 100) : 0;
+    const treatmentDurations = filteredRows
+      .filter((item) => item.nps_treatment_at && item.created_at)
+      .map((item) => Math.max(0, new Date(item.nps_treatment_at).getTime() - new Date(item.created_at).getTime()));
+    const averageTreatmentHours = treatmentDurations.length
+      ? Math.round((treatmentDurations.reduce((sum, value) => sum + value, 0) / treatmentDurations.length) / 36_000) / 100
+      : 0;
     const nps = total ? Math.round(((promoters - detractors) / total) * 100) : 0;
 
-    return { total, promoters, neutrals, detractors, treated, pendingDetractors, detractorVsPromoter, nps };
-  }, [filteredRows]);
+    return {
+      total,
+      promoters,
+      neutrals,
+      detractors,
+      inTreatment,
+      treated,
+      pendingDetractors,
+      nps,
+      sentInvites,
+      pendingInvites,
+      failedInvites,
+      responseRate,
+      referralReceived,
+      referralConverted,
+      referralConversionRate,
+      averageTreatmentHours
+    };
+  }, [automationOverview, filteredRows]);
 
   const byProfile = useMemo(() => groupCount(filteredRows, (item) => {
     const profile = item.nps_profile || profileFromScore(item.score);
@@ -231,6 +290,17 @@ function NpsDashboard() {
   const byRegion = useMemo(() => groupCount(filteredRows, (item) => item.region), [filteredRows]);
   const byCoordinator = useMemo(() => groupCount(filteredRows, (item) => item.coordinator_name).slice(0, 10), [filteredRows]);
   const byTreatmentStatus = useMemo(() => groupCount(filteredRows, (item) => npsStatusLabels[getNpsStatus(item)]), [filteredRows]);
+  const byDay = useMemo(() => groupCount(filteredRows, (item) => formatDateBucket(item.responded_at || item.created_at, 'day')).slice(0, 15).reverse(), [filteredRows]);
+  const byWeek = useMemo(() => groupCount(filteredRows, (item) => formatDateBucket(item.responded_at || item.created_at, 'week')).slice(0, 12).reverse(), [filteredRows]);
+  const byMonth = useMemo(() => groupCount(filteredRows, (item) => formatDateBucket(item.responded_at || item.created_at, 'month')).slice(0, 12).reverse(), [filteredRows]);
+  const byDetractorReason = useMemo(() => {
+    const rows = filteredRows.flatMap((item) => (Number(item.score) <= 6 ? listDetractorReasons(item.detractor_reasons) : []));
+    return groupCount(rows.map((label) => ({ label })), (item) => item.label).slice(0, 10);
+  }, [filteredRows]);
+  const byReferralClinic = useMemo(() => groupCount(
+    filteredRows.filter((item) => Number(item.referral_count || (item.recommend_yes ? 1 : 0) || 0) > 0),
+    (item) => item.clinic_name
+  ).slice(0, 10), [filteredRows]);
   const baseRows = useMemo(() => filteredRows, [filteredRows]);
   const baseExportRows = useMemo(() => baseRows.map((item) => {
     const profile = item.nps_profile || profileFromScore(item.score);
@@ -488,19 +558,29 @@ function NpsDashboard() {
 
       <section className="kpi-grid dashboard-kpi-grid nps-kpi-grid" aria-label="Resumo NPS filtrado">
         <button className="kpi-card kpi-button" type="button" onClick={() => setFilters(initialFilters)}>
-          <span>Detratores x Promotores</span>
-          <strong>{metrics.detractorVsPromoter}%</strong>
-          <p>COMPARATIVO DO CENÁRIO</p>
+          <span>NPS Geral</span>
+          <strong>{metrics.nps}</strong>
+          <p>Promotores - detratores</p>
         </button>
         <button className="kpi-card kpi-button" type="button" onClick={() => clearFilters(['profile', 'status'])}>
-          <span>Respostas</span>
+          <span>Respostas recebidas</span>
           <strong>{metrics.total}</strong>
-          <p>{percentOf(rows.length, metrics.total)} DA BASE</p>
+          <p>{metrics.responseRate}% de taxa de resposta</p>
         </button>
+        <article className="kpi-card kpi-static">
+          <span>Pesquisas enviadas</span>
+          <strong>{metrics.sentInvites}</strong>
+          <p>{metrics.pendingInvites} pendentes · {metrics.failedInvites} falhas</p>
+        </article>
         <button className={`kpi-card success kpi-button ${filters.profile === 'promotor' ? 'active' : ''}`} type="button" onClick={() => toggleFilter('profile', 'promotor')}>
           <span>Promotores</span>
           <strong>{metrics.promoters}</strong>
           <p>{percentOf(metrics.total, metrics.promoters)} DO CENÁRIO</p>
+        </button>
+        <button className={`kpi-card progress kpi-button ${filters.profile === 'neutro' ? 'active' : ''}`} type="button" onClick={() => toggleFilter('profile', 'neutro')}>
+          <span>Neutros</span>
+          <strong>{metrics.neutrals}</strong>
+          <p>{percentOf(metrics.total, metrics.neutrals)} DO CENÁRIO</p>
         </button>
         <button className={`kpi-card danger kpi-button ${filters.profile === 'detrator' ? 'active' : ''}`} type="button" onClick={() => toggleFilter('profile', 'detrator')}>
           <span>Detratores</span>
@@ -508,15 +588,20 @@ function NpsDashboard() {
           <p>{percentOf(metrics.total, metrics.detractors)} DO CENÁRIO</p>
         </button>
         <article className="kpi-card progress kpi-static">
-          <span>NPS</span>
-          <strong>{metrics.nps}</strong>
-          <p>ÍNDICE FILTRADO</p>
+          <span>Em tratamento</span>
+          <strong>{metrics.inTreatment}</strong>
+          <p>{metrics.pendingDetractors} detratores pendentes</p>
         </article>
         <button className={`kpi-card warning kpi-button ${filters.status === 'tratado' ? 'active' : ''}`} type="button" onClick={() => toggleFilter('status', 'tratado')}>
           <span>Tratados</span>
           <strong>{metrics.treated}</strong>
-          <p>{metrics.pendingDetractors} DETRATORES EM ABERTO</p>
+          <p>Tempo médio: {metrics.averageTreatmentHours}h</p>
         </button>
+        <article className="kpi-card success kpi-static">
+          <span>Indicações recebidas</span>
+          <strong>{metrics.referralReceived}</strong>
+          <p>{metrics.referralConverted} convertidas · {metrics.referralConversionRate}%</p>
+        </article>
       </section>
 
       {loading ? (
@@ -560,6 +645,36 @@ function NpsDashboard() {
               <h2>Volume por coordenador</h2>
               <div className="chart-box">
                 <Bar data={buildBarData(byCoordinator, 'Respostas', '#d08c31')} options={chartOptions} />
+              </div>
+            </article>
+            <article className="chart-card">
+              <h2>Evolução diária</h2>
+              <div className="chart-box">
+                <Bar data={buildBarData(byDay, 'Respostas', '#0b6f5f')} options={chartOptions} />
+              </div>
+            </article>
+            <article className="chart-card">
+              <h2>Evolução semanal</h2>
+              <div className="chart-box">
+                <Bar data={buildBarData(byWeek, 'Respostas', '#1f7a8c')} options={chartOptions} />
+              </div>
+            </article>
+            <article className="chart-card">
+              <h2>Evolução mensal</h2>
+              <div className="chart-box">
+                <Bar data={buildBarData(byMonth, 'Respostas', '#4c956c')} options={chartOptions} />
+              </div>
+            </article>
+            <article className="chart-card">
+              <h2>Detratores por motivo</h2>
+              <div className="chart-box">
+                <Bar data={buildBarData(byDetractorReason, 'Motivos', '#c44536')} options={chartOptions} />
+              </div>
+            </article>
+            <article className="chart-card">
+              <h2>Indicações por clínica</h2>
+              <div className="chart-box">
+                <Bar data={buildBarData(byReferralClinic, 'Indicações', '#0b6f5f')} options={chartOptions} />
               </div>
             </article>
           </section>

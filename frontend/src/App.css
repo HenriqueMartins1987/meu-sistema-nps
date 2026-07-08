@@ -16771,6 +16771,18 @@ a {
     radial-gradient(circle at top right, rgba(239, 68, 68, 0.11), transparent 42%);
 }
 
+.agenda-task-card.prosthesis-pending {
+  border-color: rgba(245, 158, 11, 0.34);
+  border-left-color: #f59e0b;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(255, 251, 235, 0.98)),
+    radial-gradient(circle at top right, rgba(245, 158, 11, 0.12), transparent 42%);
+}
+
+.agenda-task-card.patient-complaint {
+  box-shadow: 0 18px 36px rgba(185, 28, 28, 0.12);
+}
+
 .agenda-card-topline {
   display: flex;
   align-items: center;
@@ -17391,21 +17403,21 @@ a {
 
 .agenda-editor-hero h2 {
   margin: 0;
-  color: #fff8ec;
+  color: #111827;
   font-family: Georgia, 'Times New Roman', serif;
   font-size: clamp(1.8rem, 4vw, 2.65rem);
   letter-spacing: -0.04em;
 }
 
 .agenda-editor-hero .eyebrow {
-  color: #dcb875;
+  color: #111827;
 }
 
 .agenda-editor-hero span {
   display: block;
   max-width: 620px;
   margin-top: 7px;
-  color: rgba(255, 248, 236, 0.82);
+  color: #1f2937;
   line-height: 1.45;
 }
 
@@ -17811,7 +17823,8 @@ a {
   }
 
   .agenda-toolbar-filters,
-  .agenda-editor-grid {
+  .agenda-editor-grid,
+  .agenda-period-ranking-grid {
     grid-template-columns: 1fr;
   }
 
@@ -18498,9 +18511,159 @@ a {
   opacity: 0.78;
 }
 
+.agenda-lab-pending-button,
+.agenda-patient-complaint-button {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  width: 100%;
+  padding: 14px 16px;
+  border-radius: 18px;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+}
+
+.agenda-lab-pending-button {
+  border: 1px solid rgba(245, 158, 11, 0.42);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 251, 235, 0.96));
+  color: #92400e;
+}
+
+.agenda-patient-complaint-button {
+  border: 1px solid rgba(248, 113, 113, 0.42);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(254, 242, 242, 0.96));
+  color: #991b1b;
+}
+
+.agenda-lab-pending-button:hover,
+.agenda-patient-complaint-button:hover {
+  transform: translateY(-1px);
+}
+
+.agenda-lab-pending-button.active {
+  border-color: rgba(180, 83, 9, 0.62);
+  background: linear-gradient(135deg, #b45309, #f59e0b);
+  color: #ffffff;
+  box-shadow: 0 18px 32px rgba(180, 83, 9, 0.2);
+}
+
+.agenda-patient-complaint-button.active {
+  border-color: rgba(185, 28, 28, 0.62);
+  background: linear-gradient(135deg, #991b1b, #dc2626);
+  color: #ffffff;
+  box-shadow: 0 18px 32px rgba(185, 28, 28, 0.22);
+}
+
+.agenda-patient-complaint-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.agenda-lab-pending-button strong,
+.agenda-patient-complaint-button strong {
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.agenda-lab-pending-button small,
+.agenda-patient-complaint-button small {
+  color: currentColor;
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.45;
+  opacity: 0.82;
+}
+
+.agenda-lab-warning-box {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(245, 158, 11, 0.34);
+  background:
+    linear-gradient(180deg, rgba(255, 251, 235, 0.98), rgba(255, 247, 237, 0.96)),
+    radial-gradient(circle at top right, rgba(245, 158, 11, 0.12), transparent 42%);
+}
+
+.agenda-lab-warning-box > div {
+  display: grid;
+  gap: 4px;
+}
+
+.agenda-lab-warning-box strong {
+  color: #78350f;
+  font-size: 0.94rem;
+}
+
+.agenda-lab-warning-box small {
+  color: #92400e;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.agenda-period-ranking-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.agenda-period-ranking-grid section {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid rgba(216, 224, 236, 0.92);
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.84);
+}
+
+.agenda-period-ranking-grid section > strong {
+  color: #10213b;
+  font-size: 0.9rem;
+}
+
+.agenda-period-ranking-grid article {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 10px;
+  padding: 10px;
+  border-radius: 14px;
+  background: #ffffff;
+  border: 1px solid rgba(226, 232, 240, 0.92);
+}
+
+.agenda-period-ranking-grid article span,
+.agenda-period-ranking-grid article small {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.agenda-period-ranking-grid article small {
+  grid-column: 1 / -1;
+}
+
+.agenda-ranking-panel-warning {
+  border-color: rgba(245, 158, 11, 0.26);
+}
+
+.agenda-ranking-panel-danger {
+  border-color: rgba(239, 68, 68, 0.24);
+}
+
 .agenda-task-meta span.agenda-fake-meta {
   background: rgba(254, 226, 226, 0.98);
   color: #b91c1c;
+}
+
+.agenda-task-meta span.agenda-lab-meta {
+  background: rgba(254, 243, 199, 0.98);
+  color: #92400e;
+}
+
+.agenda-task-meta span.agenda-complaint-meta {
+  background: rgba(254, 226, 226, 0.98);
+  color: #991b1b;
 }
 
 .complaints-dashboard-page .dashboard-kpi-grid,
