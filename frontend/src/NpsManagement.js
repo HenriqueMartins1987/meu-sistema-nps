@@ -2,42 +2,56 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from './api';
 import { hasActionPermission, isMasterAdmin, normalizeRoleValue, readUser } from './constants';
+import {
+  NPS_PROFILE_LABELS,
+  NPS_STATUS_LABELS,
+  PRIORITY_LABELS,
+  buildExecutiveAlerts,
+  buildPriorityQueue,
+  calculateMetrics,
+  calculateRisk,
+  classifyNps,
+  derivePriority,
+  getNpsStatus,
+  getSlaState,
+  normalizeText
+} from './npsEnterpriseAnalytics';
+import './NpsEnterprise.css';
 
-const profileLabels = {
-  detrator: 'Detrator',
-  neutro: 'Neutro',
-  promotor: 'Promotor'
+const initialFilters = {
+  search: '', clinic: '', region: '', state: '', coordinator: '', profile: '',
+  status: '', priority: '', sla: '', recovery: ''
 };
 
-const statusLabels = {
-  registrado: 'Registrado',
-  em_tratativa: 'Em tratamento',
-  tratado: 'Tratado'
+const SUBSTATUS_LABELS = {
+  aguardando_retorno_paciente: 'Aguardando retorno do paciente',
+  aguardando_unidade: 'Aguardando unidade',
+  aguardando_area_interna: 'Aguardando área interna',
+  resolvido: 'Resolvido'
 };
 
-function normalizeText(value) {
-  return String(value || '').toLowerCase();
+function uniqueList(values) {
+  return Array.from(new Set(values.filter(Boolean))).sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'));
 }
 
 function formatDate(value) {
   if (!value) return 'Não informado';
-  return new Intl.DateTimeFormat('pt-BR', {
-    dateStyle: 'short',
-    timeStyle: 'short'
-  }).format(new Date(value));
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return 'Não informado';
+  return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(date);
 }
 
-function profileFromScore(score) {
-  const value = Number(score || 0);
-  if (value >= 9) return 'promotor';
-  if (value >= 7) return 'neutro';
-  return 'detrator';
+function formatHours(value) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return '—';
+  const numeric = Number(value);
+  if (numeric < 0) return `${Math.abs(numeric).toFixed(1)}h vencido`;
+  return `${numeric.toFixed(1)}h restantes`;
 }
 
-function profileWeight(profile) {
-  if (profile === 'detrator') return 0;
-  if (profile === 'neutro') return 1;
-  return 2;
+function protocolLabel(item) {
+  if (item?.nps_protocol) return item.nps_protocol;
+  const year = item?.created_at ? new Date(item.created_at).getFullYear() : new Date().getFullYear();
+  return `NPS-${year}-${String(item?.id || 0).padStart(6, '0')}`;
 }
 
 function buildWhatsappUrl(phone) {
@@ -46,1102 +60,492 @@ function buildWhatsappUrl(phone) {
   return `https://wa.me/${digits.startsWith('55') ? digits : `55${digits}`}`;
 }
 
-function getNpsStatus(item) {
-  return item?.nps_status || 'registrado';
-}
-
-function canFinalizeNps(item) {
-  if (!item || item.deleted_at) return false;
-  const profile = item.nps_profile || profileFromScore(item.score);
-  return profile === 'detrator' && getNpsStatus(item) !== 'tratado';
-}
-
-function protocolLabel(item) {
-  if (item?.nps_protocol) return item.nps_protocol;
-
-  const year = item?.created_at ? new Date(item.created_at).getFullYear() : new Date().getFullYear();
-  return `NPS-${year}-${String(item?.id || 0).padStart(6, '0')}`;
-}
-
-function parseReasons(value) {
-  if (!value) return [];
-
-  try {
-    const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [String(value)];
-  } catch (error) {
-    return [String(value)];
-  }
-}
-
-function uniqueList(values) {
-  return Array.from(new Set(values.filter(Boolean)))
-    .sort((a, b) => String(a).localeCompare(String(b), 'pt-BR'));
-}
-
-function buildBriefText(value, maxLength = 220) {
-  const text = String(value || '').replace(/\s+/g, ' ').trim();
-  if (!text) return '';
-  if (text.length <= maxLength) return text;
-  return `${text.slice(0, maxLength).trimEnd()}...`;
-}
-
-function buildNpsNextAction(item) {
-  if (!item) return 'Validar o registro e direcionar o atendimento.';
-  const profile = item.nps_profile || profileFromScore(item.score);
-  const status = getNpsStatus(item);
-
-  if (item.deleted_at) return 'Registro excluído da operação ativa. Consultar apenas para histórico.';
-  if (status === 'tratado') return 'Tratativa concluída. Confirmar se o retorno final ficou devidamente registrado.';
-  if (profile === 'detrator' && !String(item.nps_treatment_comment || '').trim()) return 'Registrar a tratativa do detrator com objetividade e evidência do contato.';
-  if (profile === 'detrator') return 'Concluir o retorno ao paciente e finalizar a tratativa quando o caso estiver resolvido.';
-  if (profile === 'neutro') return 'Avaliar oportunidade de melhoria operacional e registrar eventual ação preventiva.';
-  return 'Manter o registro para acompanhamento de satisfação e relacionamento.';
-}
-
-function buildNpsExecutiveSummary(item) {
-  if (!item) return [];
-
-  const profile = item.nps_profile || profileFromScore(item.score);
-  const lastLog = Array.isArray(item.logs) && item.logs.length ? item.logs[0] : null;
-  const mainFeedback = buildBriefText(
-    item.detractor_feedback || item.improvement_comment || item.comment,
-    220
-  ) || 'Sem comentário detalhado na pesquisa.';
-  const reasons = parseReasons(item.detractor_reasons);
-  const lastMovement = lastLog
-    ? `${formatDate(lastLog.created_at)} · ${lastLog.actor_name || 'Usuário'} · ${buildBriefText(lastLog.message, 170)}`
-    : 'Sem movimentações de tratativa registradas até o momento.';
-
-  return [
-    `Pesquisa ${protocolLabel(item)} registrada para ${item.patient_name || 'paciente não informado'} na unidade ${item.clinic_name || 'não informada'}, com nota ${item.score || 'não informada'} e perfil ${profileLabels[profile] || profile}.`,
-    `Percepção principal do paciente: ${mainFeedback}`,
-    reasons.length ? `Motivos sinalizados pelo paciente: ${reasons.join(', ')}.` : 'O paciente não informou motivos estruturados adicionais na resposta.',
-    `Situação atual: ${statusLabels[getNpsStatus(item)] || getNpsStatus(item)}. Última movimentação: ${lastMovement}`,
-    `Próxima ação recomendada: ${buildNpsNextAction(item)}`
-  ];
+function ManagementChip({ children, type = 'default' }) {
+  return <span className={`nps-management-chip ${type}`}>{children}</span>;
 }
 
 function NpsManagement() {
   const navigate = useNavigate();
   const location = useLocation();
-  const focusNpsId = useMemo(() => {
-    const params = new URLSearchParams(location.search);
-    const rawId = params.get('abrir') || params.get('id');
-    const parsedId = Number(rawId);
-    return Number.isFinite(parsedId) && parsedId > 0 ? parsedId : null;
-  }, [location.search]);
   const currentUser = readUser();
   const currentUserRole = normalizeRoleValue(currentUser?.role);
   const canViewDeleted = isMasterAdmin(currentUser);
   const canDeleteRecords = isMasterAdmin(currentUser) || currentUserRole === 'supervisor_crc';
   const canFinishNps = hasActionPermission(currentUser, 'nps_finish');
   const canManageAutomation = ['admin', 'master_admin', 'supervisor_crc'].includes(currentUserRole) || isMasterAdmin(currentUser);
+  const focusNpsId = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    const parsed = Number(params.get('abrir') || params.get('id'));
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }, [location.search]);
+
   const [rows, setRows] = useState([]);
   const [clinics, setClinics] = useState([]);
-  const [viewMode, setViewMode] = useState('active');
-  const [filters, setFilters] = useState({
-    profile: '',
-    clinic: '',
-    state: '',
-    region: '',
-    coordinator: '',
-    status: '',
-    search: ''
-  });
-  const [loading, setLoading] = useState(true);
-  const [savingId, setSavingId] = useState(null);
-  const [selectedNps, setSelectedNps] = useState(null);
-  const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [showExecutiveSummary, setShowExecutiveSummary] = useState(false);
-  const [treatmentText, setTreatmentText] = useState('');
-  const [treatmentStatus, setTreatmentStatus] = useState('em_tratativa');
-  const [bulkFile, setBulkFile] = useState(null);
-  const [feedback, setFeedback] = useState('');
-  const [bulkSending, setBulkSending] = useState(false);
+  const [causes, setCauses] = useState([]);
   const [automationOverview, setAutomationOverview] = useState(null);
-  const [automationLoading, setAutomationLoading] = useState(false);
-  const [automationRunning, setAutomationRunning] = useState(false);
-  const [automationTesting, setAutomationTesting] = useState(false);
-  const [automationReprocessing, setAutomationReprocessing] = useState(false);
-  const autoOpenNpsRef = useRef(false);
+  const [viewMode, setViewMode] = useState('active');
+  const [filters, setFilters] = useState(initialFilters);
+  const [selectedNps, setSelectedNps] = useState(null);
+  const [timeline, setTimeline] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [feedback, setFeedback] = useState('');
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [bulkFile, setBulkFile] = useState(null);
+  const [bulkSending, setBulkSending] = useState(false);
+  const [automationBusy, setAutomationBusy] = useState('');
+  const [managementForm, setManagementForm] = useState({
+    operational_priority: 'normal', management_substatus: '', cause_category: '', cause_subcategory: '',
+    root_cause: '', responsible_name: '', sla_due_at: '', recovery_status: 'nao_iniciado',
+    nps_status: 'registrado', treatment_comment: ''
+  });
+  const autoOpenRef = useRef(false);
 
   const loadRows = useCallback(async () => {
     setLoading(true);
     setFeedback('');
-
     try {
-      const [npsRes, clinicsRes] = await Promise.all([
-        api.get('/nps/responses', {
-          params: canViewDeleted ? { include_deleted: 1 } : undefined
-        }),
-        api.get('/clinics')
+      const [npsRes, clinicsRes, overviewRes, causesRes] = await Promise.all([
+        api.get('/nps/responses', { params: canViewDeleted ? { include_deleted: 1 } : undefined }),
+        api.get('/clinics'),
+        api.get('/nps/automation/overview').catch(() => ({ data: null })),
+        api.get('/nps/enterprise/causes').catch(() => ({ data: [] }))
       ]);
       setRows(Array.isArray(npsRes.data) ? npsRes.data : []);
       setClinics(Array.isArray(clinicsRes.data) ? clinicsRes.data : []);
+      setAutomationOverview(overviewRes.data || null);
+      setCauses(Array.isArray(causesRes.data) ? causesRes.data : []);
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível carregar as pesquisas NPS.');
+      setFeedback(error.response?.data?.error || 'Não foi possível carregar a central de gestão NPS.');
     } finally {
       setLoading(false);
     }
   }, [canViewDeleted]);
 
-  const loadAutomationOverview = useCallback(async () => {
-    setAutomationLoading(true);
-
-    try {
-      const overviewRes = await api.get('/nps/automation/overview');
-      setAutomationOverview(overviewRes.data || null);
-    } catch (error) {
-      setAutomationOverview(null);
-    } finally {
-      setAutomationLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    loadRows();
-    loadAutomationOverview();
-  }, [loadAutomationOverview, loadRows]);
-
-  useEffect(() => {
-    autoOpenNpsRef.current = false;
-  }, [focusNpsId]);
-
-  useEffect(() => {
-    if (!canViewDeleted && viewMode === 'deleted') {
-      setViewMode('active');
-    }
-  }, [canViewDeleted, viewMode]);
-
-  useEffect(() => {
-    if (!focusNpsId || autoOpenNpsRef.current || !rows.length) {
-      return;
-    }
-
-    const targetNps = rows.find((item) => item.id === focusNpsId);
-
-    if (!targetNps) {
-      return;
-    }
-
-    autoOpenNpsRef.current = true;
-    setSelectedNps(targetNps);
-    setTreatmentText('');
-    setTreatmentStatus(getNpsStatus(targetNps) === 'tratado' ? 'tratado' : 'em_tratativa');
-    setShowDeleteModal(false);
-    navigate(location.pathname, { replace: true });
-  }, [focusNpsId, location.pathname, navigate, rows]);
+  useEffect(() => { loadRows(); }, [loadRows]);
 
   const operationalRows = useMemo(() => rows.filter((item) => !item.deleted_at), [rows]);
-  const activeRows = useMemo(() => (
-    operationalRows.filter((item) => getNpsStatus(item) !== 'tratado')
-  ), [operationalRows]);
-  const finishedRows = useMemo(() => (
-    operationalRows.filter((item) => getNpsStatus(item) === 'tratado')
-  ), [operationalRows]);
+  const activeRows = useMemo(() => operationalRows.filter((item) => getNpsStatus(item) !== 'tratado'), [operationalRows]);
+  const finishedRows = useMemo(() => operationalRows.filter((item) => getNpsStatus(item) === 'tratado'), [operationalRows]);
   const deletedRows = useMemo(() => rows.filter((item) => item.deleted_at), [rows]);
-  const scopedRows = useMemo(() => {
-    if (viewMode === 'finished') return finishedRows;
-    if (viewMode === 'deleted' && canViewDeleted) return deletedRows;
-    return activeRows;
-  }, [activeRows, canViewDeleted, deletedRows, finishedRows, viewMode]);
+  const baseRows = viewMode === 'finished' ? finishedRows : viewMode === 'deleted' ? deletedRows : activeRows;
 
   const filterOptions = useMemo(() => ({
-    clinics: uniqueList([...rows.map((item) => item.clinic_name), ...clinics.map((clinic) => clinic.name)]),
-    states: uniqueList([...rows.map((item) => item.state), ...clinics.map((clinic) => clinic.state)]),
-    regions: uniqueList([...rows.map((item) => item.region), ...clinics.map((clinic) => clinic.region)]),
-    coordinators: uniqueList([...rows.map((item) => item.coordinator_name), ...clinics.map((clinic) => clinic.coordinator_name)])
+    clinics: uniqueList([...rows.map((item) => item.clinic_name), ...clinics.map((item) => item.name)]),
+    regions: uniqueList([...rows.map((item) => item.region), ...clinics.map((item) => item.region)]),
+    states: uniqueList([...rows.map((item) => item.state), ...clinics.map((item) => item.state)]),
+    coordinators: uniqueList([...rows.map((item) => item.coordinator_name), ...clinics.map((item) => item.coordinator_name)])
   }), [rows, clinics]);
 
-  const filteredRows = useMemo(() => scopedRows
-    .filter((item) => {
-      const profile = item.nps_profile || profileFromScore(item.score);
-      const status = getNpsStatus(item);
-      const searchable = [
-        protocolLabel(item),
-        item.patient_name,
-        item.patient_phone,
-        item.clinic_name,
-        item.city,
-        item.state,
-        item.region,
-        item.detractor_feedback,
-        item.improvement_comment,
-        item.comment,
-        item.nps_treatment_comment,
-        item.response_channel,
-        item.source,
-        item.referral_name,
-        item.referral_phone,
-        ...(item.logs || []).map((log) => log.message)
-      ].map(normalizeText).join(' ');
+  const filteredRows = useMemo(() => baseRows.filter((item) => {
+    const profile = item.nps_profile || classifyNps(item.score);
+    const status = getNpsStatus(item);
+    const priority = derivePriority(item);
+    const sla = getSlaState(item);
+    const searchable = normalizeText([
+      protocolLabel(item), item.patient_name, item.patient_phone, item.clinic_name, item.region,
+      item.coordinator_name, item.detractor_feedback, item.improvement_comment, item.comment,
+      item.nps_treatment_comment, item.cause_category, item.cause_subcategory, item.responsible_name
+    ].filter(Boolean).join(' '));
 
-      return (
-        (!filters.profile || profile === filters.profile)
-        && (!filters.clinic || item.clinic_name === filters.clinic)
-        && (!filters.state || item.state === filters.state)
-        && (!filters.region || item.region === filters.region)
-        && (!filters.coordinator || item.coordinator_name === filters.coordinator)
-        && (!filters.status || status === filters.status)
-        && (!filters.search || searchable.includes(normalizeText(filters.search)))
-      );
-    })
-    .sort((a, b) => {
-      const profileDiff = profileWeight(a.nps_profile || profileFromScore(a.score))
-        - profileWeight(b.nps_profile || profileFromScore(b.score));
+    return (
+      (!filters.search || searchable.includes(normalizeText(filters.search)))
+      && (!filters.clinic || item.clinic_name === filters.clinic)
+      && (!filters.region || item.region === filters.region)
+      && (!filters.state || item.state === filters.state)
+      && (!filters.coordinator || item.coordinator_name === filters.coordinator)
+      && (!filters.profile || profile === filters.profile)
+      && (!filters.status || status === filters.status)
+      && (!filters.priority || priority === filters.priority)
+      && (!filters.sla || sla.code === filters.sla)
+      && (!filters.recovery || String(item.recovery_status || 'nao_iniciado') === filters.recovery)
+    );
+  }).sort((left, right) => {
+    const priorityOrder = { critica: 4, alta: 3, media: 2, normal: 1 };
+    const priorityDiff = priorityOrder[derivePriority(right)] - priorityOrder[derivePriority(left)];
+    if (priorityDiff !== 0) return priorityDiff;
+    return calculateRisk(right).score - calculateRisk(left).score;
+  }), [baseRows, filters]);
 
-      if (profileDiff !== 0) return profileDiff;
+  const metrics = useMemo(() => calculateMetrics(operationalRows, automationOverview?.summary || {}), [automationOverview, operationalRows]);
+  const priorityQueue = useMemo(() => buildPriorityQueue(operationalRows), [operationalRows]);
+  const alerts = useMemo(() => buildExecutiveAlerts(operationalRows), [operationalRows]);
 
-      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
-    }), [filters, scopedRows]);
+  useEffect(() => {
+    if (!focusNpsId || autoOpenRef.current || !rows.length) return;
+    const target = rows.find((item) => Number(item.id) === focusNpsId);
+    if (!target) return;
+    autoOpenRef.current = true;
+    openManagement(target);
+    navigate(location.pathname, { replace: true });
+  }, [focusNpsId, rows, navigate, location.pathname]);
 
-  const metrics = useMemo(() => {
-    const total = operationalRows.length;
-    const promoters = operationalRows.filter((item) => Number(item.score) >= 9).length;
-    const neutrals = operationalRows.filter((item) => Number(item.score) >= 7 && Number(item.score) <= 8).length;
-    const detractors = operationalRows.filter((item) => Number(item.score) <= 6).length;
-    const inTreatment = activeRows.filter((item) => getNpsStatus(item) === 'em_tratativa').length;
-    const treated = finishedRows.length;
-    const pendingDetractors = activeRows.filter((item) => Number(item.score) <= 6 && getNpsStatus(item) !== 'tratado').length;
-    const referralReceived = operationalRows.reduce((sum, item) => sum + Number(item.referral_count || (item.recommend_yes ? 1 : 0) || 0), 0);
-    const referralConverted = operationalRows.reduce((sum, item) => sum + Number(item.referral_converted_count || 0), 0);
-    const nps = total ? Math.round(((promoters - detractors) / total) * 100) : 0;
+  const loadTimeline = async (id) => {
+    try {
+      const response = await api.get(`/nps/enterprise/responses/${id}/timeline`);
+      setTimeline(Array.isArray(response.data) ? response.data : []);
+    } catch (_error) {
+      setTimeline([]);
+    }
+  };
 
-    return { total, promoters, neutrals, detractors, inTreatment, treated, pendingDetractors, referralReceived, referralConverted, nps };
-  }, [activeRows, finishedRows, operationalRows]);
-  const selectedNpsExecutiveSummary = useMemo(
-    () => buildNpsExecutiveSummary(selectedNps),
-    [selectedNps]
+  function openManagement(item) {
+    const slaDue = item.sla_due_at ? new Date(item.sla_due_at).toISOString().slice(0, 16) : '';
+    setSelectedNps(item);
+    setManagementForm({
+      operational_priority: item.operational_priority || derivePriority(item),
+      management_substatus: item.management_substatus || '',
+      cause_category: item.cause_category || '',
+      cause_subcategory: item.cause_subcategory || '',
+      root_cause: item.root_cause || '',
+      responsible_name: item.responsible_name || item.nps_treatment_by || '',
+      sla_due_at: slaDue,
+      recovery_status: item.recovery_status || 'nao_iniciado',
+      nps_status: getNpsStatus(item),
+      treatment_comment: ''
+    });
+    setFeedback('');
+    loadTimeline(item.id);
+  }
+
+  function closeManagement() {
+    setSelectedNps(null);
+    setTimeline([]);
+    setShowDeleteModal(false);
+  }
+
+  const setManagementField = (field, value) => {
+    setManagementForm((previous) => ({ ...previous, [field]: value }));
+  };
+
+  const selectedCategoryOptions = useMemo(
+    () => uniqueList(causes.map((item) => item.category)),
+    [causes]
+  );
+  const selectedSubcategories = useMemo(
+    () => causes.filter((item) => item.category === managementForm.cause_category),
+    [causes, managementForm.cause_category]
   );
 
-  const updateFilter = (field, value) => {
-    setFilters((prev) => ({ ...prev, [field]: value }));
-  };
-
-  const applyQuickFilter = (nextViewMode, nextFilters = {}) => {
-    setViewMode(nextViewMode);
-    setFilters((prev) => ({
-      ...prev,
-      profile: '',
-      state: '',
-      region: '',
-      coordinator: '',
-      status: '',
-      clinic: prev.clinic,
-      search: prev.search,
-      ...nextFilters
-    }));
-  };
-
-  const handleDownloadTemplate = async () => {
-    try {
-      const response = await api.get('/nps/bulk-template', { responseType: 'blob' });
-      const blobUrl = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement('a');
-      link.href = blobUrl;
-      link.download = 'template-envio-nps.xlsx';
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.URL.revokeObjectURL(blobUrl);
-    } catch (error) {
-      const backendMessage = typeof error.response?.data === 'string'
-        ? error.response.data
-        : error.response?.data?.error;
-      setFeedback(backendMessage || error.message || 'Não foi possível baixar o template de envio em massa.');
-    }
-  };
-
-  const handleBulkDispatch = async () => {
-    if (!bulkFile) {
-      setFeedback('Selecione a planilha para envio em massa do link NPS.');
-      return;
-    }
-
-    setBulkSending(true);
+  const saveManagement = async () => {
+    if (!selectedNps) return;
+    setSaving(true);
     setFeedback('');
 
     try {
-      const formData = new FormData();
-      formData.append('file', bulkFile);
-      const response = await api.post('/nps/bulk-dispatch', formData);
-      const sessionLabel = response.data?.sessionId ? ` Sessao WhatsApp usada: ${response.data.sessionId}.` : '';
-      setFeedback((response.data?.message || 'Envio em massa preparado com sucesso.') + sessionLabel);
-      setBulkFile(null);
-    } catch (error) {
-      const backendMessage = typeof error.response?.data === 'string'
-        ? error.response.data
-        : error.response?.data?.error;
-      setFeedback(backendMessage || error.message || 'Não foi possível processar a planilha de envio em massa.');
-    } finally {
-      setBulkSending(false);
-    }
-  };
-
-  const handleRunAutomation = async () => {
-    setAutomationRunning(true);
-    setFeedback('');
-
-    try {
-      const response = await api.post('/nps/automation/run', {});
-      setFeedback(response.data?.message || 'Robô Ecuro executado com sucesso.');
-      await loadAutomationOverview();
-    } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível executar o robô Ecuro / NPS automática.');
-    } finally {
-      setAutomationRunning(false);
-    }
-  };
-
-  const handleTestAutomationLogin = async () => {
-    setAutomationTesting(true);
-    setFeedback('');
-
-    try {
-      const response = await api.post('/nps/automation/test-login', {});
-      setFeedback(response.data?.message || 'Login do robô Ecuro validado.');
-      await loadAutomationOverview();
-    } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível validar o login do robô Ecuro.');
-    } finally {
-      setAutomationTesting(false);
-    }
-  };
-
-  const handleReprocessAutomationFailures = async () => {
-    setAutomationReprocessing(true);
-    setFeedback('');
-
-    try {
-      const response = await api.post('/nps/automation/reprocess-failures', {});
-      setFeedback(response.data?.message || 'Falhas da automação NPS reprocessadas.');
-      await loadAutomationOverview();
-    } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível reprocessar as falhas da automação NPS.');
-    } finally {
-      setAutomationReprocessing(false);
-    }
-  };
-
-  const automationSummary = automationOverview?.summary || {};
-  const automationRobot = automationOverview?.robot || {};
-  const automationJobs = Array.isArray(automationOverview?.recentJobs) ? automationOverview.recentJobs : [];
-  const usesSharedSession = automationRobot.sessionId && automationRobot.sessionId !== 'nps';
-  const robotStatusLabel = automationRobot.serviceStatus === 'online'
-    ? 'Robô online'
-    : automationRobot.serviceStatus === 'unreachable'
-      ? 'Robô indisponível'
-      : automationRobot.serviceStatus === 'api_key_missing'
-        ? 'Chave do robô ausente'
-        : 'Robô aguardando configuração';
-  const sessionStatusLabel = automationRobot.sessionConnected
-    ? 'Sessão conectada'
-    : 'Sessão não conectada';
-
-  const openTreatment = (item) => {
-    setSelectedNps(item);
-    setTreatmentText('');
-    setTreatmentStatus(getNpsStatus(item) === 'tratado' ? 'tratado' : 'em_tratativa');
-    setFeedback('');
-    setShowExecutiveSummary(false);
-  };
-
-  const closeTreatment = () => {
-    setSelectedNps(null);
-    setShowDeleteModal(false);
-    setTreatmentText('');
-    setTreatmentStatus('em_tratativa');
-    setShowExecutiveSummary(false);
-  };
-
-  const handleSaveTreatment = async () => {
-    const comment = treatmentText.trim();
-
-    if (!comment) {
-      setFeedback('Descreva a tratativa realizada antes de salvar.');
-      return;
-    }
-
-    setSavingId(selectedNps.id);
-    setFeedback('');
-
-    try {
-      const res = await api.patch(`/nps/responses/${selectedNps.id}/treatment`, {
-        treatment_comment: comment,
-        status: treatmentStatus
-      });
-      const updated = res.data?.response;
-
+      const payload = {
+        ...managementForm,
+        cause_category: managementForm.cause_category || null,
+        cause_subcategory: managementForm.cause_subcategory || null,
+        management_substatus: managementForm.management_substatus || null,
+        root_cause: managementForm.root_cause || null,
+        responsible_name: managementForm.responsible_name || null,
+        sla_due_at: managementForm.sla_due_at ? new Date(managementForm.sla_due_at).toISOString() : null,
+        treatment_comment: managementForm.treatment_comment || null
+      };
+      const response = await api.patch(`/nps/enterprise/responses/${selectedNps.id}/management`, payload);
+      const updated = response.data?.response;
       if (updated) {
-        setRows((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+        setRows((previous) => previous.map((item) => Number(item.id) === Number(updated.id) ? { ...item, ...updated } : item));
+        setSelectedNps((previous) => ({ ...previous, ...updated }));
       } else {
         await loadRows();
       }
-
-      setFeedback(`Tratativa salva no protocolo ${res.data?.protocol || protocolLabel(selectedNps)}.`);
-      closeTreatment();
+      await loadTimeline(selectedNps.id);
+      setManagementField('treatment_comment', '');
+      setFeedback(`Gestão atualizada no protocolo ${protocolLabel(selectedNps)}.`);
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível salvar a tratativa NPS.');
+      setFeedback(error.response?.data?.error || 'Não foi possível salvar a gestão NPS. Verifique se o módulo enterprise está habilitado no backend.');
     } finally {
-      setSavingId(null);
+      setSaving(false);
     }
   };
 
-  const handleFinalizeNps = async (item = selectedNps) => {
-    if (!item || !canFinalizeNps(item)) return;
-
-    const isCurrentSelection = selectedNps?.id === item.id;
-    const comment = (isCurrentSelection ? treatmentText : '').trim() || String(item.nps_treatment_comment || '').trim();
-
-    if (!comment) {
-      setSelectedNps(item);
-      setTreatmentStatus('tratado');
-      setFeedback('Descreva a tratativa antes de finalizar o NPS.');
+  const extendSla = async () => {
+    if (!selectedNps || !managementForm.sla_due_at) {
+      setFeedback('Informe um novo prazo para prorrogação do SLA.');
       return;
     }
-
-    setSavingId(item.id);
-    setFeedback('');
-
+    const reason = window.prompt('Justificativa obrigatória para a prorrogação do SLA:');
+    if (!reason || reason.trim().length < 10) {
+      setFeedback('A justificativa precisa ter pelo menos 10 caracteres.');
+      return;
+    }
+    setSaving(true);
     try {
-      const res = await api.patch(`/nps/responses/${item.id}/treatment`, {
-        treatment_comment: comment,
-        status: 'tratado'
+      await api.post(`/nps/enterprise/responses/${selectedNps.id}/sla-extension`, {
+        new_due_at: new Date(managementForm.sla_due_at).toISOString(),
+        reason: reason.trim()
       });
-      const updated = res.data?.response;
-
-      if (updated) {
-        setRows((prev) => prev.map((row) => (row.id === updated.id ? updated : row)));
-        if (isCurrentSelection) {
-          setSelectedNps(updated);
-        }
-      } else {
-        await loadRows();
-      }
-
-      setFeedback(`NPS finalizado no protocolo ${res.data?.protocol || protocolLabel(item)}.`);
-      if (isCurrentSelection) {
-        closeTreatment();
-      }
+      await loadRows();
+      await loadTimeline(selectedNps.id);
+      setFeedback('SLA prorrogado com justificativa e trilha de auditoria.');
     } catch (error) {
-      setFeedback(error.response?.data?.error || 'Não foi possível finalizar a tratativa NPS.');
+      setFeedback(error.response?.data?.error || 'Não foi possível prorrogar o SLA.');
     } finally {
-      setSavingId(null);
+      setSaving(false);
     }
   };
 
   const handleConvertToComplaint = async () => {
-    setSavingId(selectedNps.id);
-    setFeedback('');
-
+    if (!selectedNps) return;
+    setSaving(true);
     try {
-      const res = await api.post(`/nps/responses/${selectedNps.id}/convert-complaint`);
+      const response = await api.post(`/nps/responses/${selectedNps.id}/convert-complaint`);
       await loadRows();
-      closeTreatment();
-      setFeedback(`Detrator migrado para reclamação no protocolo ${res.data?.protocol || ''}.`);
-
-      if (res.data?.complaintId) {
-        navigate(`/gestao/${res.data.complaintId}`);
-      }
+      setFeedback(`Detrator migrado para reclamação no protocolo ${response.data?.protocol || ''}.`);
+      if (response.data?.complaintId) navigate(`/gestao/${response.data.complaintId}`);
+      closeManagement();
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível migrar este NPS para reclamação.');
     } finally {
-      setSavingId(null);
+      setSaving(false);
     }
   };
 
   const handleDeleteNps = async () => {
     if (!selectedNps || !canDeleteRecords) return;
-
-    setSavingId(selectedNps.id);
-    setFeedback('');
-
+    setSaving(true);
     try {
-      await api.delete(`/nps/responses/${selectedNps.id}`, {
-        data: { reason: 'Exclusão administrativa pela tela de gestão NPS.' }
-      });
+      await api.delete(`/nps/responses/${selectedNps.id}`, { data: { reason: 'Exclusão administrativa pela Central de Gestão NPS.' } });
       await loadRows();
-      setShowDeleteModal(false);
-      closeTreatment();
+      closeManagement();
       setFeedback('Pesquisa NPS excluída com lastro de auditoria.');
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível excluir a pesquisa NPS.');
     } finally {
-      setSavingId(null);
+      setSaving(false);
+    }
+  };
+
+  const handleAutomation = async (action) => {
+    if (!canManageAutomation) return;
+    setAutomationBusy(action);
+    setFeedback('');
+    const endpoint = action === 'run' ? '/nps/automation/run' : action === 'test' ? '/nps/automation/test-login' : '/nps/automation/reprocess-failures';
+    try {
+      const response = await api.post(endpoint, {});
+      setFeedback(response.data?.message || 'Ação concluída.');
+      await loadRows();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível executar a ação da automação NPS.');
+    } finally {
+      setAutomationBusy('');
+    }
+  };
+
+  const handleDownloadTemplate = async () => {
+    try {
+      const response = await api.get('/nps/bulk-template', { responseType: 'blob' });
+      const url = URL.createObjectURL(new Blob([response.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'template-envio-nps.xlsx';
+      link.click();
+      URL.revokeObjectURL(url);
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível baixar o template NPS.');
+    }
+  };
+
+  const handleBulkDispatch = async () => {
+    if (!bulkFile) {
+      setFeedback('Selecione a planilha para envio em massa.');
+      return;
+    }
+    setBulkSending(true);
+    try {
+      const formData = new FormData();
+      formData.append('file', bulkFile);
+      const response = await api.post('/nps/bulk-dispatch', formData);
+      setFeedback(response.data?.message || 'Envio em massa preparado com sucesso.');
+      setBulkFile(null);
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível processar a planilha NPS.');
+    } finally {
+      setBulkSending(false);
     }
   };
 
   return (
-    <main className="app-page">
-      <header className="page-heading">
+    <main className="app-page nps-enterprise-page">
+      <header className="page-heading nps-enterprise-heading">
         <div>
-          <p className="eyebrow">Gestão NPS</p>
-          <h1>Painel de Gestão NPS</h1>
-          <p>Trate clientes detratores em protocolo próprio, sem misturar com a gestão de reclamações.</p>
+          <p className="eyebrow">Gestão de experiência</p>
+          <h1>Central Operacional NPS</h1>
+          <p>Tratativa de detratores, SLA, causa raiz, recuperação, prioridades e relacionamento.</p>
         </div>
-
         <div className="heading-actions">
-          <button className="outline-action" onClick={() => navigate('/dashboard-nps')}>
-            Dashboard NPS
-          </button>
-          <button className="outline-action" onClick={() => navigate('/home')}>
-            Home
-          </button>
+          <button className="outline-action" type="button" onClick={() => navigate('/dashboard-nps')}>Cockpit Executivo</button>
+          <button className="outline-action" type="button" onClick={() => navigate('/home')}>Home</button>
         </div>
       </header>
 
-      <section className="kpi-grid management-kpi-grid" aria-label="Resumo NPS">
-        <button type="button" className="kpi-card kpi-button" onClick={() => applyQuickFilter('active')}>
-          <span>NPS</span>
-          <strong>{metrics.nps}</strong>
-          <p>ÍNDICE ATUAL</p>
-        </button>
-        <button type="button" className="kpi-card success kpi-button" onClick={() => applyQuickFilter('active', { profile: 'promotor' })}>
-          <span>Promotores</span>
-          <strong>{metrics.promoters}</strong>
-          <p>NOTAS 9 E 10</p>
-        </button>
-        <button type="button" className="kpi-card progress kpi-button" onClick={() => applyQuickFilter('active', { profile: 'neutro' })}>
-          <span>Neutros</span>
-          <strong>{metrics.neutrals}</strong>
-          <p>NOTAS 7 E 8</p>
-        </button>
-        <button type="button" className="kpi-card danger kpi-button" onClick={() => applyQuickFilter('active', { profile: 'detrator' })}>
-          <span>Detratores</span>
-          <strong>{metrics.detractors}</strong>
-          <p>NOTAS 0 A 6</p>
-        </button>
-        <button type="button" className="kpi-card warning kpi-button" onClick={() => applyQuickFilter('active', { profile: 'detrator' })}>
-          <span>Pendentes</span>
-          <strong>{metrics.pendingDetractors}</strong>
-          <p>DETRATORES EM ABERTO</p>
-        </button>
-        <button type="button" className="kpi-card kpi-button" onClick={() => applyQuickFilter('finished', { status: 'tratado' })}>
-          <span>Tratados</span>
-          <strong>{metrics.treated}</strong>
-          <p>PROTOCOLOS NPS</p>
-        </button>
-        <article className="kpi-card success kpi-static">
-          <span>Indicações</span>
-          <strong>{metrics.referralReceived}</strong>
-          <p>{metrics.referralConverted} convertidas</p>
+      <section className="nps-enterprise-kpi-grid">
+        <article className="nps-enterprise-kpi featured"><span>NPS</span><strong>{metrics.nps}</strong><small>Índice atual da base operacional</small></article>
+        <article className="nps-enterprise-kpi negative"><span>Detratores pendentes</span><strong>{metrics.pendingDetractors}</strong><small>{metrics.overdue} SLA(s) vencido(s)</small></article>
+        <article className="nps-enterprise-kpi"><span>Em tratamento</span><strong>{metrics.inTreatment}</strong><small>{metrics.treated} tratado(s)</small></article>
+        <article className="nps-enterprise-kpi"><span>Conformidade SLA</span><strong>{metrics.slaCompliance}%</strong><small>Casos dentro do prazo</small></article>
+        <article className="nps-enterprise-kpi positive"><span>Taxa de reversão</span><strong>{metrics.recoveryRate}%</strong><small>{metrics.recovered} detrator(es) recuperado(s)</small></article>
+      </section>
+
+      <section className="nps-enterprise-grid two-columns">
+        <article className="nps-enterprise-panel">
+          <div className="nps-enterprise-section-head"><div><p className="eyebrow">Prioridades do dia</p><h2>Fila de risco</h2></div><span className="nps-enterprise-note">{priorityQueue.length} caso(s) em aberto</span></div>
+          <div className="nps-enterprise-compact-list">
+            {priorityQueue.slice(0, 8).map((item) => (
+              <div key={item.id}>
+                <span><b>{protocolLabel(item)}</b><small>{item.patient_name || 'Paciente não informado'} · {item.clinic_name || 'Unidade não informada'}</small></span>
+                <span><ManagementChip type={item.enterprisePriority}>{PRIORITY_LABELS[item.enterprisePriority]}</ManagementChip> <ManagementChip type={item.enterpriseSla.code}>{item.enterpriseSla.label}</ManagementChip></span>
+              </div>
+            ))}
+            {!priorityQueue.length && <p className="empty-state">Nenhum detrator pendente.</p>}
+          </div>
+        </article>
+
+        <article className="nps-enterprise-panel">
+          <div className="nps-enterprise-section-head"><div><p className="eyebrow">Alertas</p><h2>Riscos gerenciais</h2></div></div>
+          <div className="nps-enterprise-alert-list">
+            {alerts.length ? alerts.map((alert) => <div key={alert.type} className={`nps-enterprise-alert ${alert.severity}`}><strong>{alert.title}</strong><span>Ação requerida</span></div>) : <p className="empty-state">Nenhum alerta crítico.</p>}
+          </div>
         </article>
       </section>
 
-      <section className="management-panel nps-automation-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">Robô Ecuro / NPS automática</p>
-            <h2>Monitoramento do disparo automático da pesquisa NPS</h2>
-            <p className="base-subtitle">
-              Verificação de pacientes concluídos no Ecuro, fila profissional de convites e envio pela VPS com a sessão configurada.
-            </p>
-          </div>
-          <div className="heading-actions">
-            <button type="button" className="outline-action" onClick={loadAutomationOverview} disabled={automationLoading}>
-              {automationLoading ? 'Atualizando...' : 'Atualizar painel'}
-            </button>
-            {isMasterAdmin(currentUser) && (
-              <button type="button" className="outline-action" onClick={() => navigate('/admin/robot-master')}>
-                Monitor Master
-              </button>
-            )}
-            <button type="button" className="outline-action" onClick={handleTestAutomationLogin} disabled={!canManageAutomation || automationTesting || automationRunning}>
-              {automationTesting ? 'Testando...' : 'Testar login Ecuro'}
-            </button>
-            <button type="button" className="outline-action" onClick={handleReprocessAutomationFailures} disabled={!canManageAutomation || automationReprocessing || automationRunning}>
-              {automationReprocessing ? 'Reprocessando...' : 'Reprocessar falhas'}
-            </button>
-            <button type="button" className="primary-action" onClick={handleRunAutomation} disabled={!canManageAutomation || automationRunning}>
-              {automationRunning ? 'Executando...' : 'Executar agora'}
-            </button>
+      <section className="nps-enterprise-panel">
+        <div className="nps-enterprise-section-head">
+          <div><p className="eyebrow">Base operacional</p><h2>Gestão das pesquisas NPS</h2></div>
+          <div className="patient-tabs" role="tablist">
+            <button type="button" className={viewMode === 'active' ? 'active' : ''} onClick={() => setViewMode('active')}>Ativos ({activeRows.length})</button>
+            <button type="button" className={viewMode === 'finished' ? 'active' : ''} onClick={() => setViewMode('finished')}>Finalizados ({finishedRows.length})</button>
+            {canViewDeleted && <button type="button" className={viewMode === 'deleted' ? 'active' : ''} onClick={() => setViewMode('deleted')}>Excluídos ({deletedRows.length})</button>}
           </div>
         </div>
 
-        <div className="nps-automation-hero">
-          <article className="nps-automation-status-card">
-            <span>Status do robô</span>
-            <strong>{robotStatusLabel}</strong>
-            <p>{automationRobot.browserMode ? 'Modo browser com Playwright' : 'Modo aguardando serviço externo'}</p>
-          </article>
-          <article className="nps-automation-status-card">
-            <span>Sessão usada</span>
-            <strong>{automationRobot.sessionId || 'nps'}</strong>
-            <p>{sessionStatusLabel}</p>
-          </article>
-          <article className="nps-automation-status-card">
-            <span>Última execução</span>
-            <strong>{automationSummary.lastExecutionAt ? formatDate(automationSummary.lastExecutionAt) : 'Sem execução'}</strong>
-            <p>Cron: {automationRobot.cron || 'não configurado'}</p>
-          </article>
-          <article className="nps-automation-status-card">
-            <span>Último envio</span>
-            <strong>{automationSummary.lastSentAt ? formatDate(automationSummary.lastSentAt) : 'Sem envio'}</strong>
-            <p>{automationRobot.dryRun ? 'Dry-run ativo' : 'Disparo habilitado'}</p>
-          </article>
-        </div>
-
-        {usesSharedSession && (
-          <div className="nps-automation-warning">
-            <strong>Atenção:</strong> a NPS está utilizando temporariamente a sessão <strong>{automationRobot.sessionId}</strong>. Recomenda-se voltar para a sessão dedicada <strong>nps</strong> após a homologação.
-          </div>
-        )}
-
-        <div className="kpi-grid nps-automation-metrics">
-          <article className="kpi-card">
-            <span>Pacientes verificados</span>
-            <strong>{automationSummary.totalChecked || 0}</strong>
-            <p>últimos 7 dias</p>
-          </article>
-          <article className="kpi-card success">
-            <span>Concluídos</span>
-            <strong>{automationSummary.totalCompleted || 0}</strong>
-            <p>atendimentos elegíveis</p>
-          </article>
-          <article className="kpi-card progress">
-            <span>NPS enviadas</span>
-            <strong>{automationSummary.sentInvites || 0}</strong>
-            <p>convites disparados</p>
-          </article>
-          <article className="kpi-card warning">
-            <span>Pendentes</span>
-            <strong>{automationSummary.pendingInvites || 0}</strong>
-            <p>aguardando fila</p>
-          </article>
-          <article className="kpi-card danger">
-            <span>Falhas</span>
-            <strong>{automationSummary.failedInvites || 0}</strong>
-            <p>necessitam revisão</p>
-          </article>
-          <article className="kpi-card">
-            <span>Sem telefone</span>
-            <strong>{automationSummary.patientsWithoutPhone || 0}</strong>
-            <p>sem dado de contato</p>
-          </article>
-          <article className="kpi-card">
-            <span>Ambíguos</span>
-            <strong>{automationSummary.totalAmbiguous || 0}</strong>
-            <p>revisão manual</p>
-          </article>
-          <article className="kpi-card">
-            <span>Respondidas</span>
-            <strong>{automationSummary.respondedInvites || 0}</strong>
-            <p>pesquisas concluídas</p>
-          </article>
-        </div>
-
-        <div className="nps-automation-jobs">
-          <div className="panel-heading compact">
-            <div>
-              <p className="eyebrow">Histórico recente</p>
-              <h3>Jobs do Ecuro</h3>
-            </div>
-          </div>
-
-          {automationJobs.length ? (
-            <div className="nps-automation-job-grid">
-              {automationJobs.map((job) => (
-                <article className={`nps-automation-job-card ${String(job.status || '').toLowerCase()}`} key={job.id}>
-                  <div className="nps-automation-job-head">
-                    <strong>{job.clinic_name || 'Clínica não informada'}</strong>
-                    <span>{String(job.status || 'pending').replace(/_/g, ' ')}</span>
-                  </div>
-                  <p>Data da agenda: {job.appointment_date || 'não informada'}</p>
-                  <small>
-                    Verificados: {job.total_checked || 0} · Concluídos: {job.total_completed || 0} · Falhas: {job.total_failed || 0}
-                  </small>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <p className="empty-state">Ainda não há jobs Ecuro registrados para este painel.</p>
-          )}
-        </div>
-      </section>
-
-      <section className="management-panel bulk-dispatch-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">Envio em massa</p>
-            <h2>Link da pesquisa NPS para pacientes</h2>
-            <p className="base-subtitle">Mensagem padrão: Sua opinião é fundamental para melhorarmos nossos processos. Poderia dedicar 1 minuto para avaliar sua experiência conosco?</p>
-          </div>
-          <button type="button" className="outline-action" onClick={handleDownloadTemplate}>
-            Baixar template Excel
-          </button>
-        </div>
-
-        <div className="bulk-dispatch-actions">
-          <label className="field bulk-dispatch-field">
-            <span>Planilha CSV</span>
-            <input type="file" accept=".xlsx,.xls,.csv,.txt,text/csv" onChange={(event) => setBulkFile(event.target.files?.[0] || null)} />
-          </label>
-          <button type="button" className="primary-action" onClick={handleBulkDispatch} disabled={bulkSending}>
-            {bulkSending ? 'Processando...' : 'Enviar links em massa'}
-          </button>
-        </div>
-
-        {bulkFile && <small className="bulk-file-name">Arquivo selecionado: {bulkFile.name}</small>}
-      </section>
-
-      <section className="management-panel">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">Pesquisas</p>
-            <h2>
-              {viewMode === 'deleted'
-                ? 'Pesquisas NPS excluídas com auditoria'
-                : viewMode === 'finished'
-                  ? 'Pesquisas NPS finalizadas'
-                  : 'Lista de respostas NPS'}
-            </h2>
-            <p className="base-subtitle">O envio usa a sessão configurada no backend para NPS e pode ser alternado entre <strong>reclamacoes</strong> e <strong>nps</strong> apenas por variável de ambiente.</p>
-          </div>
-
-          <div className="patient-tabs" role="tablist" aria-label="Visões da gestão NPS">
-            <button
-              type="button"
-              className={viewMode === 'active' ? 'active' : ''}
-              onClick={() => setViewMode('active')}
-            >
-              Ativos ({activeRows.length})
-            </button>
-            <button
-              type="button"
-              className={viewMode === 'finished' ? 'active' : ''}
-              onClick={() => setViewMode('finished')}
-            >
-              Finalizados ({finishedRows.length})
-            </button>
-            {canViewDeleted && (
-              <button
-                type="button"
-                className={viewMode === 'deleted' ? 'active' : ''}
-                onClick={() => setViewMode('deleted')}
-              >
-                Excluídos ({deletedRows.length})
-              </button>
-            )}
-          </div>
-
-          <div className="filters nps-management-filters">
-            <input
-              className="field"
-              value={filters.search}
-              onChange={(event) => updateFilter('search', event.target.value)}
-              placeholder="Buscar protocolo, paciente, unidade, telefone ou relato"
-            />
-            <select className="field" value={filters.clinic} onChange={(event) => updateFilter('clinic', event.target.value)}>
-              <option value="">Todas as unidades</option>
-              {filterOptions.clinics.map((clinic) => (
-                <option key={clinic} value={clinic}>{clinic}</option>
-              ))}
-            </select>
-            <select className="field" value={filters.region} onChange={(event) => updateFilter('region', event.target.value)}>
-              <option value="">Todas as regiões</option>
-              {filterOptions.regions.map((region) => (
-                <option key={region} value={region}>{region}</option>
-              ))}
-            </select>
-            <select className="field" value={filters.state} onChange={(event) => updateFilter('state', event.target.value)}>
-              <option value="">Todos os estados</option>
-              {filterOptions.states.map((state) => (
-                <option key={state} value={state}>{state}</option>
-              ))}
-            </select>
-            <select className="field" value={filters.coordinator} onChange={(event) => updateFilter('coordinator', event.target.value)}>
-              <option value="">Todos os coordenadores</option>
-              {filterOptions.coordinators.map((coordinator) => (
-                <option key={coordinator} value={coordinator}>{coordinator}</option>
-              ))}
-            </select>
-            <select className="field" value={filters.profile} onChange={(event) => updateFilter('profile', event.target.value)}>
-              <option value="">Todos os perfis</option>
-              <option value="detrator">Detratores</option>
-              <option value="neutro">Neutros</option>
-              <option value="promotor">Promotores</option>
-            </select>
-            <select className="field" value={filters.status} onChange={(event) => updateFilter('status', event.target.value)}>
-              <option value="">Todos os status</option>
-              <option value="registrado">Registrado</option>
-              <option value="em_tratativa">Em tratamento</option>
-              <option value="tratado">Tratado</option>
-            </select>
-          </div>
+        <div className="nps-enterprise-filters">
+          <input className="field" value={filters.search} onChange={(event) => setFilters((previous) => ({ ...previous, search: event.target.value }))} placeholder="Buscar protocolo, paciente, unidade, relato ou responsável" />
+          <select className="field" value={filters.clinic} onChange={(event) => setFilters((previous) => ({ ...previous, clinic: event.target.value }))}><option value="">Todas as unidades</option>{filterOptions.clinics.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+          <select className="field" value={filters.region} onChange={(event) => setFilters((previous) => ({ ...previous, region: event.target.value }))}><option value="">Todas as regiões</option>{filterOptions.regions.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+          <select className="field" value={filters.coordinator} onChange={(event) => setFilters((previous) => ({ ...previous, coordinator: event.target.value }))}><option value="">Todos os coordenadores</option>{filterOptions.coordinators.map((value) => <option key={value} value={value}>{value}</option>)}</select>
+          <select className="field" value={filters.profile} onChange={(event) => setFilters((previous) => ({ ...previous, profile: event.target.value }))}><option value="">Todos os perfis</option><option value="detrator">Detratores</option><option value="neutro">Neutros</option><option value="promotor">Promotores</option></select>
+          <select className="field" value={filters.status} onChange={(event) => setFilters((previous) => ({ ...previous, status: event.target.value }))}><option value="">Todos os status</option><option value="registrado">Registrado</option><option value="em_tratativa">Em tratamento</option><option value="tratado">Tratado</option></select>
+          <select className="field" value={filters.priority} onChange={(event) => setFilters((previous) => ({ ...previous, priority: event.target.value }))}><option value="">Todas as prioridades</option><option value="critica">Crítica</option><option value="alta">Alta</option><option value="media">Média</option><option value="normal">Normal</option></select>
+          <select className="field" value={filters.sla} onChange={(event) => setFilters((previous) => ({ ...previous, sla: event.target.value }))}><option value="">Todos os SLA</option><option value="overdue">Vencido</option><option value="warning">Próximo do vencimento</option><option value="on_time">Dentro do prazo</option><option value="closed">Concluído</option></select>
+          <select className="field" value={filters.recovery} onChange={(event) => setFilters((previous) => ({ ...previous, recovery: event.target.value }))}><option value="">Todas as recuperações</option><option value="nao_iniciado">Não iniciado</option><option value="em_tratativa">Em tratativa</option><option value="recuperado">Recuperado</option><option value="nao_recuperado">Não recuperado</option><option value="sem_retorno">Sem retorno</option></select>
         </div>
 
         {feedback && <p className="form-feedback">{feedback}</p>}
-
-        {loading ? (
-          <p className="empty-state">Carregando pesquisas NPS...</p>
-        ) : filteredRows.length === 0 ? (
-          <p className="empty-state">Nenhuma pesquisa encontrada com os filtros atuais.</p>
-        ) : (
-          <div className="nps-list">
-            {filteredRows.map((item) => {
-              const profile = item.nps_profile || profileFromScore(item.score);
-              const status = getNpsStatus(item);
-              const reasons = parseReasons(item.detractor_reasons);
-              const isDetractor = profile === 'detrator';
-              const isDeleted = Boolean(item.deleted_at);
-              const canFinalize = canFinishNps && canFinalizeNps(item);
-
-              return (
-                <article className={`nps-list-item ${profile}`} key={item.id}>
-                  <div className="nps-score-block">
-                    <span className={`nps-score-pill ${profile}`}>{item.score}</span>
-                    <strong>{profileLabels[profile]}</strong>
-                    <small>{formatDate(item.created_at)}</small>
-                  </div>
-
-                  <div className="nps-list-content">
-                    <div className="nps-list-headline">
-                      <span className="nps-protocol-label">{protocolLabel(item)}</span>
-                      <span className={`nps-status-chip ${status}`}>{statusLabels[status] || status}</span>
-                    </div>
-                    <span className="person-label">Paciente</span>
-                    <h3>{item.patient_name || 'Paciente não informado'}</h3>
-                    <p>{item.clinic_name || 'Unidade não informada'} · {item.city || 'Cidade'} / {item.state || 'UF'}</p>
-
-                    <p className="cell-secondary">
-                      Canal: {item.response_channel || 'link'} · Origem: {item.source || 'manual'} · {Number(item.referral_count || 0) > 0 || item.recommend_yes ? 'Com indicação vinculada' : 'Sem indicação vinculada'}
-                    </p>
-
-                    {item.detractor_feedback && <p className="nps-relato">{item.detractor_feedback}</p>}
-                    {item.improvement_comment && <p className="nps-relato">{item.improvement_comment}</p>}
-                    {item.comment && <p className="nps-relato">{item.comment}</p>}
-                    {reasons.length > 0 && (
-                      <div className="nps-reason-row">
-                        {reasons.map((reason) => <span key={reason}>{reason}</span>)}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="nps-action-stack">
-                    <span className={`deadline-chip ${isDeleted ? 'closed' : status === 'tratado' ? 'closed' : isDetractor ? 'danger' : 'neutral'}`}>
-                      {isDeleted ? 'Excluída da operação' : isDetractor ? 'Relato para tratamento' : 'Registro NPS'}
-                    </span>
-                    {isDeleted ? (
-                      <small>Excluída por {item.deleted_by || 'Usuário não informado'}</small>
-                    ) : item.nps_treatment_at && (
-                      <small>Última tratativa: {formatDate(item.nps_treatment_at)}</small>
-                    )}
-                    <button
-                      className={isDetractor ? 'primary-action' : 'outline-action'}
-                      onClick={() => openTreatment(item)}
-                    >
-                      {isDetractor ? 'Abrir relato para tratamento' : 'Abrir avaliação'}
-                    </button>
-                    {canFinalize && (
-                      <button
-                        className="outline-action"
-                        onClick={() => handleFinalizeNps(item)}
-                        disabled={savingId === item.id}
-                      >
-                        {savingId === item.id ? 'Finalizando...' : 'Finalizar'}
-                      </button>
-                    )}
-                  </div>
-                </article>
-              );
-            })}
+        {loading ? <p className="empty-state">Carregando central NPS...</p> : (
+          <div className="nps-enterprise-table-wrap">
+            <table className="nps-enterprise-table">
+              <thead><tr><th>Protocolo</th><th>Paciente</th><th>Clínica</th><th>Nota</th><th>Prioridade</th><th>SLA</th><th>Status</th><th>Responsável</th><th>Risco</th><th>Ação</th></tr></thead>
+              <tbody>
+                {filteredRows.map((item) => {
+                  const priority = derivePriority(item);
+                  const sla = getSlaState(item);
+                  const risk = calculateRisk(item);
+                  const profile = item.nps_profile || classifyNps(item.score);
+                  return (
+                    <tr key={item.id}>
+                      <td><strong>{protocolLabel(item)}</strong><small>{formatDate(item.responded_at || item.created_at)}</small></td>
+                      <td><strong>{item.patient_name || 'Não informado'}</strong><small>{item.patient_phone || 'Sem telefone'}</small></td>
+                      <td>{item.clinic_name || 'Não informada'}<small>{item.region || 'Região não informada'}</small></td>
+                      <td><span className={`nps-enterprise-score ${profile}`}>{item.score}</span><small>{NPS_PROFILE_LABELS[profile]}</small></td>
+                      <td><ManagementChip type={priority}>{PRIORITY_LABELS[priority]}</ManagementChip></td>
+                      <td><ManagementChip type={sla.code}>{sla.label}</ManagementChip><small>{formatHours(sla.remainingHours)}</small></td>
+                      <td>{NPS_STATUS_LABELS[getNpsStatus(item)] || getNpsStatus(item)}</td>
+                      <td>{item.responsible_name || item.nps_treatment_by || 'Não atribuído'}</td>
+                      <td><strong>{risk.score}/100</strong><small>{risk.level}</small></td>
+                      <td><button className="primary-action small-action" type="button" onClick={() => openManagement(item)}>Abrir gestão</button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </section>
 
+      <section className="nps-enterprise-grid two-columns">
+        <article className="nps-enterprise-panel">
+          <div className="nps-enterprise-section-head"><div><p className="eyebrow">Automação</p><h2>Ecuro e disparo NPS</h2></div></div>
+          <div className="heading-actions">
+            <button className="outline-action" type="button" onClick={() => handleAutomation('test')} disabled={!canManageAutomation || automationBusy}>Testar login</button>
+            <button className="outline-action" type="button" onClick={() => handleAutomation('retry')} disabled={!canManageAutomation || automationBusy}>Reprocessar falhas</button>
+            <button className="primary-action" type="button" onClick={() => handleAutomation('run')} disabled={!canManageAutomation || automationBusy}>{automationBusy === 'run' ? 'Executando...' : 'Executar agora'}</button>
+          </div>
+          <div className="nps-enterprise-compact-list">
+            <div><span><b>Status do robô</b><small>{automationOverview?.robot?.browserMode ? 'Modo browser' : 'Aguardando status'}</small></span><strong>{automationOverview?.robot?.serviceStatus || '—'}</strong></div>
+            <div><span><b>Última execução</b><small>Automação NPS</small></span><strong>{formatDate(automationOverview?.summary?.lastExecutionAt)}</strong></div>
+            <div><span><b>Dry-run</b><small>Proteção de envio</small></span><strong>{automationOverview?.robot?.dryRun ? 'Ativo' : 'Inativo'}</strong></div>
+          </div>
+        </article>
+
+        <article className="nps-enterprise-panel">
+          <div className="nps-enterprise-section-head"><div><p className="eyebrow">Envio em massa</p><h2>Campanha NPS controlada</h2></div><button className="outline-action" type="button" onClick={handleDownloadTemplate}>Baixar template</button></div>
+          <label className="field"><input type="file" accept=".xlsx,.xls,.csv" onChange={(event) => setBulkFile(event.target.files?.[0] || null)} /></label>
+          {bulkFile && <p className="nps-enterprise-note">Arquivo: {bulkFile.name}</p>}
+          <button className="primary-action" type="button" onClick={handleBulkDispatch} disabled={bulkSending}>{bulkSending ? 'Processando...' : 'Preparar envio'}</button>
+        </article>
+      </section>
+
       {selectedNps && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={closeTreatment}>
-          <section className="modal-panel nps-treatment-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="nps-modal-title">
-              <div>
-                <p className="eyebrow">Tratativa NPS</p>
-                <h2>{protocolLabel(selectedNps)}</h2>
-              </div>
-              <span className={`nps-status-chip ${getNpsStatus(selectedNps)}`}>
-                {statusLabels[getNpsStatus(selectedNps)] || getNpsStatus(selectedNps)}
-              </span>
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={closeManagement}>
+          <section className="modal-panel nps-enterprise-management-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="nps-enterprise-section-head">
+              <div><p className="eyebrow">Gestão do protocolo</p><h2>{protocolLabel(selectedNps)}</h2><p>{selectedNps.patient_name || 'Paciente não informado'} · {selectedNps.clinic_name || 'Unidade não informada'}</p></div>
+              <div><ManagementChip type={derivePriority(selectedNps)}>{PRIORITY_LABELS[derivePriority(selectedNps)]}</ManagementChip></div>
             </div>
 
-            <div className="nps-treatment-summary">
-              <div>
-                <span>Paciente</span>
-                <strong>{selectedNps.patient_name || 'Não informado'}</strong>
-              </div>
-              <div>
-                <span>Telefone</span>
-                <strong>{selectedNps.patient_phone || 'Não informado'}</strong>
-              </div>
-              <div>
-                <span>Unidade</span>
-                <strong>{selectedNps.clinic_name || 'Não informada'}</strong>
-              </div>
-              <div>
-                <span>Nota</span>
-                <strong>{selectedNps.score}</strong>
-              </div>
+            <div className="nps-enterprise-thermometer modal-summary">
+              <article><span>Nota</span><strong>{selectedNps.score}</strong></article>
+              <article><span>Perfil</span><strong>{NPS_PROFILE_LABELS[selectedNps.nps_profile || classifyNps(selectedNps.score)]}</strong></article>
+              <article><span>Status</span><strong>{NPS_STATUS_LABELS[getNpsStatus(selectedNps)]}</strong></article>
+              <article><span>SLA</span><strong>{getSlaState(selectedNps).label}</strong></article>
+              <article><span>Risco</span><strong>{calculateRisk(selectedNps).score}/100</strong></article>
             </div>
 
-            <div className="heading-actions inline-summary-actions">
-              <button className="outline-action" type="button" onClick={() => setShowExecutiveSummary((prev) => !prev)}>
-                {showExecutiveSummary ? 'Ocultar resumo' : 'Resumo rápido'}
-              </button>
-            </div>
-
-            {showExecutiveSummary && (
-              <div className="nps-executive-summary">
-                <strong>Resumo executivo do NPS</strong>
-                <div className="executive-summary-list">
-                  {selectedNpsExecutiveSummary.map((item, index) => (
-                    <article className="executive-summary-item" key={`nps-summary-${index}`}>
-                      <span>{index + 1}</span>
-                      <p>{item}</p>
-                    </article>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="nps-treatment-relato">
-              <strong>Relato do cliente</strong>
+            <section className="nps-management-voice">
+              <h3>Voz do paciente</h3>
               <p>{selectedNps.detractor_feedback || selectedNps.improvement_comment || selectedNps.comment || 'Sem comentário detalhado.'}</p>
-              {parseReasons(selectedNps.detractor_reasons).length > 0 && (
-                <div className="nps-reason-row">
-                  {parseReasons(selectedNps.detractor_reasons).map((reason) => <span key={reason}>{reason}</span>)}
-                </div>
-              )}
-              {selectedNps.recommend_yes ? (
-                <p className="history-note">
-                  Houve indicação: {selectedNps.referral_name || 'nome não informado'} · {selectedNps.referral_phone || 'telefone não informado'}
-                </p>
-              ) : (
-                <p className="history-note">Sem indicação registrada.</p>
-              )}
-              {Array.isArray(selectedNps.referrals) && selectedNps.referrals.length > 0 && (
-                <div className="nps-reason-row">
-                  {selectedNps.referrals.map((referral) => (
-                    <span key={referral.id}>
-                      {referral.referral_name || 'Indicação sem nome'} · {referral.referral_phone || 'telefone pendente'} · {referral.referral_status || 'received'}
-                    </span>
-                  ))}
-                </div>
-              )}
-              {selectedNps.deleted_at && (
-                <p className="history-note">
-                  Excluída por {selectedNps.deleted_by || 'Usuário não informado'} em {formatDate(selectedNps.deleted_at)}.
-                </p>
-              )}
+            </section>
+
+            <div className="nps-enterprise-form-grid">
+              <label>Prioridade operacional<select className="field" value={managementForm.operational_priority} onChange={(event) => setManagementField('operational_priority', event.target.value)}><option value="normal">Normal</option><option value="media">Média</option><option value="alta">Alta</option><option value="critica">Crítica</option></select></label>
+              <label>Status principal<select className="field" value={managementForm.nps_status} onChange={(event) => setManagementField('nps_status', event.target.value)}><option value="registrado">Registrado</option><option value="em_tratativa">Em tratamento</option><option value="tratado">Tratado</option></select></label>
+              <label>Substatus<select className="field" value={managementForm.management_substatus} onChange={(event) => setManagementField('management_substatus', event.target.value)}><option value="">Sem substatus</option>{Object.entries(SUBSTATUS_LABELS).map(([key, label]) => <option key={key} value={key}>{label}</option>)}</select></label>
+              <label>Responsável<input className="field" value={managementForm.responsible_name} onChange={(event) => setManagementField('responsible_name', event.target.value)} placeholder="Nome do responsável" /></label>
+              <label>Categoria da causa<select className="field" value={managementForm.cause_category} onChange={(event) => { setManagementField('cause_category', event.target.value); setManagementField('cause_subcategory', ''); }}><option value="">Não classificada</option>{selectedCategoryOptions.map((value) => <option key={value} value={value}>{value}</option>)}</select></label>
+              <label>Subcategoria<select className="field" value={managementForm.cause_subcategory} onChange={(event) => setManagementField('cause_subcategory', event.target.value)}><option value="">Não classificada</option>{selectedSubcategories.map((item) => <option key={item.id || item.subcategory} value={item.subcategory}>{item.subcategory}</option>)}</select></label>
+              <label>Prazo SLA<input className="field" type="datetime-local" value={managementForm.sla_due_at} onChange={(event) => setManagementField('sla_due_at', event.target.value)} /></label>
+              <label>Recuperação<select className="field" value={managementForm.recovery_status} onChange={(event) => setManagementField('recovery_status', event.target.value)}><option value="nao_iniciado">Não iniciado</option><option value="em_tratativa">Em tratativa</option><option value="recuperado">Recuperado</option><option value="nao_recuperado">Não recuperado</option><option value="sem_retorno">Sem retorno</option></select></label>
             </div>
 
-            {!selectedNps.deleted_at && (selectedNps.nps_profile || profileFromScore(selectedNps.score)) === 'detrator' && (
-              <>
-                <label>
-                  Status da tratativa
-                  <select className="field" value={treatmentStatus} onChange={(event) => setTreatmentStatus(event.target.value)}>
-                    <option value="em_tratativa">Em tratamento</option>
-                    <option value="tratado">Tratado</option>
-                  </select>
-                </label>
+            <label>Causa raiz<textarea className="field textarea" value={managementForm.root_cause} onChange={(event) => setManagementField('root_cause', event.target.value.slice(0, 5000))} placeholder="Registre a causa raiz identificada, com base em fatos e evidências." /></label>
+            <label>Registro da tratativa<textarea className="field textarea treatment-textarea" value={managementForm.treatment_comment} onChange={(event) => setManagementField('treatment_comment', event.target.value.slice(0, 5000))} placeholder="Ação realizada, contato, retorno ao paciente, evidências e próximos passos." /></label>
 
-                <label>
-                  Descrição da tratativa
-                  <textarea
-                    className="field textarea treatment-textarea"
-                    value={treatmentText}
-                    onChange={(event) => setTreatmentText(event.target.value.slice(0, 5000))}
-                    placeholder="Registre a ação realizada, contato feito, retorno dado ao cliente e próximos passos."
-                    maxLength={5000}
-                  />
-                  <small className="field-counter">{treatmentText.length}/5000 caracteres</small>
-                </label>
-              </>
-            )}
-
-            <div className="nps-treatment-history">
-              <strong>Histórico do protocolo</strong>
-              {selectedNps.logs?.length ? (
-                <div className="history-list">
-                  {selectedNps.logs.map((log) => (
-                    <article className="history-item" key={log.id}>
-                      <div className="history-item-head">
-                        <strong>{log.actor_name || 'Usuário'}</strong>
-                        <span>{formatDate(log.created_at)}</span>
-                      </div>
-                      <small>{log.actor_role || 'Perfil não informado'} · {log.action}</small>
-                      <p>{log.message}</p>
-                    </article>
-                  ))}
-                </div>
-              ) : (
-                <p className="empty-mini">Ainda não há tratativas registradas.</p>
-              )}
-            </div>
+            <section className="nps-management-timeline">
+              <h3>Timeline do protocolo</h3>
+              {timeline.length ? timeline.map((event) => <article key={event.id}><div><strong>{event.action}</strong><span>{formatDate(event.created_at)}</span></div><small>{event.actor_name || 'Usuário'} · {event.actor_role || 'Perfil não informado'}</small><p>{event.message || 'Movimentação gerencial registrada.'}</p></article>) : <p className="empty-state">Ainda não há eventos enterprise registrados.</p>}
+            </section>
 
             <div className="heading-actions">
-              {buildWhatsappUrl(selectedNps.patient_phone) && (
-                <a className="primary-action whatsapp-action" href={buildWhatsappUrl(selectedNps.patient_phone)} target="_blank" rel="noreferrer">
-                  Chamar no WhatsApp
-                </a>
-              )}
-              {canDeleteRecords && !selectedNps.deleted_at && (
-                <button
-                  className="outline-action danger-action"
-                  onClick={() => setShowDeleteModal(true)}
-                  disabled={savingId === selectedNps.id}
-                >
-                  Excluir NPS
-                </button>
-              )}
-              <button className="outline-action" onClick={closeTreatment} disabled={savingId === selectedNps.id}>
-                Fechar
-              </button>
-              {selectedNps.converted_complaint_id ? (
-                <button className="outline-action" onClick={() => navigate(`/gestao/${selectedNps.converted_complaint_id}`)}>
-                  Abrir reclamação vinculada
-                </button>
-              ) : (selectedNps.nps_profile || profileFromScore(selectedNps.score)) === 'detrator' && (
-                <button className="secondary-action" onClick={handleConvertToComplaint} disabled={savingId === selectedNps.id}>
-                  Migrar para reclamação
-                </button>
-              )}
-              {canFinishNps && canFinalizeNps(selectedNps) && (
-                <button className="outline-action" onClick={() => handleFinalizeNps()} disabled={savingId === selectedNps.id}>
-                  {savingId === selectedNps.id ? 'Finalizando...' : 'Finalizar'}
-                </button>
-              )}
-              {!selectedNps.deleted_at && (selectedNps.nps_profile || profileFromScore(selectedNps.score)) === 'detrator' && (
-                <button className="primary-action" onClick={handleSaveTreatment} disabled={savingId === selectedNps.id}>
-                  {savingId === selectedNps.id ? 'Salvando...' : 'Salvar tratativa'}
-                </button>
-              )}
+              {buildWhatsappUrl(selectedNps.patient_phone) && <a className="primary-action" href={buildWhatsappUrl(selectedNps.patient_phone)} target="_blank" rel="noreferrer">Chamar no WhatsApp</a>}
+              <button className="outline-action" type="button" onClick={extendSla} disabled={saving}>Prorrogar SLA</button>
+              {(selectedNps.nps_profile || classifyNps(selectedNps.score)) === 'detrator' && !selectedNps.converted_complaint_id && <button className="outline-action" type="button" onClick={handleConvertToComplaint} disabled={saving}>Migrar para reclamação</button>}
+              {canFinishNps && (selectedNps.nps_profile || classifyNps(selectedNps.score)) === 'detrator' && <button className="outline-action" type="button" onClick={() => { setManagementField('nps_status', 'tratado'); setManagementField('recovery_status', managementForm.recovery_status === 'nao_iniciado' ? 'nao_recuperado' : managementForm.recovery_status); }} disabled={saving}>Preparar finalização</button>}
+              {canDeleteRecords && !selectedNps.deleted_at && <button className="outline-action danger-action" type="button" onClick={() => setShowDeleteModal(true)} disabled={saving}>Excluir NPS</button>}
+              <button className="outline-action" type="button" onClick={closeManagement} disabled={saving}>Fechar</button>
+              <button className="primary-action" type="button" onClick={saveManagement} disabled={saving}>{saving ? 'Salvando...' : 'Salvar gestão'}</button>
             </div>
           </section>
         </div>
       )}
 
       {showDeleteModal && selectedNps && (
-        <div className="modal-backdrop" role="dialog" aria-modal="true" aria-label="Confirmar exclusão do NPS" onClick={() => setShowDeleteModal(false)}>
+        <div className="modal-backdrop" role="dialog" aria-modal="true" onClick={() => setShowDeleteModal(false)}>
           <section className="modal-panel modal-confirm-panel" onClick={(event) => event.stopPropagation()}>
-            <p className="eyebrow">Excluir NPS</p>
-            <h2>Tem certeza que deseja excluir?</h2>
-            <div className="row-actions">
-              <button
-                className="outline-action"
-                type="button"
-                onClick={() => setShowDeleteModal(false)}
-                disabled={savingId === selectedNps.id}
-              >
-                Cancelar
-              </button>
-              <button
-                className="outline-action danger-action"
-                type="button"
-                onClick={handleDeleteNps}
-                disabled={savingId === selectedNps.id}
-              >
-                {savingId === selectedNps.id ? 'Excluindo...' : 'Confirmar exclusão'}
-              </button>
-            </div>
+            <p className="eyebrow">Excluir NPS</p><h2>Confirma a exclusão lógica?</h2><p>O registro permanecerá disponível para auditoria conforme as regras atuais do sistema.</p>
+            <div className="row-actions"><button className="outline-action" type="button" onClick={() => setShowDeleteModal(false)}>Cancelar</button><button className="outline-action danger-action" type="button" onClick={handleDeleteNps} disabled={saving}>{saving ? 'Excluindo...' : 'Confirmar exclusão'}</button></div>
           </section>
         </div>
       )}
