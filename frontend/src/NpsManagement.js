@@ -171,42 +171,118 @@ function NpsManagement() {
   const priorityQueue = useMemo(() => buildPriorityQueue(operationalRows), [operationalRows]);
   const alerts = useMemo(() => buildExecutiveAlerts(operationalRows), [operationalRows]);
 
-  useEffect(() => {
-    if (!focusNpsId || autoOpenRef.current || !rows.length) return;
-    const target = rows.find((item) => Number(item.id) === focusNpsId);
-    if (!target) return;
-    autoOpenRef.current = true;
-    openManagement(target);
-    navigate(location.pathname, { replace: true });
-  }, [focusNpsId, rows, navigate, location.pathname]);
-
-  const loadTimeline = async (id) => {
+  const loadTimeline = useCallback(async (id) => {
     try {
-      const response = await api.get(`/nps/enterprise/responses/${id}/timeline`);
-      setTimeline(Array.isArray(response.data) ? response.data : []);
+      const response =
+        await api.get(
+          `/nps/enterprise/responses/${id}/timeline`
+        );
+
+      setTimeline(
+        Array.isArray(response.data)
+          ? response.data
+          : []
+      );
+
     } catch (_error) {
       setTimeline([]);
     }
-  };
+  }, []);
 
-  function openManagement(item) {
-    const slaDue = item.sla_due_at ? new Date(item.sla_due_at).toISOString().slice(0, 16) : '';
+  const openManagement = useCallback((item) => {
+    const slaDue =
+      item.sla_due_at
+        ? new Date(item.sla_due_at)
+            .toISOString()
+            .slice(0, 16)
+        : '';
+
     setSelectedNps(item);
+
     setManagementForm({
-      operational_priority: item.operational_priority || derivePriority(item),
-      management_substatus: item.management_substatus || '',
-      cause_category: item.cause_category || '',
-      cause_subcategory: item.cause_subcategory || '',
-      root_cause: item.root_cause || '',
-      responsible_name: item.responsible_name || item.nps_treatment_by || '',
-      sla_due_at: slaDue,
-      recovery_status: item.recovery_status || 'nao_iniciado',
-      nps_status: getNpsStatus(item),
-      treatment_comment: ''
+      operational_priority:
+        item.operational_priority
+        || derivePriority(item),
+
+      management_substatus:
+        item.management_substatus
+        || '',
+
+      cause_category:
+        item.cause_category
+        || '',
+
+      cause_subcategory:
+        item.cause_subcategory
+        || '',
+
+      root_cause:
+        item.root_cause
+        || '',
+
+      responsible_name:
+        item.responsible_name
+        || item.nps_treatment_by
+        || '',
+
+      sla_due_at:
+        slaDue,
+
+      recovery_status:
+        item.recovery_status
+        || 'nao_iniciado',
+
+      nps_status:
+        getNpsStatus(item),
+
+      treatment_comment:
+        ''
     });
+
     setFeedback('');
+
     loadTimeline(item.id);
-  }
+
+  }, [loadTimeline]);
+
+  useEffect(() => {
+    if (
+      !focusNpsId
+      || autoOpenRef.current
+      || !rows.length
+    ) {
+      return;
+    }
+
+    const target =
+      rows.find(
+        item =>
+          Number(item.id)
+          === focusNpsId
+      );
+
+    if (!target) {
+      return;
+    }
+
+    autoOpenRef.current = true;
+
+    openManagement(target);
+
+    navigate(
+      location.pathname,
+      {
+        replace: true
+      }
+    );
+
+  }, [
+    focusNpsId,
+    rows,
+    navigate,
+    location.pathname,
+    openManagement
+  ]);
 
   function closeManagement() {
     setSelectedNps(null);
