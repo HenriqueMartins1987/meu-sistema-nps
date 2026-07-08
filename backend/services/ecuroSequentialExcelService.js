@@ -12,6 +12,7 @@ const {
   summarizeCompletionResults
 } = require('./ecuroRobotService');
 const { normalizePhone, normalizeText } = require('./patientEnrichmentService');
+const { createAuthenticatedEcuroSession } = require('./ecuroBrowserSession');
 
 function ensureDir(dirPath) {
   if (!dirPath) return;
@@ -670,19 +671,9 @@ async function runSequentialExcelClinicsJob(payload = {}, config = getEcuroRobot
   const clinicsFromConfig = resolveClinicsForSequentialRun(payload);
   const maxClinics = Math.max(1, Number(payload.maxClinics || payload.max_clinics || config.maxClinicsPerRunHomolog || 2) || 2);
   const clinicsToProcess = clinicsFromConfig.slice(0, maxClinics);
-  const playwright = await loadPlaywright();
-  ensureDir(config.profileDir);
   ensureDir(config.exportDir);
-  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
-    headless: config.headless,
-    viewport: { width: 1440, height: 960 },
-    args: ['--disable-dev-shm-usage', '--no-sandbox'],
-    userAgent: config.userAgent || undefined,
-    acceptDownloads: true
-  });
-  const page = context.pages()[0] || await context.newPage();
-  page.setDefaultTimeout(config.timeoutMs);
-  page.setDefaultNavigationTimeout(config.timeoutMs);
+  let session;
+  let page;
 
   const clinicRuns = [];
   const results = [];
@@ -692,7 +683,9 @@ async function runSequentialExcelClinicsJob(payload = {}, config = getEcuroRobot
 
   try {
     addLog(job, { level: 'info', step: 'login', action: 'login', message: 'Login Ecuro iniciado para processamento sequencial por clínica.' });
-    await performLogin(page, config);
+    session = await createAuthenticatedEcuroSession(config);
+    ({ page } = session);
+    addLog(job, { level: 'info', step: 'login', action: 'authenticated', message: 'Sessao autenticada Ecuro criada para processamento sequencial por clínica.', url: page.url() });
     await navigatePatients(page, config);
 
     let effectiveClinics = clinicsToProcess;
@@ -775,7 +768,7 @@ async function runSequentialExcelClinicsJob(payload = {}, config = getEcuroRobot
     });
     return updated;
   } finally {
-    await context.close().catch(() => null);
+    await session?.close().catch(() => null);
     jobStore.resetRuntime();
   }
 }
@@ -785,23 +778,15 @@ async function runCurrentClinicExcelDryRun(payload = {}, config = getEcuroRobotC
   const source = payload.source || 'ecuro_excel_current_clinic';
   const targetDate = resolveEcuroTargetDate({ ...payload, dateMode: 'today' });
   const job = createSequentialJob({ ...payload, targetDate, source, dryRun }, 'excel_export_current_clinic');
-  const playwright = await loadPlaywright();
-  ensureDir(config.profileDir);
   ensureDir(config.exportDir);
-  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
-    headless: config.headless,
-    viewport: { width: 1440, height: 960 },
-    args: ['--disable-dev-shm-usage', '--no-sandbox'],
-    userAgent: config.userAgent || undefined,
-    acceptDownloads: true
-  });
-  const page = context.pages()[0] || await context.newPage();
-  page.setDefaultTimeout(config.timeoutMs);
-  page.setDefaultNavigationTimeout(config.timeoutMs);
+  let session;
+  let page;
 
   try {
     addLog(job, { level: 'info', step: 'login', action: 'login', message: 'Login Ecuro iniciado para Excel da clínica atual.' });
-    await performLogin(page, config);
+    session = await createAuthenticatedEcuroSession(config);
+    ({ page } = session);
+    addLog(job, { level: 'info', step: 'login', action: 'authenticated', message: 'Sessao autenticada Ecuro criada para Excel da clínica atual.', url: page.url() });
     await navigatePatients(page, config);
     const currentClinic = await getCurrentClinicFromPage(page, payload);
     const result = await processClinicExcel({ page, config, job, clinic: currentClinic, targetDate, source, dryRun, selectClinic: false, index: 0, total: 1 });
@@ -851,7 +836,7 @@ async function runCurrentClinicExcelDryRun(payload = {}, config = getEcuroRobotC
     });
     return updated;
   } finally {
-    await context.close().catch(() => null);
+    await session?.close().catch(() => null);
     jobStore.resetRuntime();
   }
 }

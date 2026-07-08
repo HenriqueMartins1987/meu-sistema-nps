@@ -4,6 +4,7 @@ const path = require('path');
 const XLSX = require('xlsx');
 
 const { normalizePhone, normalizeText } = require('./patientEnrichmentService');
+const { createAuthenticatedEcuroSession } = require('./ecuroBrowserSession');
 
 const DEFAULT_SELECTORS = {
   login: {
@@ -617,6 +618,21 @@ async function saveRobotArtifacts(page, config, jobId, reason = 'error') {
   }
 
   return artifacts;
+}
+
+async function saveRobotArtifactsSafe(page, config, jobId, reason = 'error') {
+  if (!page || typeof page.screenshot !== 'function' || typeof page.content !== 'function') {
+    return [];
+  }
+  return saveRobotArtifacts(page, config, jobId, reason).catch(() => []);
+}
+
+function getPageUrlSafe(page) {
+  try {
+    return typeof page?.url === 'function' ? page.url() : '';
+  } catch (_error) {
+    return '';
+  }
 }
 
 function saveRobotDebugArtifacts(config, jobId, reason = 'debug', payload = {}) {
@@ -3389,21 +3405,14 @@ function buildNetworkJobTotals(results = []) {
 }
 
 async function executeBrowserNetworkDiscovery(job, payload = {}, config = getEcuroRobotConfig()) {
-  const playwright = await loadPlaywright();
-  ensureDir(config.profileDir);
-  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
-    headless: config.headless,
-    viewport: { width: 1440, height: 960 },
-    args: ['--disable-dev-shm-usage', '--no-sandbox'],
-    userAgent: config.userAgent || undefined
-  });
-  const page = context.pages()[0] || await context.newPage();
-  page.setDefaultTimeout(config.timeoutMs);
-  page.setDefaultNavigationTimeout(config.timeoutMs);
+  let session;
+  let page;
 
   try {
     logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'login', currentStep: 'login', message: 'Login do robo Ecuro iniciado para descoberta Network.' });
-    await performEcuroBrowserLogin(page, config);
+    session = await createAuthenticatedEcuroSession(config);
+    ({ page } = session);
+    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'authenticated', currentStep: 'authenticated', currentUrl: page.url(), message: 'Sessao autenticada do robo Ecuro criada para descoberta Network.' });
     logRobotJobEvent(job.id, { level: 'info', step: 'network_discovery', action: 'capturing', currentStep: 'network_discovery', message: 'Capturando requisicoes XHR/Fetch da tela de pacientes.' });
     const discovery = await discoverEcuroNetworkEndpoints(page, config, payload);
     const artifacts = config.debugCapture || config.captureNetwork
@@ -3435,37 +3444,30 @@ async function executeBrowserNetworkDiscovery(job, payload = {}, config = getEcu
       errorMessage: discovery.selectedPatientEndpoint ? null : 'Robo autenticou no Ecuro, mas nao identificou endpoint de pacientes via Network.'
     };
   } catch (error) {
-    const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'network-discovery-error');
+    const artifacts = await saveRobotArtifactsSafe(page, config, job.id, error.code || 'network-discovery-error');
     if (artifacts.length) jobStore.addArtifacts(job.id, artifacts);
     return {
       status: error.code === 'manual_action_required' ? 'manual_action_required' : 'failed',
       discovery: buildNetworkDiscoverySummary([]),
       artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
-      currentUrl: page.url(),
+      currentUrl: getPageUrlSafe(page),
       errorMessage: error.message
     };
   } finally {
-    await context.close().catch(() => null);
+    await session?.close().catch(() => null);
   }
 }
 
 async function executeBrowserNetworkCompletionCheck(job, payload = {}, config = getEcuroRobotConfig()) {
-  const playwright = await loadPlaywright();
-  ensureDir(config.profileDir);
-  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
-    headless: config.headless,
-    viewport: { width: 1440, height: 960 },
-    args: ['--disable-dev-shm-usage', '--no-sandbox'],
-    userAgent: config.userAgent || undefined
-  });
-  const page = context.pages()[0] || await context.newPage();
-  page.setDefaultTimeout(config.timeoutMs);
-  page.setDefaultNavigationTimeout(config.timeoutMs);
+  let session;
+  let page;
 
   try {
     const targetDate = resolveEcuroTargetDate(payload);
     logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'login', currentStep: 'login', message: 'Login do robo Ecuro iniciado para coleta Network.' });
-    await performEcuroBrowserLogin(page, config);
+    session = await createAuthenticatedEcuroSession(config);
+    ({ page } = session);
+    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'authenticated', currentStep: 'authenticated', currentUrl: page.url(), message: 'Sessao autenticada do robo Ecuro criada para coleta Network.' });
     logRobotJobEvent(job.id, { level: 'info', step: 'network_collect', action: 'capturing', currentStep: 'network_collect', message: 'Capturando endpoints e respostas JSON da tela de pacientes.' });
     const discovery = await discoverEcuroNetworkEndpoints(page, config, payload);
     const directFetch = await tryFetchSelectedNetworkEndpoint(page, discovery.selectedPatientEndpoint, config);
@@ -3536,7 +3538,7 @@ async function executeBrowserNetworkCompletionCheck(job, payload = {}, config = 
       ...totals
     };
   } catch (error) {
-    const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'network-error');
+    const artifacts = await saveRobotArtifactsSafe(page, config, job.id, error.code || 'network-error');
     if (artifacts.length) jobStore.addArtifacts(job.id, artifacts);
     return {
       status: error.code === 'manual_action_required' ? 'manual_action_required' : 'failed',
@@ -3546,11 +3548,11 @@ async function executeBrowserNetworkCompletionCheck(job, payload = {}, config = 
       results: [],
       discovery: buildNetworkDiscoverySummary([]),
       artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
-      currentUrl: page.url(),
+      currentUrl: getPageUrlSafe(page),
       errorMessage: error.message
     };
   } finally {
-    await context.close().catch(() => null);
+    await session?.close().catch(() => null);
   }
 }
 
@@ -3674,24 +3676,19 @@ async function extractMappingPageSnapshot(page, config, context = {}) {
 }
 
 async function executeBrowserMappingJob(job, payload = {}, config = getEcuroRobotConfig()) {
-  const playwright = await loadPlaywright();
   const maxPages = Math.max(1, Number(payload.maxPages || config.mappingMaxPages || 10) || 10);
   const maxDepth = Math.max(1, Number(payload.maxDepth || config.mappingMaxDepth || 3) || 3);
-  ensureDir(config.profileDir);
-  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
-    headless: !config.visualMode,
-    viewport: { width: 1440, height: 960 },
-    args: ['--disable-dev-shm-usage', '--no-sandbox'],
-    userAgent: config.userAgent || undefined
-  });
-  const page = context.pages()[0] || await context.newPage();
-  page.setDefaultTimeout(config.timeoutMs);
-  page.setDefaultNavigationTimeout(config.timeoutMs);
+  let session;
+  let page;
 
   try {
     logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'login', message: 'Login do mapeamento iniciado.' });
-    await performEcuroBrowserLogin(page, config);
-    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'authenticated', message: 'Login do mapeamento concluído.', currentUrl: page.url() });
+    session = await createAuthenticatedEcuroSession({
+      ...config,
+      headless: !config.visualMode
+    });
+    ({ page } = session);
+    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'authenticated', message: 'Sessao autenticada do mapeamento criada.', currentUrl: page.url() });
 
     const startUrl = resolveEcuroSameOriginUrl(config.baseUrl, payload.startUrl || config.selectors.navigation.completedPagePath || `${config.baseUrl}/dashboard/patients`) || `${config.baseUrl}/dashboard/patients`;
     const queue = [{ url: startUrl, depth: 0, menuLabel: 'Pacientes' }];
@@ -3784,7 +3781,7 @@ async function executeBrowserMappingJob(job, payload = {}, config = getEcuroRobo
       currentUrl: page.url()
     };
   } catch (error) {
-    const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'mapping-error');
+    const artifacts = await saveRobotArtifactsSafe(page, config, job.id, error.code || 'mapping-error');
     if (artifacts.length) {
       jobStore.addArtifacts(job.id, artifacts);
     }
@@ -3796,6 +3793,7 @@ async function executeBrowserMappingJob(job, payload = {}, config = getEcuroRobo
         totalRoutes: 0,
         totalErrors: 1,
         artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+        currentUrl: getPageUrlSafe(page),
         errorMessage: error.message
       };
     }
@@ -3806,10 +3804,11 @@ async function executeBrowserMappingJob(job, payload = {}, config = getEcuroRobo
       totalRoutes: 0,
       totalErrors: 1,
       artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+      currentUrl: getPageUrlSafe(page),
       errorMessage: error.message
     };
   } finally {
-    await context.close().catch(() => null);
+    await session?.close().catch(() => null);
   }
 }
 
@@ -3949,23 +3948,14 @@ function matchCompletionRows(patients = [], extractedRows = []) {
 }
 
 async function executeBrowserCompletionCheck(job, payload = {}, config = getEcuroRobotConfig()) {
-  const playwright = await loadPlaywright();
-  ensureDir(config.profileDir);
-  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
-    headless: config.headless,
-    viewport: { width: 1440, height: 960 },
-    args: ['--disable-dev-shm-usage', '--no-sandbox'],
-    userAgent: config.userAgent || undefined
-  });
-
-  const page = context.pages()[0] || await context.newPage();
-  page.setDefaultTimeout(config.timeoutMs);
-  page.setDefaultNavigationTimeout(config.timeoutMs);
+  let session;
+  let page;
 
   try {
     logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'login', currentStep: 'login', message: 'Login do robô Ecuro iniciado.' });
-    await performEcuroBrowserLogin(page, config);
-    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'authenticated', currentStep: 'authenticated', currentUrl: page.url(), message: 'Login do robô Ecuro concluído.' });
+    session = await createAuthenticatedEcuroSession(config);
+    ({ page } = session);
+    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'authenticated', currentStep: 'authenticated', currentUrl: page.url(), message: 'Sessao autenticada do robô Ecuro criada.' });
     logRobotJobEvent(job.id, { level: 'info', step: 'navigate_patients', action: 'navigating', currentStep: 'navigate_patients', message: 'Navegando para a tela de pacientes do Ecuro.' });
     await navigateToCompletionScreen(page, config);
     logRobotJobEvent(job.id, { level: 'info', step: 'collect_patients', action: 'collecting', currentStep: 'collect_patients', currentUrl: page.url(), message: 'Lendo a tabela de pacientes para montar a elegibilidade NPS.' });
@@ -4051,7 +4041,7 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
       errorMessage: collectionErrorMessage
     };
   } catch (error) {
-    const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'error');
+    const artifacts = await saveRobotArtifactsSafe(page, config, job.id, error.code || 'error');
     if (artifacts.length) {
       jobStore.addArtifacts(job.id, artifacts);
     }
@@ -4060,7 +4050,7 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
       step: error.code === 'manual_action_required' ? 'manual_action_required' : 'error',
       action: 'failed',
       currentStep: error.code === 'manual_action_required' ? 'manual_action_required' : 'error',
-      currentUrl: page.url(),
+      currentUrl: getPageUrlSafe(page),
       message: error.message
     });
     if (error.code === 'manual_action_required') {
@@ -4069,6 +4059,7 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
         extractedRows: [],
         results: [],
         artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+        currentUrl: getPageUrlSafe(page),
         errorMessage: error.message
       };
     }
@@ -4094,10 +4085,11 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
         }))
         : [],
       artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
+      currentUrl: getPageUrlSafe(page),
       errorMessage: error.message
     };
   } finally {
-    await context.close().catch(() => null);
+    await session?.close().catch(() => null);
   }
 }
 
@@ -4168,18 +4160,8 @@ function markDuplicateEcuroPatients(results = [], seenKeys = new Set()) {
 }
 
 async function executeBrowserAllClinicsNpsAutomation(job, payload = {}, config = getEcuroRobotConfig()) {
-  const playwright = await loadPlaywright();
-  ensureDir(config.profileDir);
-  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
-    headless: config.headless,
-    viewport: { width: 1440, height: 960 },
-    args: ['--disable-dev-shm-usage', '--no-sandbox'],
-    userAgent: config.userAgent || undefined
-  });
-
-  const page = context.pages()[0] || await context.newPage();
-  page.setDefaultTimeout(config.timeoutMs);
-  page.setDefaultNavigationTimeout(config.timeoutMs);
+  let session;
+  let page;
 
   const source = 'ecuro_all_clinics_last_consultation';
   const eligibleDates = getNpsEligibleDates(config, payload);
@@ -4198,8 +4180,9 @@ async function executeBrowserAllClinicsNpsAutomation(job, payload = {}, config =
 
   try {
     logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'login', currentStep: 'login', message: 'Login do robo Ecuro iniciado para varredura multi-clinicas.' });
-    await performEcuroBrowserLogin(page, config);
-    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'authenticated', currentStep: 'authenticated', currentUrl: page.url(), message: 'Login do robo Ecuro concluido.' });
+    session = await createAuthenticatedEcuroSession(config);
+    ({ page } = session);
+    logRobotJobEvent(job.id, { level: 'info', step: 'login', action: 'authenticated', currentStep: 'authenticated', currentUrl: page.url(), message: 'Sessao autenticada do robo Ecuro criada para varredura multi-clinicas.' });
 
     await navigateToCompletionScreen(page, config);
     await waitForEcuroPatientsPageReady(page, config);
@@ -4431,7 +4414,7 @@ async function executeBrowserAllClinicsNpsAutomation(job, payload = {}, config =
       currentUrl: page.url()
     };
   } catch (error) {
-    const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'all-clinics-error');
+    const artifacts = await saveRobotArtifactsSafe(page, config, job.id, error.code || 'all-clinics-error');
     if (artifacts.length) {
       jobStore.addArtifacts(job.id, artifacts);
     }
@@ -4440,7 +4423,7 @@ async function executeBrowserAllClinicsNpsAutomation(job, payload = {}, config =
       step: error.code === 'manual_action_required' ? 'manual_action_required' : 'error',
       action: 'failed',
       currentStep: error.code === 'manual_action_required' ? 'manual_action_required' : 'error',
-      currentUrl: page.url(),
+      currentUrl: getPageUrlSafe(page),
       message: error.message
     });
     return {
@@ -4461,11 +4444,11 @@ async function executeBrowserAllClinicsNpsAutomation(job, payload = {}, config =
       artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
       startedAt,
       finishedAt: new Date().toISOString(),
-      currentUrl: page.url(),
+      currentUrl: getPageUrlSafe(page),
       errorMessage: error.message
     };
   } finally {
-    await context.close().catch(() => null);
+    await session?.close().catch(() => null);
   }
 }
 
@@ -4496,20 +4479,9 @@ function buildExcelClinicSummaryPayload({ clinic = {}, download = {}, parsed = {
 }
 
 async function executeBrowserExcelExportAllClinicsNpsJob(job, payload = {}, config = getEcuroRobotConfig()) {
-  const playwright = await loadPlaywright();
-  ensureDir(config.profileDir);
   ensureDir(config.exportDir);
-  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
-    headless: config.headless,
-    viewport: { width: 1440, height: 960 },
-    args: ['--disable-dev-shm-usage', '--no-sandbox'],
-    userAgent: config.userAgent || undefined,
-    acceptDownloads: true
-  });
-
-  const page = context.pages()[0] || await context.newPage();
-  page.setDefaultTimeout(config.timeoutMs);
-  page.setDefaultNavigationTimeout(config.timeoutMs);
+  let session;
+  let page;
 
   const source = payload.source || 'ecuro_excel_export';
   const targetDate = resolveEcuroTargetDate({ ...payload, dateMode: payload.dateMode || 'today' });
@@ -4532,14 +4504,15 @@ async function executeBrowserExcelExportAllClinicsNpsJob(job, payload = {}, conf
       currentStep: 'login',
       message: 'Login do robo Ecuro iniciado para exportacao Excel.'
     });
-    await performEcuroBrowserLogin(page, config);
+    session = await createAuthenticatedEcuroSession(config);
+    ({ page } = session);
     logRobotJobEvent(job.id, {
       level: 'info',
       step: 'login',
       action: 'authenticated',
       currentStep: 'authenticated',
       currentUrl: page.url(),
-      message: 'Login do robo Ecuro concluido.'
+      message: 'Sessao autenticada do robo Ecuro criada para exportacao Excel.'
     });
 
     await navigateToCompletionScreen(page, config);
@@ -4820,14 +4793,14 @@ async function executeBrowserExcelExportAllClinicsNpsJob(job, payload = {}, conf
       errorMessage: totalRowsRead > 0 ? null : 'Robo autenticou no Ecuro, mas nao conseguiu baixar/processar Excel com linhas de pacientes.'
     };
   } catch (error) {
-    const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'excel-export-error');
+    const artifacts = await saveRobotArtifactsSafe(page, config, job.id, error.code || 'excel-export-error');
     if (artifacts.length) jobStore.addArtifacts(job.id, artifacts);
     logRobotJobEvent(job.id, {
       level: 'error',
       step: error.code === 'manual_action_required' ? 'manual_action_required' : 'excel_export_error',
       action: 'failed',
       currentStep: error.code === 'manual_action_required' ? 'manual_action_required' : 'excel_export_error',
-      currentUrl: page.url(),
+      currentUrl: getPageUrlSafe(page),
       message: error.message
     });
     return {
@@ -4850,11 +4823,11 @@ async function executeBrowserExcelExportAllClinicsNpsJob(job, payload = {}, conf
       artifacts: (jobStore.get(job.id)?.artifacts || []).slice(),
       startedAt,
       finishedAt: new Date().toISOString(),
-      currentUrl: page.url(),
+      currentUrl: getPageUrlSafe(page),
       errorMessage: error.message
     };
   } finally {
-    await context.close().catch(() => null);
+    await session?.close().catch(() => null);
   }
 }
 
@@ -4936,20 +4909,12 @@ async function runDiscoverClinicsJob(payload = {}, config = getEcuroRobotConfig(
     status: 'running'
   });
 
-  const playwright = await loadPlaywright();
-  ensureDir(config.profileDir);
-  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
-    headless: config.headless,
-    viewport: { width: 1440, height: 960 },
-    args: ['--disable-dev-shm-usage', '--no-sandbox'],
-    userAgent: config.userAgent || undefined
-  });
-  const page = context.pages()[0] || await context.newPage();
-  page.setDefaultTimeout(config.timeoutMs);
-  page.setDefaultNavigationTimeout(config.timeoutMs);
+  let session;
+  let page;
 
   try {
-    await performEcuroBrowserLogin(page, config);
+    session = await createAuthenticatedEcuroSession(config);
+    ({ page } = session);
     await navigateToCompletionScreen(page, config);
     const clinics = await discoverEcuroClinics(page, config);
     const artifacts = config.debugCapture
@@ -4976,18 +4941,19 @@ async function runDiscoverClinicsJob(payload = {}, config = getEcuroRobotConfig(
     jobStore.resetRuntime();
     return updated;
   } catch (error) {
-    const artifacts = await saveRobotArtifacts(page, config, job.id, error.code || 'discover-clinics-error');
+    const artifacts = await saveRobotArtifactsSafe(page, config, job.id, error.code || 'discover-clinics-error');
     if (artifacts.length) jobStore.addArtifacts(job.id, artifacts);
     const updated = jobStore.update(job.id, {
       status: error.code === 'manual_action_required' ? 'manual_action_required' : 'failed',
       finishedAt: new Date().toISOString(),
       errorMessage: error.message,
+      currentUrl: getPageUrlSafe(page),
       artifacts: (jobStore.get(job.id)?.artifacts || []).slice()
     });
     jobStore.resetRuntime();
     return updated;
   } finally {
-    await context.close().catch(() => null);
+    await session?.close().catch(() => null);
   }
 }
 
@@ -5170,20 +5136,12 @@ async function runLoginTest(_payload = {}, config = getEcuroRobotConfig()) {
     };
   }
 
-  const playwright = await loadPlaywright();
-  ensureDir(config.profileDir);
-  const context = await playwright.chromium.launchPersistentContext(config.profileDir, {
-    headless: config.headless,
-    viewport: { width: 1440, height: 960 },
-    args: ['--disable-dev-shm-usage', '--no-sandbox'],
-    userAgent: config.userAgent || undefined
-  });
-  const page = context.pages()[0] || await context.newPage();
-  page.setDefaultTimeout(config.timeoutMs);
-  page.setDefaultNavigationTimeout(config.timeoutMs);
+  let session;
+  let page;
 
   try {
-    const result = await performEcuroBrowserLogin(page, config);
+    session = await createAuthenticatedEcuroSession(config);
+    ({ page } = session);
     const targetUrl = String(config.selectors.navigation.completedPagePath || '').trim();
     if (targetUrl) {
       const destination = targetUrl.startsWith('http')
@@ -5197,13 +5155,13 @@ async function runLoginTest(_payload = {}, config = getEcuroRobotConfig()) {
       success: true,
       status: 'authenticated',
       browserMode: true,
-      reusedSession: Boolean(result.reusedSession),
+      reusedSession: false,
       checkedAt: new Date().toISOString(),
       destination: targetUrl || null,
       clinicName: clinicName || null
     };
   } catch (error) {
-    const artifacts = await saveRobotArtifacts(page, config, buildJobId(), error.code || 'login-test');
+    const artifacts = await saveRobotArtifactsSafe(page, config, buildJobId(), error.code || 'login-test');
     return {
       success: false,
       status: error.code === 'manual_action_required' ? 'manual_action_required' : 'failed',
@@ -5213,7 +5171,7 @@ async function runLoginTest(_payload = {}, config = getEcuroRobotConfig()) {
       artifacts
     };
   } finally {
-    await context.close().catch(() => null);
+    await session?.close().catch(() => null);
   }
 }
 

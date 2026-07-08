@@ -4,7 +4,6 @@ import api from './api';
 import { hasPermission, isMasterAdmin, normalizeRoleValue, readUser, statusLabels } from './constants';
 
 const pageSizeOptions = [10, 25, 50, 100];
-const dayMs = 24 * 60 * 60 * 1000;
 const closedComplaintStatuses = new Set([
   'cancelada',
   'cancelado',
@@ -81,10 +80,10 @@ function formatProtocol(item) {
 }
 
 function formatFullDateTime(value) {
-  if (!value) return 'Nao informado';
+  if (!value) return 'Não informado';
   const date = new Date(value);
 
-  if (Number.isNaN(date.getTime())) return 'Nao informado';
+  if (Number.isNaN(date.getTime())) return 'Não informado';
 
   return new Intl.DateTimeFormat('pt-BR', {
     day: '2-digit',
@@ -98,7 +97,7 @@ function formatFullDateTime(value) {
 function formatShortText(value, maxLength = 180) {
   const text = String(value || '').trim();
 
-  if (!text) return 'Nao informado';
+  if (!text) return 'Não informado';
   if (text.length <= maxLength) return text;
 
   return `${text.slice(0, maxLength).trimEnd()}...`;
@@ -129,7 +128,7 @@ function getWeeklyProfessionalLabel(item) {
     || item.assigned_responsible_name
     || item.coordinator_name
     || item.manager_name
-    || 'Nao informado'
+    || 'Não informado'
   );
 }
 
@@ -138,7 +137,7 @@ function getWeeklyReasonLabel(item) {
     return formatShortText(`${item.complaint_type || 'Outros'}: ${item.complaint_type_other}`);
   }
 
-  return formatShortText(item.description || item.complaint_type || 'Nao informado');
+  return formatShortText(item.description || item.complaint_type || 'Não informado');
 }
 
 function getCurrentResponsibleLabel(item) {
@@ -147,7 +146,7 @@ function getCurrentResponsibleLabel(item) {
     || item.assigned_coordinator_name
     || item.coordinator_name
     || item.manager_name
-    || 'Nao informado'
+    || 'Não informado'
   );
 }
 
@@ -182,7 +181,7 @@ function deadlineTone(item) {
 }
 
 function buildTopLabel(items) {
-  if (!items.length) return 'Nao informado';
+  if (!items.length) return null;
 
   const counts = items.reduce((acc, item) => {
     acc[item] = (acc[item] || 0) + 1;
@@ -199,8 +198,8 @@ function buildSummaryRows(items) {
     id: item.id,
     protocolo: formatProtocol(item),
     data_cadastro: formatFullDateTime(item.created_at),
-    paciente: item.patient_name || 'Nao informado',
-    clinica: item.clinic_name || 'Nao informado',
+    paciente: item.patient_name || 'Não informado',
+    clinica: item.clinic_name || 'Não informado',
     responsavel_atual: getCurrentResponsibleLabel(item),
     profissional_envolvido: getWeeklyProfessionalLabel(item),
     motivo: getWeeklyReasonLabel(item),
@@ -330,7 +329,7 @@ function exportComplaintReportPdf({
           <section class="report-header">
             <div class="report-header-top">
               <div>
-                <p class="report-kicker">Grupo Sorria · Gestao de reclamacoes</p>
+                <p class="report-kicker">Grupo Sorria · Gestão de reclamações</p>
                 <h1>${escapeHtml(title)}</h1>
                 <p class="report-subtitle">${escapeHtml(subtitle)}</p>
               </div>
@@ -342,11 +341,11 @@ function exportComplaintReportPdf({
           </section>
           <section class="summary-grid">
             <article class="summary-card">
-              <strong>Demandas no periodo</strong>
+              <strong>Demandas no período</strong>
               <span>${escapeHtml(String(highlights.total))}</span>
             </article>
             <article class="summary-card">
-              <strong>Clinicas envolvidas</strong>
+              <strong>Clínicas envolvidas</strong>
               <span>${escapeHtml(String(highlights.clinics))}</span>
             </article>
             <article class="summary-card">
@@ -359,7 +358,7 @@ function exportComplaintReportPdf({
             </article>
           </section>
           <section class="report-meta">
-            <strong>Periodo de referencia</strong>
+            <strong>Período de referência</strong>
             <span>${escapeHtml(periodLabel)}</span>
           </section>
           <section class="report-table-wrap">
@@ -369,8 +368,8 @@ function exportComplaintReportPdf({
                   <th>Protocolo</th>
                   <th>Data de cadastro</th>
                   <th>Paciente</th>
-                  <th>Clinica</th>
-                  <th>Responsavel atual</th>
+                  <th>Clínica</th>
+                  <th>Responsável atual</th>
                   <th>Profissional envolvido</th>
                   <th>Motivo</th>
                   <th>Status</th>
@@ -395,7 +394,7 @@ function ComplaintReportSection({
   description,
   filterLabel,
   filterValue,
-  filterOptions,
+  filterType = 'date',
   onFilterChange,
   periodDescription,
   highlights,
@@ -439,25 +438,26 @@ function ComplaintReportSection({
       <div className="weekly-report-filter-bar">
         <label>
           {filterLabel}
-          <select className="field" value={filterValue} onChange={(event) => onFilterChange(event.target.value)}>
-            {filterOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
+          <input
+            className="field"
+            type={filterType}
+            value={filterValue}
+            onChange={(event) => onFilterChange(event.target.value)}
+          />
         </label>
         <small>{periodDescription}</small>
       </div>
 
       <div className="weekly-report-metrics">
         <article className="weekly-report-card">
-          <span>Demandas no periodo</span>
+          <span>Demandas no período</span>
           <strong>{highlights.total}</strong>
           <p>Protocolos criados na janela selecionada</p>
         </article>
         <article className="weekly-report-card">
-          <span>Clinicas envolvidas</span>
+          <span>Clínicas envolvidas</span>
           <strong>{highlights.clinics}</strong>
-          <p>Unidades com reclamacoes registradas</p>
+          <p>Unidades com reclamações registradas</p>
         </article>
         <article className="weekly-report-card">
           <span>Frentes envolvidas</span>
@@ -472,20 +472,20 @@ function ComplaintReportSection({
         <article className="weekly-report-card">
           <span>Demandas finalizadas</span>
           <strong>{highlights.resolvedCount}</strong>
-          <p>Protocolos do periodo que ja foram encerrados</p>
+          <p>Protocolos do período que já foram encerrados</p>
         </article>
       </div>
 
       <div className="weekly-report-insights">
         <article className="weekly-report-insight-card">
           <span>Unidade com maior volume</span>
-          <strong>{highlights.topClinic?.label || 'Nao informado'}</strong>
-          <p>{highlights.topClinic ? `${highlights.topClinic.total} registro(s) concentrados nessa unidade.` : 'Nenhuma unidade com registros no periodo selecionado.'}</p>
+          <strong>{highlights.topClinic?.label || 'Não informado'}</strong>
+          <p>{highlights.topClinic ? `${highlights.topClinic.total} registro(s) concentrados nessa unidade.` : 'Nenhuma unidade com registros no período selecionado.'}</p>
         </article>
         <article className="weekly-report-insight-card">
           <span>Motivo mais recorrente</span>
-          <strong>{formatShortText(highlights.topReason?.label || 'Nao informado', 72)}</strong>
-          <p>{highlights.topReason ? `${highlights.topReason.total} ocorrencia(s) concentradas nesse tema.` : 'Nenhum motivo recorrente identificado no periodo selecionado.'}</p>
+          <strong>{formatShortText(highlights.topReason?.label || 'Não informado', 72)}</strong>
+          <p>{highlights.topReason ? `${highlights.topReason.total} ocorrência(s) concentradas nesse tema.` : 'Nenhum motivo recorrente identificado no período selecionado.'}</p>
         </article>
         <article className="weekly-report-insight-card">
           <span>Prazos vencidos</span>
@@ -497,9 +497,9 @@ function ComplaintReportSection({
       <div className="weekly-report-table-toolbar">
         <div>
           <span className="eyebrow">Base detalhada</span>
-          <strong>{rows.length} protocolo(s) no periodo analisado</strong>
+          <strong>{rows.length} protocolo(s) no período analisado</strong>
         </div>
-        <p>Leitura rapida de paciente, unidade, dono atual, profissional envolvido e motivo principal.</p>
+        <p>Leitura rápida de paciente, unidade, dono atual, profissional envolvido e motivo principal.</p>
       </div>
 
       <div className="data-table-wrap weekly-report-table-wrap">
@@ -509,8 +509,8 @@ function ComplaintReportSection({
               <th>Protocolo</th>
               <th>Data de cadastro</th>
               <th>Paciente</th>
-              <th>Clinica</th>
-              <th>Responsavel atual</th>
+              <th>Clínica</th>
+              <th>Responsável atual</th>
               <th>Profissional envolvido</th>
               <th>Motivo</th>
               <th>Status</th>
@@ -519,7 +519,7 @@ function ComplaintReportSection({
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan="8">Carregando relatorio...</td>
+                <td colSpan="8">Carregando relatório...</td>
               </tr>
             ) : paginatedRows.length ? (
               paginatedRows.map((row) => (
@@ -586,9 +586,9 @@ function ComplaintReportSection({
             <button className="outline-action" onClick={() => onPageChange(Math.max(1, currentPage - 1))} disabled={currentPage === 1}>
               Anterior
             </button>
-            <strong>Pagina {currentPage} de {totalPages}</strong>
+            <strong>Página {currentPage} de {totalPages}</strong>
             <button className="outline-action" onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))} disabled={currentPage === totalPages}>
-              Proxima
+              Próxima
             </button>
           </div>
         </div>
@@ -604,10 +604,13 @@ function WeeklyComplaintReport() {
   const [complaints, setComplaints] = useState([]);
   const [loading, setLoading] = useState(true);
   const [feedback, setFeedback] = useState('');
+  const [dailyPage, setDailyPage] = useState(1);
+  const [dailyPageSize, setDailyPageSize] = useState(10);
   const [weekPage, setWeekPage] = useState(1);
   const [weekPageSize, setWeekPageSize] = useState(10);
   const [monthPage, setMonthPage] = useState(1);
   const [monthPageSize, setMonthPageSize] = useState(10);
+  const [selectedDay, setSelectedDay] = useState(() => toDateInputValue(new Date()));
   const [selectedWeekStart, setSelectedWeekStart] = useState(() => toDateInputValue(getWeekRange().start));
   const [selectedMonth, setSelectedMonth] = useState(() => toMonthInputValue(new Date()));
 
@@ -622,7 +625,7 @@ function WeeklyComplaintReport() {
         const res = await api.get('/complaints');
         setComplaints(Array.isArray(res.data) ? res.data : []);
       } catch (error) {
-        setFeedback('Nao foi possivel carregar os relatorios de reclamacoes.');
+        setFeedback('Não foi possível carregar os relatórios de reclamações.');
       } finally {
         setLoading(false);
       }
@@ -633,6 +636,10 @@ function WeeklyComplaintReport() {
   }, [canAccess]);
 
   useEffect(() => {
+    setDailyPage(1);
+  }, [selectedDay, dailyPageSize]);
+
+  useEffect(() => {
     setWeekPage(1);
   }, [selectedWeekStart, weekPageSize]);
 
@@ -640,60 +647,25 @@ function WeeklyComplaintReport() {
     setMonthPage(1);
   }, [selectedMonth, monthPageSize]);
 
-  const weekOptions = useMemo(() => {
-    const weeks = new Map();
-    complaints
-      .filter((item) => !item.deleted_at)
-      .forEach((item) => {
-        const createdAt = new Date(item.created_at || 0);
-        if (Number.isNaN(createdAt.getTime())) return;
-        const range = getWeekRange(createdAt);
-        const key = toDateInputValue(range.start);
-        const current = weeks.get(key) || { value: key, count: 0, start: range.start };
-        weeks.set(key, { ...current, count: current.count + 1 });
-      });
-
-    if (!weeks.has(selectedWeekStart)) {
-      const range = getWeekRange(parseDateInputValue(selectedWeekStart));
-      weeks.set(selectedWeekStart, { value: selectedWeekStart, count: 0, start: range.start });
-    }
-
-    return Array.from(weeks.values())
-      .sort((a, b) => b.start.getTime() - a.start.getTime())
-      .map((item) => ({
-        ...item,
-        label: `${formatWeekRangeLabel(item.start, new Date(item.start.getTime() + (6 * dayMs)))} (${item.count})`
-      }));
-  }, [complaints, selectedWeekStart]);
-
-  const monthOptions = useMemo(() => {
-    const months = new Map();
-    complaints
-      .filter((item) => !item.deleted_at)
-      .forEach((item) => {
-        const createdAt = new Date(item.created_at || 0);
-        if (Number.isNaN(createdAt.getTime())) return;
-        const range = getMonthRange(createdAt);
-        const key = toMonthInputValue(range.start);
-        const current = months.get(key) || { value: key, count: 0, start: range.start };
-        months.set(key, { ...current, count: current.count + 1 });
-      });
-
-    if (!months.has(selectedMonth)) {
-      const range = getMonthRange(parseMonthInputValue(selectedMonth));
-      months.set(selectedMonth, { value: selectedMonth, count: 0, start: range.start });
-    }
-
-    return Array.from(months.values())
-      .sort((a, b) => b.start.getTime() - a.start.getTime())
-      .map((item) => ({
-        ...item,
-        label: `${capitalizeLabel(formatMonthRangeLabel(item.start))} (${item.count})`
-      }));
-  }, [complaints, selectedMonth]);
-
+  const selectedDayRange = useMemo(() => {
+    const start = parseDateInputValue(selectedDay);
+    start.setHours(0, 0, 0, 0);
+    const end = new Date(start);
+    end.setHours(23, 59, 59, 999);
+    return { start, end };
+  }, [selectedDay]);
   const selectedWeekRange = useMemo(() => getWeekRange(parseDateInputValue(selectedWeekStart)), [selectedWeekStart]);
   const selectedMonthRange = useMemo(() => getMonthRange(parseMonthInputValue(selectedMonth)), [selectedMonth]);
+
+  const dailyComplaints = useMemo(() => (
+    complaints
+      .filter((item) => !item.deleted_at)
+      .filter((item) => {
+        const createdAt = new Date(item.created_at || 0);
+        return !Number.isNaN(createdAt.getTime()) && createdAt >= selectedDayRange.start && createdAt <= selectedDayRange.end;
+      })
+      .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
+  ), [complaints, selectedDayRange]);
 
   const weeklyComplaints = useMemo(() => (
     complaints
@@ -715,17 +687,34 @@ function WeeklyComplaintReport() {
       .sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime())
   ), [complaints, selectedMonthRange]);
 
+  const dailySummaryRows = useMemo(() => buildSummaryRows(dailyComplaints), [dailyComplaints]);
   const weeklySummaryRows = useMemo(() => buildSummaryRows(weeklyComplaints), [weeklyComplaints]);
   const monthlySummaryRows = useMemo(() => buildSummaryRows(monthlyComplaints), [monthlyComplaints]);
+  const dailyHighlights = useMemo(() => buildHighlights(dailyComplaints), [dailyComplaints]);
   const weeklyHighlights = useMemo(() => buildHighlights(weeklyComplaints), [weeklyComplaints]);
   const monthlyHighlights = useMemo(() => buildHighlights(monthlyComplaints), [monthlyComplaints]);
 
+  const handleDailyPdfExport = () => {
+    const opened = exportComplaintReportPdf({
+      title: 'Relatório diário de reclamações',
+      subtitle: 'Consolidado diário com paciente, clínica, responsável atual e motivo principal da demanda.',
+      periodLabel: new Intl.DateTimeFormat('pt-BR').format(selectedDayRange.start),
+      periodBadge: 'Consolidado diário',
+      highlights: dailyHighlights,
+      rows: dailySummaryRows
+    });
+
+    if (!opened) {
+      setFeedback('Permita pop-ups para gerar o PDF.');
+    }
+  };
+
   const handleWeeklyPdfExport = () => {
     const opened = exportComplaintReportPdf({
-      title: 'Relatorio semanal de reclamacoes',
-      subtitle: 'Consolidado semanal com paciente, clinica, profissional envolvido e motivo principal da demanda.',
+      title: 'Relatório semanal de reclamações',
+      subtitle: 'Consolidado semanal com paciente, clínica, profissional envolvido e motivo principal da demanda.',
       periodLabel: formatWeekRangeLabel(selectedWeekRange.start, selectedWeekRange.end),
-      periodBadge: 'Ultimos 7 dias',
+      periodBadge: 'Semana selecionada',
       highlights: weeklyHighlights,
       rows: weeklySummaryRows
     });
@@ -737,8 +726,8 @@ function WeeklyComplaintReport() {
 
   const handleMonthlyPdfExport = () => {
     const opened = exportComplaintReportPdf({
-      title: 'Relatorio mensal de reclamacoes',
-      subtitle: 'Consolidado mensal com paciente, clinica, profissional envolvido e motivo principal da demanda.',
+      title: 'Relatório mensal de reclamações',
+      subtitle: 'Consolidado mensal com paciente, clínica, profissional envolvido e motivo principal da demanda.',
       periodLabel: capitalizeLabel(formatMonthRangeLabel(selectedMonthRange.start)),
       periodBadge: 'Consolidado mensal',
       highlights: monthlyHighlights,
@@ -758,14 +747,14 @@ function WeeklyComplaintReport() {
     <main className="app-page">
       <header className="page-heading">
         <div>
-          <p className="eyebrow">Visao semanal e mensal</p>
-          <h1>Relatorios de reclamacoes</h1>
-          <p>Consolidado operacional e gerencial com leitura semanal e mensal por paciente, unidade, responsavel atual e motivo principal de cada protocolo.</p>
+          <p className="eyebrow">Visão diária, semanal e mensal</p>
+          <h1>Relatórios de reclamações</h1>
+          <p>Consolidado operacional e gerencial com seleção manual de data por paciente, unidade, responsável atual e motivo principal de cada protocolo.</p>
         </div>
 
         <div className="heading-actions">
           <button className="outline-action" onClick={() => navigate('/gestao')}>
-            Painel de Gestao
+            Painel de Gestão
           </button>
           <button className="outline-action" onClick={() => navigate('/home')}>
             Home
@@ -776,18 +765,40 @@ function WeeklyComplaintReport() {
       {feedback && <p className="form-feedback page-form-feedback">{feedback}</p>}
 
       <ComplaintReportSection
+        eyebrow="Consolidado diário"
+        title="Reclamações registradas na data selecionada"
+        description="Leitura diária para conferência operacional, acionamentos imediatos e acompanhamento de protocolos abertos no dia."
+        filterLabel="Data de referência"
+        filterValue={selectedDay}
+        filterType="date"
+        onFilterChange={setSelectedDay}
+        periodDescription={`Período analisado: ${new Intl.DateTimeFormat('pt-BR').format(selectedDayRange.start)}. Selecione qualquer data manualmente para auditar o dia desejado.`}
+        highlights={dailyHighlights}
+        rows={dailySummaryRows}
+        loading={loading}
+        emptyLabel="Nenhuma reclamação registrada na data selecionada."
+        rowContextLabel="Cadastro diário"
+        exportExcel={() => exportComplaintReportExcel(dailySummaryRows, 'relatorio-diario-reclamacoes')}
+        exportPdf={handleDailyPdfExport}
+        page={dailyPage}
+        pageSize={dailyPageSize}
+        onPageChange={setDailyPage}
+        onPageSizeChange={setDailyPageSize}
+      />
+
+      <ComplaintReportSection
         eyebrow="Segunda a domingo"
-        title="Reclamacoes registradas na semana selecionada"
-        description="Leitura consolidada da carteira semanal com foco em unidade, responsavel atual e motivo central de cada protocolo."
-        filterLabel="Semana de referencia"
+        title="Reclamações registradas na semana selecionada"
+        description="Leitura consolidada da carteira semanal com foco em unidade, responsável atual e motivo central de cada protocolo."
+        filterLabel="Data de referência da semana"
         filterValue={selectedWeekStart}
-        filterOptions={weekOptions}
+        filterType="date"
         onFilterChange={setSelectedWeekStart}
-        periodDescription={`Periodo analisado: ${formatWeekRangeLabel(selectedWeekRange.start, selectedWeekRange.end)}. O historico semanal permanece disponivel para comparacao.`}
+        periodDescription={`Período analisado: ${formatWeekRangeLabel(selectedWeekRange.start, selectedWeekRange.end)}. Selecione qualquer data; o sistema calcula automaticamente a semana de segunda a domingo.`}
         highlights={weeklyHighlights}
         rows={weeklySummaryRows}
         loading={loading}
-        emptyLabel="Nenhuma reclamacao registrada na semana selecionada."
+        emptyLabel="Nenhuma reclamação registrada na semana selecionada."
         rowContextLabel="Cadastro semanal"
         exportExcel={() => exportComplaintReportExcel(weeklySummaryRows, 'relatorio-semanal-reclamacoes')}
         exportPdf={handleWeeklyPdfExport}
@@ -799,17 +810,17 @@ function WeeklyComplaintReport() {
 
       <ComplaintReportSection
         eyebrow="Consolidado mensal"
-        title="Reclamacoes registradas no mes selecionado"
-        description="Visao mensal para acompanhamento executivo do volume, recorrencia de motivos e concentracao por unidade."
-        filterLabel="Mes de referencia"
+        title="Reclamações registradas no mês selecionado"
+        description="Visão mensal para acompanhamento executivo do volume, recorrência de motivos e concentração por unidade."
+        filterLabel="Mês de referência"
         filterValue={selectedMonth}
-        filterOptions={monthOptions}
+        filterType="month"
         onFilterChange={setSelectedMonth}
-        periodDescription={`Periodo analisado: ${capitalizeLabel(formatMonthRangeLabel(selectedMonthRange.start))}. O comparativo mensal fica centralizado na mesma base do relatorio semanal.`}
+        periodDescription={`Período analisado: ${capitalizeLabel(formatMonthRangeLabel(selectedMonthRange.start))}. O comparativo mensal fica centralizado na mesma base do relatório semanal.`}
         highlights={monthlyHighlights}
         rows={monthlySummaryRows}
         loading={loading}
-        emptyLabel="Nenhuma reclamacao registrada no mes selecionado."
+        emptyLabel="Nenhuma reclamação registrada no mês selecionado."
         rowContextLabel="Cadastro mensal"
         exportExcel={() => exportComplaintReportExcel(monthlySummaryRows, 'relatorio-mensal-reclamacoes')}
         exportPdf={handleMonthlyPdfExport}

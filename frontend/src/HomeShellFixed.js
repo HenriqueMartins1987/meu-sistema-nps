@@ -282,7 +282,7 @@ function HomeShellFixed() {
       items: [
         { label: 'Novo Protocolo', path: '/cadastro', permission: 'complaints_register' },
         { label: 'Painel de Gestão de Reclamações', path: '/gestao', permission: 'complaints_management' },
-        { label: 'Relatório semanal de Reclamações', path: '/gestao/relatorio-semanal', permission: 'complaints_management', weeklyReportOnly: true },
+        { label: 'Relatório diário, semanal e mensal de Reclamações', path: '/gestao/relatorio-semanal', permission: 'complaints_management', weeklyReportOnly: true },
         { label: 'Dashboard de Reclamações', path: '/dashboard', permission: 'complaints_dashboard' }
       ]
     },

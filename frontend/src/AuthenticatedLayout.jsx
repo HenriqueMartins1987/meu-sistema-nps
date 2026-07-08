@@ -63,7 +63,7 @@ function buildMenuSections(user) {
         { key: 'home', label: 'Home', icon: 'home', path: '/home', exact: true, visible: hasPermission(user, 'home') },
         { key: 'crc-executive', label: 'Dashboard Executivo CRC', icon: 'dashboard', path: '/home/financial-intelligence', visible: hasPermission(user, 'financial_dashboard') },
         { key: 'crc-campaigns', label: 'Produtividade x Campanha', icon: 'finance', path: '/home/financial-intelligence/campaigns', visible: hasPermission(user, 'financial_campaigns') },
-        { key: 'crc-finance', label: 'Gestao Financeira CRC', icon: 'finance', path: '/home/financial-intelligence/manage', visible: hasPermission(user, 'financial_management') }
+        { key: 'crc-finance', label: 'Gestão Financeira CRC', icon: 'finance', path: '/home/financial-intelligence/manage', visible: hasPermission(user, 'financial_management') }
       ]
     },
     {
@@ -71,16 +71,16 @@ function buildMenuSections(user) {
       label: 'Atendimento',
       items: [
         { key: 'new-protocol', label: 'Novo Protocolo', icon: 'complaints', path: '/cadastro', visible: hasPermission(user, 'complaints_register') },
-        { key: 'complaints-panel', label: 'Painel de Reclamacoes', icon: 'complaints', path: '/gestao', exact: true, visible: hasPermission(user, 'complaints_management') },
-        { key: 'weekly-report', label: 'Relatorio Semanal e Mensal', icon: 'reports', path: '/gestao/relatorio-semanal', visible: canOpenWeeklyComplaintReport(user) && hasPermission(user, 'complaints_management') },
-        { key: 'complaints-dashboard', label: 'Dashboard de Reclamacoes', icon: 'dashboard', path: '/dashboard', visible: hasPermission(user, 'complaints_dashboard') }
+        { key: 'complaints-panel', label: 'Painel de Reclamações', icon: 'complaints', path: '/gestao', exact: true, visible: hasPermission(user, 'complaints_management') },
+        { key: 'weekly-report', label: 'Relatório Diário, Semanal e Mensal', icon: 'reports', path: '/gestao/relatorio-semanal', visible: canOpenWeeklyComplaintReport(user) && hasPermission(user, 'complaints_management') },
+        { key: 'complaints-dashboard', label: 'Dashboard de Reclamações', icon: 'dashboard', path: '/dashboard', visible: hasPermission(user, 'complaints_dashboard') }
       ]
     },
     {
       key: 'nps',
       label: 'NPS',
       items: [
-        { key: 'nps-management', label: 'Painel de Gestao NPS', icon: 'nps', path: '/gestao-nps', visible: hasPermission(user, 'nps_management') },
+        { key: 'nps-management', label: 'Painel de Gestão NPS', icon: 'nps', path: '/gestao-nps', visible: hasPermission(user, 'nps_management') },
         { key: 'nps-dashboard', label: 'Dashboard NPS', icon: 'dashboard', path: '/dashboard-nps', visible: hasPermission(user, 'nps_dashboard') },
         { key: 'nps-survey', label: 'Pesquisas NPS', icon: 'reports', path: '/pesquisa-nps', visible: hasPermission(user, 'nps_management') }
       ]
@@ -89,33 +89,33 @@ function buildMenuSections(user) {
       key: 'whatsapp',
       label: 'WhatsApp',
       items: [
-        { key: 'whatsapp-management', label: 'Gestao WhatsApp CRC', icon: 'whatsapp', path: '/home/whatsapp-management/dashboard', visible: whatsappVisible },
-        { key: 'whatsapp-confirmation', label: 'Confirmacao e Agendamento', icon: 'whatsapp', path: '/home/whatsapp-management/confirmation', visible: whatsappVisible && !isNpsOperator && hasPermission(user, 'whatsapp_reports') },
-        { key: 'whatsapp-instances', label: 'Sessoes / QR Code', icon: 'settings', path: '/home/whatsapp-management/instances', visible: whatsappVisible && hasPermission(user, 'whatsapp_instances') }
+        { key: 'whatsapp-management', label: 'Gestão WhatsApp CRC', icon: 'whatsapp', path: '/home/whatsapp-management/dashboard', visible: whatsappVisible },
+        { key: 'whatsapp-confirmation', label: 'Confirmação e Agendamento', icon: 'whatsapp', path: '/home/whatsapp-management/confirmation', visible: whatsappVisible && !isNpsOperator && hasPermission(user, 'whatsapp_reports') },
+        { key: 'whatsapp-instances', label: 'Sessões / QR Code', icon: 'settings', path: '/home/whatsapp-management/instances', visible: whatsappVisible && hasPermission(user, 'whatsapp_instances') }
       ]
     },
     {
       key: 'reports',
-      label: 'Relatorios',
+      label: 'Relatórios',
       items: [
-        { key: 'reports-hub', label: 'Central de Relatorios', icon: 'reports', path: '/home/relatorios', visible: showReports }
+        { key: 'reports-hub', label: 'Central de Relatórios', icon: 'reports', path: '/home/relatorios', visible: showReports }
       ]
     },
     {
       key: 'records',
       label: 'Cadastros',
       items: [
-        { key: 'clinics', label: 'Clinicas', icon: 'clinics', path: '', visible: true, disabled: true, helper: 'Em preparacao' },
+        { key: 'clinics', label: 'Clínicas', icon: 'clinics', path: '', visible: true, disabled: true, helper: 'Em preparação' },
         { key: 'patients', label: 'Pacientes', icon: 'patients', path: '/pacientes', visible: hasPermission(user, 'patient_management') },
         { key: 'partners', label: 'Parceiros', icon: 'users', path: '/home/whatsapp-management/confirmation?tab=partners', visible: whatsappVisible },
-        { key: 'users', label: 'Usuarios', icon: 'users', path: '/admin', visible: master || hasPermission(user, 'admin_panel') }
+        { key: 'users', label: 'Usuários', icon: 'users', path: '/admin', visible: master || hasPermission(user, 'admin_panel') }
       ]
     },
     {
       key: 'system',
       label: 'Sistema',
       items: [
-        { key: 'settings', label: 'Configuracoes', icon: 'settings', path: master ? '/admin/controle-master' : '/perfil', visible: master || hasPermission(user, 'home') },
+        { key: 'settings', label: 'Configurações', icon: 'settings', path: master ? '/admin/controle-master' : '/perfil', visible: master || hasPermission(user, 'home') },
         { key: 'account', label: 'Minha Conta', icon: 'account', path: '/perfil', visible: hasPermission(user, 'home') },
         { key: 'logout', label: 'Sair', icon: 'logout', action: 'logout', visible: true, danger: true }
       ]
