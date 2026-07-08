@@ -16662,6 +16662,67 @@ a {
   padding-right: 6px;
 }
 
+.agenda-clinic-bucket {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid rgba(205, 216, 232, 0.96);
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 248, 252, 0.96)),
+    radial-gradient(circle at top right, rgba(15, 157, 168, 0.08), transparent 46%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.9);
+}
+
+.agenda-clinic-bucket-head {
+  display: grid;
+  gap: 8px;
+  padding: 10px 11px;
+  border-radius: 16px;
+  background: linear-gradient(135deg, rgba(15, 23, 42, 0.95), rgba(15, 157, 168, 0.88));
+  color: #ffffff;
+}
+
+.agenda-clinic-bucket-head span {
+  display: block;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agenda-clinic-bucket-head strong {
+  color: #ffffff;
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.agenda-clinic-bucket-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.agenda-clinic-bucket-stats small {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.agenda-clinic-bucket-stats small.danger {
+  background: rgba(254, 226, 226, 0.95);
+  color: #b91c1c;
+}
+
+.agenda-clinic-bucket-list {
+  display: grid;
+  gap: 10px;
+}
+
 .agenda-task-card {
   position: relative;
   display: grid;
@@ -16700,6 +16761,14 @@ a {
 .agenda-task-card.priority-urgente,
 .agenda-task-card.overdue {
   border-left-color: #ef4444;
+}
+
+.agenda-task-card.fake-appointment {
+  border-color: rgba(239, 68, 68, 0.32);
+  border-left-color: #dc2626;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(255, 247, 247, 0.98)),
+    radial-gradient(circle at top right, rgba(239, 68, 68, 0.11), transparent 42%);
 }
 
 .agenda-card-topline {
@@ -17368,6 +17437,44 @@ a {
   gap: 16px;
 }
 
+.agenda-editor-summary-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.agenda-editor-summary-strip article {
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  border: 1px solid rgba(216, 224, 236, 0.96);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 249, 252, 0.96));
+}
+
+.agenda-editor-summary-strip article.danger {
+  border-color: rgba(239, 68, 68, 0.26);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.99), rgba(254, 242, 242, 0.98));
+}
+
+.agenda-editor-summary-strip span {
+  color: #64748b;
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agenda-editor-summary-strip strong {
+  color: #10213b;
+  font-size: 0.9rem;
+  line-height: 1.25;
+}
+
+.agenda-editor-summary-strip article.danger strong {
+  color: #b91c1c;
+}
+
 .agenda-title-field {
   min-height: 54px;
   font-size: 1.05rem;
@@ -17383,6 +17490,10 @@ a {
 .agenda-textarea {
   min-height: 220px;
   resize: vertical;
+}
+
+.agenda-free-notes {
+  min-height: 118px;
 }
 
 .agenda-editor-side {
@@ -17648,6 +17759,10 @@ a {
   }
 
   .agenda-editor-body {
+    grid-template-columns: 1fr;
+  }
+
+  .agenda-editor-summary-strip {
     grid-template-columns: 1fr;
   }
 
@@ -18341,6 +18456,51 @@ a {
   .robot-master-table-card {
     overflow-x: auto;
   }
+}
+
+.agenda-fake-appointment-button {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 4px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 1px solid rgba(248, 113, 113, 0.42);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(254, 242, 242, 0.96));
+  color: #991b1b;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, background 0.16s ease, border-color 0.16s ease;
+}
+
+.agenda-fake-appointment-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 14px 24px rgba(185, 28, 28, 0.12);
+}
+
+.agenda-fake-appointment-button.active {
+  border-color: rgba(185, 28, 28, 0.62);
+  background: linear-gradient(135deg, #991b1b, #dc2626);
+  color: #ffffff;
+  box-shadow: 0 18px 32px rgba(185, 28, 28, 0.22);
+}
+
+.agenda-fake-appointment-button strong {
+  font-size: 0.9rem;
+  font-weight: 900;
+}
+
+.agenda-fake-appointment-button small {
+  color: currentColor;
+  font-size: 0.76rem;
+  font-weight: 700;
+  line-height: 1.45;
+  opacity: 0.78;
+}
+
+.agenda-task-meta span.agenda-fake-meta {
+  background: rgba(254, 226, 226, 0.98);
+  color: #b91c1c;
 }
 
 .complaints-dashboard-page .dashboard-kpi-grid,

@@ -5441,6 +5441,7 @@ async function ensureDatabaseSchema() {
       source_batch_id VARCHAR(120) NULL,
       title VARCHAR(180) NOT NULL,
       description TEXT NULL,
+      free_notes TEXT NULL,
       status VARCHAR(40) NOT NULL DEFAULT 'todo',
       priority VARCHAR(30) NOT NULL DEFAULT 'normal',
       is_daily_recurring TINYINT(1) NOT NULL DEFAULT 0,
@@ -5482,6 +5483,7 @@ async function ensureDatabaseSchema() {
   await ensureColumn('agenda_items', 'patient_channel', 'VARCHAR(120) NULL');
   await ensureColumn('agenda_items', 'patient_has_scheduled', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn('agenda_items', 'patient_scheduled_at', 'DATETIME NULL');
+  await ensureColumn('agenda_items', 'patient_fake_appointment', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn('agenda_items', 'confirmation_status', 'VARCHAR(40) NULL');
   await ensureColumn('agenda_items', 'confirmation_notes', 'TEXT NULL');
   await ensureColumn('agenda_items', 'confirmation_recorded_at', 'DATETIME NULL');
@@ -5489,6 +5491,7 @@ async function ensureDatabaseSchema() {
   await ensureColumn('agenda_items', 'confirmation_recorded_by_name', 'VARCHAR(180) NULL');
   await ensureColumn('agenda_items', 'source_label', 'VARCHAR(120) NULL');
   await ensureColumn('agenda_items', 'source_batch_id', 'VARCHAR(120) NULL');
+  await ensureColumn('agenda_items', 'free_notes', 'TEXT NULL');
   await ensureColumn('agenda_items', 'is_daily_recurring', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn('agenda_items', 'requires_completion', 'TINYINT(1) NOT NULL DEFAULT 1');
   await ensureColumn('agenda_items', 'recurrence_base_status', 'VARCHAR(40) NULL');
@@ -27002,7 +27005,9 @@ function buildAgendaReplicatedInsertValues(row = {}, {
     normalizeAgendaReplicationDateValue(row.reminder_at) || null,
     row.tags_json || JSON.stringify([]),
     row.checklist_json || JSON.stringify([]),
-    Number(row.board_order || 0) || 0
+    Number(row.board_order || 0) || 0,
+    demandType === 'patient' && normalizeAgendaBoolean(row.patient_fake_appointment, false) ? 1 : 0,
+    row.free_notes || null
   ];
 }
 
@@ -27136,6 +27141,7 @@ function serializeAgendaItem(row = {}) {
     patient_do_not_contact: normalizeAgendaBoolean(row.patient_do_not_contact, false),
     patient_has_scheduled: normalizeAgendaBoolean(row.patient_has_scheduled, false),
     patient_scheduled_at: row.patient_scheduled_at || null,
+    patient_fake_appointment: normalizeAgendaBoolean(row.patient_fake_appointment, false),
     confirmation_status: normalizeAgendaConfirmationStatus(row.confirmation_status, demandType),
     confirmation_notes: row.confirmation_notes || null,
     confirmation_recorded_at: row.confirmation_recorded_at || null,
@@ -27145,6 +27151,7 @@ function serializeAgendaItem(row = {}) {
     is_evasion: demandType === 'patient' && normalizeAgendaConfirmationStatus(row.confirmation_status, demandType) === 'nao_confirmado',
     source_label: row.source_label || null,
     source_batch_id: row.source_batch_id || null,
+    free_notes: row.free_notes || null,
     contact_status: row.contact_status || 'pending',
     contact_last_checked_at: row.contact_last_checked_at || null,
     contact_source: row.contact_source || null,
@@ -29215,12 +29222,13 @@ function buildAgendaTaskReportWhere(user, query = {}, alias = 'a') {
     where.push(`(
       ${prefix}title LIKE ?
       OR ${prefix}description LIKE ?
+      OR ${prefix}free_notes LIKE ?
       OR ${prefix}assigned_user_name LIKE ?
       OR ${prefix}clinic_name LIKE ?
       OR ${prefix}patient_name LIKE ?
       OR ${prefix}patient_phone LIKE ?
     )`);
-    params.push(term, term, term, term, term, term);
+    params.push(term, term, term, term, term, term, term);
   }
 
   const rawQueue = String(query.queue || '').trim().toLowerCase();
@@ -29252,6 +29260,8 @@ function buildAgendaTaskReportWhere(user, query = {}, alias = 'a') {
 }
 
 function summarizeAgendaTaskReport(items = []) {
+  const todayKey = getSaoPauloDateKey(new Date());
+  const tomorrowKey = getSaoPauloDateKey(new Date(Date.now() + 86400000));
   const summary = {
     total: items.length,
     open: 0,
@@ -29261,7 +29271,17 @@ function summarizeAgendaTaskReport(items = []) {
     patient_total: 0,
     patient_confirmed: 0,
     patient_pending: 0,
-    patient_not_confirmed: 0
+    patient_not_confirmed: 0,
+    patient_scheduled: 0,
+    patient_fake_appointment: 0,
+    patient_today_total: 0,
+    patient_today_confirmed: 0,
+    patient_today_pending: 0,
+    patient_today_not_confirmed: 0,
+    patient_tomorrow_total: 0,
+    patient_tomorrow_confirmed: 0,
+    patient_tomorrow_pending: 0,
+    patient_tomorrow_not_confirmed: 0
   };
 
   items.forEach((item) => {
@@ -29275,18 +29295,163 @@ function summarizeAgendaTaskReport(items = []) {
     const demandType = normalizeAgendaDemandType(item.demand_type, item);
     if (demandType === 'patient') {
       summary.patient_total += 1;
+      if (item.patient_has_scheduled) summary.patient_scheduled += 1;
+      if (item.patient_fake_appointment) summary.patient_fake_appointment += 1;
       const confirmationStatus = normalizeAgendaConfirmationStatus(item.confirmation_status, demandType);
       if (confirmationStatus === 'confirmado') summary.patient_confirmed += 1;
       else if (confirmationStatus === 'nao_confirmado') summary.patient_not_confirmed += 1;
       else summary.patient_pending += 1;
+
+      const scheduledDateKey = getSaoPauloDateKey(item.patient_scheduled_at || item.due_at);
+      if (scheduledDateKey && scheduledDateKey === todayKey) {
+        summary.patient_today_total += 1;
+        if (confirmationStatus === 'confirmado') summary.patient_today_confirmed += 1;
+        else if (confirmationStatus === 'nao_confirmado') summary.patient_today_not_confirmed += 1;
+        else summary.patient_today_pending += 1;
+      }
+      if (scheduledDateKey && scheduledDateKey === tomorrowKey) {
+        summary.patient_tomorrow_total += 1;
+        if (confirmationStatus === 'confirmado') summary.patient_tomorrow_confirmed += 1;
+        else if (confirmationStatus === 'nao_confirmado') summary.patient_tomorrow_not_confirmed += 1;
+        else summary.patient_tomorrow_pending += 1;
+      }
     }
   });
 
   summary.patient_confirmation_rate = summary.patient_total
     ? Math.round((summary.patient_confirmed * 1000) / summary.patient_total) / 10
     : 0;
+  summary.patient_today_confirmation_rate = summary.patient_today_total
+    ? Math.round((summary.patient_today_confirmed * 1000) / summary.patient_today_total) / 10
+    : 0;
+  summary.patient_today_pending_rate = summary.patient_today_total
+    ? Math.round((summary.patient_today_pending * 1000) / summary.patient_today_total) / 10
+    : 0;
+  summary.patient_today_not_confirmed_rate = summary.patient_today_total
+    ? Math.round((summary.patient_today_not_confirmed * 1000) / summary.patient_today_total) / 10
+    : 0;
   summary.completion_rate = summary.total ? Math.round((summary.done * 1000) / summary.total) / 10 : 0;
+  summary.patient_tomorrow_confirmation_rate = summary.patient_tomorrow_total
+    ? Math.round((summary.patient_tomorrow_confirmed * 1000) / summary.patient_tomorrow_total) / 10
+    : 0;
+  summary.patient_tomorrow_pending_rate = summary.patient_tomorrow_total
+    ? Math.round((summary.patient_tomorrow_pending * 1000) / summary.patient_tomorrow_total) / 10
+    : 0;
+  summary.patient_tomorrow_not_confirmed_rate = summary.patient_tomorrow_total
+    ? Math.round((summary.patient_tomorrow_not_confirmed * 1000) / summary.patient_tomorrow_total) / 10
+    : 0;
   return summary;
+}
+
+function getAgendaReportDemandTypeLabel(value = 'general') {
+  return normalizeAgendaDemandType(value, {}) === 'patient' ? 'Paciente' : 'Demanda geral';
+}
+
+function buildAgendaTaskClinicDemandSummary(items = []) {
+  const clinicMap = new Map();
+  const todayKey = getSaoPauloDateKey(new Date());
+  const tomorrowKey = getSaoPauloDateKey(new Date(Date.now() + 86400000));
+
+  items.forEach((item) => {
+    const clinicName = item.clinic_name || 'Sem clínica definida';
+    const clinicKey = item.clinic_id ? `clinic-${item.clinic_id}` : `clinic-name-${normalizeComparableText(clinicName) || 'sem-clinica'}`;
+    if (!clinicMap.has(clinicKey)) {
+      clinicMap.set(clinicKey, {
+        clinic_id: item.clinic_id || null,
+        clinic_name: clinicName,
+        total: 0,
+        patient_total: 0,
+        patient_confirmed: 0,
+        patient_pending: 0,
+        patient_not_confirmed: 0,
+        patient_fake_appointment: 0,
+        today_total: 0,
+        today_confirmed: 0,
+        today_pending: 0,
+        today_not_confirmed: 0,
+        tomorrow_total: 0,
+        tomorrow_confirmed: 0,
+        tomorrow_pending: 0,
+        tomorrow_not_confirmed: 0,
+        demandMap: new Map()
+      });
+    }
+
+    const clinic = clinicMap.get(clinicKey);
+    const demandType = normalizeAgendaDemandType(item.demand_type, item);
+    const demandKey = demandType;
+    if (!clinic.demandMap.has(demandKey)) {
+      clinic.demandMap.set(demandKey, {
+        demand_type: demandType,
+        demand_label: getAgendaReportDemandTypeLabel(demandType),
+        total: 0,
+        open: 0,
+        done: 0,
+        overdue: 0,
+        patient_confirmed: 0,
+        patient_pending: 0,
+        patient_not_confirmed: 0,
+        patient_fake_appointment: 0
+      });
+    }
+
+    const demand = clinic.demandMap.get(demandKey);
+    const status = normalizeAgendaStatus(item.status);
+    const confirmationStatus = normalizeAgendaConfirmationStatus(item.confirmation_status, demandType);
+    const scheduledDateKey = getSaoPauloDateKey(item.patient_scheduled_at || item.due_at);
+
+    clinic.total += 1;
+    demand.total += 1;
+    if (status === 'done') demand.done += 1;
+    else demand.open += 1;
+    if (status !== 'done') {
+      const dueHours = getAgendaHoursUntil(item.due_at);
+      if (dueHours !== null && dueHours < 0) demand.overdue += 1;
+    }
+
+    if (demandType === 'patient') {
+      clinic.patient_total += 1;
+      if (confirmationStatus === 'confirmado') {
+        clinic.patient_confirmed += 1;
+        demand.patient_confirmed += 1;
+      } else if (confirmationStatus === 'nao_confirmado') {
+        clinic.patient_not_confirmed += 1;
+        demand.patient_not_confirmed += 1;
+      } else {
+        clinic.patient_pending += 1;
+        demand.patient_pending += 1;
+      }
+      if (item.patient_fake_appointment) {
+        clinic.patient_fake_appointment += 1;
+        demand.patient_fake_appointment += 1;
+      }
+      if (scheduledDateKey && scheduledDateKey === todayKey) {
+        clinic.today_total += 1;
+        if (confirmationStatus === 'confirmado') clinic.today_confirmed += 1;
+        else if (confirmationStatus === 'nao_confirmado') clinic.today_not_confirmed += 1;
+        else clinic.today_pending += 1;
+      }
+      if (scheduledDateKey && scheduledDateKey === tomorrowKey) {
+        clinic.tomorrow_total += 1;
+        if (confirmationStatus === 'confirmado') clinic.tomorrow_confirmed += 1;
+        else if (confirmationStatus === 'nao_confirmado') clinic.tomorrow_not_confirmed += 1;
+        else clinic.tomorrow_pending += 1;
+      }
+    }
+  });
+
+  return Array.from(clinicMap.values()).map((clinic) => ({
+    ...clinic,
+    confirmation_rate: clinic.patient_total ? Math.round((clinic.patient_confirmed * 1000) / clinic.patient_total) / 10 : 0,
+    today_confirmation_rate: clinic.today_total ? Math.round((clinic.today_confirmed * 1000) / clinic.today_total) / 10 : 0,
+    today_pending_rate: clinic.today_total ? Math.round((clinic.today_pending * 1000) / clinic.today_total) / 10 : 0,
+    today_not_confirmed_rate: clinic.today_total ? Math.round((clinic.today_not_confirmed * 1000) / clinic.today_total) / 10 : 0,
+    tomorrow_confirmation_rate: clinic.tomorrow_total ? Math.round((clinic.tomorrow_confirmed * 1000) / clinic.tomorrow_total) / 10 : 0,
+    tomorrow_pending_rate: clinic.tomorrow_total ? Math.round((clinic.tomorrow_pending * 1000) / clinic.tomorrow_total) / 10 : 0,
+    tomorrow_not_confirmed_rate: clinic.tomorrow_total ? Math.round((clinic.tomorrow_not_confirmed * 1000) / clinic.tomorrow_total) / 10 : 0,
+    demands: Array.from(clinic.demandMap.values()).sort((left, right) => right.total - left.total || left.demand_label.localeCompare(right.demand_label, 'pt-BR')),
+    demandMap: undefined
+  })).sort((left, right) => right.total - left.total || left.clinic_name.localeCompare(right.clinic_name, 'pt-BR'));
 }
 
 async function loadAgendaTaskReport(user, query = {}) {
@@ -29309,6 +29474,7 @@ async function loadAgendaTaskReport(user, query = {}) {
   return {
     generated_at: new Date().toISOString(),
     summary: summarizeAgendaTaskReport(items),
+    clinic_summaries: buildAgendaTaskClinicDemandSummary(items),
     filters: {
       search: String(query.search || '').trim(),
       status: String(query.status || 'all').trim() || 'all',
@@ -29329,10 +29495,26 @@ function buildAgendaTaskExcelBuffer(report = {}) {
     { indicador: 'Atrasadas', valor: Number(summary.overdue || 0) },
     { indicador: 'Vencendo em 24h', valor: Number(summary.due_24h || 0) },
     { indicador: 'Pacientes', valor: Number(summary.patient_total || 0) },
+    { indicador: 'Pacientes agendados', valor: Number(summary.patient_scheduled || 0) },
     { indicador: 'Pacientes confirmados', valor: Number(summary.patient_confirmed || 0) },
     { indicador: 'Pacientes pendentes', valor: Number(summary.patient_pending || 0) },
     { indicador: 'Pacientes nao confirmados', valor: Number(summary.patient_not_confirmed || 0) },
-    { indicador: 'Taxa de confirmacao (%)', valor: Number(summary.patient_confirmation_rate || 0) }
+    { indicador: 'Agendamentos fake', valor: Number(summary.patient_fake_appointment || 0) },
+    { indicador: 'Pacientes para hoje', valor: Number(summary.patient_today_total || 0) },
+    { indicador: 'Confirmados para hoje', valor: Number(summary.patient_today_confirmed || 0) },
+    { indicador: 'Pendentes para hoje', valor: Number(summary.patient_today_pending || 0) },
+    { indicador: 'Nao confirmados para hoje', valor: Number(summary.patient_today_not_confirmed || 0) },
+    { indicador: 'Taxa de confirmacao hoje (%)', valor: Number(summary.patient_today_confirmation_rate || 0) },
+    { indicador: 'Taxa de pendentes hoje (%)', valor: Number(summary.patient_today_pending_rate || 0) },
+    { indicador: 'Taxa de nao confirmados hoje (%)', valor: Number(summary.patient_today_not_confirmed_rate || 0) },
+    { indicador: 'Pacientes para o dia seguinte', valor: Number(summary.patient_tomorrow_total || 0) },
+    { indicador: 'Confirmados para o dia seguinte', valor: Number(summary.patient_tomorrow_confirmed || 0) },
+    { indicador: 'Pendentes para o dia seguinte', valor: Number(summary.patient_tomorrow_pending || 0) },
+    { indicador: 'Nao confirmados para o dia seguinte', valor: Number(summary.patient_tomorrow_not_confirmed || 0) },
+    { indicador: 'Taxa de confirmacao geral (%)', valor: Number(summary.patient_confirmation_rate || 0) },
+    { indicador: 'Taxa de confirmacao dia seguinte (%)', valor: Number(summary.patient_tomorrow_confirmation_rate || 0) },
+    { indicador: 'Taxa de pendentes dia seguinte (%)', valor: Number(summary.patient_tomorrow_pending_rate || 0) },
+    { indicador: 'Taxa de nao confirmados dia seguinte (%)', valor: Number(summary.patient_tomorrow_not_confirmed_rate || 0) }
   ]);
   summarySheet['!cols'] = [{ wch: 32 }, { wch: 18 }];
   XLSX.utils.book_append_sheet(workbook, summarySheet, 'Resumo');
@@ -29354,6 +29536,8 @@ function buildAgendaTaskExcelBuffer(report = {}) {
       canal: item.patient_channel || '-',
       status_confirmacao: getAgendaReportConfirmationLabel(item.confirmation_status, demandType),
       observacao_confirmacao: item.confirmation_notes || '-',
+      observacoes_livres: item.free_notes || '-',
+      agendamento_fake: item.patient_fake_appointment ? 'Sim' : 'Nao',
       consulta: getAgendaReportDateLabel(item.patient_scheduled_at),
       vencimento: getAgendaReportDateLabel(item.due_at),
       lembrete: getAgendaReportDateLabel(item.reminder_at),
@@ -29368,91 +29552,232 @@ function buildAgendaTaskExcelBuffer(report = {}) {
   itemsSheet['!cols'] = [
     { wch: 8 }, { wch: 34 }, { wch: 16 }, { wch: 14 }, { wch: 28 }, { wch: 28 },
     { wch: 14 }, { wch: 30 }, { wch: 18 }, { wch: 20 }, { wch: 24 }, { wch: 18 },
-    { wch: 20 }, { wch: 34 }, { wch: 20 }, { wch: 20 }, { wch: 20 }, { wch: 12 },
-    { wch: 20 }, { wch: 28 }, { wch: 20 }, { wch: 20 }, { wch: 20 }
+    { wch: 20 }, { wch: 34 }, { wch: 34 }, { wch: 16 }, { wch: 20 }, { wch: 20 },
+    { wch: 20 }, { wch: 12 }, { wch: 20 }, { wch: 28 }, { wch: 20 }, { wch: 20 }, { wch: 20 }
   ];
   XLSX.utils.book_append_sheet(workbook, itemsSheet, 'Tarefas');
+
+  const clinicSheet = XLSX.utils.json_to_sheet((report.clinic_summaries || []).flatMap((clinic) => (
+    (clinic.demands || []).map((demand) => ({
+      clinica: clinic.clinic_name,
+      tipo_demanda: demand.demand_label,
+      total_clinica: clinic.total,
+      total_demanda: demand.total,
+      abertas: demand.open,
+      concluidas: demand.done,
+      atrasadas: demand.overdue,
+      pacientes: clinic.patient_total,
+      confirmados: clinic.patient_confirmed,
+      pendentes: clinic.patient_pending,
+      nao_confirmados: clinic.patient_not_confirmed,
+      agendamentos_fake: clinic.patient_fake_appointment,
+      pacientes_hoje: clinic.today_total,
+      confirmados_hoje: clinic.today_confirmed,
+      pendentes_hoje: clinic.today_pending,
+      nao_confirmados_hoje: clinic.today_not_confirmed,
+      pacientes_dia_seguinte: clinic.tomorrow_total,
+      confirmados_dia_seguinte: clinic.tomorrow_confirmed,
+      pendentes_dia_seguinte: clinic.tomorrow_pending,
+      nao_confirmados_dia_seguinte: clinic.tomorrow_not_confirmed,
+      taxa_confirmacao: clinic.confirmation_rate,
+      taxa_hoje: clinic.today_confirmation_rate,
+      taxa_pendentes_hoje: clinic.today_pending_rate,
+      taxa_nao_confirmados_hoje: clinic.today_not_confirmed_rate,
+      taxa_dia_seguinte: clinic.tomorrow_confirmation_rate,
+      taxa_pendentes_dia_seguinte: clinic.tomorrow_pending_rate,
+      taxa_nao_confirmados_dia_seguinte: clinic.tomorrow_not_confirmed_rate
+    }))
+  )));
+  clinicSheet['!cols'] = [
+    { wch: 32 }, { wch: 18 }, ...Array.from({ length: 23 }, () => ({ wch: 16 }))
+  ];
+  XLSX.utils.book_append_sheet(workbook, clinicSheet, 'Clinicas e demandas');
   return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 }
 
 function buildAgendaTaskPdfBuffer(report = {}) {
   return new Promise((resolve, reject) => {
     try {
-      const doc = new PDFDocument({ size: 'A4', margin: 36 });
+      const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 28 });
       const chunks = [];
       doc.on('data', (chunk) => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
 
       const summary = report.summary || {};
-      doc.fontSize(18).font('Helvetica-Bold').fillColor('#111827').text('Relatorio profissional de tarefas da agenda');
-      doc.moveDown(0.25);
-      doc.fontSize(9).font('Helvetica').fillColor('#6b7280').text(`Gerado em ${formatMessageDateTime(new Date())}`);
-      doc.moveDown(0.8);
+      const pageLeft = 28;
+      const pageWidth = doc.page.width - 56;
+      const ink = '#10213b';
+      const muted = '#64748b';
+      const line = '#d8e1ef';
+      const teal = '#0f9da8';
+      const amber = '#b7791f';
+      const danger = '#b91c1c';
+      let y = 28;
 
-      const metrics = [
-        ['Tarefas', summary.total || 0],
-        ['Abertas', summary.open || 0],
-        ['Concluidas', summary.done || 0],
-        ['Atrasadas', summary.overdue || 0],
-        ['Conf. pacientes', `${summary.patient_confirmation_rate || 0}%`]
-      ];
-      const cardWidth = 100;
-      const cardY = doc.y;
-      metrics.forEach((metric, index) => {
-        const x = 36 + (index * 104);
-        doc.roundedRect(x, cardY, cardWidth, 48, 8).fillAndStroke('#f8fafc', '#e5e7eb');
-        doc.fillColor('#6b7280').fontSize(7).font('Helvetica-Bold').text(metric[0], x + 10, cardY + 10, { width: cardWidth - 20 });
-        doc.fillColor('#111827').fontSize(14).font('Helvetica-Bold').text(String(metric[1]), x + 10, cardY + 25, { width: cardWidth - 20 });
-      });
-      doc.y = cardY + 64;
-
-      doc.fontSize(12).font('Helvetica-Bold').fillColor('#111827').text('Tarefas');
-      doc.moveDown(0.35);
-      const rows = (report.items || []).slice(0, 80);
-      const columns = [
-        { title: 'Titulo', width: 150 },
-        { title: 'Responsavel', width: 95 },
-        { title: 'Clinica', width: 95 },
-        { title: 'Status', width: 62 },
-        { title: 'Vencimento', width: 92 },
-        { title: 'Confirmacao', width: 78 }
-      ];
-      const startX = 36;
-      const rowHeight = 22;
-      const renderHeader = () => {
-        let x = startX;
-        doc.rect(startX, doc.y, 523, rowHeight).fill('#111827');
-        columns.forEach((column) => {
-          doc.fillColor('#ffffff').fontSize(7).font('Helvetica-Bold').text(column.title, x + 4, doc.y + 7, { width: column.width - 8 });
-          x += column.width;
-        });
-        doc.y += rowHeight;
+      const truncate = (value, size = 58) => {
+        const text = String(value || '-').replace(/\s+/g, ' ').trim();
+        return text.length > size ? `${text.slice(0, Math.max(0, size - 1))}…` : text;
       };
-      renderHeader();
-      rows.forEach((item, index) => {
-        if (doc.y > 760) {
-          doc.addPage();
-          renderHeader();
-        }
-        const demandType = normalizeAgendaDemandType(item.demand_type, item);
-        let x = startX;
-        doc.rect(startX, doc.y, 523, rowHeight).fill(index % 2 === 0 ? '#ffffff' : '#f9fafb');
-        [
-          item.title || '-',
-          item.assigned_user_name || item.owner_name || '-',
-          item.clinic_name || '-',
-          getAgendaReportStatusLabel(item.status),
-          getAgendaReportDateLabel(item.due_at || item.patient_scheduled_at),
-          getAgendaReportConfirmationLabel(item.confirmation_status, demandType)
-        ].forEach((value, columnIndex) => {
-          doc.fillColor('#111827').fontSize(6.6).font('Helvetica').text(String(value).slice(0, 48), x + 4, doc.y + 7, { width: columns[columnIndex].width - 8 });
-          x += columns[columnIndex].width;
+
+      const drawHeader = () => {
+        doc.rect(0, 0, doc.page.width, 78).fill('#f6fbfc');
+        doc.fillColor(teal).font('Helvetica-Bold').fontSize(9).text('AGENDA E CONFIRMAÇÃO WHATSAPP', pageLeft, 20);
+        doc.fillColor(ink).fontSize(20).text('Relatório executivo por clínica e demanda', pageLeft, 35);
+        doc.fillColor(muted).font('Helvetica').fontSize(8.5)
+          .text(`Gerado em ${formatMessageDateTime(new Date())} · ${report.items?.length || 0} registro(s) analisado(s)`, pageLeft, 59);
+        y = 96;
+      };
+
+      const ensureSpace = (height = 80) => {
+        if (y + height <= doc.page.height - 34) return;
+        doc.addPage();
+        drawHeader();
+      };
+
+      const drawMetricCards = () => {
+        const metrics = [
+          ['Pacientes hoje', summary.patient_today_total || 0, teal],
+          ['Confirmados hoje', `${summary.patient_today_confirmed || 0} · ${summary.patient_today_confirmation_rate || 0}%`, '#15803d'],
+          ['Pendentes hoje', `${summary.patient_today_pending || 0} · ${summary.patient_today_pending_rate || 0}%`, amber],
+          ['Não conf. hoje', `${summary.patient_today_not_confirmed || 0} · ${summary.patient_today_not_confirmed_rate || 0}%`, danger],
+          ['Fake', summary.patient_fake_appointment || 0, danger],
+          ['Conf. dia seguinte', `${summary.patient_tomorrow_confirmed || 0} · ${summary.patient_tomorrow_confirmation_rate || 0}%`, '#1d4ed8']
+        ];
+        const gap = 8;
+        const cardWidth = (pageWidth - (gap * (metrics.length - 1))) / metrics.length;
+        let x = pageLeft;
+        metrics.forEach(([label, value, accent]) => {
+          doc.roundedRect(x, y, cardWidth, 58, 12).fillAndStroke('#ffffff', line);
+          doc.rect(x, y, 4, 58).fill(accent);
+          doc.fillColor(muted).font('Helvetica-Bold').fontSize(7).text(label.toUpperCase(), x + 12, y + 11, { width: cardWidth - 20 });
+          doc.fillColor(ink).fontSize(18).text(String(value), x + 12, y + 28, { width: cardWidth - 20 });
+          x += cardWidth + gap;
         });
-        doc.y += rowHeight;
-      });
-      if ((report.items || []).length > rows.length) {
-        doc.moveDown(0.6);
-        doc.fontSize(8).fillColor('#6b7280').text(`PDF exibindo os primeiros ${rows.length} registros. Use o Excel para a base completa.`);
+        y += 78;
+        doc.roundedRect(pageLeft, y - 8, pageWidth, 26, 8).fill('#f8fafc');
+        doc.fillColor(muted).font('Helvetica').fontSize(8).text(
+          `Hoje: confirmação ${summary.patient_today_confirmation_rate || 0}% · pendentes ${summary.patient_today_pending_rate || 0}% · não confirmados ${summary.patient_today_not_confirmed_rate || 0}%   |   Dia seguinte: confirmação ${summary.patient_tomorrow_confirmation_rate || 0}% · pendentes ${summary.patient_tomorrow_pending_rate || 0}% · não confirmados ${summary.patient_tomorrow_not_confirmed_rate || 0}%`,
+          pageLeft + 10,
+          y,
+          { width: pageWidth - 20 }
+        );
+        y += 34;
+      };
+
+      const drawSectionTitle = (title, subtitle = '') => {
+        ensureSpace(38);
+        doc.fillColor(ink).font('Helvetica-Bold').fontSize(12).text(title, pageLeft, y);
+        y += 14;
+        if (subtitle) {
+          doc.fillColor(muted).font('Helvetica').fontSize(8).text(subtitle, pageLeft, y, { width: pageWidth });
+          y += 14;
+        } else {
+          y += 6;
+        }
+      };
+
+      const drawClinicSummary = () => {
+        drawSectionTitle('Resumo por clínica', 'Total do dia, confirmação, pendências, exceções e previsão do dia seguinte por unidade.');
+        const columns = [
+          ['Clínica', 214],
+          ['Hoje', 54],
+          ['Conf.', 74],
+          ['Pend.', 74],
+          ['Não conf.', 78],
+          ['Fake', 48],
+          ['Dia seg.', 60],
+          ['% dia seg.', 62]
+        ];
+        const rowHeight = 24;
+        const drawTableHeader = () => {
+          let x = pageLeft;
+          doc.roundedRect(pageLeft, y, pageWidth, rowHeight, 6).fill('#10213b');
+          columns.forEach(([label, width]) => {
+            doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(7).text(label, x + 5, y + 8, { width: width - 10 });
+            x += width;
+          });
+          y += rowHeight;
+        };
+        drawTableHeader();
+        (report.clinic_summaries || []).slice(0, 18).forEach((clinic, index) => {
+          ensureSpace(rowHeight + 4);
+          if (y < 100) drawTableHeader();
+          let x = pageLeft;
+          doc.rect(pageLeft, y, pageWidth, rowHeight).fill(index % 2 === 0 ? '#ffffff' : '#f8fafc');
+          [
+            truncate(clinic.clinic_name, 44),
+            clinic.today_total,
+            `${clinic.today_confirmed} (${clinic.today_confirmation_rate || 0}%)`,
+            `${clinic.today_pending} (${clinic.today_pending_rate || 0}%)`,
+            `${clinic.today_not_confirmed} (${clinic.today_not_confirmed_rate || 0}%)`,
+            clinic.patient_fake_appointment,
+            clinic.tomorrow_total,
+            `${clinic.tomorrow_confirmation_rate || 0}%`
+          ].forEach((value, columnIndex) => {
+            doc.fillColor(ink).font('Helvetica').fontSize(7).text(String(value ?? '-'), x + 5, y + 8, { width: columns[columnIndex][1] - 10 });
+            x += columns[columnIndex][1];
+          });
+          y += rowHeight;
+        });
+        y += 14;
+      };
+
+      const drawDemandBreakdown = () => {
+        drawSectionTitle('Clínicas por tipo de demanda', 'Separação operacional para controlar pacientes, tarefas gerais, confirmação e exceções.');
+        (report.clinic_summaries || []).slice(0, 10).forEach((clinic) => {
+          ensureSpace(78);
+          doc.roundedRect(pageLeft, y, pageWidth, 24, 8).fill('#eaf7f8');
+          doc.fillColor(ink).font('Helvetica-Bold').fontSize(9).text(truncate(clinic.clinic_name, 94), pageLeft + 10, y + 7, { width: pageWidth - 20 });
+          y += 30;
+          (clinic.demands || []).forEach((demand) => {
+            ensureSpace(30);
+            const label = `${demand.demand_label}: ${demand.total} total · ${demand.open} aberta(s) · ${demand.done} concluída(s) · ${demand.patient_confirmed} confirmada(s) · ${demand.patient_pending} pendente(s) · ${demand.patient_fake_appointment} fake`;
+            doc.fillColor(muted).font('Helvetica').fontSize(8).text(label, pageLeft + 12, y, { width: pageWidth - 24 });
+            y += 16;
+          });
+          y += 8;
+        });
+      };
+
+      const drawOperationalList = () => {
+        drawSectionTitle('Lista operacional por clínica', 'Principais registros para acompanhamento. A base completa permanece disponível no Excel.');
+        const itemsByClinic = new Map();
+        (report.items || []).forEach((item) => {
+          const key = item.clinic_id ? `clinic-${item.clinic_id}` : item.clinic_name || 'Sem clínica definida';
+          if (!itemsByClinic.has(key)) itemsByClinic.set(key, { clinicName: item.clinic_name || 'Sem clínica definida', items: [] });
+          itemsByClinic.get(key).items.push(item);
+        });
+
+        Array.from(itemsByClinic.values()).slice(0, 8).forEach((clinic) => {
+          ensureSpace(58);
+          doc.fillColor(teal).font('Helvetica-Bold').fontSize(9).text(clinic.clinicName, pageLeft, y, { width: pageWidth });
+          y += 14;
+          clinic.items.slice(0, 10).forEach((item) => {
+            ensureSpace(28);
+            const demandType = normalizeAgendaDemandType(item.demand_type, item);
+            const firstLine = `${truncate(item.patient_name || item.title, 38)} · ${getAgendaReportConfirmationLabel(item.confirmation_status, demandType)} · ${getAgendaReportDateLabel(item.patient_scheduled_at || item.due_at)}`;
+            const secondLine = [
+              item.assigned_user_name || item.owner_name || 'Sem responsável',
+              item.patient_fake_appointment ? 'AGENDAMENTO FAKE' : null,
+              item.free_notes ? truncate(item.free_notes, 64) : null
+            ].filter(Boolean).join(' · ');
+            doc.fillColor(ink).font('Helvetica-Bold').fontSize(8).text(firstLine, pageLeft + 10, y, { width: pageWidth - 20 });
+            y += 10;
+            doc.fillColor(muted).font('Helvetica').fontSize(7).text(secondLine || 'Sem observação adicional.', pageLeft + 10, y, { width: pageWidth - 20 });
+            y += 16;
+          });
+          y += 8;
+        });
+      };
+
+      drawHeader();
+      drawMetricCards();
+      drawClinicSummary();
+      drawDemandBreakdown();
+      drawOperationalList();
+      if ((report.items || []).length > 120) {
+        ensureSpace(24);
+        doc.fillColor(muted).font('Helvetica').fontSize(8).text('Este PDF prioriza a visualização executiva. Use o Excel para auditar todos os registros da base exportada.', pageLeft, y);
       }
 
       doc.end();
@@ -32185,6 +32510,9 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
     const patientScheduledAt = demandType === 'patient' && patientHasScheduled
       ? normalizeNullableMysqlDateTime(req.body?.patient_scheduled_at || req.body?.patientScheduledAt)
       : null;
+    const patientFakeAppointment = demandType === 'patient'
+      ? normalizeAgendaBoolean(req.body?.patient_fake_appointment ?? req.body?.patientFakeAppointment, false)
+      : false;
     const confirmationStatus = normalizeAgendaConfirmationStatus(
       req.body?.confirmation_status || req.body?.confirmationStatus,
       demandType
@@ -32216,10 +32544,11 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
       : null;
     const sourceLabel = sanitizeFinancialString(req.body?.source_label || req.body?.sourceLabel, 120) || null;
     const sourceBatchId = sanitizeFinancialString(req.body?.source_batch_id || req.body?.sourceBatchId, 120) || null;
+    const freeNotes = sanitizeFinancialString(req.body?.free_notes || req.body?.freeNotes, 5000) || null;
     const [result] = await pool.query(
       `INSERT INTO agenda_items
-       (company_id, owner_user_id, owner_name, assigned_user_id, assigned_user_name, assigned_user_email, clinic_id, clinic_name, demand_type, source_external_id, patient_name, patient_phone, patient_specialty, patient_dentist, patient_channel, patient_has_scheduled, patient_scheduled_at, confirmation_status, confirmation_notes, confirmation_recorded_at, confirmation_recorded_by_user_id, confirmation_recorded_by_name, source_label, source_batch_id, title, description, status, priority, is_daily_recurring, requires_completion, recurrence_base_status, recurrence_cycle_date, recurrence_weekdays_json, due_at, reminder_at, tags_json, checklist_json, board_order)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )`,
+       (company_id, owner_user_id, owner_name, assigned_user_id, assigned_user_name, assigned_user_email, clinic_id, clinic_name, demand_type, source_external_id, patient_name, patient_phone, patient_specialty, patient_dentist, patient_channel, patient_has_scheduled, patient_scheduled_at, confirmation_status, confirmation_notes, confirmation_recorded_at, confirmation_recorded_by_user_id, confirmation_recorded_by_name, source_label, source_batch_id, title, description, status, priority, is_daily_recurring, requires_completion, recurrence_base_status, recurrence_cycle_date, recurrence_weekdays_json, due_at, reminder_at, tags_json, checklist_json, board_order, patient_fake_appointment, free_notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ? )`,
       [
         companyId,
         ownerUserId,
@@ -32258,7 +32587,9 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
         normalizeNullableMysqlDateTime(req.body?.reminder_at || req.body?.reminderAt),
         JSON.stringify(tags),
         JSON.stringify(checklist),
-        Number(req.body?.board_order || req.body?.boardOrder || 0) || 0
+        Number(req.body?.board_order || req.body?.boardOrder || 0) || 0,
+        patientFakeAppointment ? 1 : 0,
+        freeNotes
       ]
     );
 
@@ -32377,7 +32708,9 @@ app.post('/api/agenda/items/replicate', authenticate, async (req, res) => {
       'reminder_at',
       'tags_json',
       'checklist_json',
-      'board_order'
+      'board_order',
+      'patient_fake_appointment',
+      'free_notes'
     ];
     const insertSql = `INSERT INTO agenda_items (${insertColumns.join(', ')}) VALUES (${insertColumns.map(() => '?').join(', ')})`;
 
@@ -32553,6 +32886,9 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(req.body, 'description')) {
       assign('description', sanitizeFinancialString(req.body.description, 4000) || null);
     }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'free_notes') || Object.prototype.hasOwnProperty.call(req.body, 'freeNotes')) {
+      assign('free_notes', sanitizeFinancialString(req.body.free_notes || req.body.freeNotes, 5000) || null);
+    }
     if (Object.prototype.hasOwnProperty.call(req.body, 'clinic_id') || Object.prototype.hasOwnProperty.call(req.body, 'clinicId')) {
       assign('clinic_id', Number(req.body.clinic_id || req.body.clinicId || 0) || null);
     }
@@ -32614,10 +32950,16 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
         assign('patient_scheduled_at', null);
       }
     }
+    if (Object.prototype.hasOwnProperty.call(req.body, 'patient_fake_appointment') || Object.prototype.hasOwnProperty.call(req.body, 'patientFakeAppointment')) {
+      assign('patient_fake_appointment', nextDemandType === 'patient'
+        ? (normalizeAgendaBoolean(req.body.patient_fake_appointment ?? req.body.patientFakeAppointment, false) ? 1 : 0)
+        : 0);
+    }
     if (nextDemandType !== 'patient' && (Object.prototype.hasOwnProperty.call(req.body, 'demand_type') || Object.prototype.hasOwnProperty.call(req.body, 'demandType'))) {
       assign('patient_specialty', null);
       assign('patient_dentist', null);
       assign('patient_channel', null);
+      assign('patient_fake_appointment', 0);
       assign('confirmation_status', null);
       assign('confirmation_notes', null);
       assign('confirmation_recorded_at', null);

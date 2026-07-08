@@ -93,8 +93,10 @@ const emptyDraft = {
   patient_phone: '',
   patient_has_scheduled: false,
   patient_scheduled_at: '',
+  patient_fake_appointment: false,
   confirmation_status: 'pendente',
   confirmation_notes: '',
+  free_notes: '',
   due_at: '',
   reminder_at: '',
   assigned_user_id: '',
@@ -164,8 +166,10 @@ function normalizeDraftFromItem(item = {}) {
     patient_phone: item.patient_phone || '',
     patient_has_scheduled: Boolean(item.patient_has_scheduled),
     patient_scheduled_at: toDatetimeLocal(item.patient_scheduled_at),
+    patient_fake_appointment: Boolean(item.patient_fake_appointment),
     confirmation_status: item.confirmation_status || 'pendente',
     confirmation_notes: item.confirmation_notes || '',
+    free_notes: item.free_notes || '',
     due_at: toDatetimeLocal(item.due_at),
     reminder_at: toDatetimeLocal(item.reminder_at),
     assigned_user_id: item.assigned_user_id ? String(item.assigned_user_id) : '',
@@ -353,6 +357,41 @@ function buildAgendaBoards(items = [], assigneeDirectory = new Map(), currentUse
     });
 }
 
+function buildAgendaClinicGroups(items = []) {
+  const groups = new Map();
+
+  items.forEach((item) => {
+    const clinicName = item.clinic_name || 'Sem clínica definida';
+    const clinicKey = item.clinic_id ? `clinic-${item.clinic_id}` : `clinic-name-${clinicName}`;
+    if (!groups.has(clinicKey)) {
+      groups.set(clinicKey, {
+        key: clinicKey,
+        clinicName,
+        clinicId: item.clinic_id || null,
+        items: [],
+        total: 0,
+        confirmed: 0,
+        pending: 0,
+        notConfirmed: 0,
+        fake: 0
+      });
+    }
+
+    const group = groups.get(clinicKey);
+    group.items.push(item);
+    group.total += 1;
+    if (item.confirmation_status === 'confirmado') group.confirmed += 1;
+    else if (item.confirmation_status === 'nao_confirmado') group.notConfirmed += 1;
+    else group.pending += 1;
+    if (item.patient_fake_appointment) group.fake += 1;
+  });
+
+  return Array.from(groups.values()).sort((left, right) => {
+    if (right.total !== left.total) return right.total - left.total;
+    return left.clinicName.localeCompare(right.clinicName, 'pt-BR');
+  });
+}
+
 function formatAgendaDashboardDate(value) {
   if (!value) return '-';
   const date = new Date(value);
@@ -490,6 +529,8 @@ function buildAgendaPreviewPayload(item = {}, source = 'task') {
       `Telefone: ${item.contact_phone_masked || item.patient_phone || '-'}`,
       `Status do contato: ${getAgendaContactStatusLabel(item.contact_status || '')}`,
       `Data da agenda: ${getAgendaDateMatchLabel(item.appointment_date_match_status || '')}`,
+      `Agendamento: ${item.patient_fake_appointment ? 'Fake' : 'Regular'}`,
+      `Observações: ${item.free_notes || '-'}`,
       `Fonte: ${item.contact_source || item.whatsapp_status_label || 'Aguardando atualização'}`,
       `Confiança: ${formatAgendaConfidence(item.contact_confidence_score || item.confidence_score)}`
     ]
@@ -581,7 +622,7 @@ function AgendaCard({
   };
   return (
     <article
-      className={`agenda-task-card priority-${item.priority || 'normal'} ${isOverdue(item.due_at) && item.status !== 'done' ? 'overdue' : ''}`}
+      className={`agenda-task-card priority-${item.priority || 'normal'} ${isOverdue(item.due_at) && item.status !== 'done' ? 'overdue' : ''} ${item.patient_fake_appointment ? 'fake-appointment' : ''}`}
       draggable
       role="button"
       tabIndex={0}
@@ -637,6 +678,15 @@ function AgendaCard({
             {getAgendaConfirmationStatusLabel(item.confirmation_status)}
           </button>
         ) : null}
+        {item.patient_fake_appointment ? (
+          <button
+            type="button"
+            className="agenda-inline-pill agenda-inline-pill-button danger"
+            onClick={(event) => onPreviewPin(event, previewPayload)}
+          >
+            Agendamento fake
+          </button>
+        ) : null}
       </div>
       <div className="agenda-card-secondary-meta">
         {recurrenceSummary ? <small>{recurrenceSummary}</small> : null}
@@ -673,6 +723,7 @@ function AgendaCard({
         {item.clinic_name ? <span>Unidade {item.clinic_name}</span> : null}
         {item.patient_name ? <span>Paciente {item.patient_name}</span> : null}
         {item.patient_has_scheduled && item.patient_scheduled_at ? <span>Agendado para {formatDateTime(item.patient_scheduled_at)}</span> : null}
+        {item.patient_fake_appointment ? <span className="agenda-fake-meta">Agendamento fake</span> : null}
         {executionStamp ? <span>{executionStamp}</span> : null}
       </div>
       {tags.length ? (
@@ -1387,8 +1438,10 @@ export default function AgendaPage() {
       patient_phone: draft.demand_type === 'patient' ? draft.patient_phone : null,
       patient_has_scheduled: draft.demand_type === 'patient' ? Boolean(draft.patient_has_scheduled) : false,
       patient_scheduled_at: draft.demand_type === 'patient' && draft.patient_has_scheduled ? (draft.patient_scheduled_at || null) : null,
+      patient_fake_appointment: draft.demand_type === 'patient' ? Boolean(draft.patient_fake_appointment) : false,
       confirmation_status: draft.demand_type === 'patient' ? draft.confirmation_status : null,
       confirmation_notes: draft.demand_type === 'patient' ? draft.confirmation_notes : null,
+      free_notes: draft.free_notes,
       due_at: draft.due_at || null,
       reminder_at: draft.reminder_at || null,
       assigned_user_id: draft.assigned_user_id || null,
@@ -3016,22 +3069,40 @@ export default function AgendaPage() {
                       </button>
                       <div className="agenda-card-list">
                         {loading ? <p className="empty-mini">Carregando agenda...</p> : null}
-                        {!loading && group.columns[column.key]?.length ? group.columns[column.key].map((item) => (
-                          <AgendaCard
-                            key={item.id}
-                            item={item}
-                            currentUserId={currentUserId}
-                            onOpen={openAgendaItemDetails}
-                            onStatus={updateStatus}
-                            onDragStart={setDraggingId}
-                            onOpenWhatsApp={openAgendaWhatsApp}
-                            onReprocessContact={reprocessContact}
-                            onPreviewEnter={handlePreviewEnter}
-                            onPreviewLeave={handlePreviewLeave}
-                            onPreviewPin={handlePreviewPin}
-                            openingWhatsappId={openingWhatsappId}
-                            reprocessingContactId={reprocessingContactId}
-                          />
+                        {!loading && group.columns[column.key]?.length ? buildAgendaClinicGroups(group.columns[column.key]).map((clinicGroup) => (
+                          <section key={`${group.key}-${column.key}-${clinicGroup.key}`} className="agenda-clinic-bucket">
+                            <header className="agenda-clinic-bucket-head">
+                              <div>
+                                <span>Clínica</span>
+                                <strong>{clinicGroup.clinicName}</strong>
+                              </div>
+                              <div className="agenda-clinic-bucket-stats">
+                                <small>{clinicGroup.total} total</small>
+                                <small>{clinicGroup.confirmed} conf.</small>
+                                <small>{clinicGroup.pending} pend.</small>
+                                {clinicGroup.fake ? <small className="danger">{clinicGroup.fake} fake</small> : null}
+                              </div>
+                            </header>
+                            <div className="agenda-clinic-bucket-list">
+                              {clinicGroup.items.map((item) => (
+                                <AgendaCard
+                                  key={item.id}
+                                  item={item}
+                                  currentUserId={currentUserId}
+                                  onOpen={openAgendaItemDetails}
+                                  onStatus={updateStatus}
+                                  onDragStart={setDraggingId}
+                                  onOpenWhatsApp={openAgendaWhatsApp}
+                                  onReprocessContact={reprocessContact}
+                                  onPreviewEnter={handlePreviewEnter}
+                                  onPreviewLeave={handlePreviewLeave}
+                                  onPreviewPin={handlePreviewPin}
+                                  openingWhatsappId={openingWhatsappId}
+                                  reprocessingContactId={reprocessingContactId}
+                                />
+                              ))}
+                            </div>
+                          </section>
                         )) : null}
                         {!loading && !group.columns[column.key]?.length ? <p className="empty-mini">Sem itens nesta etapa.</p> : null}
                       </div>
@@ -3062,6 +3133,20 @@ export default function AgendaPage() {
 
             <div className="agenda-editor-body">
               <div className="agenda-editor-main">
+                <div className="agenda-editor-summary-strip">
+                  <article>
+                    <span>Responsável</span>
+                    <strong>{draft.assigned_user_id ? (assigneeOptions.find((user) => String(user.id) === String(draft.assigned_user_id))?.name || 'Selecionado') : 'Sem responsável'}</strong>
+                  </article>
+                  <article>
+                    <span>Fluxo</span>
+                    <strong>{agendaColumns.find((column) => column.key === draft.status)?.label || 'A fazer'}</strong>
+                  </article>
+                  <article className={draft.patient_fake_appointment ? 'danger' : ''}>
+                    <span>Agenda</span>
+                    <strong>{draft.patient_fake_appointment ? 'Fake' : draft.patient_has_scheduled ? 'Agendada' : 'Sem agendamento'}</strong>
+                  </article>
+                </div>
                 <label>
                   Titulo da tarefa
                   <input
@@ -3082,6 +3167,15 @@ export default function AgendaPage() {
                   />
                 </label>
                 <label>
+                  Observações livres
+                  <textarea
+                    className="field agenda-textarea agenda-free-notes"
+                    value={draft.free_notes}
+                    onChange={(event) => setDraft((current) => ({ ...current, free_notes: event.target.value }))}
+                    placeholder="Registre observações operacionais, combinados internos, exceções e detalhes para acompanhamento."
+                  />
+                </label>
+                <label>
                   Tipo da demanda
                   <select
                     className="field"
@@ -3092,6 +3186,7 @@ export default function AgendaPage() {
                       confirmation_status: event.target.value === 'patient' ? current.confirmation_status || 'pendente' : 'pendente',
                       patient_has_scheduled: event.target.value === 'patient' ? current.patient_has_scheduled : false,
                       patient_scheduled_at: event.target.value === 'patient' ? current.patient_scheduled_at : '',
+                      patient_fake_appointment: event.target.value === 'patient' ? current.patient_fake_appointment : false,
                       patient_name: event.target.value === 'patient' ? current.patient_name : '',
                       patient_phone: event.target.value === 'patient' ? current.patient_phone : '',
                       confirmation_notes: event.target.value === 'patient' ? current.confirmation_notes : ''
@@ -3127,6 +3222,18 @@ export default function AgendaPage() {
                         <small>Marque quando já houver data reservada para o paciente.</small>
                       </div>
                     </label>
+                    <button
+                      type="button"
+                      className={`agenda-fake-appointment-button ${draft.patient_fake_appointment ? 'active' : ''}`}
+                      onClick={() => setDraft((current) => ({
+                        ...current,
+                        patient_fake_appointment: !current.patient_fake_appointment
+                      }))}
+                      aria-pressed={Boolean(draft.patient_fake_appointment)}
+                    >
+                      <strong>Agendamento Fake</strong>
+                      <small>Marque quando a data informada não representar comparecimento real ou exigir revisão.</small>
+                    </button>
                     <label>
                       Status da confirmação
                       <select className="field" value={draft.confirmation_status} onChange={(event) => setDraft((current) => ({ ...current, confirmation_status: event.target.value }))}>
