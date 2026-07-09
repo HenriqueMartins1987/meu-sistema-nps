@@ -17,6 +17,7 @@ export const complaintTypes = [
 ];
 
 export const serviceTypes = [
+  { value: 'avaliacao', label: 'Avaliação' },
   { value: 'clinico_geral', label: 'Clínico geral' },
   { value: 'ortodontia', label: 'Ortodontia' },
   { value: 'implante', label: 'Implante' },
@@ -38,7 +39,7 @@ export const channels = [
   { value: 'instagram', label: 'Instagram' },
   { value: 'reclame_aqui', label: 'Reclame Aqui' },
   { value: 'nps', label: 'NPS' },
-  { value: 'crc', label: 'CRC' },
+  { value: 'crc', label: 'CRC - Central de Relacionamento com Cliente' },
   { value: 'presencial', label: 'Presencial' },
   { value: 'outros', label: 'Outros' }
 ];

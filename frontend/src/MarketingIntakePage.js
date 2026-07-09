@@ -15,17 +15,18 @@ import {
 
 const maxUploadSizeBytes = 10 * 1024 * 1024;
 const manifestationOptions = [
-  { value: 'reclamacao', label: 'Reclamacao' },
-  { value: 'sugestao', label: 'Sugestao' },
+  { value: 'reclamacao', label: 'Reclamação' },
+  { value: 'sugestao', label: 'Sugestão' },
   { value: 'elogio', label: 'Elogio' }
 ];
 const channelOptions = [
   { value: 'Marketing', label: 'Marketing' },
+  { value: 'CRC - Central de Relacionamento com Cliente', label: 'CRC - Central de Relacionamento com Cliente' },
   { value: 'Instagram', label: 'Instagram' },
   { value: 'Facebook', label: 'Facebook' },
   { value: 'Google', label: 'Google' },
   { value: 'WhatsApp', label: 'WhatsApp' },
-  { value: 'Email', label: 'Email' },
+  { value: 'Email', label: 'E-mail' },
   { value: 'Telefone', label: 'Telefone' },
   { value: 'Reclame Aqui', label: 'Reclame Aqui' },
   { value: 'Site', label: 'Site' },

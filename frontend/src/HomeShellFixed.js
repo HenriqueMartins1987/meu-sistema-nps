@@ -131,6 +131,78 @@ function formatDateTime(value) {
   }).format(new Date(value));
 }
 
+function normalizeHomeStatusText(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function isClosedPatientAgendaStatus(status) {
+  return [
+    'cancelado',
+    'cancelada',
+    'encerrado',
+    'encerrada',
+    'finalizado',
+    'finalizada',
+    'fechado',
+    'fechada',
+    'concluido',
+    'concluida'
+  ].includes(normalizeHomeStatusText(status));
+}
+
+function getHomeLocalDayTimestamp(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  parsed.setHours(0, 0, 0, 0);
+  return parsed.getTime();
+}
+
+function getHomeScheduleDeadlineStatus(value) {
+  const scheduledDay = getHomeLocalDayTimestamp(value);
+  if (!scheduledDay) {
+    return {
+      key: 'unknown',
+      symbol: '•',
+      label: 'Data não informada',
+      tone: 'neutral'
+    };
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diff = scheduledDay - today.getTime();
+
+  if (diff < 0) {
+    return {
+      key: 'overdue',
+      symbol: '↓',
+      label: 'Vencido',
+      tone: 'danger'
+    };
+  }
+
+  if (diff === 0) {
+    return {
+      key: 'today',
+      symbol: '—',
+      label: 'Vence hoje',
+      tone: 'warning'
+    };
+  }
+
+  return {
+    key: 'on-time',
+    symbol: '↑',
+    label: 'Dentro do prazo',
+    tone: 'teal'
+  };
+}
+
 function buildComplaintAgendaAlert(item) {
   const dueAt = item?.due_at ? new Date(item.due_at) : null;
 
@@ -475,8 +547,6 @@ function HomeShellFixed() {
 
       const complaints = Array.isArray(complaintsRes.data) ? complaintsRes.data : [];
       const patientInteractions = Array.isArray(patientsRes.data) ? patientsRes.data : [];
-      const now = new Date();
-      const todayKey = now.toISOString().slice(0, 10);
 
       const complaintAgenda = complaints
         .filter((item) => item.status !== 'resolvida' && item.due_at)
@@ -503,33 +573,35 @@ function HomeShellFixed() {
         .filter(Boolean);
 
       const patientAgenda = patientInteractions
-        .filter((item) => item.status !== 'Cancelado' && item.scheduledAt)
+        .filter((item) => !isClosedPatientAgendaStatus(item.status) && item.scheduledAt)
         .map((item) => {
           const scheduledAt = new Date(item.scheduledAt);
 
           if (Number.isNaN(scheduledAt.getTime())) return null;
-          if (scheduledAt.toISOString().slice(0, 10) !== todayKey) return null;
+          const deadlineStatus = getHomeScheduleDeadlineStatus(item.scheduledAt);
 
           return {
             key: `patient-${item.id}`,
             type: 'Paciente',
             title: item.protocol || `PAC-${item.id}`,
             description: `${item.patient || 'Paciente'} · ${item.clinic || 'Unidade não informada'}`,
-            detail: `Agenda de hoje às ${formatDateTime(item.scheduledAt)}`,
+            detail: `Agendamento em ${formatDateTime(item.scheduledAt)}`,
+            deadlineStatus,
             when: scheduledAt.getTime(),
-            tone: 'teal',
-            urgent: false,
+            tone: deadlineStatus.tone,
+            urgent: deadlineStatus.key === 'overdue' || deadlineStatus.key === 'today',
             link: `/pacientes?abrir=${item.id}`
           };
         })
         .filter(Boolean);
 
       const complaintTreatmentAgenda = patientInteractions
-        .filter((item) => item.complaintId && String(item.status || '').toLowerCase() === 'em tratamento' && item.scheduledAt)
+        .filter((item) => item.complaintId && !isClosedPatientAgendaStatus(item.status) && String(item.status || '').toLowerCase() === 'em tratamento' && item.scheduledAt)
         .map((item) => {
           const scheduledAt = new Date(item.scheduledAt);
 
           if (Number.isNaN(scheduledAt.getTime())) return null;
+          const deadlineStatus = getHomeScheduleDeadlineStatus(item.scheduledAt);
 
           return {
             key: `complaint-treatment-${item.id}`,
@@ -537,6 +609,8 @@ function HomeShellFixed() {
             protocol: item.protocol || `PAC-${item.id}`,
             description: `${item.clinic || 'Unidade não informada'} · ${item.procedureName || 'Procedimento não informado'}`,
             detail: `${item.status || 'Em tratamento'} · ${formatDateTime(item.scheduledAt)}`,
+            deadlineStatus,
+            sacNotice: 'SAC: entrar em contato com o Coordenador e conferir no Ecuro se o paciente compareceu.',
             when: scheduledAt.getTime(),
             link: `/pacientes?abrir=${item.id}`
           };
@@ -1369,7 +1443,14 @@ function HomeShellFixed() {
                   <strong>{item.title}</strong>
                 </div>
                 <p>{item.description}</p>
-                <small>{item.detail}</small>
+                <div className="home-agenda-item-footer">
+                  {item.deadlineStatus && (
+                    <span className={`schedule-deadline-indicator ${item.deadlineStatus.key}`} title={item.deadlineStatus.label}>
+                      {item.deadlineStatus.symbol}
+                    </span>
+                  )}
+                  <small>{item.detail}</small>
+                </div>
               </button>
             ))}
           </div>
@@ -1407,7 +1488,15 @@ function HomeShellFixed() {
                     <strong>{item.title}</strong>
                   </div>
                   <p>{item.description}</p>
-                  <small>{item.protocol} | {item.detail}</small>
+                  <div className="home-agenda-item-footer">
+                    {item.deadlineStatus && (
+                      <span className={`schedule-deadline-indicator ${item.deadlineStatus.key}`} title={item.deadlineStatus.label}>
+                        {item.deadlineStatus.symbol}
+                      </span>
+                    )}
+                    <small>{item.protocol} | {item.detail}</small>
+                  </div>
+                  {isSacOperator && <em className="home-agenda-sac-note">{item.sacNotice}</em>}
                 </button>
               ))}
             </div>

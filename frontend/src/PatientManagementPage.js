@@ -134,6 +134,51 @@ function sortByRecentActivityDesc(a, b) {
   return Number(b?.id || 0) - Number(a?.id || 0);
 }
 
+function getLocalDayTimestamp(value) {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  parsed.setHours(0, 0, 0, 0);
+  return parsed.getTime();
+}
+
+function getScheduleDeadlineStatus(value) {
+  const scheduledDay = getLocalDayTimestamp(value);
+  if (!scheduledDay) {
+    return {
+      key: 'unknown',
+      symbol: '•',
+      label: 'Data não informada'
+    };
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diff = scheduledDay - today.getTime();
+
+  if (diff < 0) {
+    return {
+      key: 'overdue',
+      symbol: '↓',
+      label: 'Vencido'
+    };
+  }
+
+  if (diff === 0) {
+    return {
+      key: 'today',
+      symbol: '—',
+      label: 'Vence hoje'
+    };
+  }
+
+  return {
+    key: 'on-time',
+    symbol: '↑',
+    label: 'Dentro do prazo'
+  };
+}
+
 function groupCount(items, key) {
   const map = new Map();
 
@@ -985,7 +1030,10 @@ function PatientManagementPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {paginatedUpcomingRecords.map((record) => (
+                    {paginatedUpcomingRecords.map((record) => {
+                      const deadlineStatus = getScheduleDeadlineStatus(record.scheduledAt);
+
+                      return (
                       <tr key={record.id}>
                         <td>
                           <div className="table-cell-stack">
@@ -1011,7 +1059,14 @@ function PatientManagementPage() {
                             <span className="cell-secondary">{record.procedureName || 'Procedimento nao informado'} | {record.status}</span>
                           </div>
                         </td>
-                        <td>{formatDateTime(record.scheduledAt)}</td>
+                        <td>
+                          <div className="schedule-date-cell">
+                            <span className={`schedule-deadline-indicator ${deadlineStatus.key}`} aria-label={deadlineStatus.label} title={deadlineStatus.label}>
+                              {deadlineStatus.symbol}
+                            </span>
+                            <span>{formatDateTime(record.scheduledAt)}</span>
+                          </div>
+                        </td>
                         <td>
                           <div className="table-cell-stack">
                             <span className="cell-primary">{record.lastActorName || 'Sem tratativa'}</span>
@@ -1019,7 +1074,8 @@ function PatientManagementPage() {
                           </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -1168,7 +1224,10 @@ function PatientManagementPage() {
                 </tr>
               </thead>
               <tbody>
-                {!loading && visibleRecords.map((record) => (
+                {!loading && visibleRecords.map((record) => {
+                  const deadlineStatus = getScheduleDeadlineStatus(record.scheduledAt);
+
+                  return (
                   <tr key={record.id}>
                     <td>{record.protocol}</td>
                     <td>{record.patient}</td>
@@ -1179,7 +1238,14 @@ function PatientManagementPage() {
                       </div>
                     </td>
                     <td>{record.clinic}</td>
-                    <td>{formatDateTime(record.scheduledAt)}</td>
+                    <td>
+                      <div className="schedule-date-cell">
+                        <span className={`schedule-deadline-indicator ${deadlineStatus.key}`} aria-label={deadlineStatus.label} title={deadlineStatus.label}>
+                          {deadlineStatus.symbol}
+                        </span>
+                        <span>{formatDateTime(record.scheduledAt)}</span>
+                      </div>
+                    </td>
                     <td>
                       {activeTab === 'excluidos'
                         ? (record.cancelledByName || record.lastActorName || 'Sem registro')
@@ -1200,7 +1266,8 @@ function PatientManagementPage() {
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
 

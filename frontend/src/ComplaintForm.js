@@ -328,7 +328,7 @@ function ComplaintForm() {
 
           <div className="form-grid two">
             <label>
-              Canal de entrada
+              Canal de origem
               <select
                 className="field"
                 value={form.channel}
@@ -365,7 +365,7 @@ function ComplaintForm() {
                 className="field"
                 value={form.channel_other}
                 onChange={(event) => updateForm('channel_other', event.target.value.slice(0, 200))}
-                placeholder="Informe o canal de entrada"
+                placeholder="Informe o canal de origem"
                 maxLength={200}
                 required
               />
@@ -484,12 +484,12 @@ function ComplaintForm() {
 
           {form.service_type === 'outros' && (
             <label>
-              Descreva o outro serviÃ§o
+              Descreva o outro serviço
               <input
                 className="field"
                 value={form.service_type_other}
                 onChange={(event) => updateForm('service_type_other', event.target.value.slice(0, 200))}
-                placeholder="Informe o serviÃ§o envolvido"
+                placeholder="Informe o serviço envolvido"
                 maxLength={200}
                 required
               />
