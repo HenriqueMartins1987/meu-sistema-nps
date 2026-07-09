@@ -3,18 +3,11 @@
 const mysql = require('mysql2/promise');
 const jwt = require('jsonwebtoken');
 const { createNpsEnterpriseRouter } = require('./npsEnterpriseRoutes');
+const { buildMysqlPoolConfig } = require('../utils/databaseConfig');
 
-const db = mysql.createPool({
-  host: process.env.DB_HOST,
-  port: Number(process.env.DB_PORT || 3306),
-  user: process.env.DB_USER,
-  password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
-  waitForConnections: true,
-  connectionLimit: Math.max(2, Number(process.env.NPS_ENTERPRISE_DB_POOL_SIZE || 5)),
-  queueLimit: 0,
-  timezone: 'Z'
-});
+const db = mysql.createPool(buildMysqlPoolConfig(process.env, {
+  connectionLimit: Math.max(2, Number(process.env.NPS_ENTERPRISE_DB_POOL_SIZE || 5))
+}));
 
 function authenticate(req, res, next) {
   const authorization = String(req.headers.authorization || '');
