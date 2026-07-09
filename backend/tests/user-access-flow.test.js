@@ -1649,12 +1649,19 @@ test('SAC operator can reassign complaint directly to administration', async () 
       reply: async () => [[]]
     },
     {
-      match: (sql) => sql.includes('FROM users') && sql.includes("role IN ('admin', 'master_admin')"),
-      reply: async () => [[{
-        id: 1,
-        name: 'Administrador Master',
-        role: 'master_admin'
-      }]]
+      match: (sql) => sql.includes('FROM users') && sql.includes("role = 'admin'"),
+      reply: async () => [[
+        {
+          id: 41,
+          name: 'Willian Administrador',
+          role: 'admin'
+        },
+        {
+          id: 42,
+          name: 'Anna Administradora',
+          role: 'admin'
+        }
+      ]]
     },
     {
       match: (sql) => sql.includes('UPDATE complaints') && sql.includes('forwarded_to_role = ?'),
@@ -1694,11 +1701,11 @@ test('SAC operator can reassign complaint directly to administration', async () 
   assert.match(updateComplaintSql, /forwarded_to_role = \?/);
   assert.match(updateComplaintSql, /admin_escalated_at = COALESCE\(admin_escalated_at, NOW\(\)\)/);
   assert.ok(updateComplaintParams.includes('admin'));
-  assert.ok(updateComplaintParams.includes('Administrador Master'));
+  assert.ok(updateComplaintParams.includes('Willian Administrador'));
   assert.ok(updateComplaintParams.includes('escalonada_administracao'));
   assert.equal(updateComplaintParams.at(-1), '89');
   assert.equal(complaintLogParams[1], 'reassigned_forward');
-  assert.match(complaintLogParams[2], /Administrador Master/);
+  assert.match(complaintLogParams[2], /Willian Administrador/);
   assert.equal(complaintLogParams[6], 'escalonada_administracao');
 });
 
@@ -1861,15 +1868,18 @@ test('supervisor crc can assign agenda item to crc operator', async () => {
   assert.equal(response.body.assigned_user_id, 55);
 });
 
-test('only master admin and crc supervisor can replicate agenda items', () => {
+test('management profiles can replicate agenda items while operational profiles cannot', () => {
   assert.equal(serverModule.__testables.canReplicateAgendaItems({
     email: 'henrique.martins@grcconsultoria.net.br',
     role: 'admin'
   }), true);
   assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'master_admin' }), true);
   assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'supervisor_crc' }), true);
-  assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'admin' }), false);
-  assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'crc_leader' }), false);
+  assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'admin' }), true);
+  assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'crc_leader' }), true);
+  assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'crc_manager' }), true);
+  assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'manager' }), true);
+  assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'coordinator' }), true);
   assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'crc_operator' }), false);
 });
 

@@ -469,6 +469,27 @@ function formatAgendaPercent(value) {
   return `${numeric.toFixed(numeric % 1 === 0 ? 0 : 1)}%`;
 }
 
+function clampAgendaUiPercent(value) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.min(100, numeric));
+}
+
+function getAgendaCollaboratorTone(item = {}) {
+  if (Number(item.overdue || 0) > 0 || Number(item.patient_evasion || 0) > 0) return 'danger';
+  if (Number(item.due_24h || 0) > 0 || Number(item.mandatory_open || 0) > 0) return 'warning';
+  if (Number(item.productivity_index || 0) >= 70 && Number(item.completion_rate_period || 0) >= 70) return 'success';
+  return 'neutral';
+}
+
+function getAgendaCollaboratorStatusLabel(item = {}) {
+  const tone = getAgendaCollaboratorTone(item);
+  if (tone === 'danger') return 'Atenção crítica';
+  if (tone === 'warning') return 'Monitorar hoje';
+  if (tone === 'success') return 'Alta performance';
+  return 'Operação estável';
+}
+
 function getAgendaEvolutionToneClass(value) {
   const numeric = Number(value || 0);
   if (numeric >= 4) return 'strong';
@@ -1516,6 +1537,38 @@ export default function AgendaPage({ initialView = 'agenda' }) {
     (dashboard?.collaborators || []).find((item) => item.key === selectedEvolutionCollaboratorKey) || null
   ), [dashboard, selectedEvolutionCollaboratorKey]);
 
+  const dashboardCollaborators = useMemo(() => (
+    Array.isArray(dashboard?.collaborators) ? dashboard.collaborators : []
+  ), [dashboard]);
+
+  const selectedDashboardCollaborator = useMemo(() => (
+    dashboardCollaborators.find((item) => item.key === selectedEvolutionCollaboratorKey)
+      || dashboardCollaborators[0]
+      || null
+  ), [dashboardCollaborators, selectedEvolutionCollaboratorKey]);
+
+  const collaboratorTotals = useMemo(() => (
+    dashboardCollaborators.reduce((acc, item) => ({
+      total: acc.total + Number(item.total || 0),
+      open: acc.open + Number(item.open || 0),
+      overdue: acc.overdue + Number(item.overdue || 0),
+      completedPeriod: acc.completedPeriod + Number(item.completed_period || 0),
+      scheduledPeriod: acc.scheduledPeriod + Number(item.scheduled_period || 0),
+      patientTotal: acc.patientTotal + Number(item.patient_total || 0),
+      patientConfirmed: acc.patientConfirmed + Number(item.patient_confirmed || 0),
+      patientEvasion: acc.patientEvasion + Number(item.patient_evasion || 0)
+    }), {
+      total: 0,
+      open: 0,
+      overdue: 0,
+      completedPeriod: 0,
+      scheduledPeriod: 0,
+      patientTotal: 0,
+      patientConfirmed: 0,
+      patientEvasion: 0
+    })
+  ), [dashboardCollaborators]);
+
   const selectedEvolutionSeries = useMemo(() => (
     Array.isArray(selectedEvolutionCollaborator?.daily_series) ? selectedEvolutionCollaborator.daily_series : []
   ), [selectedEvolutionCollaborator]);
@@ -2548,48 +2601,124 @@ export default function AgendaPage({ initialView = 'agenda' }) {
                 <div className="agenda-panel-headline">
                   <div>
                     <strong>Métricas por colaborador</strong>
-                    <span>Produtividade individual, vencimentos e execução obrigatória.</span>
+                    <span>Produtividade, risco operacional, confirmação de pacientes e pressão de backlog por colaborador.</span>
                   </div>
-                  <small>{dashboardLoading ? 'Atualizando...' : `${dashboard?.collaborators?.length || 0} colaborador(es)`}</small>
+                  <small>{dashboardLoading ? 'Atualizando...' : `${dashboardCollaborators.length || 0} colaborador(es) · ${collaboratorTotals.open || 0} aberto(s)`}</small>
                 </div>
-                <div className="agenda-collaborator-table-wrap">
-                  <table className="agenda-collaborator-table">
-                    <thead>
-                      <tr>
-                        <th>Colaborador</th>
-                        <th>Abertas</th>
-                        <th>Atrasadas</th>
-                        <th>Confirmação</th>
-                        <th>Evasão</th>
-                        <th>24h</th>
-                        <th>48h</th>
-                        <th>Concl. 7d</th>
-                        <th>Índice</th>
-                        <th>Última execução</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(dashboard?.collaborators || []).map((item) => (
-                        <tr key={item.key}>
-                          <td>
+
+                <div className="agenda-collaborator-summary-grid">
+                  <article>
+                    <span>Concluídas no período</span>
+                    <strong>{collaboratorTotals.completedPeriod}</strong>
+                    <small>{collaboratorTotals.scheduledPeriod} programada(s)</small>
+                  </article>
+                  <article>
+                    <span>Taxa global</span>
+                    <strong>{formatAgendaPercent(dashboard?.summary?.completion_rate_period || 0)}</strong>
+                    <small>concluídas sobre programadas</small>
+                  </article>
+                  <article className={collaboratorTotals.overdue ? 'danger' : ''}>
+                    <span>Atrasadas</span>
+                    <strong>{collaboratorTotals.overdue}</strong>
+                    <small>{dashboard?.summary?.due_24h || 0} vencendo em 24h</small>
+                  </article>
+                  <article>
+                    <span>Confirmação</span>
+                    <strong>{formatAgendaPercent(dashboard?.summary?.patient_confirmation_rate || 0)}</strong>
+                    <small>{collaboratorTotals.patientConfirmed}/{collaboratorTotals.patientTotal || 0} pacientes</small>
+                  </article>
+                </div>
+
+                <div className="agenda-collaborator-board" role="list" aria-label="Métricas por colaborador">
+                  {dashboardCollaborators.map((item, index) => {
+                    const isActive = selectedDashboardCollaborator?.key === item.key;
+                    const tone = getAgendaCollaboratorTone(item);
+                    const executionRate = clampAgendaUiPercent(item.completion_rate_period || 0);
+                    const confirmationRate = clampAgendaUiPercent(item.patient_confirmation_rate || 0);
+                    const productivityRate = clampAgendaUiPercent(item.productivity_index || 0);
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        className={`agenda-collaborator-card ${tone} ${isActive ? 'active' : ''}`}
+                        onClick={() => setSelectedEvolutionCollaboratorKey(item.key)}
+                        role="listitem"
+                      >
+                        <div className="agenda-collaborator-rank">
+                          <span>{String(index + 1).padStart(2, '0')}</span>
+                          <i>{getAgendaCollaboratorStatusLabel(item)}</i>
+                        </div>
+                        <div className="agenda-collaborator-card-head">
+                          <div>
                             <strong>{item.name}</strong>
                             <small>{item.role || 'Equipe CRC'}</small>
-                          </td>
-                          <td>{item.open}</td>
-                          <td className={item.overdue ? 'danger-cell' : ''}>{item.overdue}</td>
-                          <td>{formatAgendaPercent(item.patient_confirmation_rate || 0)}</td>
-                          <td className={item.patient_evasion ? 'danger-cell' : ''}>{item.patient_evasion || 0}</td>
-                          <td>{item.due_24h}</td>
-                          <td>{item.due_48h}</td>
-                          <td>{item.completed_7d}</td>
-                          <td>{item.productivity_index}%</td>
-                          <td>{formatAgendaDashboardDate(item.last_completed_at)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  {!dashboardLoading && !(dashboard?.collaborators || []).length ? <p className="empty-state">Nenhuma métrica de colaborador disponível.</p> : null}
+                          </div>
+                          <em>{formatAgendaPercent(productivityRate)}</em>
+                        </div>
+                        <div className="agenda-collaborator-metrics">
+                          <span><strong>{item.open || 0}</strong> abertas</span>
+                          <span className={item.overdue ? 'danger-cell' : ''}><strong>{item.overdue || 0}</strong> atrasadas</span>
+                          <span><strong>{item.completed_period || 0}</strong> concl. período</span>
+                          <span><strong>{item.completed_7d || 0}</strong> concl. 7d</span>
+                          <span><strong>{item.due_24h || 0}</strong> 24h</span>
+                          <span><strong>{item.patient_evasion || 0}</strong> evasão</span>
+                        </div>
+                        <div className="agenda-collaborator-bars">
+                          <label>
+                            <span>Execução</span>
+                            <strong>{formatAgendaPercent(executionRate)}</strong>
+                            <i><b style={{ width: `${executionRate}%` }} /></i>
+                          </label>
+                          <label>
+                            <span>Confirmação</span>
+                            <strong>{formatAgendaPercent(confirmationRate)}</strong>
+                            <i><b style={{ width: `${confirmationRate}%` }} /></i>
+                          </label>
+                        </div>
+                        <small className="agenda-collaborator-foot">
+                          Última execução: {formatAgendaDashboardDate(item.last_completed_at)} · Saldo {item.execution_balance >= 0 ? `+${item.execution_balance || 0}` : item.execution_balance}
+                        </small>
+                      </button>
+                    );
+                  })}
+                  {!dashboardLoading && !dashboardCollaborators.length ? <p className="empty-state">Nenhuma métrica de colaborador disponível.</p> : null}
                 </div>
+
+                {selectedDashboardCollaborator ? (
+                  <div className={`agenda-collaborator-detail ${getAgendaCollaboratorTone(selectedDashboardCollaborator)}`}>
+                    <div>
+                      <span>Detalhe do colaborador selecionado</span>
+                      <strong>{selectedDashboardCollaborator.name}</strong>
+                      <small>{getAgendaCollaboratorStatusLabel(selectedDashboardCollaborator)} · {selectedDashboardCollaborator.role || 'Equipe CRC'}</small>
+                    </div>
+                    <div className="agenda-collaborator-detail-grid">
+                      <article>
+                        <span>Programadas</span>
+                        <strong>{selectedDashboardCollaborator.scheduled_period || 0}</strong>
+                      </article>
+                      <article>
+                        <span>Concluídas</span>
+                        <strong>{selectedDashboardCollaborator.completed_period || 0}</strong>
+                      </article>
+                      <article>
+                        <span>Saldo</span>
+                        <strong>{selectedDashboardCollaborator.execution_balance >= 0 ? `+${selectedDashboardCollaborator.execution_balance || 0}` : selectedDashboardCollaborator.execution_balance}</strong>
+                      </article>
+                      <article>
+                        <span>Média diária</span>
+                        <strong>{selectedDashboardCollaborator.daily_average_completed || 0}</strong>
+                      </article>
+                      <article>
+                        <span>Pacientes</span>
+                        <strong>{selectedDashboardCollaborator.patient_total || 0}</strong>
+                      </article>
+                      <article>
+                        <span>Pendentes CRC</span>
+                        <strong>{selectedDashboardCollaborator.patient_pending || 0}</strong>
+                      </article>
+                    </div>
+                  </div>
+                ) : null}
               </Card>
 
               <div className="agenda-insight-column">

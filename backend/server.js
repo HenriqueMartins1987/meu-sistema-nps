@@ -29135,6 +29135,19 @@ function sumAgendaSeriesMetric(series = [], field = 'completed', startIndex = 0,
   return series.slice(safeStart, safeEnd).reduce((total, item) => total + Number(item?.[field] || 0), 0);
 }
 
+function clampAgendaPercent(value) {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return 0;
+  return Math.max(0, Math.min(100, Math.round(numeric * 10) / 10));
+}
+
+function calculateAgendaRate(numerator, denominator, fallbackWhenNoDenominator = 0) {
+  const safeNumerator = Math.max(0, Number(numerator || 0));
+  const safeDenominator = Math.max(0, Number(denominator || 0));
+  if (!safeDenominator) return safeNumerator > 0 ? clampAgendaPercent(fallbackWhenNoDenominator) : 0;
+  return clampAgendaPercent((safeNumerator * 100) / safeDenominator);
+}
+
 function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = {}) {
   const now = new Date();
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
@@ -29527,9 +29540,7 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
       })).map((point) => ({
         ...point,
         net_flow: Number(point.completed || 0) - Number(point.created || 0),
-        completion_rate: Number(point.scheduled || 0)
-          ? Math.round(((Number(point.completed || 0) * 100) / Math.max(1, Number(point.scheduled || 0))) * 10) / 10
-          : (Number(point.completed || 0) > 0 ? 100 : 0)
+        completion_rate: calculateAgendaRate(point.completed, point.scheduled, 100)
       }));
 
       const bestDay = dailySeries.reduce((best, point) => {
@@ -29555,22 +29566,23 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
         activity_days: dailySeries.filter((point) => (point.created || point.completed || point.scheduled)).length,
         daily_average_completed: Math.round(((item.completed_period / Math.max(1, periodDays)) * 10)) / 10,
         daily_average_created: Math.round(((item.created_period / Math.max(1, periodDays)) * 10)) / 10,
-        completion_rate_period: item.scheduled_period
-          ? Math.round(((item.completed_period * 100) / Math.max(1, item.scheduled_period)) * 10) / 10
-          : (item.completed_period > 0 ? 100 : 0),
-        patient_confirmation_rate: item.patient_total
-          ? Math.round(((item.patient_confirmed * 100) / Math.max(1, item.patient_total)) * 10) / 10
-          : 0,
+        completion_rate_period: calculateAgendaRate(item.completed_period, item.scheduled_period, 100),
+        patient_confirmation_rate: calculateAgendaRate(item.patient_confirmed, item.patient_total, 0),
         best_day_completed: Number(bestDay.completed || 0),
         best_day_date: bestDay.date_key || null,
         last_7d_completed: last7dCompleted,
         previous_7d_completed: previous7dCompleted,
         momentum_delta: last7dCompleted - previous7dCompleted,
         current_streak: currentStreak,
-        productivity_index: Math.max(
-          0,
-          Math.round(((item.completed_7d * 100) / Math.max(1, item.open + item.completed_7d)) * 10) / 10
-        )
+        productivity_denominator: Number(item.open || 0) + Number(item.completed_period || 0),
+        productivity_index: calculateAgendaRate(
+          item.completed_period,
+          Number(item.open || 0) + Number(item.completed_period || 0),
+          100
+        ),
+        execution_balance: Number(item.completed_period || 0) - Number(item.scheduled_period || 0),
+        backlog_pressure: Number(item.open || 0) + Number(item.overdue || 0) + Number(item.due_24h || 0),
+        quality_alerts: Number(item.overdue || 0) + Number(item.patient_evasion || 0) + Number(item.mandatory_open || 0)
       };
     })
     .sort((left, right) => {
@@ -29588,19 +29600,16 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
       total + ((collaborator.daily_series || []).some((entry) => entry.date_key === point.date_key && (entry.created || entry.completed || entry.scheduled)) ? 1 : 0)
     ), 0),
     net_flow: Number(point.completed || 0) - Number(point.created || 0),
-    completion_rate: Number(point.scheduled || 0)
-      ? Math.round(((Number(point.completed || 0) * 100) / Math.max(1, Number(point.scheduled || 0))) * 10) / 10
-      : (Number(point.completed || 0) > 0 ? 100 : 0)
+    completion_rate: calculateAgendaRate(point.completed, point.scheduled, 100)
   }));
 
   summary.daily_average_completed = Math.round(((summary.completed_period / Math.max(1, periodDays)) * 10)) / 10;
   summary.daily_average_created = Math.round(((summary.created_period / Math.max(1, periodDays)) * 10)) / 10;
-  summary.completion_rate_period = summary.scheduled_period
-    ? Math.round(((summary.completed_period * 100) / Math.max(1, summary.scheduled_period)) * 10) / 10
-    : (summary.completed_period > 0 ? 100 : 0);
-  summary.patient_confirmation_rate = summary.patient_total
-    ? Math.round(((summary.patient_confirmed * 100) / Math.max(1, summary.patient_total)) * 10) / 10
-    : 0;
+  summary.completion_rate_period = calculateAgendaRate(summary.completed_period, summary.scheduled_period, 100);
+  summary.patient_confirmation_rate = calculateAgendaRate(summary.patient_confirmed, summary.patient_total, 0);
+  summary.productivity_denominator = Number(summary.open || 0) + Number(summary.completed_period || 0);
+  summary.productivity_index = calculateAgendaRate(summary.completed_period, summary.productivity_denominator, 100);
+  summary.execution_balance = Number(summary.completed_period || 0) - Number(summary.scheduled_period || 0);
 
   urgentItems.sort((left, right) => {
     const leftHours = getAgendaHoursUntil(left.due_at);
