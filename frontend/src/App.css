@@ -15715,6 +15715,227 @@ a {
   gap: 12px;
 }
 
+.agenda-command-center .agenda-box-visual-grid,
+.agenda-command-center .agenda-kpis {
+  display: none;
+}
+
+.agenda-scope-panel {
+  padding: 16px;
+  border: 1px solid rgba(211, 219, 232, 0.92);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at top left, rgba(29, 143, 106, 0.08), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 249, 252, 0.96));
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.agenda-scope-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.agenda-scope-tab {
+  display: grid;
+  gap: 6px;
+  padding: 15px 16px;
+  border: 1px solid rgba(207, 216, 230, 0.92);
+  border-radius: 20px;
+  background: rgba(255, 255, 255, 0.9);
+  color: #334155;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease;
+}
+
+.agenda-scope-tab:hover {
+  transform: translateY(-1px);
+  border-color: rgba(29, 143, 106, 0.34);
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.08);
+}
+
+.agenda-scope-tab.active {
+  border-color: rgba(29, 143, 106, 0.42);
+  background: linear-gradient(135deg, rgba(29, 143, 106, 0.12), rgba(255, 255, 255, 0.96));
+}
+
+.agenda-scope-tab strong {
+  color: #10213b;
+  font-size: 0.96rem;
+  font-weight: 900;
+}
+
+.agenda-scope-tab span,
+.agenda-scope-tab small {
+  color: rgba(49, 65, 91, 0.72);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.agenda-export-strip {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 16px;
+  align-items: center;
+  padding: 16px;
+  border: 1px solid rgba(211, 219, 232, 0.92);
+  border-radius: 24px;
+  background:
+    radial-gradient(circle at 96% 10%, rgba(200, 154, 87, 0.16), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.96));
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
+}
+
+.agenda-export-copy {
+  display: grid;
+  gap: 5px;
+}
+
+.agenda-export-copy span {
+  color: #6d5939;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.agenda-export-copy strong {
+  color: #10213b;
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.agenda-export-copy small {
+  color: rgba(49, 65, 91, 0.72);
+  line-height: 1.45;
+}
+
+.agenda-export-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.agenda-export-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 46px;
+  padding: 9px 13px 9px 9px;
+  border: 1px solid rgba(207, 216, 230, 0.92);
+  border-radius: 16px;
+  background: #ffffff;
+  color: #10213b;
+  cursor: pointer;
+  font-weight: 900;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.06);
+}
+
+.agenda-export-button:disabled {
+  cursor: wait;
+  opacity: 0.72;
+}
+
+.agenda-export-icon {
+  display: inline-grid;
+  min-width: 44px;
+  min-height: 32px;
+  place-items: center;
+  border-radius: 12px;
+  color: #ffffff;
+  font-size: 0.74rem;
+  font-weight: 1000;
+  letter-spacing: 0.06em;
+}
+
+.agenda-export-button.excel .agenda-export-icon {
+  background: linear-gradient(135deg, #0f7a55, #22a06b);
+}
+
+.agenda-export-button.pdf .agenda-export-icon {
+  background: linear-gradient(135deg, #991b1b, #ef4444);
+}
+
+.agenda-dashboard-visual-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.agenda-dashboard-visual-card {
+  display: grid;
+  gap: 14px;
+  min-height: 320px;
+}
+
+.agenda-mini-pie-wrap {
+  display: grid;
+  gap: 10px;
+}
+
+.agenda-mini-pie-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agenda-mini-pie-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border: 1px solid rgba(218, 226, 237, 0.92);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #334155;
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.agenda-mini-pie-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.agenda-quality-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.agenda-quality-metrics article {
+  display: grid;
+  gap: 4px;
+  padding: 11px;
+  border: 1px solid rgba(218, 226, 237, 0.92);
+  border-radius: 16px;
+  background: rgba(248, 250, 252, 0.86);
+}
+
+.agenda-quality-metrics span {
+  color: #64748b;
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agenda-quality-metrics strong {
+  color: #10213b;
+  font-size: 1.32rem;
+  font-weight: 1000;
+}
+
+.agenda-quality-metrics small {
+  color: rgba(49, 65, 91, 0.72);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
 .agenda-control-panel {
   padding: 16px;
   border: 1px solid rgba(211, 219, 232, 0.92);
@@ -17339,7 +17560,9 @@ a {
 
 @media (max-width: 640px) {
   .agenda-executive-highlight-grid,
-  .agenda-box-visual-grid {
+  .agenda-box-visual-grid,
+  .agenda-dashboard-visual-grid,
+  .agenda-scope-tabs {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -17824,8 +18047,20 @@ a {
 
   .agenda-toolbar-filters,
   .agenda-editor-grid,
-  .agenda-period-ranking-grid {
+  .agenda-period-ranking-grid,
+  .agenda-export-strip,
+  .agenda-quality-metrics,
+  .agenda-lab-warning-box.agenda-editor-inline-panel {
     grid-template-columns: 1fr;
+  }
+
+  .agenda-export-actions {
+    justify-content: stretch;
+  }
+
+  .agenda-export-button {
+    justify-content: flex-start;
+    width: 100%;
   }
 
   .agenda-tab-button {
@@ -18584,6 +18819,19 @@ a {
   background:
     linear-gradient(180deg, rgba(255, 251, 235, 0.98), rgba(255, 247, 237, 0.96)),
     radial-gradient(circle at top right, rgba(245, 158, 11, 0.12), transparent 42%);
+}
+
+.agenda-lab-warning-box.agenda-editor-inline-panel {
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(0, 1.15fr) minmax(220px, 0.85fr);
+  align-items: start;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.agenda-lab-warning-box.agenda-editor-inline-panel label,
+.agenda-lab-warning-box.agenda-editor-inline-panel .field {
+  min-width: 0;
 }
 
 .agenda-lab-warning-box > div {

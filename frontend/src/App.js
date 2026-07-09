@@ -115,6 +115,7 @@ function App() {
       <Route element={<ProtectedRoute />}>
         <Route element={<PermissionRoute permission="home" />}>
           <Route path="/agenda" element={<AgendaPage />} />
+          <Route path="/agenda/dashboard" element={<AgendaPage initialView="dashboard" />} />
           <Route path="/home" element={<Home />} />
           <Route path="/home/relatorios" element={<ReportsHub />} />
           <Route path="/perfil" element={<Profile />} />

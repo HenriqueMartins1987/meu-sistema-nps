@@ -11263,11 +11263,23 @@ async function getActiveComplaintAdministrators() {
        FROM users
       WHERE active = 1
         AND deleted_at IS NULL
-        AND role IN ('admin', 'master_admin')
-      ORDER BY CASE WHEN role = 'master_admin' THEN 0 ELSE 1 END, name ASC`
+        AND role = 'admin'
+      ORDER BY CASE
+        WHEN LOWER(COALESCE(name, '')) LIKE '%willian%' OR LOWER(COALESCE(email, '')) LIKE '%willian%' THEN 0
+        WHEN LOWER(COALESCE(name, '')) LIKE '%anna%' OR LOWER(COALESCE(name, '')) LIKE '%ana%' OR LOWER(COALESCE(email, '')) LIKE '%anna%' OR LOWER(COALESCE(email, '')) LIKE '%ana%' THEN 1
+        ELSE 2
+      END, name ASC`
   );
 
-  return rows;
+  const preferredAdministrators = rows.filter((row) => {
+    const normalizedIdentity = normalizeComparableText(`${row.name || ''} ${row.email || ''}`);
+    const identityTokens = normalizedIdentity.split('_').filter(Boolean);
+    return identityTokens.includes('willian')
+      || identityTokens.includes('anna')
+      || identityTokens.includes('ana');
+  });
+
+  return preferredAdministrators.length ? preferredAdministrators : rows;
 }
 
 async function notifyComplaintEscalationRecipients(complaint, recipients, eventType, title, message) {
@@ -11468,15 +11480,23 @@ async function runComplaintEscalationSweep(now = new Date()) {
 
   for (const complaint of managerRows) {
     const previousStatus = complaint.status || 'aberta';
+    if (!adminRecipients) {
+      adminRecipients = await getActiveComplaintAdministrators();
+    }
+    const primaryAdministrator = adminRecipients[0] || null;
+    const administratorLabel = adminRecipients.length
+      ? adminRecipients.map((administrator) => administrator.name).filter(Boolean).join(' / ')
+      : 'Administração';
+
     const [updateResult] = await pool.query(
       `UPDATE complaints c
           SET status = 'escalonada_administracao',
               forwarded_to_role = 'admin',
-              forwarded_to_label = 'Administração',
+              forwarded_to_label = ?,
               forwarded_at = ?,
               forwarded_by = ?,
-              assigned_responsible_user_id = NULL,
-              assigned_responsible_name = 'Administração',
+              assigned_responsible_user_id = ?,
+              assigned_responsible_name = ?,
               assigned_responsible_role = 'admin',
               admin_escalated_at = COALESCE(admin_escalated_at, ?),
               current_escalation_level = 'admin',
@@ -11497,8 +11517,11 @@ async function runComplaintEscalationSweep(now = new Date()) {
             OR c.status IN ('escalonada_gerente', 'em_tratativa_gerente', 'vencida_gerente')
           )`,
       [
+        administratorLabel,
         nowSql,
         systemUser.name,
+        primaryAdministrator?.id || null,
+        administratorLabel,
         nowSql,
         complaint.id,
         nowSql
@@ -11520,10 +11543,6 @@ async function runComplaintEscalationSweep(now = new Date()) {
         stageDurationHours: getComplaintStageDurationHours(complaint, 'manager_assigned_at', now)
       }
     );
-
-    if (!adminRecipients) {
-      adminRecipients = await getActiveComplaintAdministrators();
-    }
 
     await notifyComplaintEscalationRecipients(
       { ...complaint, status: 'escalonada_administracao', current_escalation_level: 'admin' },
@@ -27341,7 +27360,14 @@ function canImportAgendaWorkbook(user) {
 
 function canReplicateAgendaItems(user) {
   if (isMasterAdminUser(user)) return true;
-  return normalizeAccessRole(user?.role) === 'supervisor_crc';
+  return [
+    'admin',
+    'supervisor_crc',
+    'crc_leader',
+    'crc_manager',
+    'manager',
+    'coordinator'
+  ].includes(normalizeAccessRole(user?.role));
 }
 
 function normalizeAgendaReplicationDateValue(value) {
@@ -33187,7 +33213,7 @@ app.post('/api/agenda/items', authenticate, async (req, res) => {
 app.post('/api/agenda/items/replicate', authenticate, async (req, res) => {
   try {
     if (!canReplicateAgendaItems(req.user)) {
-      return res.status(403).json({ error: 'Apenas o Administrador Master e o Supervisor de CRC podem replicar agendas.' });
+      return res.status(403).json({ error: 'Apenas Gerencia, Coordenacao, Administracao, Supervisao e Lideranca podem replicar agendas.' });
     }
 
     const sourceUserId = normalizeAgendaUserId(req.body?.source_user_id || req.body?.sourceUserId);

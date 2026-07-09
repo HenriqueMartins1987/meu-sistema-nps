@@ -2,14 +2,18 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Bar,
   CartesianGrid,
+  Cell,
   ComposedChart,
   Legend,
   Line,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis
 } from 'recharts';
+import { useNavigate } from 'react-router-dom';
 import api, { getApiErrorMessage } from '../api';
 import { ActionButtons, Card, DashboardGrid, KPICard, PageHeader, SectionContainer } from '../components/DesignSystem';
 import { getUserDisplayName, isMasterAdmin, normalizeRoleValue, readUser } from '../constants';
@@ -85,6 +89,21 @@ const agendaDuplicateStrategyOptions = [
 
 const agendaLaboratoryOptions = ['Astetic', 'Loyola', 'Marcos', 'Simão', 'Wilton', 'Outros'];
 
+const agendaPieColors = ['#1d8f6a', '#c89a57', '#4965ff', '#ef4444', '#94a3b8', '#f59e0b'];
+
+const agendaScopeOptions = [
+  {
+    value: 'patient',
+    label: 'Agendamentos e confirmações',
+    helper: 'Pacientes importados, confirmação via WhatsApp, evasão e retorno.'
+  },
+  {
+    value: 'tasks',
+    label: 'Tarefas internas',
+    helper: 'Demandas operacionais, follow-ups e rotinas administrativas.'
+  }
+];
+
 const emptyDraft = {
   title: '',
   description: '',
@@ -158,6 +177,32 @@ function isOverdue(value) {
   if (!value) return false;
   const date = new Date(value);
   return !Number.isNaN(date.getTime()) && date.getTime() < Date.now();
+}
+
+function normalizeAgendaIdentityText(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ');
+}
+
+function isAgendaPatientDemand(item = {}) {
+  return (item.demand_type || 'general') === 'patient'
+    || Boolean(item.patient_name)
+    || Boolean(item.patient_phone);
+}
+
+function getAgendaPatientDuplicateKey(item = {}) {
+  const phoneDigits = String(item.patient_phone || item.contact_phone_normalized || item.phone || '').replace(/\D/g, '');
+  if (phoneDigits.length >= 10) return `phone-${phoneDigits}`;
+
+  const patientName = normalizeAgendaIdentityText(item.patient_name || item.title);
+  const clinicName = normalizeAgendaIdentityText(item.clinic_name || item.clinic?.name || item.clinic_snapshot_name);
+  if (patientName) return `name-${patientName}|clinic-${clinicName || 'sem-clinica'}`;
+
+  return '';
 }
 
 function normalizeDraftFromItem(item = {}) {
@@ -253,7 +298,14 @@ function canUseAgendaOperatorTabs(user) {
 
 function canReplicateAgendaItems(user) {
   if (isMasterAdmin(user)) return true;
-  return normalizeRoleValue(user?.role) === 'supervisor_crc';
+  return [
+    'admin',
+    'supervisor_crc',
+    'crc_leader',
+    'crc_manager',
+    'manager',
+    'coordinator'
+  ].includes(normalizeRoleValue(user?.role));
 }
 
 function normalizeAgendaBoardUserId(value) {
@@ -442,6 +494,43 @@ function AgendaDashboardTooltip({ active, payload, label }) {
       <div>
         {payload.map((entry) => (
           <span key={`${entry.dataKey}-${entry.name}`} style={{ color: entry.color || '#10213b' }}>
+            {entry.name}: {entry.value}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function AgendaMiniPie({ data = [] }) {
+  const visibleData = data.filter((item) => Number(item.value || 0) > 0);
+  if (!visibleData.length) {
+    return <p className="empty-state">Sem dados suficientes para gerar o gráfico.</p>;
+  }
+
+  return (
+    <div className="agenda-mini-pie-wrap">
+      <ResponsiveContainer width="100%" height={190}>
+        <PieChart>
+          <Pie
+            data={visibleData}
+            dataKey="value"
+            nameKey="name"
+            innerRadius={54}
+            outerRadius={78}
+            paddingAngle={3}
+          >
+            {visibleData.map((entry, index) => (
+              <Cell key={`${entry.name}-${entry.value}`} fill={entry.color || agendaPieColors[index % agendaPieColors.length]} />
+            ))}
+          </Pie>
+          <Tooltip />
+        </PieChart>
+      </ResponsiveContainer>
+      <div className="agenda-mini-pie-legend">
+        {visibleData.map((entry, index) => (
+          <span key={`${entry.name}-legend`}>
+            <i style={{ background: entry.color || agendaPieColors[index % agendaPieColors.length] }} />
             {entry.name}: {entry.value}
           </span>
         ))}
@@ -822,7 +911,9 @@ function AgendaCard({
   );
 }
 
-export default function AgendaPage() {
+export default function AgendaPage({ initialView = 'agenda' }) {
+  const navigate = useNavigate();
+  const startsOnDashboard = initialView === 'dashboard';
   const currentUser = useMemo(() => readUser(), []);
   const currentUserId = String(currentUser?.id || '');
   const canDeleteAgendaItem = Boolean(currentUser?.id);
@@ -855,7 +946,8 @@ export default function AgendaPage() {
   const [replicationDraft, setReplicationDraft] = useState(emptyReplicationDraft);
   const [replicatingAgenda, setReplicatingAgenda] = useState(false);
   const [replicationSummary, setReplicationSummary] = useState(null);
-  const [showAnalyticsPanel, setShowAnalyticsPanel] = useState(false);
+  const [agendaViewMode, setAgendaViewMode] = useState(startsOnDashboard ? 'dashboard' : 'agenda');
+  const [showAnalyticsPanel, setShowAnalyticsPanel] = useState(startsOnDashboard);
   const [showConfirmationPanel, setShowConfirmationPanel] = useState(false);
   const [showEnrichmentPanel, setShowEnrichmentPanel] = useState(false);
   const [showImportPanel, setShowImportPanel] = useState(false);
@@ -865,6 +957,7 @@ export default function AgendaPage() {
   const [feedback, setFeedback] = useState('');
   const [search, setSearch] = useState('');
   const [activeStatus, setActiveStatus] = useState('');
+  const [activeAgendaScope, setActiveAgendaScope] = useState('patient');
   const [activePatientQueue, setActivePatientQueue] = useState('all');
   const [activeAssignee, setActiveAssignee] = useState('');
   const [selectedItem, setSelectedItem] = useState(null);
@@ -1109,6 +1202,14 @@ export default function AgendaPage() {
   }, [canUseAgendaAnalytics, dashboardDays]);
 
   useEffect(() => {
+    const nextViewMode = initialView === 'dashboard' ? 'dashboard' : 'agenda';
+    setAgendaViewMode(nextViewMode);
+    if (nextViewMode === 'dashboard') {
+      setShowAnalyticsPanel(true);
+    }
+  }, [initialView]);
+
+  useEffect(() => {
     loadConfirmationReport();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canUseAgendaConfirmationPanel, canUseAgendaAnalytics, confirmationDays, confirmationStatus]);
@@ -1148,6 +1249,12 @@ export default function AgendaPage() {
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
+
+  useEffect(() => {
+    if (activeAgendaScope === 'tasks' && activePatientQueue !== 'all') {
+      setActivePatientQueue('all');
+    }
+  }, [activeAgendaScope, activePatientQueue]);
 
   useEffect(() => () => clearPreviewCloseTimer(), [clearPreviewCloseTimer]);
 
@@ -1242,9 +1349,28 @@ export default function AgendaPage() {
       .sort((left, right) => formatAgendaUserOption(left).localeCompare(formatAgendaUserOption(right), 'pt-BR'))
   ), [assigneeOptions]);
 
+  const agendaScopeStats = useMemo(() => {
+    const patientItems = items.filter((item) => isAgendaPatientDemand(item));
+    const taskItems = items.filter((item) => !isAgendaPatientDemand(item));
+    return {
+      patient: patientItems.length,
+      tasks: taskItems.length,
+      patientOpen: patientItems.filter((item) => item.status !== 'done').length,
+      taskOpen: taskItems.filter((item) => item.status !== 'done').length
+    };
+  }, [items]);
+
+  const scopedAgendaItems = useMemo(() => (
+    items.filter((item) => (activeAgendaScope === 'patient'
+      ? isAgendaPatientDemand(item)
+      : !isAgendaPatientDemand(item)))
+  ), [activeAgendaScope, items]);
+
   const queueFilteredItems = useMemo(() => (
-    items.filter((item) => matchesAgendaPatientQueue(item, activePatientQueue))
-  ), [activePatientQueue, items]);
+    activeAgendaScope === 'patient'
+      ? scopedAgendaItems.filter((item) => matchesAgendaPatientQueue(item, activePatientQueue))
+      : scopedAgendaItems
+  ), [activeAgendaScope, activePatientQueue, scopedAgendaItems]);
 
   const allAgendaBoards = useMemo(() => (
     buildAgendaBoards(queueFilteredItems, assigneeDirectory, currentUserId)
@@ -1279,7 +1405,7 @@ export default function AgendaPage() {
   }, [filteredItems]);
 
   const patientWorkflowStats = useMemo(() => {
-    const patientItems = filteredItems.filter((item) => (item.demand_type || 'general') === 'patient' || item.patient_name || item.patient_phone);
+    const patientItems = filteredItems.filter((item) => isAgendaPatientDemand(item));
     const confirmed = patientItems.filter((item) => item.confirmation_status === 'confirmado').length;
     const pending = patientItems.filter((item) => item.confirmation_status !== 'confirmado' && item.confirmation_status !== 'nao_confirmado').length;
     const evasion = patientItems.filter((item) => item.confirmation_status === 'nao_confirmado').length;
@@ -1293,6 +1419,64 @@ export default function AgendaPage() {
       confirmationRate: patientItems.length ? Math.round((confirmed * 1000) / patientItems.length) / 10 : 0
     };
   }, [filteredItems]);
+
+  const patientDataQualityStats = useMemo(() => {
+    const patientItems = items.filter((item) => isAgendaPatientDemand(item));
+    const identityGroups = new Map();
+    let missingPhone = 0;
+    let missingName = 0;
+
+    patientItems.forEach((item) => {
+      const phoneDigits = String(item.patient_phone || item.contact_phone_normalized || item.phone || '').replace(/\D/g, '');
+      if (phoneDigits.length < 10) missingPhone += 1;
+      if (!String(item.patient_name || '').trim()) missingName += 1;
+
+      const duplicateKey = getAgendaPatientDuplicateKey(item);
+      if (!duplicateKey) return;
+      if (!identityGroups.has(duplicateKey)) identityGroups.set(duplicateKey, []);
+      identityGroups.get(duplicateKey).push(item);
+    });
+
+    const duplicateGroups = Array.from(identityGroups.values()).filter((group) => group.length > 1);
+    const duplicateRecords = duplicateGroups.reduce((sum, group) => sum + group.length, 0);
+
+    return {
+      total: patientItems.length,
+      missingPhone,
+      missingName,
+      duplicateGroups: duplicateGroups.length,
+      duplicateRecords,
+      missingPhoneRate: patientItems.length ? Math.round((missingPhone * 1000) / patientItems.length) / 10 : 0,
+      duplicateRate: patientItems.length ? Math.round((duplicateRecords * 1000) / patientItems.length) / 10 : 0
+    };
+  }, [items]);
+
+  const agendaStatusPieData = useMemo(() => (
+    agendaColumns.map((column, index) => ({
+      name: column.label,
+      value: items.filter((item) => (item.status || 'todo') === column.key).length,
+      color: agendaPieColors[index % agendaPieColors.length]
+    }))
+  ), [items]);
+
+  const agendaConfirmationPieData = useMemo(() => {
+    const patientItems = items.filter((item) => isAgendaPatientDemand(item));
+    return [
+      { name: 'Confirmados', value: patientItems.filter((item) => item.confirmation_status === 'confirmado').length, color: '#1d8f6a' },
+      { name: 'Pendentes', value: patientItems.filter((item) => item.confirmation_status !== 'confirmado' && item.confirmation_status !== 'nao_confirmado').length, color: '#f59e0b' },
+      { name: 'Nao confirmados', value: patientItems.filter((item) => item.confirmation_status === 'nao_confirmado').length, color: '#ef4444' }
+    ];
+  }, [items]);
+
+  const agendaQualityPieData = useMemo(() => {
+    const total = patientDataQualityStats.total || 0;
+    const clean = Math.max(total - patientDataQualityStats.missingPhone - patientDataQualityStats.duplicateRecords, 0);
+    return [
+      { name: 'Base valida', value: clean, color: '#1d8f6a' },
+      { name: 'Sem telefone', value: patientDataQualityStats.missingPhone, color: '#f59e0b' },
+      { name: 'Duplicados', value: patientDataQualityStats.duplicateRecords, color: '#ef4444' }
+    ];
+  }, [patientDataQualityStats]);
 
   const agendaBoards = useMemo(() => (
     activeAssignee
@@ -1599,14 +1783,24 @@ export default function AgendaPage() {
     }
   };
 
-  const requestNotifications = async () => {
+  const requestNotifications = async ({ silent = false } = {}) => {
     if (!('Notification' in window)) {
-      setFeedback('Este navegador não suporta notificações nativas.');
+      if (!silent) setFeedback('Este navegador não suporta notificações nativas.');
       return;
     }
     const permission = await Notification.requestPermission();
-    setFeedback(permission === 'granted' ? 'Notificações da Agenda ativadas.' : 'Notificações não foram autorizadas.');
+    if (!silent) {
+      setFeedback(permission === 'granted' ? 'Notificações da Agenda ativadas.' : 'Notificações não foram autorizadas.');
+    }
   };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!('Notification' in window)) return;
+    if (Notification.permission !== 'default') return;
+    requestNotifications({ silent: true }).catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const updateImportDraft = (field, value) => {
     setImportDraft((current) => ({ ...current, [field]: value }));
@@ -1854,6 +2048,19 @@ export default function AgendaPage() {
     }
   };
 
+  const isDashboardView = agendaViewMode === 'dashboard';
+
+  const openAgendaDashboardView = () => {
+    setAgendaViewMode('dashboard');
+    setShowAnalyticsPanel(true);
+    navigate('/agenda/dashboard');
+  };
+
+  const openAgendaOperationalView = () => {
+    setAgendaViewMode('agenda');
+    navigate('/agenda');
+  };
+
   return (
     <main className="app-page agenda-page">
       <PageHeader
@@ -1862,13 +2069,21 @@ export default function AgendaPage() {
         description=""
         actions={(
           <>
-            <button type="button" className="outline-action" onClick={requestNotifications}>Ativar lembretes</button>
-            <button type="button" className="outline-action" onClick={() => downloadTaskExport('excel')} disabled={exportingReport === 'tasks-excel'}>
-              Excel tarefas
-            </button>
-            <button type="button" className="outline-action" onClick={() => downloadTaskExport('pdf')} disabled={exportingReport === 'tasks-pdf'}>
-              PDF tarefas
-            </button>
+            {canUseAgendaAnalytics ? (
+              <button type="button" className={isDashboardView ? 'secondary-action' : 'outline-action'} onClick={isDashboardView ? openAgendaOperationalView : openAgendaDashboardView}>
+                {isDashboardView ? 'Voltar para agenda' : 'Dashboard Agenda'}
+              </button>
+            ) : null}
+            {canUseAgendaConfirmationPanel ? (
+              <button type="button" className="outline-action" onClick={() => setShowConfirmationPanel((current) => !current)}>
+                {showConfirmationPanel ? 'Ocultar confirmações' : 'Confirmações CRC'}
+              </button>
+            ) : null}
+            {(canUseAgendaImportPanel || canUseAgendaConfirmationPanel) ? (
+              <button type="button" className="outline-action" onClick={() => setShowEnrichmentPanel((current) => !current)}>
+                {showEnrichmentPanel ? 'Ocultar telefones' : 'Telefones'}
+              </button>
+            ) : null}
             {canUseAgendaImportPanel ? (
               <button type="button" className="outline-action" onClick={() => setShowImportPanel(true)}>Importar agenda</button>
             ) : null}
@@ -2005,7 +2220,7 @@ export default function AgendaPage() {
         </SectionContainer>
       ) : null}
 
-      {canUseAgendaAnalytics || canUseAgendaImportPanel || canUseAgendaConfirmationPanel ? (
+      {false && (canUseAgendaAnalytics || canUseAgendaImportPanel || canUseAgendaConfirmationPanel) ? (
         <section className="agenda-executive-dock" aria-label="Atalhos executivos da agenda">
           {canUseAgendaAnalytics ? (
           <article className={`agenda-executive-toggle-card ${showAnalyticsPanel ? 'active' : ''}`}>
@@ -2060,9 +2275,9 @@ export default function AgendaPage() {
         </section>
       ) : null}
 
-      {(canUseAgendaAnalytics && showAnalyticsPanel) || (canUseAgendaConfirmationPanel && showConfirmationPanel) || showEnrichmentPanel || (canUseAgendaImportPanel && showImportPanel) ? (
+      {(canUseAgendaAnalytics && showAnalyticsPanel && isDashboardView) || (canUseAgendaConfirmationPanel && showConfirmationPanel) || showEnrichmentPanel || (canUseAgendaImportPanel && showImportPanel) ? (
         <section className="agenda-intelligence-stack">
-          {canUseAgendaAnalytics && showAnalyticsPanel ? (
+          {canUseAgendaAnalytics && showAnalyticsPanel && isDashboardView ? (
           <SectionContainer className="agenda-intelligence-panel">
             <div className="agenda-intelligence-head">
               <div>
@@ -2101,6 +2316,55 @@ export default function AgendaPage() {
                 <KPICard key={card.label} label={card.label} value={card.value} helper={card.helper} tone={card.tone} />
               ))}
             </DashboardGrid>
+
+            <div className="agenda-dashboard-visual-grid">
+              <Card className="agenda-dashboard-visual-card">
+                <div className="agenda-panel-headline">
+                  <div>
+                    <strong>Distribuição por status</strong>
+                    <span>Leitura rápida do volume em backlog, hoje, execução e concluído.</span>
+                  </div>
+                </div>
+                <AgendaMiniPie data={agendaStatusPieData} />
+              </Card>
+
+              <Card className="agenda-dashboard-visual-card">
+                <div className="agenda-panel-headline">
+                  <div>
+                    <strong>Confirmações de pacientes</strong>
+                    <span>Pacientes confirmados, pendentes e não confirmados para priorização do CRC.</span>
+                  </div>
+                </div>
+                <AgendaMiniPie data={agendaConfirmationPieData} />
+              </Card>
+
+              <Card className="agenda-dashboard-visual-card agenda-dashboard-quality-card">
+                <div className="agenda-panel-headline">
+                  <div>
+                    <strong>Qualidade da base de pacientes</strong>
+                    <span>Duplicidades e pacientes sem telefone para análise do índice de faltantes.</span>
+                  </div>
+                </div>
+                <AgendaMiniPie data={agendaQualityPieData} />
+                <div className="agenda-quality-metrics">
+                  <article>
+                    <span>Duplicados</span>
+                    <strong>{patientDataQualityStats.duplicateRecords}</strong>
+                    <small>{formatAgendaPercent(patientDataQualityStats.duplicateRate)} da base</small>
+                  </article>
+                  <article>
+                    <span>Sem telefone</span>
+                    <strong>{patientDataQualityStats.missingPhone}</strong>
+                    <small>{formatAgendaPercent(patientDataQualityStats.missingPhoneRate)} da base</small>
+                  </article>
+                  <article>
+                    <span>Sem nome</span>
+                    <strong>{patientDataQualityStats.missingName}</strong>
+                    <small>exige revisão manual</small>
+                  </article>
+                </div>
+              </Card>
+            </div>
 
             <div className="agenda-daily-dashboard-grid">
               <Card className="agenda-daily-chart-panel agenda-daily-chart-panel-wide">
@@ -3039,6 +3303,7 @@ export default function AgendaPage() {
         </section>
       ) : null}
 
+      {!isDashboardView ? (
       <section className="agenda-command-center">
         <div className="agenda-command-head">
           <div>
@@ -3052,6 +3317,36 @@ export default function AgendaPage() {
             <span>{stats.overdue} atrasado(s)</span>
           </div>
         </div>
+
+      <SectionContainer className="agenda-scope-panel">
+        <div className="agenda-tabs-head">
+          <div>
+            <strong>Tipo de agenda</strong>
+            <span>Separe agendamentos e confirmações das tarefas internas sem perder a organização por clínica.</span>
+          </div>
+        </div>
+        <div className="agenda-scope-tabs" role="tablist" aria-label="Tipo de agenda">
+          {agendaScopeOptions.map((tab) => {
+            const isActive = activeAgendaScope === tab.value;
+            const total = tab.value === 'patient' ? agendaScopeStats.patient : agendaScopeStats.tasks;
+            const open = tab.value === 'patient' ? agendaScopeStats.patientOpen : agendaScopeStats.taskOpen;
+            return (
+              <button
+                key={tab.value}
+                type="button"
+                className={`agenda-scope-tab ${isActive ? 'active' : ''}`}
+                onClick={() => setActiveAgendaScope(tab.value)}
+                role="tab"
+                aria-selected={isActive}
+              >
+                <strong>{tab.label}</strong>
+                <span>{tab.helper}</span>
+                <small>{total} item(ns) · {open} aberto(s)</small>
+              </button>
+            );
+          })}
+        </div>
+      </SectionContainer>
 
       <div className="agenda-box-visual-grid">
         <article className="agenda-box-visual-card backlog">
@@ -3115,6 +3410,25 @@ export default function AgendaPage() {
         </div>
       </SectionContainer>
 
+      <section className="agenda-export-strip" aria-label="Exportações da agenda">
+        <div className="agenda-export-copy">
+          <span>Exportações</span>
+          <strong>Relatórios da agenda operacional</strong>
+          <small>Baixe a visão atual para conferência, reunião de rotina ou auditoria de produtividade.</small>
+        </div>
+        <div className="agenda-export-actions">
+          <button type="button" className="agenda-export-button excel" onClick={() => downloadTaskExport('excel')} disabled={exportingReport === 'tasks-excel'}>
+            <span className="agenda-export-icon">XLS</span>
+            <strong>{exportingReport === 'tasks-excel' ? 'Gerando...' : 'Exportar Excel'}</strong>
+          </button>
+          <button type="button" className="agenda-export-button pdf" onClick={() => downloadTaskExport('pdf')} disabled={exportingReport === 'tasks-pdf'}>
+            <span className="agenda-export-icon">PDF</span>
+            <strong>{exportingReport === 'tasks-pdf' ? 'Gerando...' : 'Exportar PDF'}</strong>
+          </button>
+        </div>
+      </section>
+
+      {activeAgendaScope === 'patient' ? (
       <SectionContainer className="agenda-tabs-panel">
         <div className="agenda-tabs-head">
           <div>
@@ -3148,6 +3462,7 @@ export default function AgendaPage() {
           })}
         </div>
       </SectionContainer>
+      ) : null}
 
       {canUseOperatorTabs && operatorTabs.length > 2 ? (
         <SectionContainer className="agenda-tabs-panel">
@@ -3179,9 +3494,11 @@ export default function AgendaPage() {
         </SectionContainer>
       ) : null}
       </section>
+      ) : null}
 
       {feedback && !editorOpen ? <p className="form-feedback">{feedback}</p> : null}
 
+      {!isDashboardView ? (
       <section className="agenda-workspace">
         <div className="agenda-user-groups">
           {agendaBoards.map((group) => (
@@ -3284,6 +3601,7 @@ export default function AgendaPage() {
           {!loading && agendaBoards.length === 0 ? <p className="empty-state">Nenhum item encontrado para os filtros selecionados.</p> : null}
         </div>
       </section>
+      ) : null}
 
       {editorOpen ? (
         <section className="agenda-editor-shell" role="dialog" aria-modal="true" aria-label={selectedItem?.id ? 'Editar item da agenda' : 'Criar item da agenda'}>
@@ -3422,7 +3740,7 @@ export default function AgendaPage() {
                       <small>Use quando o paciente não puder seguir por pendência do laboratório.</small>
                     </button>
                     {draft.prosthesis_not_delivered ? (
-                      <div className="agenda-lab-warning-box agenda-span-2">
+                      <div className="agenda-lab-warning-box agenda-editor-inline-panel">
                         <div>
                           <strong>Responsável pelo laboratório</strong>
                           <small>Selecione o laboratório para alimentar ranking de erros e acionar correção operacional.</small>
