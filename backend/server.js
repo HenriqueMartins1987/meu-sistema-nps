@@ -119,6 +119,16 @@ const {
   getTwilioConfigStatus
 } = require('./services/twilioWhatsAppService');
 const {
+  OFFICIAL_NPS_DEMO_PHONE,
+  isNpsTestMode,
+  resolveNpsDemoRecipient
+} = require('./services/npsDemoModeService');
+const {
+  processTwilioNpsInbound,
+  resetNpsDemo,
+  startNpsDemo
+} = require('./services/npsTwilioDemoFlowService');
+const {
   buildAppointmentReminderMessage,
   buildNoShowAlertMessage,
   buildPasswordChangeUrl,
@@ -1192,6 +1202,17 @@ function isPlaceholderCoordinatorName(value) {
     'coordenador',
     'coordenador_da_unidade',
     'sem_coordenador',
+    'responsavel',
+    'responsavel_nao_informado'
+  ].includes(normalized);
+}
+
+function isPlaceholderManagerName(value) {
+  const normalized = normalizeComparableText(value);
+  return !normalized || [
+    'gerente',
+    'gerente_da_unidade',
+    'sem_gerente',
     'responsavel',
     'responsavel_nao_informado'
   ].includes(normalized);
@@ -3607,6 +3628,93 @@ async function insertPatientInteractionLog(interactionId, action, message, user)
   );
 }
 
+function isActivePatientInteractionStatus(status) {
+  const normalized = normalizeComplaintStatusValue(status || 'Registrado');
+  return !['cancelado', 'cancelada', 'encerrado', 'encerrada', 'finalizado', 'finalizada', 'fechado', 'fechada', 'concluido', 'concluida'].includes(normalized);
+}
+
+async function finalizePatientInteractionsForComplaint(complaintId, actor = null, reason = 'Reclamação vinculada encerrada.') {
+  const id = Number(complaintId || 0);
+  if (!id) return { checked: 0, finalized: 0 };
+
+  const [rows] = await pool.query(
+    `SELECT id, protocol, status
+       FROM patient_interactions
+      WHERE complaint_id = ?
+        AND COALESCE(status, '') NOT IN ('Cancelado', 'Encerrado')
+      ORDER BY scheduled_at ASC, id ASC`,
+    [id]
+  );
+
+  const activeRows = rows.filter((row) => isActivePatientInteractionStatus(row.status));
+
+  if (!activeRows.length) {
+    return { checked: rows.length, finalized: 0 };
+  }
+
+  await pool.query(
+    `UPDATE patient_interactions
+        SET status = 'Encerrado',
+            updated_at = CURRENT_TIMESTAMP
+      WHERE id IN (?)`,
+    [activeRows.map((row) => row.id)]
+  );
+
+  await Promise.all(activeRows.map((row) => (
+    insertPatientInteractionLog(
+      row.id,
+      'Encerrado por fechamento da reclamação',
+      `${reason} O agendamento saiu da agenda ativa para manter a gestão de pacientes consistente com o protocolo de reclamação.`,
+      actor || { name: 'Varredura automática', role: 'system' }
+    )
+  )));
+
+  return { checked: rows.length, finalized: activeRows.length };
+}
+
+async function cleanupPatientAgendaForClosedComplaints(batchSize = 500, maxPasses = 20) {
+  const limit = Math.max(1, Math.min(1000, Number(batchSize || 500)));
+  const maxLoops = Math.max(1, Math.min(100, Number(maxPasses || 20)));
+  const actor = { name: 'Varredura automática da agenda', role: 'system' };
+  let checked = 0;
+  let finalized = 0;
+  let passes = 0;
+
+  while (passes < maxLoops) {
+    passes += 1;
+    const [rows] = await pool.query(
+      `SELECT DISTINCT pi.complaint_id
+         FROM patient_interactions pi
+         INNER JOIN complaints c ON c.id = pi.complaint_id
+        WHERE pi.complaint_id IS NOT NULL
+          AND COALESCE(pi.status, '') NOT IN ('Cancelado', 'Encerrado')
+          AND (
+            c.deleted_at IS NOT NULL
+            OR LOWER(TRIM(COALESCE(c.status, ''))) IN ('resolvida', 'cancelada', 'finalizada', 'finalizado', 'fechada', 'fechado', 'encerrada', 'encerrado')
+          )
+        ORDER BY pi.complaint_id ASC
+        LIMIT ?`,
+      [limit]
+    );
+
+    if (!rows.length) break;
+
+    for (const row of rows) {
+      const result = await finalizePatientInteractionsForComplaint(
+        row.complaint_id,
+        actor,
+        'Reclamação vinculada já consta como finalizada ou removida.'
+      );
+      checked += result.checked;
+      finalized += result.finalized;
+    }
+
+    if (rows.length < limit) break;
+  }
+
+  return { checked, finalized, passes };
+}
+
 async function ensureColumn(table, column, definition) {
   const [rows] = await pool.query(`SHOW COLUMNS FROM \`${table}\` LIKE ?`, [column]);
 
@@ -5854,6 +5962,113 @@ async function ensureDatabaseSchema() {
       INDEX idx_nps_whatsapp_inbound_phone (patient_phone, created_at)
     )
   `);
+  await ensureColumn('nps_whatsapp_inbound_events', 'nps_conversation_id', 'BIGINT NULL');
+  await ensureColumn('nps_whatsapp_inbound_events', 'source_type', 'VARCHAR(40) NULL');
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS nps_twilio_conversations (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      conversation_id VARCHAR(120) NOT NULL,
+      nps_invite_id BIGINT NULL,
+      nps_response_id INT NULL,
+      patient_name VARCHAR(180) NULL,
+      patient_phone VARCHAR(40) NULL,
+      patient_phone_normalized VARCHAR(40) NULL,
+      clinic_id INT NULL,
+      clinic_name VARCHAR(180) NULL,
+      provider VARCHAR(40) NOT NULL DEFAULT 'TWILIO',
+      source VARCHAR(80) NOT NULL DEFAULT 'twilio_nps_demo',
+      state VARCHAR(80) NOT NULL DEFAULT 'AWAITING_NPS_SCORE',
+      nps_score INT NULL,
+      nps_profile VARCHAR(30) NULL,
+      is_demo TINYINT(1) NOT NULL DEFAULT 0,
+      demo_scenario VARCHAR(80) NULL,
+      last_message_sid VARCHAR(180) NULL,
+      last_inbound_at DATETIME NULL,
+      last_outbound_at DATETIME NULL,
+      metadata_json LONGTEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_nps_twilio_conversation_id (conversation_id),
+      INDEX idx_nps_twilio_conversation_invite (nps_invite_id),
+      INDEX idx_nps_twilio_conversation_phone (patient_phone_normalized, updated_at),
+      INDEX idx_nps_twilio_conversation_state (state, updated_at)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS nps_twilio_conversation_events (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      conversation_id BIGINT NULL,
+      nps_invite_id BIGINT NULL,
+      nps_response_id INT NULL,
+      message_sid VARCHAR(180) NULL,
+      direction VARCHAR(20) NOT NULL DEFAULT 'inbound',
+      provider VARCHAR(40) NOT NULL DEFAULT 'TWILIO',
+      state_before VARCHAR(80) NULL,
+      state_after VARCHAR(80) NULL,
+      message_type VARCHAR(80) NULL,
+      source_type VARCHAR(40) NULL,
+      body LONGTEXT NULL,
+      transcription_text LONGTEXT NULL,
+      transcription_status VARCHAR(40) NULL,
+      metadata_json LONGTEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_nps_twilio_event_message_sid (message_sid),
+      INDEX idx_nps_twilio_event_conversation (conversation_id, created_at),
+      INDEX idx_nps_twilio_event_response (nps_response_id, created_at)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS nps_audio_transcriptions (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      conversation_id BIGINT NULL,
+      nps_response_id INT NULL,
+      message_sid VARCHAR(180) NULL,
+      media_url TEXT NULL,
+      mime_type VARCHAR(120) NULL,
+      status VARCHAR(40) NOT NULL DEFAULT 'PENDING',
+      model VARCHAR(80) NULL,
+      transcript LONGTEXT NULL,
+      correction_text LONGTEXT NULL,
+      error_message TEXT NULL,
+      confirmed_at DATETIME NULL,
+      correction_requested_at DATETIME NULL,
+      metadata_json LONGTEXT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      INDEX idx_nps_audio_conversation (conversation_id, created_at),
+      INDEX idx_nps_audio_response (nps_response_id, created_at),
+      INDEX idx_nps_audio_status (status, created_at)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS nps_referral_dental_card_links (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      nps_referral_id BIGINT NOT NULL,
+      dental_card_lead_id INT NOT NULL,
+      nps_response_id INT NULL,
+      nps_invite_id BIGINT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      UNIQUE KEY uniq_nps_referral_dental_link (nps_referral_id),
+      INDEX idx_nps_referral_dental_lead (dental_card_lead_id),
+      INDEX idx_nps_referral_dental_invite (nps_invite_id)
+    )
+  `);
+
+  await ensureColumn('nps_responses', 'conversation_state', 'VARCHAR(80) NULL');
+  await ensureColumn('nps_responses', 'source_type', "VARCHAR(40) NULL DEFAULT 'TEXT'");
+  await ensureColumn('nps_responses', 'audio_transcription_status', 'VARCHAR(40) NULL');
+  await ensureColumn('nps_responses', 'audio_transcription_text', 'LONGTEXT NULL');
+  await ensureColumn('nps_responses', 'audio_transcription_confirmed_at', 'DATETIME NULL');
+  await ensureColumn('nps_responses', 'twilio_message_sid', 'VARCHAR(180) NULL');
+  await ensureColumn('nps_referrals', 'source', "VARCHAR(80) NULL DEFAULT 'NPS_WHATSAPP_REFERRAL'");
+  await ensureColumn('nps_referrals', 'provider', "VARCHAR(40) NULL DEFAULT 'TWILIO'");
+  await ensureColumn('nps_referrals', 'conversation_id', 'VARCHAR(120) NULL');
+  await ensureColumn('nps_referrals', 'dental_card_lead_id', 'INT NULL');
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS ecuro_robot_logs (
@@ -6635,6 +6850,7 @@ async function repairPendingCoordinatorAssignments() {
     `SELECT id, protocol, clinic_id, status, first_attendance_at, forwarded_to_role, forwarded_to_label,
             assigned_coordinator_user_id, assigned_coordinator_name,
             assigned_responsible_user_id, assigned_responsible_name, assigned_responsible_role,
+            manager_id, manager_name,
             clinic_snapshot_name
        FROM complaints
       WHERE deleted_at IS NULL
@@ -6655,33 +6871,55 @@ async function repairPendingCoordinatorAssignments() {
     }
 
     const assignment = await resolveCoordinatorAssignment(row.clinic_id);
+    const managerAssignment = await resolveManagerAssignment(row.clinic_id);
     const currentForwardRole = normalizeAccessRole(row.forwarded_to_role || row.assigned_responsible_role);
     const hasCoordinatorTarget = currentForwardRole === 'coordinator'
       || (
         isPlaceholderCoordinatorName(row.assigned_responsible_name)
         && Boolean(row.first_attendance_at || row.forwarded_to_role || row.assigned_responsible_role)
       );
+    const hasManagerTarget = currentForwardRole === 'manager'
+      || ['escalonada_gerente', 'em_tratativa_gerente', 'vencida_gerente'].includes(normalizeComplaintStatusForStorage(row.status));
 
-    if (!assignment.coordinatorUserId && isPlaceholderCoordinatorName(assignment.coordinatorName)) {
+    const hasResolvedCoordinator = Boolean(assignment.coordinatorUserId)
+      || !isPlaceholderCoordinatorName(assignment.coordinatorName);
+
+    if (!hasResolvedCoordinator) {
       result.unresolved += 1;
-      continue;
     }
 
     const coordinatorNameDiffers = normalizeComparableText(row.assigned_coordinator_name)
       !== normalizeComparableText(assignment.coordinatorName);
-    const coordinatorNeedsRepair = !row.assigned_coordinator_user_id
+    const coordinatorNeedsRepair = hasResolvedCoordinator && (
+      !row.assigned_coordinator_user_id
       || (assignment.coordinatorUserId && Number(row.assigned_coordinator_user_id) !== Number(assignment.coordinatorUserId))
       || isPlaceholderCoordinatorName(row.assigned_coordinator_name)
-      || coordinatorNameDiffers;
-    const responsibleNeedsRepair = hasCoordinatorTarget && (
+      || coordinatorNameDiffers
+    );
+    const responsibleNeedsRepair = hasCoordinatorTarget && hasResolvedCoordinator && (
       !row.assigned_responsible_user_id
       || (assignment.coordinatorUserId && Number(row.assigned_responsible_user_id) !== Number(assignment.coordinatorUserId))
       || isPlaceholderCoordinatorName(row.assigned_responsible_name)
       || normalizeComparableText(row.assigned_responsible_name) !== normalizeComparableText(assignment.coordinatorName)
       || normalizeAccessRole(row.assigned_responsible_role) !== 'coordinator'
     );
+    const managerNameDiffers = normalizeComparableText(row.manager_name)
+      !== normalizeComparableText(managerAssignment.managerName);
+    const managerNeedsRepair = Boolean(managerAssignment.managerUserId) && (
+      !row.manager_id
+      || Number(row.manager_id) !== Number(managerAssignment.managerUserId)
+      || isPlaceholderManagerName(row.manager_name)
+      || managerNameDiffers
+    );
+    const managerResponsibleNeedsRepair = hasManagerTarget && Boolean(managerAssignment.managerUserId) && (
+      !row.assigned_responsible_user_id
+      || Number(row.assigned_responsible_user_id) !== Number(managerAssignment.managerUserId)
+      || isPlaceholderManagerName(row.assigned_responsible_name)
+      || normalizeComparableText(row.assigned_responsible_name) !== normalizeComparableText(managerAssignment.managerName)
+      || normalizeAccessRole(row.assigned_responsible_role) !== 'manager'
+    );
 
-    if (!coordinatorNeedsRepair && !responsibleNeedsRepair) {
+    if (!coordinatorNeedsRepair && !responsibleNeedsRepair && !managerNeedsRepair && !managerResponsibleNeedsRepair) {
       continue;
     }
 
@@ -6710,6 +6948,29 @@ async function repairPendingCoordinatorAssignments() {
       );
     }
 
+    if (managerNeedsRepair) {
+      updates.push('manager_id = ?');
+      updates.push('manager_name = ?');
+      params.push(
+        managerAssignment.managerUserId || null,
+        managerAssignment.managerName || null
+      );
+    }
+
+    if (managerResponsibleNeedsRepair) {
+      updates.push('assigned_responsible_user_id = ?');
+      updates.push('assigned_responsible_name = ?');
+      updates.push("assigned_responsible_role = 'manager'");
+      updates.push("forwarded_to_role = 'manager'");
+      updates.push('forwarded_to_label = ?');
+      updates.push('forwarded_at = COALESCE(forwarded_at, NOW())');
+      params.push(
+        managerAssignment.managerUserId || null,
+        managerAssignment.managerName || null,
+        managerAssignment.managerName || row.forwarded_to_label || 'Gerente da unidade'
+      );
+    }
+
     params.push(row.id);
     await pool.query(
       `UPDATE complaints
@@ -6723,6 +6984,19 @@ async function repairPendingCoordinatorAssignments() {
   return result;
 }
 
+async function repairPendingCoordinatorAssignmentsBestEffort(source = 'operational_flow') {
+  try {
+    return await repairPendingCoordinatorAssignments();
+  } catch (error) {
+    console.warn(`Não foi possível revisar responsáveis automaticamente (${source}):`, error.message);
+    return {
+      skipped: true,
+      source,
+      error: error.message
+    };
+  }
+}
+
 async function handleRepairCoordinatorAssignments(req, res) {
   try {
     const result = await repairPendingCoordinatorAssignments();
@@ -6730,6 +7004,44 @@ async function handleRepairCoordinatorAssignments(req, res) {
   } catch (error) {
     console.error(error);
     return res.status(500).json({ error: 'Erro ao revisar encaminhamentos de coordenadores.' });
+  }
+}
+
+let complaintDataConsistencySweepRunning = false;
+
+async function runComplaintDataConsistencySweep(options = {}) {
+  if (complaintDataConsistencySweepRunning) {
+    return {
+      skipped: true,
+      reason: 'consistency_sweep_already_running'
+    };
+  }
+
+  complaintDataConsistencySweepRunning = true;
+
+  try {
+    await syncClinicLeadershipNamesFromUserLinks();
+
+    const [agendaCleanup, coordinatorRepair, appointmentSlaBackfill] = await Promise.all([
+      cleanupPatientAgendaForClosedComplaints(
+        options.patientAgendaBatchSize || 500,
+        options.patientAgendaMaxPasses || 20
+      ),
+      repairPendingCoordinatorAssignmentsBestEffort('complaint_data_consistency_sweep'),
+      backfillComplaintAppointmentSlaFromPatientInteractions(
+        options.appointmentSlaBatchSize || 500,
+        options.appointmentSlaMaxPasses || 20
+      )
+    ]);
+
+    return {
+      skipped: false,
+      agendaCleanup,
+      coordinatorRepair,
+      appointmentSlaBackfill
+    };
+  } finally {
+    complaintDataConsistencySweepRunning = false;
   }
 }
 
@@ -35202,10 +35514,12 @@ app.patch('/admin/users/:id', authenticate, requireUserClinicLinkManager, async 
         previousClinicIds,
         nextClinicIds: normalizedNextClinicIds
       });
+      const assignmentRepair = await repairPendingCoordinatorAssignmentsBestEffort('sac_clinic_link_update');
 
       return res.json({
         message: 'Clínicas vinculadas ao usuário atualizadas com sucesso.',
-        clinicIds: normalizedNextClinicIds
+        clinicIds: normalizedNextClinicIds,
+        assignmentRepair
       });
     }
 
@@ -35372,6 +35686,7 @@ app.patch('/admin/users/:id', authenticate, requireUserClinicLinkManager, async 
         previousClinicIds,
         nextClinicIds: normalizedNextClinicIds
       });
+      await repairPendingCoordinatorAssignmentsBestEffort('admin_user_clinic_link_update');
     }
 
     res.json({ message: 'Usuário atualizado com sucesso.' });
@@ -36393,6 +36708,93 @@ app.post('/nps/whatsapp/inbound', async (req, res) => {
     return res.status(500).json({
       error: 'Erro ao processar resposta NPS via WhatsApp.',
       detail: sanitizeRobotError(error)
+    });
+  }
+});
+
+function shouldValidateTwilioWebhookSignature() {
+  return String(process.env.TWILIO_VALIDATE_WEBHOOK_SIGNATURE || 'false').trim().toLowerCase() === 'true';
+}
+
+function buildTwilioWebhookUrl(req) {
+  const forwardedProto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim();
+  const protocol = forwardedProto || req.protocol || 'https';
+  const host = req.headers['x-forwarded-host'] || req.headers.host;
+  return `${protocol}://${host}${req.originalUrl}`;
+}
+
+function validateTwilioWebhookSignature(req) {
+  if (!shouldValidateTwilioWebhookSignature()) return true;
+  const authToken = String(process.env.TWILIO_AUTH_TOKEN || '').trim();
+  const signature = String(req.headers['x-twilio-signature'] || '').trim();
+  if (!authToken || !signature) return false;
+
+  const params = Object.entries(req.body || {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}${Array.isArray(value) ? value.join('') : String(value ?? '')}`)
+    .join('');
+  const expected = crypto
+    .createHmac('sha1', authToken)
+    .update(`${buildTwilioWebhookUrl(req)}${params}`)
+    .digest('base64');
+
+  const expectedBuffer = Buffer.from(expected);
+  const signatureBuffer = Buffer.from(signature);
+  return expectedBuffer.length === signatureBuffer.length
+    && crypto.timingSafeEqual(expectedBuffer, signatureBuffer);
+}
+
+app.post(['/nps/twilio/inbound', '/api/nps/twilio/inbound'], webhookLimiter, async (req, res) => {
+  try {
+    if (!validateTwilioWebhookSignature(req)) {
+      return res.status(401).json({ error: 'Webhook Twilio NPS não autorizado.' });
+    }
+
+    const payload = await processTwilioNpsInbound(pool, req.body || {});
+    return res.json({
+      success: true,
+      payload
+    });
+  } catch (error) {
+    console.error('Erro ao processar webhook Twilio NPS:', error.message);
+    return res.status(500).json({
+      error: 'Erro ao processar resposta NPS via Twilio.',
+      detail: sanitizeRobotError(error)
+    });
+  }
+});
+
+app.post('/nps/twilio/demo/start', authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    if (!isNpsTestMode()) {
+      return res.status(409).json({
+        error: 'Modo demonstração NPS desativado. Configure NPS_TEST_MODE=true antes de iniciar.'
+      });
+    }
+    const recipient = resolveNpsDemoRecipient(req.body?.patientPhone || OFFICIAL_NPS_DEMO_PHONE);
+    const result = await startNpsDemo(pool, {
+      patientName: req.body?.patientName || 'Mariana Oliveira',
+      clinicName: req.body?.clinicName || 'Unidade Demonstração',
+      patientPhone: recipient.recipientPhone,
+      scenario: req.body?.scenario || null
+    });
+    return res.json(result);
+  } catch (error) {
+    console.error('Erro ao iniciar demonstração NPS Twilio:', error.message);
+    return res.status(400).json({
+      error: error.message || 'Não foi possível iniciar a demonstração NPS.'
+    });
+  }
+});
+
+app.post('/nps/twilio/demo/reset', authenticate, requireMasterAdmin, async (_req, res) => {
+  try {
+    const result = await resetNpsDemo(pool);
+    return res.json(result);
+  } catch (error) {
+    console.error('Erro ao limpar demonstração NPS Twilio:', error.message);
+    return res.status(500).json({
+      error: 'Não foi possível limpar a demonstração NPS.'
     });
   }
 });
@@ -37628,7 +38030,21 @@ app.get('/patient-interactions', authenticate, async (req, res) => {
         updated_at
        FROM patient_interactions
        ${where.length ? `WHERE ${where.join(' AND ')}` : ''}
-       ORDER BY COALESCE(cancelled_at, created_at) DESC, id DESC`,
+       ORDER BY
+         CASE
+           WHEN COALESCE(status, '') IN ('Cancelado') THEN 2
+           WHEN COALESCE(status, '') IN ('Encerrado') THEN 1
+           ELSE 0
+         END ASC,
+         CASE
+           WHEN COALESCE(status, '') NOT IN ('Cancelado', 'Encerrado') THEN scheduled_at
+           ELSE NULL
+         END ASC,
+         CASE
+           WHEN COALESCE(status, '') IN ('Cancelado', 'Encerrado') THEN COALESCE(cancelled_at, updated_at, created_at)
+           ELSE NULL
+         END DESC,
+         id ASC`,
       params
     );
 
@@ -39027,6 +39443,32 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       insertComplaintLog(id, entry.action, entry.message, req.user, entry)
     )));
 
+    if (isClosedComplaintStatus(nextStatus)) {
+      const patientAgendaCleanup = await finalizePatientInteractionsForComplaint(
+        id,
+        req.user,
+        'Protocolo de reclamação finalizado na gestão de reclamações.'
+      );
+
+      if (patientAgendaCleanup.finalized > 0) {
+        await insertComplaintLog(
+          id,
+          'patient_agenda_closed',
+          `${patientAgendaCleanup.finalized} agendamento(s) vinculado(s) foram retirados da agenda ativa do paciente após o fechamento do protocolo.`,
+          req.user,
+          patientAgendaCleanup
+        );
+      }
+    }
+
+    const shouldRepairAssignmentsAfterChange = hasClinicChangeRequest
+      || Boolean(first_attendance)
+      || Boolean(reassign_forward)
+      || Boolean(patient_contacted);
+    const assignmentRepair = shouldRepairAssignmentsAfterChange
+      ? await repairPendingCoordinatorAssignmentsBestEffort('complaint_update')
+      : null;
+
     if ((first_attendance || reassign_forward) && ['coordinator', 'manager', 'admin'].includes(String(forward_to_role || '').toLowerCase())) {
       try {
         await notifyComplaintAssigned(id, complaint.protocol);
@@ -39039,7 +39481,8 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
 
     res.json({
       message: 'Reclamação atualizada com sucesso',
-      notificationStatus: assignmentNotificationResult?.notificationStatus
+      notificationStatus: assignmentNotificationResult?.notificationStatus,
+      assignmentRepair
     });
   } catch (error) {
     console.error(error);
@@ -41872,7 +42315,7 @@ async function startServer() {
       await backfillPatientProtocols();
       await backfillComplaintDeadlines();
       await backfillComplaintAssignments();
-      const coordinatorRepair = await repairPendingCoordinatorAssignments();
+      const coordinatorRepair = await repairPendingCoordinatorAssignmentsBestEffort('startup_backfills');
       console.log(`Backfills operacionais validados. Usernames reparados: ${repairedUsernames}. Coordenadores revisados: ${coordinatorRepair.updated}/${coordinatorRepair.checked}. Prazos hierarquicos revisados: C${escalationBackfill.coordinator}/G${escalationBackfill.manager}. Agendamentos migrados: ${appointmentSlaBackfill.migrated}/${appointmentSlaBackfill.checked}.`);
     } catch (error) {
       console.warn('Não foi possível executar os backfills:', error.message);
@@ -41912,6 +42355,7 @@ async function startServer() {
       await runScheduledJob('startup_expired_responsible_reminders', 'a rotina inicial de expiração de reclamações para responsáveis', dispatchExpiredComplaintResponsibleReminders);
       await runScheduledJob('startup_stalled_treatment_reminders', 'a rotina inicial de demandas sem tratativa', dispatchStalledComplaintTreatmentReminders);
       await runScheduledJob('startup_complaint_escalation', 'a rotina inicial de escalonamento automático', runComplaintEscalationSweep);
+      await runScheduledJob('startup_complaint_data_consistency', 'a varredura inicial de consistência entre reclamações, agenda e responsáveis', runComplaintDataConsistencySweep);
       await runScheduledJob('startup_weekly_user_reminders', 'a rotina inicial de lembretes semanais aos usuários', runScheduledUserDemandReminders);
       await runScheduledJob('startup_weekly_admin_report', 'a rotina inicial de relatório semanal aos administradores', runScheduledWeeklyAdminComplaintReport);
       await runScheduledJob('startup_daily_coordinator_reminders', 'a rotina inicial de lembretes diários aos coordenadores', runScheduledDailyCoordinatorDemandReminders);
@@ -41933,6 +42377,7 @@ async function startServer() {
   setManagedInterval('expired_responsible_reminders', 'a rotina programada de expiração de reclamações para responsáveis', dispatchExpiredComplaintResponsibleReminders, complaintExpiredReminderIntervalHours * 60 * 60 * 1000);
   setManagedInterval('stalled_treatment_reminders', 'a rotina programada de demandas sem tratativa', dispatchStalledComplaintTreatmentReminders, complaintStalledTreatmentReminderHours * 60 * 60 * 1000);
   setManagedInterval('complaint_escalation', 'a rotina programada de escalonamento automático', runComplaintEscalationSweep, complaintEscalationSweepIntervalMinutes * 60 * 1000);
+  setManagedInterval('complaint_data_consistency', 'a varredura diária de consistência entre reclamações, agenda e responsáveis', runComplaintDataConsistencySweep, Math.max(1, Number(process.env.COMPLAINT_DATA_CONSISTENCY_INTERVAL_HOURS || 24)) * 60 * 60 * 1000);
   setManagedInterval('weekly_user_reminders', 'a rotina programada de lembretes semanais aos usuários', runScheduledUserDemandReminders, weeklyDemandReminderIntervalMinutes * 60 * 1000);
   setManagedInterval('weekly_admin_report', 'a rotina programada de relatório semanal aos administradores', runScheduledWeeklyAdminComplaintReport, weeklyAdminComplaintReportIntervalMinutes * 60 * 1000);
   setManagedInterval('daily_coordinator_reminders', 'a rotina programada de lembretes diários aos coordenadores', runScheduledDailyCoordinatorDemandReminders, dailyCoordinatorDemandReminderIntervalMinutes * 60 * 1000);

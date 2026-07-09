@@ -27,7 +27,7 @@ function buildReportGroups(user) {
         { label: 'Relatório diário, semanal e mensal', path: '/gestao/relatorio-semanal', visible: canOpenWeeklyComplaintReport(user) && hasPermission(user, 'complaints_management'), meta: 'rotina operacional' },
         { label: 'Dashboard de Reclamações', path: '/dashboard', visible: hasPermission(user, 'complaints_dashboard'), meta: 'visão executiva' },
         { label: 'BI de Reclamações', path: '/bi', visible: hasPermission(user, 'complaints_dashboard'), meta: 'análise gerencial' },
-        { label: 'Painel de Gestão', path: '/gestao', visible: hasPermission(user, 'complaints_management'), meta: 'fila operacional' }
+        { label: 'Gestão de Reclamações', path: '/gestao', visible: hasPermission(user, 'complaints_management'), meta: 'fila operacional' }
       ]
     },
     {
@@ -36,7 +36,7 @@ function buildReportGroups(user) {
       title: 'Relatórios NPS',
       description: 'Indicadores de satisfação, pesquisas ativas e gestão de respostas dos pacientes.',
       items: [
-        { label: 'Painel de Gestão NPS', path: '/gestao-nps', visible: hasPermission(user, 'nps_management'), meta: 'respostas e tratativas' },
+        { label: 'Gestão de NPS', path: '/gestao-nps', visible: hasPermission(user, 'nps_management'), meta: 'respostas e tratativas' },
         { label: 'Dashboard NPS', path: '/dashboard-nps', visible: hasPermission(user, 'nps_dashboard'), meta: 'indicadores NPS' },
         { label: 'Pesquisa NPS pública', path: '/pesquisa-nps', visible: hasPermission(user, 'nps_management'), meta: 'link de pesquisa' }
       ]

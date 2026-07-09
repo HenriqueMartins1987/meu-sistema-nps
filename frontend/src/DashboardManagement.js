@@ -5,6 +5,7 @@ import {
   complaintAttendanceFollowUpLabel,
   complaintAttendanceFollowUpStatus,
   complaintTypes,
+  hasPermission,
   isMasterAdmin,
   normalizeRoleValue,
   priorityOptions,
@@ -518,6 +519,44 @@ function DashboardManagement() {
   const canViewDeleted = isMasterAdmin(currentUser);
   const canFilterByLeadership = isMasterAdmin(currentUser)
     || ['admin', 'supervisor_crc', 'manager'].includes(currentUserRole);
+  const workspaceLinks = [
+    {
+      key: 'new-protocol',
+      title: 'Novo Protocolo',
+      eyebrow: 'Cadastro',
+      description: 'Abra uma nova demanda com a ficha completa de reclamação.',
+      path: '/cadastro',
+      tone: 'brand',
+      visible: hasPermission(currentUser, 'complaints_register')
+    },
+    {
+      key: 'complaints-dashboard',
+      title: 'Dashboard de Reclamações',
+      eyebrow: 'Indicadores',
+      description: 'Analise rankings, motivos, evolução e visão gerencial dos protocolos.',
+      path: '/dashboard',
+      tone: 'teal',
+      visible: hasPermission(currentUser, 'complaints_dashboard')
+    },
+    {
+      key: 'patient-agenda',
+      title: 'Agenda do Paciente',
+      eyebrow: 'Acompanhamento',
+      description: 'Consulte pacientes agendados, tratamentos e histórico operacional.',
+      path: '/pacientes',
+      tone: 'gold',
+      visible: hasPermission(currentUser, 'patient_management')
+    },
+    {
+      key: 'complaints-report',
+      title: 'Relatórios de Reclamações',
+      eyebrow: 'PDF e prazos',
+      description: 'Acesse relatórios diário, semanal e mensal com prazos e responsáveis.',
+      path: '/gestao/relatorio-semanal',
+      tone: 'leaf',
+      visible: isWeeklyComplaintReportAllowed(currentUser)
+    }
+  ].filter((item) => item.visible);
   const [complaints, setComplaints] = useState([]);
   const [viewMode, setViewMode] = useState('active');
   const [filters, setFilters] = useState({
@@ -1002,26 +1041,35 @@ function DashboardManagement() {
       <header className="page-heading complaint-management-heading">
         <div>
           <p className="eyebrow">Gestão de reclamações</p>
-          <h1>Painel de Gestão de Reclamações</h1>
+          <h1>Gestão de Reclamações</h1>
           <p>
             Acompanhamento executivo por SLA inicial, responsável atual e escalonamento automático para Coordenador, Gerente e Administração.
           </p>
         </div>
 
         <div className="heading-actions">
-          {isWeeklyComplaintReportAllowed(currentUser) && (
-            <button className="outline-action" onClick={() => navigate('/gestao/relatorio-semanal')}>
-              Relatorio semanal e mensal
-            </button>
-          )}
-          <button className="outline-action" onClick={() => navigate('/dashboard')}>
-            Dashboard
-          </button>
           <button className="outline-action" onClick={() => navigate('/home')}>
             Home
           </button>
         </div>
       </header>
+
+      {workspaceLinks.length > 0 && (
+        <section className="management-shortcut-grid complaint-shortcut-grid" aria-label="Atalhos da gestão de reclamações">
+          {workspaceLinks.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className={`management-shortcut-card ${item.tone}`}
+              onClick={() => navigate(item.path)}
+            >
+              <span>{item.eyebrow}</span>
+              <strong>{item.title}</strong>
+              <p>{item.description}</p>
+            </button>
+          ))}
+        </section>
+      )}
 
       <section className="kpi-grid management-kpi-grid" aria-label="Resumo operacional">
         <button type="button" className={quickFilterClass('kpi-card kpi-button', 'active')} onClick={() => applyQuickFilter('active')}>

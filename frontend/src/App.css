@@ -1904,6 +1904,124 @@ a {
   box-shadow: var(--shadow-md);
 }
 
+.management-shortcut-grid {
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
+  margin: 18px auto 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.nps-shortcut-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.management-shortcut-card {
+  position: relative;
+  min-height: 150px;
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  overflow: hidden;
+  border: 1px solid rgba(11, 111, 95, 0.12);
+  border-radius: 16px;
+  background:
+    radial-gradient(circle at 100% 0%, rgba(11, 111, 95, 0.12), transparent 34%),
+    linear-gradient(145deg, rgba(255, 255, 255, 0.98), rgba(244, 250, 248, 0.94));
+  box-shadow: var(--shadow-sm);
+  color: var(--ink);
+  cursor: pointer;
+  padding: 20px;
+  text-align: left;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.management-shortcut-card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 4px;
+  background: var(--brand);
+}
+
+.management-shortcut-card:hover,
+.management-shortcut-card:focus-visible {
+  border-color: rgba(11, 111, 95, 0.28);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+  outline: none;
+}
+
+.management-shortcut-card span {
+  width: fit-content;
+  border: 1px solid rgba(11, 111, 95, 0.14);
+  border-radius: 999px;
+  background: rgba(11, 111, 95, 0.1);
+  color: var(--brand-strong);
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.06em;
+  padding: 6px 10px;
+  text-transform: uppercase;
+}
+
+.management-shortcut-card strong {
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1.18;
+}
+
+.management-shortcut-card p {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.management-shortcut-card.teal::before {
+  background: var(--teal);
+}
+
+.management-shortcut-card.teal span {
+  border-color: rgba(31, 122, 140, 0.2);
+  background: rgba(31, 122, 140, 0.12);
+  color: #15586a;
+}
+
+.management-shortcut-card.gold::before {
+  background: var(--gold);
+}
+
+.management-shortcut-card.gold span {
+  border-color: rgba(208, 140, 49, 0.22);
+  background: rgba(208, 140, 49, 0.14);
+  color: #8a5311;
+}
+
+.management-shortcut-card.leaf::before {
+  background: var(--leaf);
+}
+
+.management-shortcut-card.leaf span {
+  border-color: rgba(76, 149, 108, 0.22);
+  background: rgba(76, 149, 108, 0.14);
+  color: #2b6a49;
+}
+
+@media (max-width: 1180px) {
+  .management-shortcut-grid,
+  .nps-shortcut-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 680px) {
+  .management-shortcut-grid,
+  .nps-shortcut-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .management-panel .panel-heading {
   align-items: flex-start;
   flex-wrap: wrap;

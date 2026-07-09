@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import api from './api';
-import { hasActionPermission, isMasterAdmin, normalizeRoleValue, readUser } from './constants';
+import { hasActionPermission, hasPermission, isMasterAdmin, normalizeRoleValue, readUser } from './constants';
 
 const profileLabels = {
   detrator: 'Detrator',
@@ -137,6 +137,35 @@ function NpsManagement() {
   const canDeleteRecords = isMasterAdmin(currentUser) || currentUserRole === 'supervisor_crc';
   const canFinishNps = hasActionPermission(currentUser, 'nps_finish');
   const canManageAutomation = ['admin', 'master_admin', 'supervisor_crc'].includes(currentUserRole) || isMasterAdmin(currentUser);
+  const workspaceLinks = [
+    {
+      key: 'nps-dashboard',
+      title: 'Dashboard NPS',
+      eyebrow: 'Indicadores',
+      description: 'Acompanhe NPS geral, perfis, evolução, detratores e indicações.',
+      path: '/dashboard-nps',
+      tone: 'teal',
+      visible: hasPermission(currentUser, 'nps_dashboard')
+    },
+    {
+      key: 'nps-public-survey',
+      title: 'Pesquisa NPS Pública',
+      eyebrow: 'Coleta',
+      description: 'Abra o formulário público para apoio operacional e validações.',
+      path: '/pesquisa-nps',
+      tone: 'brand',
+      visible: hasPermission(currentUser, 'nps_management')
+    },
+    {
+      key: 'nps-robot-master',
+      title: 'Monitor do Robô Ecuro',
+      eyebrow: 'Automação',
+      description: 'Acesse jobs, logs e execução técnica do robô de NPS automática.',
+      path: '/admin/robot-master',
+      tone: 'gold',
+      visible: isMasterAdmin(currentUser)
+    }
+  ].filter((item) => item.visible);
   const [rows, setRows] = useState([]);
   const [clinics, setClinics] = useState([]);
   const [viewMode, setViewMode] = useState('active');
@@ -577,19 +606,33 @@ function NpsManagement() {
       <header className="page-heading">
         <div>
           <p className="eyebrow">Gestão NPS</p>
-          <h1>Painel de Gestão NPS</h1>
+          <h1>Gestão de NPS</h1>
           <p>Trate clientes detratores em protocolo próprio, sem misturar com a gestão de reclamações.</p>
         </div>
 
         <div className="heading-actions">
-          <button className="outline-action" onClick={() => navigate('/dashboard-nps')}>
-            Dashboard NPS
-          </button>
           <button className="outline-action" onClick={() => navigate('/home')}>
             Home
           </button>
         </div>
       </header>
+
+      {workspaceLinks.length > 0 && (
+        <section className="management-shortcut-grid nps-shortcut-grid" aria-label="Atalhos da gestão NPS">
+          {workspaceLinks.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              className={`management-shortcut-card ${item.tone}`}
+              onClick={() => navigate(item.path)}
+            >
+              <span>{item.eyebrow}</span>
+              <strong>{item.title}</strong>
+              <p>{item.description}</p>
+            </button>
+          ))}
+        </section>
+      )}
 
       <section className="kpi-grid management-kpi-grid" aria-label="Resumo NPS">
         <button type="button" className="kpi-card kpi-button" onClick={() => applyQuickFilter('active')}>

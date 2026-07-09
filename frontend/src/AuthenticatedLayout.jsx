@@ -71,18 +71,14 @@ function buildMenuSections(user) {
       key: 'attendance',
       label: 'Atendimento',
       items: [
-        { key: 'new-protocol', label: 'Novo Protocolo', icon: 'complaints', path: '/cadastro', visible: hasPermission(user, 'complaints_register') },
-        { key: 'complaints-panel', label: 'Painel de Reclamações', icon: 'complaints', path: '/gestao', exact: true, visible: hasPermission(user, 'complaints_management') },
-        { key: 'weekly-report', label: 'Relatório Diário, Semanal e Mensal', icon: 'reports', path: '/gestao/relatorio-semanal', visible: canOpenWeeklyComplaintReport(user) && hasPermission(user, 'complaints_management') },
-        { key: 'complaints-dashboard', label: 'Dashboard de Reclamações', icon: 'dashboard', path: '/dashboard', visible: hasPermission(user, 'complaints_dashboard') }
+        { key: 'complaints-panel', label: 'Gestão de Reclamações', icon: 'complaints', path: '/gestao', exact: true, visible: hasPermission(user, 'complaints_management') }
       ]
     },
     {
       key: 'nps',
       label: 'NPS',
       items: [
-        { key: 'nps-management', label: 'Painel de Gestão NPS', icon: 'nps', path: '/gestao-nps', visible: hasPermission(user, 'nps_management') },
-        { key: 'nps-dashboard', label: 'Dashboard NPS', icon: 'dashboard', path: '/dashboard-nps', visible: hasPermission(user, 'nps_dashboard') },
+        { key: 'nps-management', label: 'Gestão de NPS', icon: 'nps', path: '/gestao-nps', visible: hasPermission(user, 'nps_management') },
         { key: 'nps-survey', label: 'Pesquisas NPS', icon: 'reports', path: '/pesquisa-nps', visible: hasPermission(user, 'nps_management') }
       ]
     },

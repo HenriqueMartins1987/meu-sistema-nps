@@ -86,6 +86,54 @@ function buildInitialForm() {
   };
 }
 
+function normalizeStatusText(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function isCancelledPatientStatus(status) {
+  return ['cancelado', 'cancelada'].includes(normalizeStatusText(status));
+}
+
+function isFinalPatientStatus(status) {
+  return [
+    'encerrado',
+    'encerrada',
+    'finalizado',
+    'finalizada',
+    'fechado',
+    'fechada',
+    'concluido',
+    'concluida'
+  ].includes(normalizeStatusText(status));
+}
+
+function getScheduledTimestamp(record) {
+  const time = record?.scheduledAt ? new Date(record.scheduledAt).getTime() : Number.MAX_SAFE_INTEGER;
+  return Number.isFinite(time) ? time : Number.MAX_SAFE_INTEGER;
+}
+
+function getActivityTimestamp(record) {
+  const value = record?.cancelledAt || record?.updatedAt || record?.createdAt || record?.scheduledAt;
+  const time = value ? new Date(value).getTime() : 0;
+  return Number.isFinite(time) ? time : 0;
+}
+
+function sortByScheduleAsc(a, b) {
+  const timeDiff = getScheduledTimestamp(a) - getScheduledTimestamp(b);
+  if (timeDiff !== 0) return timeDiff;
+  return Number(a?.id || 0) - Number(b?.id || 0);
+}
+
+function sortByRecentActivityDesc(a, b) {
+  const timeDiff = getActivityTimestamp(b) - getActivityTimestamp(a);
+  if (timeDiff !== 0) return timeDiff;
+  return Number(b?.id || 0) - Number(a?.id || 0);
+}
+
 function groupCount(items, key) {
   const map = new Map();
 
@@ -219,9 +267,9 @@ function PatientManagementPage() {
     }
 
     autoOpenRecordRef.current = true;
-    if (targetRecord.status === 'Cancelado') {
+    if (isCancelledPatientStatus(targetRecord.status)) {
       setActiveTab(canViewDeleted ? 'excluidos' : 'ativos');
-    } else if (targetRecord.status === 'Encerrado') {
+    } else if (isFinalPatientStatus(targetRecord.status)) {
       setActiveTab('finalizados');
     } else {
       setActiveTab('ativos');
@@ -232,10 +280,19 @@ function PatientManagementPage() {
   }, [canViewDeleted, focusRecordId, isDashboard, isRegister, location.pathname, navigate, records]);
 
   const activeRecords = useMemo(() => (
-    records.filter((record) => record.status !== 'Cancelado' && record.status !== 'Encerrado')
+    records
+      .filter((record) => !isCancelledPatientStatus(record.status) && !isFinalPatientStatus(record.status))
+      .slice()
+      .sort(sortByScheduleAsc)
   ), [records]);
-  const finishedRecords = useMemo(() => records.filter((record) => record.status === 'Encerrado'), [records]);
-  const deletedRecords = useMemo(() => records.filter((record) => record.status === 'Cancelado'), [records]);
+  const finishedRecords = useMemo(() => records
+    .filter((record) => isFinalPatientStatus(record.status))
+    .slice()
+    .sort(sortByRecentActivityDesc), [records]);
+  const deletedRecords = useMemo(() => records
+    .filter((record) => isCancelledPatientStatus(record.status))
+    .slice()
+    .sort(sortByRecentActivityDesc), [records]);
   const visibleRecords = activeTab === 'excluidos'
     ? deletedRecords
     : activeTab === 'finalizados'
@@ -290,10 +347,10 @@ function PatientManagementPage() {
       );
     })
     .slice()
-    .sort((a, b) => new Date(a.scheduledAt) - new Date(b.scheduledAt)), [dashboardSourceRecords, filters]);
+    .sort(sortByScheduleAsc), [dashboardSourceRecords, filters]);
   const dashboardReportRecords = useMemo(() => records
     .filter((record) => {
-      if (record.status === 'Cancelado') return false;
+      if (isCancelledPatientStatus(record.status)) return false;
 
       const searchable = [
         record.protocol,
@@ -321,11 +378,7 @@ function PatientManagementPage() {
       );
     })
     .slice()
-    .sort((a, b) => {
-      const aTime = a.scheduledAt ? new Date(a.scheduledAt).getTime() : Number.MAX_SAFE_INTEGER;
-      const bTime = b.scheduledAt ? new Date(b.scheduledAt).getTime() : Number.MAX_SAFE_INTEGER;
-      return aTime - bTime;
-    }), [records, filters]);
+    .sort(sortByScheduleAsc), [records, filters]);
   const dashboardExportRows = useMemo(() => dashboardReportRecords.map((record) => ({
     protocolo: record.protocol,
     paciente: record.patient,

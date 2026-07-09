@@ -280,25 +280,14 @@ function HomeShellFixed() {
     {
       title: 'Reclamações',
       items: [
-        { label: 'Novo Protocolo', path: '/cadastro', permission: 'complaints_register' },
-        { label: 'Painel de Gestão de Reclamações', path: '/gestao', permission: 'complaints_management' },
-        { label: 'Relatório diário, semanal e mensal de Reclamações', path: '/gestao/relatorio-semanal', permission: 'complaints_management', weeklyReportOnly: true },
-        { label: 'Dashboard de Reclamações', path: '/dashboard', permission: 'complaints_dashboard' }
+        { label: 'Gestão de Reclamações', path: '/gestao', permission: 'complaints_management' }
       ]
     },
     {
       title: 'NPS',
       items: [
-        { label: 'Painel de Gestão NPS', path: '/gestao-nps', permission: 'nps_management' },
-        { label: 'Dashboard NPS', path: '/dashboard-nps', permission: 'nps_dashboard' },
+        { label: 'Gestão de NPS', path: '/gestao-nps', permission: 'nps_management' },
         { label: 'Pesquisa NPS pública', path: '/pesquisa-nps', permission: 'nps_management' }
-      ]
-    },
-    {
-      title: 'Pacientes',
-      items: [
-        { label: 'Gestão do Paciente', path: '/pacientes', permission: 'patient_management' },
-        { label: 'Dashboard do Paciente', path: '/pacientes/dashboard', permission: 'patient_management' }
       ]
     },
     {
@@ -1239,26 +1228,14 @@ function HomeShellFixed() {
           {hasPermission(user, 'dental_card') && (
             <button className="primary-action" onClick={() => navigate('/dental-card')}>Dental Card</button>
           )}
-          {hasPermission(user, 'complaints_register') && (
-            <button className="primary-action" onClick={() => navigate('/cadastro')}>Novo Protocolo</button>
-          )}
           {hasPermission(user, 'complaints_management') && (
-            <button className="secondary-action" onClick={() => navigate('/gestao')}>Painel de Gestão de Reclamações</button>
+            <button className="secondary-action" onClick={() => navigate('/gestao')}>Gestão de Reclamações</button>
           )}
           {canAccessWeeklyComplaintReport(user) && hasPermission(user, 'complaints_management') && (
-            <button className="secondary-action" onClick={() => navigate('/home/relatorios')}>Central de relatorios</button>
-          )}
-          {hasPermission(user, 'complaints_dashboard') && (
-            <button className="secondary-action" onClick={() => navigate('/dashboard')}>Dashboard de Reclamações</button>
+            <button className="secondary-action" onClick={() => navigate('/home/relatorios')}>Central de relatórios</button>
           )}
           {hasPermission(user, 'nps_management') && (
-            <button className="outline-action" onClick={() => navigate('/gestao-nps')}>Painel de Gestão NPS</button>
-          )}
-          {hasPermission(user, 'nps_dashboard') && (
-            <button className="outline-action" onClick={() => navigate('/dashboard-nps')}>Dashboard NPS</button>
-          )}
-          {hasPermission(user, 'patient_management') && (
-            <button className="outline-action" onClick={() => navigate('/pacientes')}>Agendamento de Paciente</button>
+            <button className="outline-action" onClick={() => navigate('/gestao-nps')}>Gestão de NPS</button>
           )}
         </div>
       </section>
@@ -1466,14 +1443,7 @@ function HomeShellFixed() {
           </div>
           <h2>Agendamento do Paciente com protocolo e histórico</h2>
           <p>Cadastre confirmações, agendamentos e reagendamentos com data atual, protocolo próprio e trilha de cancelados.</p>
-          {hasPermission(user, 'patient_management') ? (
-            <div className="quick-card-actions">
-              <button className="primary-action" onClick={() => navigate('/pacientes')}>Cadastrar paciente</button>
-              <button className="outline-action" onClick={() => navigate('/pacientes/dashboard')}>Dashboard Pacientes</button>
-            </div>
-          ) : (
-            <strong className="quick-highlight">A rotina fica disponível conforme a alçada do usuário.</strong>
-          )}
+          <strong className="quick-highlight">A rotina agora fica concentrada dentro de Gestão de Reclamações para manter a operação organizada.</strong>
         </article>
 
         <article className="quick-card accent-leaf">
