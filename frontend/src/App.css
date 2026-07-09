@@ -16647,6 +16647,177 @@ a {
   font-weight: 900;
 }
 
+.agenda-operation-split-panel {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border: 1px solid rgba(211, 219, 232, 0.92);
+  background:
+    radial-gradient(circle at 98% 0%, rgba(73, 101, 255, 0.08), transparent 32%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96));
+}
+
+.agenda-operation-split-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.agenda-operation-card {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid rgba(214, 223, 236, 0.92);
+  border-radius: 22px;
+  background: #ffffff;
+  color: #10213b;
+  cursor: pointer;
+  text-align: left;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.06);
+  transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+}
+
+.agenda-operation-card:hover,
+.agenda-operation-card.active {
+  transform: translateY(-2px);
+  border-color: rgba(29, 143, 106, 0.38);
+  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.12);
+}
+
+.agenda-operation-card.patients {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(29, 143, 106, 0.13), transparent 36%),
+    linear-gradient(180deg, #ffffff, #f0fdf4);
+}
+
+.agenda-operation-card.confirmation {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(73, 101, 255, 0.13), transparent 36%),
+    linear-gradient(180deg, #ffffff, #eff6ff);
+}
+
+.agenda-operation-card.tasks {
+  background:
+    radial-gradient(circle at 100% 0%, rgba(245, 158, 11, 0.13), transparent 36%),
+    linear-gradient(180deg, #ffffff, #fffbeb);
+}
+
+.agenda-operation-card > span,
+.agenda-operation-focus > span,
+.agenda-confirmation-command-card > span {
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 1000;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agenda-operation-card > strong {
+  color: #10213b;
+  font-size: 1.05rem;
+  font-weight: 1000;
+  line-height: 1.18;
+}
+
+.agenda-operation-card > p,
+.agenda-operation-focus > p {
+  margin: 0;
+  color: rgba(49, 65, 91, 0.72);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.agenda-operation-card-main {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.agenda-operation-card-main b {
+  color: #10213b;
+  font-size: 1.75rem;
+  font-weight: 1000;
+}
+
+.agenda-operation-card-main small,
+.agenda-operation-card-metrics small,
+.agenda-operation-focus small {
+  color: rgba(49, 65, 91, 0.66);
+  font-size: 0.73rem;
+  line-height: 1.32;
+}
+
+.agenda-operation-card-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.agenda-operation-card-metrics article {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px;
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.agenda-operation-card-metrics article.danger {
+  background: rgba(254, 242, 242, 0.9);
+}
+
+.agenda-operation-card-metrics strong {
+  color: #10213b;
+  font-size: 1.05rem;
+  font-weight: 1000;
+}
+
+.agenda-operation-card-metrics span {
+  color: #334155;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.agenda-operation-card em {
+  display: inline-flex;
+  width: fit-content;
+  padding: 8px 11px;
+  border-radius: 999px;
+  background: #10213b;
+  color: #ffffff;
+  font-size: 0.74rem;
+  font-style: normal;
+  font-weight: 1000;
+}
+
+.agenda-operation-focus {
+  display: grid;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid rgba(214, 223, 236, 0.94);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.86);
+}
+
+.agenda-operation-focus.confirmation {
+  border-color: rgba(73, 101, 255, 0.24);
+}
+
+.agenda-operation-focus.tasks {
+  border-color: rgba(245, 158, 11, 0.3);
+}
+
+.agenda-operation-focus strong {
+  color: #10213b;
+  font-size: 1rem;
+  font-weight: 1000;
+}
+
 .agenda-confirmation-panel {
   border-color: rgba(73, 101, 255, 0.18);
   background:
@@ -16685,6 +16856,54 @@ a {
 .agenda-confirmation-monitor {
   display: grid;
   gap: 16px;
+}
+
+.agenda-confirmation-command-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.agenda-confirmation-command-card {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid rgba(214, 223, 236, 0.92);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.agenda-confirmation-command-card strong {
+  color: #10213b;
+  font-size: 1.45rem;
+  font-weight: 1000;
+}
+
+.agenda-confirmation-command-card small {
+  color: rgba(49, 65, 91, 0.7);
+  font-size: 0.74rem;
+  line-height: 1.35;
+}
+
+.agenda-confirmation-command-card.success {
+  border-color: rgba(29, 143, 106, 0.28);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(240, 253, 244, 0.94));
+}
+
+.agenda-confirmation-command-card.warning {
+  border-color: rgba(245, 158, 11, 0.34);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 251, 235, 0.94));
+}
+
+.agenda-confirmation-command-card.danger {
+  border-color: rgba(239, 68, 68, 0.28);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(254, 242, 242, 0.94));
+}
+
+.agenda-confirmation-command-card.progress {
+  border-color: rgba(73, 101, 255, 0.28);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(239, 246, 255, 0.94));
 }
 
 .agenda-confirmation-dashboard-grid {
@@ -17843,7 +18062,9 @@ a {
   .agenda-executive-highlight-grid,
   .agenda-box-visual-grid,
   .agenda-dashboard-visual-grid,
+  .agenda-operation-split-grid,
   .agenda-collaborator-board,
+  .agenda-confirmation-command-grid,
   .agenda-scope-tabs {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -18340,6 +18561,10 @@ a {
 
   .agenda-collaborator-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .agenda-operation-card-metrics {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .agenda-collaborator-bars label {

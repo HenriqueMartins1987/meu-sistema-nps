@@ -1883,8 +1883,15 @@ test('management profiles can replicate agenda items while operational profiles 
   assert.equal(serverModule.__testables.canReplicateAgendaItems({ role: 'crc_operator' }), false);
 });
 
-test('CRC operator can import agenda workbook without executive agenda access', () => {
+test('CRC and SAC operators access only scoped agenda dashboards', () => {
+  assert.equal(serverModule.__testables.canAccessAgendaDashboard({ role: 'crc_operator' }), true);
+  assert.equal(serverModule.__testables.canAccessAgendaDashboard({ role: 'sac_operator' }), true);
+  assert.equal(serverModule.__testables.canAccessAgendaDashboard({ role: 'viewer' }), false);
+  assert.equal(serverModule.__testables.canAccessAgendaConfirmationDashboard({ role: 'crc_operator' }), true);
+  assert.equal(serverModule.__testables.canAccessAgendaConfirmationDashboard({ role: 'sac_operator' }), true);
+
   assert.equal(serverModule.__testables.canImportAgendaWorkbook({ role: 'crc_operator' }), true);
+  assert.equal(serverModule.__testables.canImportAgendaWorkbook({ role: 'sac_operator' }), false);
   assert.equal(serverModule.__testables.canImportAgendaWorkbook({ role: 'viewer' }), false);
   assert.equal(serverModule.__testables.canImportAgendaWorkbook({ role: 'supervisor_crc' }), true);
 
@@ -1898,6 +1905,16 @@ test('CRC operator can import agenda workbook without executive agenda access', 
   assert.match(visibility.sql, /a\.assigned_user_id = \?/);
   assert.match(visibility.sql, /a\.clinic_id IS NULL OR a\.clinic_id IN \(\?\)/);
   assert.deepEqual(visibility.params, [1, 88, 88, [7, 9]]);
+
+  const sacVisibility = serverModule.__testables.buildAgendaVisibilityWhere({
+    id: 77,
+    role: 'sac_operator',
+    company_id: 1
+  }, 'a');
+  assert.match(sacVisibility.sql, /a\.owner_user_id = \?/);
+  assert.match(sacVisibility.sql, /a\.assigned_user_id = \?/);
+  assert.doesNotMatch(sacVisibility.sql, /a\.clinic_id IN/);
+  assert.deepEqual(sacVisibility.params, [1, 77, 77]);
 });
 
 test('CRC operator downloads agenda template and sees only linked clinics', async () => {
@@ -3542,7 +3559,9 @@ test('agenda confirmations dashboard summarizes WhatsApp sent dates by collabora
   assert.equal(response.body.clinics[0].clinic_name, 'Clinica Norte');
 });
 
-test('CRC operator cannot open leadership confirmations dashboard', async () => {
+test('CRC operator opens confirmations dashboard scoped to own agenda demands', async () => {
+  let confirmationSql = '';
+  let confirmationParams = [];
   pool.query = buildQueryStub([
     {
       match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
@@ -3554,6 +3573,14 @@ test('CRC operator cannot open leadership confirmations dashboard', async () => 
         permissions: JSON.stringify(['home']),
         action_permissions: null
       }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM agenda_items a') && sql.includes('LEFT JOIN whatsapp_campaign_recipients wcr'),
+      reply: async (sql, params) => {
+        confirmationSql = sql;
+        confirmationParams = params;
+        return [[]];
+      }
     }
   ]);
 
@@ -3568,6 +3595,11 @@ test('CRC operator cannot open leadership confirmations dashboard', async () => 
       mustChangePassword: false
     })}`);
 
-  assert.equal(response.status, 403);
+  assert.equal(response.status, 200);
+  assert.equal(response.body.summary.total, 0);
+  assert.match(confirmationSql, /a\.owner_user_id = \?/);
+  assert.match(confirmationSql, /a\.assigned_user_id = \?/);
+  assert.match(confirmationSql, /a\.clinic_id IS NULL OR a\.clinic_id IN \(\?\)/);
+  assert.deepEqual(confirmationParams.slice(0, 4), [1, 21, 21, [7]]);
 });
 

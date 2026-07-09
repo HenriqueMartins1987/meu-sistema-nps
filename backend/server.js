@@ -27341,12 +27341,12 @@ function canAccessAgendaCompanyBoard(user) {
 }
 
 function canAccessAgendaDashboard(user) {
-  return canAccessAgendaCompanyBoard(user);
+  if (canAccessAgendaCompanyBoard(user)) return true;
+  return ['crc_operator', 'sac_operator'].includes(normalizeAccessRole(user?.role));
 }
 
 function canAccessAgendaConfirmationDashboard(user) {
-  if (isMasterAdminUser(user)) return true;
-  return ['admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'manager'].includes(normalizeAccessRole(user?.role));
+  return canAccessAgendaDashboard(user);
 }
 
 function canAccessAgendaHomeDigest(user) {
@@ -29183,9 +29183,21 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
     patient_evasion: 0,
     patient_scheduled: 0,
     patient_confirmation_rate: 0,
+    patient_open: 0,
+    patient_done: 0,
+    patient_overdue: 0,
+    patient_due_24h: 0,
+    patient_schedule_rate: 0,
     fake_appointments: 0,
     prosthesis_not_delivered: 0,
-    patient_complaints: 0
+    patient_complaints: 0,
+    task_total: 0,
+    task_open: 0,
+    task_done: 0,
+    task_overdue: 0,
+    task_due_24h: 0,
+    task_recurring: 0,
+    task_completion_rate: 0
   };
   const urgentItems = [];
   const recentCompletions = [];
@@ -29343,6 +29355,7 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
     const createdDateKey = getSaoPauloDateKey(rawRow.created_at || item.created_at);
     const dueDateKey = getSaoPauloDateKey(item.due_at);
     const isPatientDemand = item.demand_type === 'patient';
+    const isDone = item.status === 'done';
 
     collaborator.total += 1;
     summary.total += 1;
@@ -29361,6 +29374,24 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
     if (item.is_daily_recurring) {
       collaborator.recurring += 1;
       summary.recurring += 1;
+    }
+
+    if (isPatientDemand) {
+      if (isDone) summary.patient_done += 1;
+      else {
+        summary.patient_open += 1;
+        if (dueHours !== null && dueHours < 0) summary.patient_overdue += 1;
+        if (dueHours !== null && dueHours >= 0 && dueHours <= 24) summary.patient_due_24h += 1;
+      }
+    } else {
+      summary.task_total += 1;
+      if (isDone) summary.task_done += 1;
+      else {
+        summary.task_open += 1;
+        if (dueHours !== null && dueHours < 0) summary.task_overdue += 1;
+        if (dueHours !== null && dueHours >= 0 && dueHours <= 24) summary.task_due_24h += 1;
+      }
+      if (item.is_daily_recurring) summary.task_recurring += 1;
     }
 
     if (isPatientDemand) {
@@ -29452,7 +29483,7 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
       }
     }
 
-    if (item.status === 'done') {
+    if (isDone) {
       collaborator.done += 1;
       summary.done += 1;
     } else {
@@ -29607,6 +29638,8 @@ function buildAgendaDashboardSnapshot(rows = [], completionRows = [], options = 
   summary.daily_average_created = Math.round(((summary.created_period / Math.max(1, periodDays)) * 10)) / 10;
   summary.completion_rate_period = calculateAgendaRate(summary.completed_period, summary.scheduled_period, 100);
   summary.patient_confirmation_rate = calculateAgendaRate(summary.patient_confirmed, summary.patient_total, 0);
+  summary.patient_schedule_rate = calculateAgendaRate(summary.patient_scheduled, summary.patient_total, 0);
+  summary.task_completion_rate = calculateAgendaRate(summary.task_done, summary.task_total, 100);
   summary.productivity_denominator = Number(summary.open || 0) + Number(summary.completed_period || 0);
   summary.productivity_index = calculateAgendaRate(summary.completed_period, summary.productivity_denominator, 100);
   summary.execution_balance = Number(summary.completed_period || 0) - Number(summary.scheduled_period || 0);
@@ -30953,88 +30986,185 @@ function buildAgendaConfirmationExcelBuffer(report = {}) {
 function buildAgendaConfirmationPdfBuffer(report = {}) {
   return new Promise((resolve, reject) => {
     try {
-      const doc = new PDFDocument({ size: 'A4', margin: 36 });
+      const doc = new PDFDocument({ size: 'A4', layout: 'landscape', margin: 28, bufferPages: true });
       const chunks = [];
       doc.on('data', (chunk) => chunks.push(chunk));
       doc.on('end', () => resolve(Buffer.concat(chunks)));
 
       const summary = report.summary || {};
-      doc.fontSize(18).font('Helvetica-Bold').fillColor('#111827').text('Relatorio de confirmacoes da agenda');
-      doc.moveDown(0.25);
-      doc.fontSize(9).font('Helvetica').fillColor('#6b7280').text(`Janela: ${report.window_days || 30} dias | Gerado em ${formatMessageDateTime(new Date())}`);
-      doc.moveDown(0.8);
+      const pageLeft = 28;
+      const pageWidth = doc.page.width - 56;
+      const pageBottom = doc.page.height - 42;
+      const navy = '#10213b';
+      const muted = '#64748b';
+      const border = '#dbe4ef';
+      const soft = '#f8fafc';
 
-      const metrics = [
-        ['Pacientes', summary.total || 0],
-        ['Confirmados', summary.confirmed || 0],
-        ['Sem confirmacao', summary.without_confirmation || 0],
-        ['WhatsApp enviado', summary.sent || 0],
-        ['Taxa', `${summary.confirmation_rate || 0}%`]
-      ];
-      const cardY = doc.y;
-      metrics.forEach((metric, index) => {
-        const x = 36 + (index * 104);
-        doc.roundedRect(x, cardY, 100, 48, 8).fillAndStroke('#f8fafc', '#e5e7eb');
-        doc.fillColor('#6b7280').fontSize(7).font('Helvetica-Bold').text(metric[0], x + 10, cardY + 10, { width: 80 });
-        doc.fillColor('#111827').fontSize(14).font('Helvetica-Bold').text(String(metric[1]), x + 10, cardY + 25, { width: 80 });
-      });
-      doc.y = cardY + 66;
+      const ensureSpace = (height = 80) => {
+        if (doc.y + height > pageBottom) {
+          doc.addPage();
+          doc.y = 34;
+        }
+      };
 
-      const renderSimpleTable = (title, rows, columns) => {
-        doc.fontSize(12).font('Helvetica-Bold').fillColor('#111827').text(title);
-        doc.moveDown(0.3);
-        const startX = 36;
-        const rowHeight = 22;
-        const tableWidth = columns.reduce((sum, column) => sum + column.width, 0);
-        const headerY = doc.y;
-        doc.rect(startX, headerY, tableWidth, rowHeight).fill('#111827');
-        let x = startX;
-        columns.forEach((column) => {
-          doc.fillColor('#ffffff').fontSize(7).font('Helvetica-Bold').text(column.title, x + 4, headerY + 7, { width: column.width - 8 });
-          x += column.width;
+      const drawSectionTitle = (title, subtitle = '') => {
+        ensureSpace(42);
+        doc.fillColor(navy).font('Helvetica-Bold').fontSize(13).text(title, pageLeft, doc.y, { width: pageWidth });
+        if (subtitle) {
+          doc.moveDown(0.16);
+          doc.fillColor(muted).font('Helvetica').fontSize(8).text(subtitle, pageLeft, doc.y, { width: pageWidth });
+        }
+        doc.moveDown(0.45);
+      };
+
+      const drawMetricCards = (metrics = []) => {
+        const gap = 10;
+        const cardWidth = (pageWidth - (gap * (metrics.length - 1))) / metrics.length;
+        const cardY = doc.y;
+        metrics.forEach((metric, index) => {
+          const x = pageLeft + (index * (cardWidth + gap));
+          doc.roundedRect(x, cardY, cardWidth, 58, 12).fillAndStroke(metric.fill || soft, metric.stroke || border);
+          doc.fillColor(metric.color || muted).font('Helvetica-Bold').fontSize(7).text(metric.label, x + 11, cardY + 11, { width: cardWidth - 22 });
+          doc.fillColor(navy).font('Helvetica-Bold').fontSize(17).text(String(metric.value ?? 0), x + 11, cardY + 26, { width: cardWidth - 22 });
+          doc.fillColor(muted).font('Helvetica').fontSize(7).text(metric.helper || '', x + 11, cardY + 45, { width: cardWidth - 22 });
         });
-        doc.y = headerY + rowHeight;
-        rows.forEach((row, rowIndex) => {
-          if (doc.y > 760) doc.addPage();
-          const y = doc.y;
-          doc.rect(startX, y, tableWidth, rowHeight).fill(rowIndex % 2 === 0 ? '#ffffff' : '#f9fafb');
-          x = startX;
+        doc.y = cardY + 72;
+      };
+
+      const renderTable = (title, subtitle, rows, columns, options = {}) => {
+        const limitedRows = rows.slice(0, options.limit || 18);
+        drawSectionTitle(title, subtitle);
+        if (!limitedRows.length) {
+          doc.roundedRect(pageLeft, doc.y, pageWidth, 34, 10).fillAndStroke('#ffffff', border);
+          doc.fillColor(muted).font('Helvetica').fontSize(8).text('Sem registros para os filtros selecionados.', pageLeft + 12, doc.y + 12);
+          doc.y += 48;
+          return;
+        }
+
+        const rowHeight = options.rowHeight || 25;
+        const headerHeight = 24;
+        const tableWidth = columns.reduce((sum, column) => sum + column.width, 0);
+        const startX = pageLeft;
+
+        const drawHeader = () => {
+          ensureSpace(headerHeight + rowHeight);
+          const headerY = doc.y;
+          doc.roundedRect(startX, headerY, tableWidth, headerHeight, 8).fill(navy);
+          let x = startX;
           columns.forEach((column) => {
-            const value = typeof column.value === 'function' ? column.value(row) : row[column.value];
-            doc.fillColor('#111827').fontSize(6.6).font('Helvetica').text(String(value || '-').slice(0, 46), x + 4, y + 7, { width: column.width - 8 });
+            doc.fillColor('#ffffff').font('Helvetica-Bold').fontSize(7).text(column.title, x + 6, headerY + 8, {
+              width: column.width - 12,
+              lineBreak: false
+            });
+            x += column.width;
+          });
+          doc.y = headerY + headerHeight;
+        };
+
+        drawHeader();
+        limitedRows.forEach((row, rowIndex) => {
+          if (doc.y + rowHeight > pageBottom) {
+            doc.addPage();
+            doc.y = 34;
+            drawHeader();
+          }
+
+          const y = doc.y;
+          doc.rect(startX, y, tableWidth, rowHeight).fill(rowIndex % 2 === 0 ? '#ffffff' : soft);
+          let x = startX;
+          columns.forEach((column) => {
+            const rawValue = typeof column.value === 'function' ? column.value(row) : row[column.value];
+            const value = String(rawValue ?? '-').replace(/\s+/g, ' ').trim() || '-';
+            doc.fillColor(column.danger && column.danger(row) ? '#b91c1c' : '#111827')
+              .font(column.bold ? 'Helvetica-Bold' : 'Helvetica')
+              .fontSize(column.fontSize || 7)
+              .text(value.slice(0, column.max || 64), x + 6, y + 8, {
+                width: column.width - 12,
+                lineBreak: false
+              });
             x += column.width;
           });
           doc.y = y + rowHeight;
         });
-        doc.moveDown(0.8);
+        doc.y += 16;
       };
 
-      renderSimpleTable('Pacientes sem confirmacao priorizados', (report.items || []).filter((item) => !item.is_confirmed).slice(0, 50), [
-        { title: 'Paciente', width: 120, value: 'patient_name' },
-        { title: 'Clinica', width: 95, value: 'clinic_name' },
-        { title: 'Responsavel', width: 95, value: 'assigned_user_name' },
-        { title: 'Consulta', width: 82, value: (row) => getAgendaReportDateLabel(row.patient_scheduled_at || row.due_at) },
-        { title: 'WhatsApp', width: 82, value: (row) => getAgendaReportDateLabel(row.whatsapp_sent_at) },
-        { title: 'Acao', width: 49, value: 'action_label' }
+      doc.roundedRect(pageLeft, 28, pageWidth, 74, 16).fillAndStroke('#eef6ff', '#cfe1f8');
+      doc.fillColor(navy).font('Helvetica-Bold').fontSize(20).text('Relatorio profissional de confirmacoes da agenda', pageLeft + 18, 43, { width: pageWidth - 36 });
+      doc.fillColor(muted).font('Helvetica').fontSize(9).text(
+        `Janela analisada: ${report.window_days || 30} dias | Gerado em ${formatMessageDateTime(new Date())}`,
+        pageLeft + 18,
+        71,
+        { width: pageWidth - 36 }
+      );
+      doc.y = 118;
+
+      drawMetricCards([
+        { label: 'Pacientes monitorados', value: summary.total || 0, helper: 'base de pacientes visivel' },
+        { label: 'Confirmados', value: summary.confirmed || 0, helper: `${summary.confirmation_rate || 0}% de confirmacao`, color: '#166534', fill: '#f0fdf4', stroke: '#bbf7d0' },
+        { label: 'Sem confirmacao', value: summary.without_confirmation || 0, helper: 'precisam retorno ativo', color: '#92400e', fill: '#fffbeb', stroke: '#fde68a' },
+        { label: 'Acao necessaria', value: summary.action_required || 0, helper: 'prioridade operacional', color: '#991b1b', fill: '#fef2f2', stroke: '#fecaca' },
+        { label: 'WhatsApp enviado', value: summary.sent || 0, helper: `${summary.failed || 0} falha(s) no envio`, color: '#1d4ed8', fill: '#eff6ff', stroke: '#bfdbfe' }
       ]);
 
-      renderSimpleTable('Desempenho por colaborador', (report.collaborators || []).slice(0, 12), [
-        { title: 'Colaborador', width: 160, value: 'name' },
-        { title: 'Total', width: 55, value: 'total' },
-        { title: 'Confirm.', width: 60, value: 'confirmed' },
-        { title: 'Sem conf.', width: 65, value: 'without_confirmation' },
-        { title: 'Enviados', width: 65, value: 'sent' },
-        { title: 'Taxa', width: 55, value: (row) => `${row.confirmation_rate || 0}%` }
+      const priorityRows = (report.items || [])
+        .filter((item) => !item.is_confirmed || item.needs_attention)
+        .sort((left, right) => {
+          if (left.needs_attention !== right.needs_attention) return left.needs_attention ? -1 : 1;
+          const leftTime = new Date(left.patient_scheduled_at || left.due_at || left.created_at || 0).getTime();
+          const rightTime = new Date(right.patient_scheduled_at || right.due_at || right.created_at || 0).getTime();
+          return leftTime - rightTime;
+        });
+
+      renderTable('Fila prioritaria de acompanhamento', 'Pacientes sem confirmacao, com falha, reagendamento ou necessidade de acao.', priorityRows, [
+        { title: 'Paciente', width: 142, value: 'patient_name', bold: true, max: 38 },
+        { title: 'Clinica', width: 124, value: 'clinic_name', max: 34 },
+        { title: 'Responsavel', width: 116, value: 'assigned_user_name', max: 30 },
+        { title: 'Consulta', width: 82, value: (row) => getAgendaReportDateLabel(row.patient_scheduled_at || row.due_at), max: 22 },
+        { title: 'WhatsApp', width: 82, value: (row) => getAgendaReportDateLabel(row.whatsapp_sent_at), max: 22 },
+        { title: 'Confirmacao', width: 90, value: 'confirmation_label', bold: true, max: 26 },
+        { title: 'Acao recomendada', width: 122, value: 'action_label', danger: (row) => row.needs_attention, max: 40 }
+      ], { limit: 28 });
+
+      renderTable('Ranking por clinica', 'Comparativo de confirmacao, pendencias, envio e falhas por unidade.', (report.clinics || []).slice(0, 18), [
+        { title: 'Clinica', width: 190, value: 'clinic_name', bold: true, max: 48 },
+        { title: 'Total', width: 58, value: 'total' },
+        { title: 'Confirm.', width: 68, value: 'confirmed' },
+        { title: 'Sem conf.', width: 72, value: 'without_confirmation', danger: (row) => Number(row.without_confirmation || 0) > 0 },
+        { title: 'Pendentes', width: 72, value: 'pending' },
+        { title: 'Acao', width: 58, value: 'action_required', danger: (row) => Number(row.action_required || 0) > 0 },
+        { title: 'Enviados', width: 70, value: 'sent' },
+        { title: 'Falhas', width: 58, value: 'failed', danger: (row) => Number(row.failed || 0) > 0 },
+        { title: 'Taxa', width: 64, value: (row) => `${row.confirmation_rate || 0}%`, bold: true }
       ]);
 
-      renderSimpleTable('Desempenho por clinica', (report.clinics || []).slice(0, 12), [
-        { title: 'Clinica', width: 160, value: 'clinic_name' },
-        { title: 'Total', width: 55, value: 'total' },
-        { title: 'Confirm.', width: 60, value: 'confirmed' },
-        { title: 'Sem conf.', width: 65, value: 'without_confirmation' },
-        { title: 'Enviados', width: 65, value: 'sent' },
-        { title: 'Taxa', width: 55, value: (row) => `${row.confirmation_rate || 0}%` }
+      renderTable('Desempenho por colaborador', 'Produtividade de confirmacao individual dentro da visao permitida ao usuario.', (report.collaborators || []).slice(0, 18), [
+        { title: 'Colaborador', width: 192, value: 'name', bold: true, max: 48 },
+        { title: 'Total', width: 62, value: 'total' },
+        { title: 'Confirm.', width: 72, value: 'confirmed' },
+        { title: 'Sem conf.', width: 78, value: 'without_confirmation', danger: (row) => Number(row.without_confirmation || 0) > 0 },
+        { title: 'Pendentes', width: 76, value: 'pending' },
+        { title: 'Acao', width: 62, value: 'action_required', danger: (row) => Number(row.action_required || 0) > 0 },
+        { title: 'Enviados', width: 76, value: 'sent' },
+        { title: 'Taxa', width: 72, value: (row) => `${row.confirmation_rate || 0}%`, bold: true }
       ]);
+
+      renderTable('Evolucao diaria', 'Volume de pacientes, confirmados, envios e acoes por dia.', (report.daily_series || []).slice(-24), [
+        { title: 'Data', width: 90, value: 'date', bold: true },
+        { title: 'Pacientes', width: 82, value: 'total' },
+        { title: 'Confirmados', width: 92, value: 'confirmed' },
+        { title: 'Sem confirmacao', width: 104, value: 'without_confirmation', danger: (row) => Number(row.without_confirmation || 0) > 0 },
+        { title: 'WhatsApp enviado', width: 110, value: 'sent' },
+        { title: 'Acao necessaria', width: 104, value: 'action_required', danger: (row) => Number(row.action_required || 0) > 0 }
+      ], { limit: 24 });
+
+      const pageRange = doc.bufferedPageRange();
+      for (let index = 0; index < pageRange.count; index += 1) {
+        doc.switchToPage(pageRange.start + index);
+        doc.fillColor(muted).font('Helvetica').fontSize(7)
+          .text('Relatorio executivo gerado pelo Sistema NPS | Dados mascarados conforme permissao e visao do usuario.', pageLeft, doc.page.height - 26, { width: pageWidth - 80 });
+        doc.text(`Pagina ${index + 1}/${pageRange.count}`, doc.page.width - 94, doc.page.height - 26, { width: 66, align: 'right' });
+      }
 
       doc.end();
     } catch (error) {
@@ -41890,6 +42020,8 @@ module.exports = {
     parseBulkNpsWorksheetRows,
     buildAgendaDashboardSnapshot,
     buildAgendaVisibilityWhere,
+    canAccessAgendaDashboard,
+    canAccessAgendaConfirmationDashboard,
     canImportAgendaWorkbook,
     canReplicateAgendaItems,
     applyAgendaImportSelectedDate,

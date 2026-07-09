@@ -278,11 +278,16 @@ function formatAgendaRecurrenceSummary(item = {}) {
 
 function canAccessAgendaAnalytics(user) {
   if (isMasterAdmin(user)) return true;
+  return ['admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'manager', 'crc_operator', 'sac_operator'].includes(normalizeRoleValue(user?.role));
+}
+
+function canAccessAgendaLeadershipAnalytics(user) {
+  if (isMasterAdmin(user)) return true;
   return ['admin', 'supervisor_crc', 'crc_leader', 'crc_manager', 'manager'].includes(normalizeRoleValue(user?.role));
 }
 
 function canUseAgendaImport(user) {
-  if (canAccessAgendaAnalytics(user)) return true;
+  if (canAccessAgendaLeadershipAnalytics(user)) return true;
   return normalizeRoleValue(user?.role) === 'crc_operator';
 }
 
@@ -939,6 +944,7 @@ export default function AgendaPage({ initialView = 'agenda' }) {
   const currentUserId = String(currentUser?.id || '');
   const canDeleteAgendaItem = Boolean(currentUser?.id);
   const canUseAgendaAnalytics = canAccessAgendaAnalytics(currentUser);
+  const canUseAgendaLeadershipAnalytics = canAccessAgendaLeadershipAnalytics(currentUser);
   const canUseAgendaImportPanel = canUseAgendaImport(currentUser);
   const canUseAgendaConfirmationPanel = canUseAgendaConfirmationMonitor(currentUser);
   const canUseOperatorTabs = canUseAgendaOperatorTabs(currentUser);
@@ -968,6 +974,7 @@ export default function AgendaPage({ initialView = 'agenda' }) {
   const [replicatingAgenda, setReplicatingAgenda] = useState(false);
   const [replicationSummary, setReplicationSummary] = useState(null);
   const [agendaViewMode, setAgendaViewMode] = useState(startsOnDashboard ? 'dashboard' : 'agenda');
+  const [activeDashboardSegment, setActiveDashboardSegment] = useState('patient');
   const [showAnalyticsPanel, setShowAnalyticsPanel] = useState(startsOnDashboard);
   const [showConfirmationPanel, setShowConfirmationPanel] = useState(false);
   const [showEnrichmentPanel, setShowEnrichmentPanel] = useState(false);
@@ -1593,6 +1600,74 @@ export default function AgendaPage({ initialView = 'agenda' }) {
     { label: 'Rotinas recorrentes', value: dashboard?.summary?.recurring || 0, helper: 'voltam automaticamente ao fluxo', tone: 'neutral' }
   ]), [dashboard]);
 
+  const agendaOperationSections = useMemo(() => {
+    const summary = dashboard?.summary || {};
+    return [
+      {
+        key: 'patient',
+        eyebrow: 'Agenda',
+        title: 'Agendamentos de pacientes',
+        helper: 'Pacientes importados, agenda clinica, evasao, reclamacao CRC e pendencias de dados.',
+        accent: 'patients',
+        primaryValue: summary.patient_total || 0,
+        primaryLabel: 'pacientes na carteira',
+        actionLabel: 'Ver agendamentos',
+        onClick: () => {
+          setActiveAgendaScope('patient');
+          setActivePatientQueue('all');
+        },
+        metrics: [
+          { label: 'Agendados', value: summary.patient_scheduled || 0, helper: formatAgendaPercent(summary.patient_schedule_rate || 0) },
+          { label: 'Abertos', value: summary.patient_open || 0, helper: 'em acompanhamento' },
+          { label: 'Atrasados', value: summary.patient_overdue || 0, helper: 'fora do prazo', danger: Number(summary.patient_overdue || 0) > 0 }
+        ]
+      },
+      {
+        key: 'confirmation',
+        eyebrow: 'Confirmacao',
+        title: 'Confirmacao via WhatsApp',
+        helper: 'Pacientes confirmados, pendentes ou nao confirmados para priorizacao ativa.',
+        accent: 'confirmation',
+        primaryValue: formatAgendaPercent(summary.patient_confirmation_rate || 0),
+        primaryLabel: 'taxa de confirmacao',
+        actionLabel: 'Ver pendentes',
+        onClick: () => {
+          setActiveAgendaScope('patient');
+          setActivePatientQueue('pending_confirmation');
+          setShowConfirmationPanel(true);
+        },
+        metrics: [
+          { label: 'Confirmados', value: summary.patient_confirmed || 0, helper: 'presenca validada' },
+          { label: 'Pendentes', value: summary.patient_pending || 0, helper: 'aguardando retorno', danger: Number(summary.patient_pending || 0) > 0 },
+          { label: 'Nao confirmados', value: summary.patient_evasion || 0, helper: 'evasao/tratativa', danger: Number(summary.patient_evasion || 0) > 0 }
+        ]
+      },
+      {
+        key: 'tasks',
+        eyebrow: 'Tarefas',
+        title: 'Tarefas internas',
+        helper: 'Rotinas administrativas, follow-ups, recorrencias obrigatorias e demandas sem paciente.',
+        accent: 'tasks',
+        primaryValue: summary.task_total || 0,
+        primaryLabel: 'tarefas internas',
+        actionLabel: 'Ver tarefas',
+        onClick: () => {
+          setActiveAgendaScope('tasks');
+          setActivePatientQueue('all');
+        },
+        metrics: [
+          { label: 'Concluidas', value: summary.task_done || 0, helper: formatAgendaPercent(summary.task_completion_rate || 0) },
+          { label: 'Abertas', value: summary.task_open || 0, helper: 'em execucao' },
+          { label: 'Vencendo 24h', value: summary.task_due_24h || 0, helper: 'acao imediata', danger: Number(summary.task_due_24h || 0) > 0 }
+        ]
+      }
+    ];
+  }, [dashboard]);
+
+  const selectedAgendaOperationSection = useMemo(() => (
+    agendaOperationSections.find((item) => item.key === activeDashboardSegment) || agendaOperationSections[0] || null
+  ), [activeDashboardSegment, agendaOperationSections]);
+
   const agendaExecutiveHighlights = useMemo(() => ([
     {
       label: 'Performance operacional',
@@ -1630,6 +1705,40 @@ export default function AgendaPage({ initialView = 'agenda' }) {
     { label: 'Acao necessaria', value: confirmationReport?.summary?.action_required || 0, helper: 'prioridade operacional', tone: 'danger' },
     { label: 'Taxa de confirmacao', value: formatAgendaPercent(confirmationReport?.summary?.confirmation_rate || 0), helper: 'confirmados sobre total', tone: 'progress' }
   ]), [confirmationReport]);
+
+  const confirmationCommandCards = useMemo(() => {
+    const summary = confirmationReport?.summary || {};
+    return [
+      {
+        key: 'priority',
+        label: 'Prioridade de hoje',
+        value: summary.action_required || 0,
+        helper: 'pacientes com acao recomendada',
+        tone: Number(summary.action_required || 0) > 0 ? 'danger' : 'success'
+      },
+      {
+        key: 'pending',
+        label: 'Sem confirmacao',
+        value: summary.without_confirmation || 0,
+        helper: 'pendentes, reagendamento ou nao confirmou',
+        tone: Number(summary.without_confirmation || 0) > 0 ? 'warning' : 'success'
+      },
+      {
+        key: 'whatsapp',
+        label: 'Cobertura WhatsApp',
+        value: formatAgendaPercent(summary.total ? ((Number(summary.sent || 0) * 100) / Number(summary.total || 1)) : 0),
+        helper: `${summary.sent || 0} enviado(s) de ${summary.total || 0}`,
+        tone: 'progress'
+      },
+      {
+        key: 'failures',
+        label: 'Falhas de envio',
+        value: summary.failed || 0,
+        helper: `${summary.without_whatsapp || 0} sem disparo vinculado`,
+        tone: Number(summary.failed || 0) > 0 ? 'danger' : 'neutral'
+      }
+    ];
+  }, [confirmationReport]);
 
   const openCreate = (status = 'todo', assignedUserId = currentUserId || '') => {
     setSelectedItem(null);
@@ -2370,6 +2479,55 @@ export default function AgendaPage({ initialView = 'agenda' }) {
               ))}
             </DashboardGrid>
 
+            <Card className="agenda-operation-split-panel">
+              <div className="agenda-panel-headline">
+                <div>
+                  <strong>Operacao separada por natureza</strong>
+                  <span>Agenda de pacientes, confirmacao e tarefas internas com leitura independente para evitar mistura de indicadores.</span>
+                </div>
+                <small>{canUseAgendaLeadershipAnalytics ? 'Visao de equipe' : 'Visao individual'}</small>
+              </div>
+              <div className="agenda-operation-split-grid">
+                {agendaOperationSections.map((section) => (
+                  <button
+                    key={section.key}
+                    type="button"
+                    className={`agenda-operation-card ${section.accent} ${activeDashboardSegment === section.key ? 'active' : ''}`}
+                    onClick={() => {
+                      setActiveDashboardSegment(section.key);
+                      section.onClick();
+                    }}
+                  >
+                    <span>{section.eyebrow}</span>
+                    <strong>{section.title}</strong>
+                    <p>{section.helper}</p>
+                    <div className="agenda-operation-card-main">
+                      <b>{section.primaryValue}</b>
+                      <small>{section.primaryLabel}</small>
+                    </div>
+                    <div className="agenda-operation-card-metrics">
+                      {section.metrics.map((metric) => (
+                        <article key={`${section.key}-${metric.label}`} className={metric.danger ? 'danger' : ''}>
+                          <strong>{metric.value}</strong>
+                          <span>{metric.label}</span>
+                          <small>{metric.helper}</small>
+                        </article>
+                      ))}
+                    </div>
+                    <em>{section.actionLabel}</em>
+                  </button>
+                ))}
+              </div>
+              {selectedAgendaOperationSection ? (
+                <div className={`agenda-operation-focus ${selectedAgendaOperationSection.accent}`}>
+                  <span>Foco selecionado</span>
+                  <strong>{selectedAgendaOperationSection.title}</strong>
+                  <p>{selectedAgendaOperationSection.helper}</p>
+                  <small>Os indicadores abaixo respeitam este recorte operacional e a permissao do usuario logado.</small>
+                </div>
+              ) : null}
+            </Card>
+
             <div className="agenda-dashboard-visual-grid">
               <Card className="agenda-dashboard-visual-card">
                 <div className="agenda-panel-headline">
@@ -2892,7 +3050,7 @@ export default function AgendaPage({ initialView = 'agenda' }) {
                   role="tab"
                   aria-selected={confirmationActiveTab === 'dashboard'}
                 >
-                  Dashboard lideranca
+                  {canUseAgendaLeadershipAnalytics ? 'Dashboard lideranca' : 'Meu dashboard'}
                 </button>
               ) : null}
             </div>
@@ -2902,6 +3060,16 @@ export default function AgendaPage({ initialView = 'agenda' }) {
                 <KPICard key={`confirmation-${card.label}`} label={card.label} value={card.value} helper={card.helper} tone={card.tone} />
               ))}
             </DashboardGrid>
+
+            <div className="agenda-confirmation-command-grid">
+              {confirmationCommandCards.map((card) => (
+                <article key={card.key} className={`agenda-confirmation-command-card ${card.tone}`}>
+                  <span>{card.label}</span>
+                  <strong>{card.value}</strong>
+                  <small>{card.helper}</small>
+                </article>
+              ))}
+            </div>
 
             {confirmationActiveTab === 'dashboard' && canUseAgendaAnalytics ? (
               <div className="agenda-confirmation-dashboard">
