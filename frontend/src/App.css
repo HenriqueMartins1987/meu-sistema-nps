@@ -1665,7 +1665,7 @@ a {
 }
 
 .reports-hub-page {
-  width: min(1180px, calc(100vw - 48px));
+  width: min(var(--page-shell-width), calc(100vw - (var(--page-shell-padding) * 2)));
   margin: 0 auto;
   padding: 32px 0 54px;
   display: grid;
@@ -1681,8 +1681,9 @@ a {
   border: 1px solid rgba(221, 207, 188, 0.82);
   border-radius: 28px;
   background:
-    radial-gradient(circle at 90% 10%, rgba(198, 152, 84, 0.18), transparent 30%),
-    linear-gradient(135deg, #151f2d 0%, #253448 54%, #f8f4ec 54%, #ffffff 100%);
+    radial-gradient(circle at 92% 8%, rgba(200, 154, 87, 0.28), transparent 30%),
+    radial-gradient(circle at 0% 100%, rgba(11, 111, 95, 0.22), transparent 34%),
+    linear-gradient(135deg, #121c2c 0%, #24364b 58%, #173f42 100%);
   box-shadow: 0 24px 48px rgba(18, 24, 34, 0.12);
 }
 
@@ -1700,7 +1701,7 @@ a {
 .reports-hub-hero p {
   max-width: 660px;
   margin: 0;
-  color: rgba(255, 247, 234, 0.8);
+  color: rgba(255, 247, 234, 0.88);
   font-weight: 760;
   line-height: 1.5;
 }
@@ -1739,8 +1740,9 @@ a {
 
 .reports-hub-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
   gap: 16px;
+  align-items: stretch;
 }
 
 .reports-command-center {
@@ -1793,6 +1795,10 @@ a {
   background: linear-gradient(135deg, rgba(255, 252, 246, 0.98), rgba(242, 247, 252, 0.96));
 }
 
+.reports-featured-actions .base-subtitle {
+  color: #5f5144;
+}
+
 .reports-featured-actions h2 {
   margin: 6px 0 0;
   color: #172235;
@@ -1801,7 +1807,7 @@ a {
 
 .reports-featured-actions > div:last-child {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 10px;
 }
 
@@ -1828,6 +1834,12 @@ a {
   box-shadow: 0 12px 24px rgba(18, 24, 34, 0.08);
 }
 
+.reports-featured-actions button:focus-visible,
+.reports-hub-links button:focus-visible {
+  outline: 3px solid rgba(11, 111, 95, 0.28);
+  outline-offset: 3px;
+}
+
 .reports-featured-actions button span {
   color: #172235;
   font-size: 0.96rem;
@@ -1842,13 +1854,19 @@ a {
 
 .reports-hub-card {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 16px;
+  min-height: 360px;
   padding: 20px;
   border: 1px solid rgba(221, 207, 188, 0.82);
   border-radius: 24px;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 244, 237, 0.88));
   box-shadow: 0 18px 34px rgba(18, 24, 34, 0.08);
+}
+
+.reports-hub-card header {
+  min-height: 148px;
 }
 
 .reports-hub-card h2 {
@@ -1867,6 +1885,7 @@ a {
 .reports-hub-links {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  align-content: start;
   gap: 12px;
 }
 
@@ -1874,7 +1893,7 @@ a {
   display: grid;
   align-content: start;
   gap: 8px;
-  min-height: 132px;
+  min-height: 146px;
   border: 1px solid rgba(221, 207, 188, 0.9);
   border-radius: 16px;
   background:
@@ -1905,11 +1924,21 @@ a {
 }
 
 .agenda-feature-grid {
-  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  align-items: stretch;
 }
 
 .agenda-feature-card {
-  min-height: 164px;
+  min-height: 184px;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+}
+
+.agenda-feature-card strong {
+  min-height: 44px;
+}
+
+.agenda-feature-card p {
+  min-height: 58px;
 }
 
 .agenda-feature-card.active {
