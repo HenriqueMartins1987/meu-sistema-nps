@@ -9,9 +9,9 @@
     "robot:server": "node robot/ecuroRobotServer.js",
     "robot:install-browser": "npx playwright install chromium",
     "test": "node --test --test-concurrency=1 --test-isolation=none tests/*.test.js",
+    "sync:prod-local": "node scripts/syncProductionToLocal.js",
     "nps:demo": "node scripts/npsDemo.js",
-    "nps:demo:reset": "node scripts/npsDemoReset.js",
-    "sync:prod-local": "node scripts/syncProductionToLocal.js"
+    "nps:demo:reset": "node scripts/npsDemoReset.js"
   },
   "keywords": [],
   "author": "",
