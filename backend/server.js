@@ -17234,6 +17234,63 @@ async function getNpsRows(query = {}, user = null) {
   }));
 }
 
+async function getNpsSentInviteRows(query = {}, user = null) {
+  const where = [
+    "(i.status IN ('sent', 'responded') OR i.sent_at IS NOT NULL)"
+  ];
+  const params = [];
+
+  if (query.clinic_id) {
+    where.push('i.clinic_id = ?');
+    params.push(query.clinic_id);
+  }
+
+  if (user && !isAdminUser(user) && !['supervisor_crc', 'sac_operator'].includes(normalizeAccessRole(user?.role))) {
+    const clinicIds = await getUserClinicIds(user.id);
+
+    if (clinicIds.length) {
+      where.push('i.clinic_id IN (?)');
+      params.push(clinicIds);
+    } else {
+      where.push('1 = 0');
+    }
+  }
+
+  const limit = normalizeEcuroAutomationLimit(query.limit, 20, 100);
+  params.push(limit);
+
+  const [rows] = await pool.query(
+    `SELECT
+      i.id,
+      i.token,
+      i.clinic_id,
+      COALESCE(i.clinic_name, cl.name) AS clinic_name,
+      i.patient_name,
+      i.patient_phone,
+      i.source,
+      i.session_id,
+      i.status,
+      i.public_url,
+      i.provider_message_id,
+      i.sent_at,
+      i.responded_at,
+      i.created_at,
+      i.updated_at
+     FROM nps_invites i
+     LEFT JOIN clinics cl ON cl.id = i.clinic_id
+     WHERE ${where.join(' AND ')}
+     ORDER BY COALESCE(i.sent_at, i.updated_at, i.created_at) DESC, i.id DESC
+     LIMIT ?`,
+    params
+  );
+
+  return rows.map((row) => ({
+    ...row,
+    patient_phone_masked: maskPhone(row.patient_phone),
+    patient_phone: undefined
+  }));
+}
+
 async function convertNpsToComplaint(npsId, user) {
   const [rows] = await pool.query('SELECT * FROM nps_responses WHERE id = ?', [npsId]);
 
@@ -37164,6 +37221,22 @@ app.get('/nps/responses', authenticate, async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao buscar pesquisas NPS.' });
+  }
+});
+
+app.get('/nps/invites/sent', authenticate, async (req, res) => {
+  try {
+    const permissions = Array.isArray(req.user?.permissions) ? req.user.permissions : [];
+
+    if (!permissions.includes('nps_management') && !permissions.includes('nps_dashboard') && !isAdminUser(req.user)) {
+      return res.status(403).json({ error: 'Seu perfil não possui acesso aos convites NPS enviados.' });
+    }
+
+    const rows = await getNpsSentInviteRows(req.query, req.user);
+    res.json(rows);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Erro ao buscar convites NPS enviados.' });
   }
 });
 

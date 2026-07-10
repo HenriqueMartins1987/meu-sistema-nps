@@ -53,8 +53,7 @@ function buildMenuSections(user) {
       key: 'agenda',
       label: 'Agenda',
       items: [
-        { key: 'agenda', label: 'Agenda', icon: 'agenda', path: '/agenda', exact: true, visible: hasPermission(user, 'home') },
-        { key: 'agenda-dashboard', label: 'Dashboard Agenda', icon: 'dashboard', path: '/agenda/dashboard', visible: hasPermission(user, 'home') }
+        { key: 'agenda', label: 'Agenda', icon: 'agenda', path: '/agenda', exact: true, visible: hasPermission(user, 'home') }
       ]
     },
     {

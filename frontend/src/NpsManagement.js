@@ -46,6 +46,15 @@ function buildWhatsappUrl(phone) {
   return `https://wa.me/${digits.startsWith('55') ? digits : `55${digits}`}`;
 }
 
+function maskPhoneDisplay(phone) {
+  const digits = String(phone || '').replace(/\D/g, '');
+  if (!digits) return 'Telefone não informado';
+  const normalized = digits.startsWith('55') ? digits : `55${digits}`;
+  const ddd = normalized.slice(2, 4);
+  const last = normalized.slice(-4);
+  return `+55 ${ddd} *****-${last}`;
+}
+
 function getNpsStatus(item) {
   return item?.nps_status || 'registrado';
 }
@@ -136,7 +145,8 @@ function NpsManagement() {
   const canViewDeleted = isMasterAdmin(currentUser);
   const canDeleteRecords = isMasterAdmin(currentUser) || currentUserRole === 'supervisor_crc';
   const canFinishNps = hasActionPermission(currentUser, 'nps_finish');
-  const canManageAutomation = ['admin', 'master_admin', 'supervisor_crc'].includes(currentUserRole) || isMasterAdmin(currentUser);
+  const canViewAutomationMonitor = isMasterAdmin(currentUser);
+  const canManageAutomation = canViewAutomationMonitor;
   const workspaceLinks = [
     {
       key: 'nps-dashboard',
@@ -176,6 +186,7 @@ function NpsManagement() {
     region: '',
     coordinator: '',
     status: '',
+    referral: '',
     search: ''
   });
   const [loading, setLoading] = useState(true);
@@ -188,6 +199,8 @@ function NpsManagement() {
   const [bulkFile, setBulkFile] = useState(null);
   const [feedback, setFeedback] = useState('');
   const [bulkSending, setBulkSending] = useState(false);
+  const [sentInvites, setSentInvites] = useState([]);
+  const [sentInvitesLoading, setSentInvitesLoading] = useState(false);
   const [automationOverview, setAutomationOverview] = useState(null);
   const [automationLoading, setAutomationLoading] = useState(false);
   const [automationRunning, setAutomationRunning] = useState(false);
@@ -215,7 +228,27 @@ function NpsManagement() {
     }
   }, [canViewDeleted]);
 
+  const loadSentInvites = useCallback(async () => {
+    setSentInvitesLoading(true);
+
+    try {
+      const response = await api.get('/nps/invites/sent', {
+        params: { limit: 20 }
+      });
+      setSentInvites(Array.isArray(response.data) ? response.data : []);
+    } catch (error) {
+      setSentInvites([]);
+    } finally {
+      setSentInvitesLoading(false);
+    }
+  }, []);
+
   const loadAutomationOverview = useCallback(async () => {
+    if (!canViewAutomationMonitor) {
+      setAutomationOverview(null);
+      return;
+    }
+
     setAutomationLoading(true);
 
     try {
@@ -226,12 +259,13 @@ function NpsManagement() {
     } finally {
       setAutomationLoading(false);
     }
-  }, []);
+  }, [canViewAutomationMonitor]);
 
   useEffect(() => {
     loadRows();
+    loadSentInvites();
     loadAutomationOverview();
-  }, [loadAutomationOverview, loadRows]);
+  }, [loadAutomationOverview, loadRows, loadSentInvites]);
 
   useEffect(() => {
     autoOpenNpsRef.current = false;
@@ -287,6 +321,12 @@ function NpsManagement() {
     .filter((item) => {
       const profile = item.nps_profile || profileFromScore(item.score);
       const status = getNpsStatus(item);
+      const hasReferral = Boolean(
+        Number(item.referral_count || 0) > 0
+        || item.recommend_yes
+        || item.referral_name
+        || (Array.isArray(item.referrals) && item.referrals.length)
+      );
       const searchable = [
         protocolLabel(item),
         item.patient_name,
@@ -313,6 +353,7 @@ function NpsManagement() {
         && (!filters.region || item.region === filters.region)
         && (!filters.coordinator || item.coordinator_name === filters.coordinator)
         && (!filters.status || status === filters.status)
+        && (!filters.referral || hasReferral)
         && (!filters.search || searchable.includes(normalizeText(filters.search)))
       );
     })
@@ -332,7 +373,7 @@ function NpsManagement() {
     const detractors = operationalRows.filter((item) => Number(item.score) <= 6).length;
     const inTreatment = activeRows.filter((item) => getNpsStatus(item) === 'em_tratativa').length;
     const treated = finishedRows.length;
-    const pendingDetractors = activeRows.filter((item) => Number(item.score) <= 6 && getNpsStatus(item) !== 'tratado').length;
+    const pendingDetractors = activeRows.filter((item) => Number(item.score) <= 6 && getNpsStatus(item) === 'registrado').length;
     const referralReceived = operationalRows.reduce((sum, item) => sum + Number(item.referral_count || (item.recommend_yes ? 1 : 0) || 0), 0);
     const referralConverted = operationalRows.reduce((sum, item) => sum + Number(item.referral_converted_count || 0), 0);
     const nps = total ? Math.round(((promoters - detractors) / total) * 100) : 0;
@@ -357,10 +398,17 @@ function NpsManagement() {
       region: '',
       coordinator: '',
       status: '',
+      referral: '',
       clinic: prev.clinic,
       search: prev.search,
       ...nextFilters
     }));
+  };
+
+  const isQuickFilterActive = (expectedViewMode, expectedFilters = {}) => {
+    const fields = ['profile', 'state', 'region', 'coordinator', 'status', 'referral'];
+    return viewMode === expectedViewMode
+      && fields.every((field) => String(filters[field] || '') === String(expectedFilters[field] || ''));
   };
 
   const handleDownloadTemplate = async () => {
@@ -415,7 +463,7 @@ function NpsManagement() {
     try {
       const response = await api.post('/nps/automation/run', {});
       setFeedback(response.data?.message || 'Robô Ecuro executado com sucesso.');
-      await loadAutomationOverview();
+      await Promise.all([loadAutomationOverview(), loadSentInvites()]);
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível executar o robô Ecuro / NPS automática.');
     } finally {
@@ -445,7 +493,7 @@ function NpsManagement() {
     try {
       const response = await api.post('/nps/automation/reprocess-failures', {});
       setFeedback(response.data?.message || 'Falhas da automação NPS reprocessadas.');
-      await loadAutomationOverview();
+      await Promise.all([loadAutomationOverview(), loadSentInvites()]);
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível reprocessar as falhas da automação NPS.');
     } finally {
@@ -602,7 +650,7 @@ function NpsManagement() {
   };
 
   return (
-    <main className="app-page">
+    <main className="app-page nps-management-page">
       <header className="page-heading">
         <div>
           <p className="eyebrow">Gestão NPS</p>
@@ -635,43 +683,44 @@ function NpsManagement() {
       )}
 
       <section className="kpi-grid management-kpi-grid" aria-label="Resumo NPS">
-        <button type="button" className="kpi-card kpi-button" onClick={() => applyQuickFilter('active')}>
+        <button type="button" className={`kpi-card kpi-button ${isQuickFilterActive('active') ? 'active' : ''}`} onClick={() => applyQuickFilter('active')}>
           <span>NPS</span>
           <strong>{metrics.nps}</strong>
           <p>ÍNDICE ATUAL</p>
         </button>
-        <button type="button" className="kpi-card success kpi-button" onClick={() => applyQuickFilter('active', { profile: 'promotor' })}>
+        <button type="button" className={`kpi-card success kpi-button ${isQuickFilterActive('active', { profile: 'promotor' }) ? 'active' : ''}`} onClick={() => applyQuickFilter('active', { profile: 'promotor' })}>
           <span>Promotores</span>
           <strong>{metrics.promoters}</strong>
           <p>NOTAS 9 E 10</p>
         </button>
-        <button type="button" className="kpi-card progress kpi-button" onClick={() => applyQuickFilter('active', { profile: 'neutro' })}>
+        <button type="button" className={`kpi-card progress kpi-button ${isQuickFilterActive('active', { profile: 'neutro' }) ? 'active' : ''}`} onClick={() => applyQuickFilter('active', { profile: 'neutro' })}>
           <span>Neutros</span>
           <strong>{metrics.neutrals}</strong>
           <p>NOTAS 7 E 8</p>
         </button>
-        <button type="button" className="kpi-card danger kpi-button" onClick={() => applyQuickFilter('active', { profile: 'detrator' })}>
+        <button type="button" className={`kpi-card danger kpi-button ${isQuickFilterActive('active', { profile: 'detrator' }) ? 'active' : ''}`} onClick={() => applyQuickFilter('active', { profile: 'detrator' })}>
           <span>Detratores</span>
           <strong>{metrics.detractors}</strong>
           <p>NOTAS 0 A 6</p>
         </button>
-        <button type="button" className="kpi-card warning kpi-button" onClick={() => applyQuickFilter('active', { profile: 'detrator' })}>
+        <button type="button" className={`kpi-card warning kpi-button ${isQuickFilterActive('active', { profile: 'detrator', status: 'registrado' }) ? 'active' : ''}`} onClick={() => applyQuickFilter('active', { profile: 'detrator', status: 'registrado' })}>
           <span>Pendentes</span>
           <strong>{metrics.pendingDetractors}</strong>
           <p>DETRATORES EM ABERTO</p>
         </button>
-        <button type="button" className="kpi-card kpi-button" onClick={() => applyQuickFilter('finished', { status: 'tratado' })}>
+        <button type="button" className={`kpi-card kpi-button ${isQuickFilterActive('finished', { status: 'tratado' }) ? 'active' : ''}`} onClick={() => applyQuickFilter('finished', { status: 'tratado' })}>
           <span>Tratados</span>
           <strong>{metrics.treated}</strong>
           <p>PROTOCOLOS NPS</p>
         </button>
-        <article className="kpi-card success kpi-static">
+        <button type="button" className={`kpi-card success kpi-button ${isQuickFilterActive('active', { referral: 'with_referral' }) ? 'active' : ''}`} onClick={() => applyQuickFilter('active', { referral: 'with_referral' })}>
           <span>Indicações</span>
           <strong>{metrics.referralReceived}</strong>
           <p>{metrics.referralConverted} convertidas</p>
-        </article>
+        </button>
       </section>
 
+      {canViewAutomationMonitor && (
       <section className="management-panel nps-automation-panel">
         <div className="panel-heading">
           <div>
@@ -802,6 +851,7 @@ function NpsManagement() {
           )}
         </div>
       </section>
+      )}
 
       <section className="management-panel bulk-dispatch-panel">
         <div className="panel-heading">
@@ -826,6 +876,54 @@ function NpsManagement() {
         </div>
 
         {bulkFile && <small className="bulk-file-name">Arquivo selecionado: {bulkFile.name}</small>}
+      </section>
+
+      <section className="management-panel nps-sent-success-panel">
+        <div className="panel-heading">
+          <div>
+            <p className="eyebrow">Envios concluídos</p>
+            <h2>Pacientes com NPS enviada com êxito</h2>
+            <p className="base-subtitle">
+              Últimos convites enviados ou respondidos, antes da lista de respostas, para controle operacional do disparo.
+            </p>
+          </div>
+          <button type="button" className="outline-action" onClick={loadSentInvites} disabled={sentInvitesLoading}>
+            {sentInvitesLoading ? 'Atualizando...' : 'Atualizar envios'}
+          </button>
+        </div>
+
+        {sentInvitesLoading ? (
+          <p className="empty-state">Carregando envios NPS...</p>
+        ) : sentInvites.length ? (
+          <div className="nps-sent-grid">
+            {sentInvites.map((invite) => (
+              <article className={`nps-sent-card ${String(invite.status || '').toLowerCase()}`} key={invite.id}>
+                <div>
+                  <span className="person-label">Paciente</span>
+                  <strong>{invite.patient_name || 'Paciente não informado'}</strong>
+                  <p>{invite.clinic_name || 'Unidade não informada'}</p>
+                </div>
+                <div className="nps-sent-meta">
+                  <span>{invite.patient_phone_masked || maskPhoneDisplay(invite.patient_phone)}</span>
+                  <span>Sessão: {invite.session_id || 'nps'}</span>
+                  <span>Enviado em {formatDate(invite.sent_at || invite.updated_at || invite.created_at)}</span>
+                </div>
+                <div className="nps-sent-actions">
+                  <span className={`nps-status-chip ${String(invite.status || 'sent').toLowerCase()}`}>
+                    {invite.status === 'responded' ? 'Respondida' : 'Enviada'}
+                  </span>
+                  {invite.public_url ? (
+                    <a className="outline-action compact-action" href={invite.public_url} target="_blank" rel="noreferrer">
+                      Abrir link
+                    </a>
+                  ) : null}
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-state">Nenhum envio NPS com êxito foi localizado nos últimos registros.</p>
+        )}
       </section>
 
       <section className="management-panel">
