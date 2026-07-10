@@ -86,6 +86,13 @@ export default function ReportsHub() {
   const user = useMemo(() => readUser(), []);
   const groups = useMemo(() => buildReportGroups(user), [user]);
   const totalLinks = groups.reduce((sum, group) => sum + group.items.length, 0);
+  const totalDashboards = groups.reduce((sum, group) => (
+    sum + group.items.filter((item) => String(item.label || '').toLowerCase().includes('dashboard')).length
+  ), 0);
+  const totalOperationalReports = Math.max(totalLinks - totalDashboards, 0);
+  const primaryActions = groups
+    .flatMap((group) => group.items.map((item) => ({ ...item, group: group.title })))
+    .slice(0, 4);
 
   return (
     <main className="reports-hub-page">
@@ -101,6 +108,41 @@ export default function ReportsHub() {
           <small>{groups.length} módulos disponíveis</small>
         </div>
       </section>
+
+      <section className="reports-command-center" aria-label="Resumo da central de relatorios">
+        <article>
+          <span>Dashboards</span>
+          <strong>{totalDashboards}</strong>
+          <small>visoes executivas liberadas</small>
+        </article>
+        <article>
+          <span>Relatorios operacionais</span>
+          <strong>{totalOperationalReports}</strong>
+          <small>rotinas, auditoria e acompanhamento</small>
+        </article>
+        <article>
+          <span>Perfil</span>
+          <strong>{normalizeRoleValue(user?.role) || 'usuario'}</strong>
+          <small>acesso calculado por permissao</small>
+        </article>
+      </section>
+
+      {primaryActions.length ? (
+        <section className="reports-featured-actions" aria-label="Atalhos recomendados">
+          <div>
+            <p className="eyebrow">Atalhos recomendados</p>
+            <h2>Acesse rapidamente as frentes mais usadas</h2>
+          </div>
+          <div>
+            {primaryActions.map((item) => (
+              <button type="button" key={`featured-${item.path}`} onClick={() => navigate(item.path)}>
+                <span>{item.label}</span>
+                <small>{item.group} - {item.meta}</small>
+              </button>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="reports-hub-grid">
         {groups.map((group) => (

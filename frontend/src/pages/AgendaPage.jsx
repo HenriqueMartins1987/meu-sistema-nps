@@ -844,11 +844,19 @@ function AgendaCard({
         {item.patient_channel ? <small>{item.patient_channel}</small> : null}
       </div>
       <div className="agenda-contact-grid">
-        <article>
+        <button
+          type="button"
+          className="agenda-contact-tile editable"
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpen(item);
+          }}
+          title="Abrir detalhe para editar o telefone do paciente"
+        >
           <span>Telefone</span>
-          <strong>{item.contact_phone_masked || 'Pendente'}</strong>
+          <strong>{item.contact_phone_masked || item.patient_phone || 'Pendente'}</strong>
           <small>{item.contact_source || 'Busca automatica pendente'}</small>
-        </article>
+        </button>
         <article>
           <span>Ultima validacao</span>
           <strong>{item.contact_last_checked_at ? formatDateTime(item.contact_last_checked_at) : 'Ainda nao validado'}</strong>
@@ -1477,6 +1485,40 @@ export default function AgendaPage({ initialView = 'agenda' }) {
       missingPhoneRate: patientItems.length ? Math.round((missingPhone * 1000) / patientItems.length) / 10 : 0,
       duplicateRate: patientItems.length ? Math.round((duplicateRecords * 1000) / patientItems.length) / 10 : 0
     };
+  }, [items]);
+
+  const agendaDuplicatePatientGroups = useMemo(() => {
+    const patientItems = items.filter((item) => isAgendaPatientDemand(item));
+    const identityGroups = new Map();
+
+    patientItems.forEach((item) => {
+      const duplicateKey = getAgendaPatientDuplicateKey(item);
+      if (!duplicateKey) return;
+      if (!identityGroups.has(duplicateKey)) identityGroups.set(duplicateKey, []);
+      identityGroups.get(duplicateKey).push(item);
+    });
+
+    return Array.from(identityGroups.values())
+      .filter((group) => group.length > 1)
+      .map((group) => {
+        const first = group[0] || {};
+        const dates = group
+          .map((item) => item.patient_scheduled_at || item.due_at || item.created_at)
+          .filter(Boolean)
+          .map((value) => formatDateTime(value));
+        const clinics = Array.from(new Set(group.map((item) => item.clinic_name || 'Sem clinica').filter(Boolean)));
+        return {
+          key: getAgendaPatientDuplicateKey(first),
+          patientName: first.patient_name || 'Paciente sem nome',
+          phone: first.contact_phone_masked || first.patient_phone || 'Telefone nao informado',
+          total: group.length,
+          clinics,
+          dates,
+          items: group
+        };
+      })
+      .sort((left, right) => right.total - left.total || String(left.patientName).localeCompare(String(right.patientName)))
+      .slice(0, 12);
   }, [items]);
 
   const agendaStatusPieData = useMemo(() => (
@@ -2576,6 +2618,33 @@ export default function AgendaPage({ initialView = 'agenda' }) {
                 </div>
               </Card>
             </div>
+
+            <Card className="agenda-duplicate-patients-panel">
+              <div className="agenda-panel-headline">
+                <div>
+                  <strong>Pacientes duplicados para auditoria</strong>
+                  <span>Mostra quem aparece mais de uma vez na agenda, com datas e unidades para analise do indice de faltantes.</span>
+                </div>
+                <small>{agendaDuplicatePatientGroups.length} grupo(s)</small>
+              </div>
+              <div className="agenda-duplicate-patient-list">
+                {agendaDuplicatePatientGroups.map((group) => (
+                  <article key={group.key}>
+                    <div>
+                      <strong>{group.patientName}</strong>
+                      <small>{group.phone} · {group.total} ocorrencias</small>
+                    </div>
+                    <div className="agenda-duplicate-patient-meta">
+                      <span>Clinicas: {group.clinics.join(' | ')}</span>
+                      <span>Datas: {group.dates.slice(0, 6).join(' | ') || 'Sem data informada'}</span>
+                    </div>
+                  </article>
+                ))}
+                {!agendaDuplicatePatientGroups.length ? (
+                  <p className="empty-state">Nenhum paciente duplicado encontrado nos filtros atuais.</p>
+                ) : null}
+              </div>
+            </Card>
 
             <div className="agenda-daily-dashboard-grid">
               <Card className="agenda-daily-chart-panel agenda-daily-chart-panel-wide">
@@ -4127,6 +4196,28 @@ export default function AgendaPage({ initialView = 'agenda' }) {
                   <strong>Propriedades</strong>
                   <span>{selectedItem?.id ? `ID ${selectedItem.id}` : 'Novo'}</span>
                 </div>
+                {draft.demand_type === 'patient' ? (
+                  <div className="agenda-contact-edit-panel">
+                    <div>
+                      <span>Status do contato</span>
+                      <strong>{getAgendaContactStatusLabel(selectedItem?.contact_status || 'pending')}</strong>
+                      <small>Ao salvar, o telefone sincroniza agenda, cadastro local e protocolos vinculados.</small>
+                    </div>
+                    <label>
+                      Telefone do paciente
+                      <input
+                        className="field"
+                        value={draft.patient_phone}
+                        onChange={(event) => setDraft((current) => ({ ...current, patient_phone: event.target.value }))}
+                        placeholder="+55DDDNÚMERO"
+                      />
+                    </label>
+                    <div className="agenda-contact-edit-meta">
+                      <span>Fonte: {selectedItem?.contact_source || 'manual/pendente'}</span>
+                      <span>Confianca: {formatAgendaConfidence(selectedItem?.contact_confidence_score)}</span>
+                    </div>
+                  </div>
+                ) : null}
                 <label>
                   Responsável
                   <select

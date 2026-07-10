@@ -253,6 +253,8 @@ function PatientManagementPage() {
   const [dashboardTablePage, setDashboardTablePage] = useState(1);
   const [dashboardTablePageSize, setDashboardTablePageSize] = useState(10);
   const [selectedRecord, setSelectedRecord] = useState(null);
+  const [selectedPhoneDraft, setSelectedPhoneDraft] = useState('');
+  const [phoneSaving, setPhoneSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('ativos');
   const [feedback, setFeedback] = useState('');
   const [savedProtocol, setSavedProtocol] = useState('');
@@ -627,6 +629,7 @@ function PatientManagementPage() {
 
   const openRecord = (record) => {
     setSelectedRecord(record);
+    setSelectedPhoneDraft(formatBrazilPhoneInput(record.phone || ''));
     setShowCancelModal(false);
     setShowRescheduleModal(false);
   };
@@ -650,6 +653,33 @@ function PatientManagementPage() {
       setFeedback(error.response?.data?.error || 'Não foi possível atualizar o agendamento.');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const saveSelectedPhone = async () => {
+    if (!selectedRecord) return;
+    const normalizedPhone = formatBrazilPhoneInput(selectedPhoneDraft);
+
+    if (!isCompleteBrazilPhone(normalizedPhone)) {
+      setFeedback('Informe o telefone completo no formato +55DDDNÚMERO.');
+      return;
+    }
+
+    setPhoneSaving(true);
+    setFeedback('');
+
+    try {
+      await api.patch(`/patient-interactions/${selectedRecord.id}`, {
+        phone: normalizedPhone,
+        action: 'Telefone atualizado'
+      });
+      await refreshSelectedRecord(selectedRecord.id);
+      setSelectedPhoneDraft(normalizedPhone);
+      setFeedback('Telefone atualizado e sincronizado com os vínculos disponíveis.');
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Não foi possível atualizar o telefone.');
+    } finally {
+      setPhoneSaving(false);
     }
   };
 
@@ -1295,7 +1325,24 @@ function PatientManagementPage() {
               </div>
               <div>
                 <dt>Telefone</dt>
-                <dd>{selectedRecord.phone}</dd>
+                <dd>
+                  <div className="patient-phone-inline-editor">
+                    <input
+                      className="field"
+                      value={selectedPhoneDraft}
+                      onChange={(event) => setSelectedPhoneDraft(formatBrazilPhoneInput(event.target.value))}
+                      placeholder="+55DDDNÚMERO"
+                    />
+                    <button
+                      type="button"
+                      className="outline-action compact-action"
+                      onClick={saveSelectedPhone}
+                      disabled={phoneSaving || selectedPhoneDraft === formatBrazilPhoneInput(selectedRecord.phone || '')}
+                    >
+                      {phoneSaving ? 'Salvando...' : 'Salvar telefone'}
+                    </button>
+                  </div>
+                </dd>
               </div>
               <div>
                 <dt>Canal</dt>

@@ -33963,11 +33963,23 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
     if (Object.prototype.hasOwnProperty.call(req.body, 'patient_name') || Object.prototype.hasOwnProperty.call(req.body, 'patientName')) {
       assign('patient_name', sanitizeFinancialString(req.body.patient_name || req.body.patientName, 180) || null);
     }
+    const hasAgendaPatientPhoneUpdate = Object.prototype.hasOwnProperty.call(req.body, 'patient_phone')
+      || Object.prototype.hasOwnProperty.call(req.body, 'patientPhone');
+    const nextAgendaPatientPhone = hasAgendaPatientPhoneUpdate
+      ? normalizeBrazilPhone(req.body.patient_phone || req.body.patientPhone || '')
+      : null;
     if (Object.prototype.hasOwnProperty.call(req.body, 'patient_phone') || Object.prototype.hasOwnProperty.call(req.body, 'patientPhone')) {
-      assign(
-        'patient_phone',
-        sanitizeFinancialString(normalizeWhatsAppPhone(req.body.patient_phone || req.body.patientPhone || ''), 40) || null
-      );
+      if (nextAgendaPatientPhone && !isCompleteBrazilPhone(nextAgendaPatientPhone)) {
+        return res.status(400).json({ error: 'Informe um telefone completo no formato +55DDDNÚMERO.' });
+      }
+      assign('patient_phone', nextAgendaPatientPhone || null);
+      assign('contact_phone_found', nextAgendaPatientPhone || null);
+      assign('contact_phone_normalized', nextAgendaPatientPhone || null);
+      assign('contact_status', nextAgendaPatientPhone ? 'updated' : 'pending');
+      assign('contact_source', nextAgendaPatientPhone ? 'manual_agenda' : null);
+      assign('contact_last_checked_at', nextAgendaPatientPhone ? toMysqlDateTime(new Date()) : null);
+      assign('contact_confidence_score', nextAgendaPatientPhone ? 100 : null);
+      assign('contact_whatsapp_available', nextAgendaPatientPhone ? 1 : 0);
     }
     if (Object.prototype.hasOwnProperty.call(req.body, 'source_external_id') || Object.prototype.hasOwnProperty.call(req.body, 'sourceExternalId')) {
       assign('source_external_id', sanitizeFinancialString(req.body.source_external_id || req.body.sourceExternalId, 120) || null);
@@ -34198,6 +34210,40 @@ app.patch('/api/agenda/items/:id', authenticate, async (req, res) => {
 
     const [rows] = await pool.query('SELECT * FROM agenda_items WHERE id = ? LIMIT 1', [itemId]);
     const updated = serializeAgendaItem(rows[0]);
+    if (hasAgendaPatientPhoneUpdate && nextAgendaPatientPhone) {
+      await insertPatientPhoneAudit({
+        agendaItemId: itemId,
+        patientName: updated.patient_name || currentItem.patient_name || null,
+        clinicId: updated.clinic_id || currentItem.clinic_id || null,
+        operatorUserId: Number(req.user?.id || 0) || null,
+        phoneOld: currentItem.patient_phone || currentItem.contact_phone_normalized || null,
+        phoneNew: nextAgendaPatientPhone,
+        source: 'manual_agenda',
+        confidenceScore: 100,
+        matchMethod: 'manual_update',
+        appointmentDate: updated.patient_scheduled_at || updated.due_at || null,
+        appointmentDateMatchStatus: 'manual',
+        action: 'manual_phone_update',
+        createdBy: getActorName(req.user)
+      });
+      await upsertPatientContactRegistry({
+        agendaItem: rows[0],
+        phone: nextAgendaPatientPhone,
+        phoneNormalized: nextAgendaPatientPhone,
+        source: 'manual_agenda',
+        lastValidatedAt: toMysqlDateTime(new Date())
+      });
+      if (updated.complaint_id) {
+        await pool.query(
+          'UPDATE complaints SET patient_phone = ?, updated_at = NOW() WHERE id = ?',
+          [nextAgendaPatientPhone, updated.complaint_id]
+        );
+        await pool.query(
+          'UPDATE patient_interactions SET patient_phone = ?, updated_at = NOW() WHERE complaint_id = ?',
+          [nextAgendaPatientPhone, updated.complaint_id]
+        );
+      }
+    }
     if (updated.is_daily_recurring) {
       await upsertAgendaCompletionLog(rows[0], {
         cycleDate: updated.recurrence_cycle_date || getAgendaCycleDateKey(rows[0]),
@@ -37970,6 +38016,10 @@ app.delete('/nps/responses/:id', authenticate, async (req, res) => {
 
 app.get('/patient-interactions', authenticate, async (req, res) => {
   try {
+    await cleanupPatientAgendaForClosedComplaints(250, 4).catch((error) => {
+      console.warn('Não foi possível executar limpeza preventiva da agenda do paciente:', error.message);
+    });
+
     const includeDeleted = Boolean(req.query.include_deleted) && canViewDeletedRecords(req.user);
     const complaintId = Number(req.query.complaint_id || 0);
     const where = [];
@@ -38168,10 +38218,20 @@ app.patch('/patient-interactions/:id', authenticate, async (req, res) => {
     const action = String(req.body.action || status || 'Atualização').trim();
     const scheduledAtInput = String(req.body.scheduledAt || req.body.scheduled_at || '').trim();
     const note = String(req.body.note || '').trim();
+    const hasPhoneUpdate = Object.prototype.hasOwnProperty.call(req.body || {}, 'phone')
+      || Object.prototype.hasOwnProperty.call(req.body || {}, 'patient_phone')
+      || Object.prototype.hasOwnProperty.call(req.body || {}, 'patientPhone');
+    const normalizedPhone = hasPhoneUpdate
+      ? normalizeBrazilPhone(req.body.phone || req.body.patient_phone || req.body.patientPhone || '')
+      : null;
     let nextScheduledAt = null;
 
-    if (!status) {
-      return res.status(400).json({ error: 'Informe o novo status.' });
+    if (!status && !hasPhoneUpdate) {
+      return res.status(400).json({ error: 'Informe o novo status ou o telefone atualizado.' });
+    }
+
+    if (hasPhoneUpdate && !isCompleteBrazilPhone(normalizedPhone)) {
+      return res.status(400).json({ error: 'Informe um telefone completo no formato +55DDDNÚMERO.' });
     }
 
     if (scheduledAtInput) {
@@ -38187,7 +38247,7 @@ app.patch('/patient-interactions/:id', authenticate, async (req, res) => {
     }
 
     const [rows] = await pool.query(
-      'SELECT id, protocol, patient_name, patient_phone, clinic_name, interaction_type, scheduled_at, no_show_alert_sent_at FROM patient_interactions WHERE id = ?',
+      'SELECT id, protocol, complaint_id, patient_name, patient_phone, clinic_name, interaction_type, scheduled_at, no_show_alert_sent_at FROM patient_interactions WHERE id = ?',
       [req.params.id]
     );
 
@@ -38196,23 +38256,69 @@ app.patch('/patient-interactions/:id', authenticate, async (req, res) => {
     }
 
     const currentRecord = rows[0];
+    const updates = [];
+    const params = [];
 
+    if (status) {
+      updates.push('status = ?');
+      params.push(status);
+      updates.push('cancelled_at = NULL');
+      updates.push('cancelled_by_name = NULL');
+      updates.push('cancelled_by_role = NULL');
+    }
+
+    if (nextScheduledAt) {
+      updates.push('scheduled_at = ?');
+      params.push(nextScheduledAt);
+    }
+
+    if (hasPhoneUpdate) {
+      updates.push('patient_phone = ?');
+      params.push(normalizedPhone);
+    }
+
+    params.push(req.params.id);
     await pool.query(
-      'UPDATE patient_interactions SET status = ?, scheduled_at = COALESCE(?, scheduled_at), cancelled_at = NULL, cancelled_by_name = NULL, cancelled_by_role = NULL WHERE id = ?',
-      [status, nextScheduledAt, req.params.id]
+      `UPDATE patient_interactions SET ${updates.join(', ')}, updated_at = NOW() WHERE id = ?`,
+      params
     );
+
     const scheduleNote = nextScheduledAt ? ` Nova agenda: ${formatMessageDateTime(nextScheduledAt)}.` : '';
     const detailNote = note ? ` Observação: ${note}` : '';
-    await insertPatientInteractionLog(req.params.id, action, `Status atualizado para ${status}.${scheduleNote}${detailNote}`, req.user);
+    const phoneNote = hasPhoneUpdate ? ` Telefone atualizado para ${normalizedPhone}.` : '';
+    const statusNote = status ? `Status atualizado para ${status}.` : 'Dados do paciente atualizados.';
+    await insertPatientInteractionLog(req.params.id, action, `${statusNote}${scheduleNote}${phoneNote}${detailNote}`, req.user);
 
-    if (isNoShowStatus(status) && !currentRecord.no_show_alert_sent_at) {
+    if (hasPhoneUpdate && currentRecord.complaint_id) {
+      await pool.query(
+        'UPDATE complaints SET patient_phone = ?, updated_at = NOW() WHERE id = ?',
+        [normalizedPhone, currentRecord.complaint_id]
+      );
+      await pool.query(
+        `UPDATE agenda_items
+            SET patient_phone = ?,
+                contact_phone_found = ?,
+                contact_phone_normalized = ?,
+                contact_status = 'updated',
+                contact_source = 'manual_patient_management',
+                contact_last_checked_at = NOW(),
+                contact_confidence_score = 100,
+                contact_whatsapp_available = 1,
+                updated_at = NOW()
+          WHERE complaint_id = ?
+            AND deleted_at IS NULL`,
+        [normalizedPhone, normalizedPhone, normalizedPhone, currentRecord.complaint_id]
+      );
+    }
+
+    if (status && isNoShowStatus(status) && !currentRecord.no_show_alert_sent_at) {
       await dispatchNoShowNotifications({
         ...currentRecord,
         status
       }, req.user);
     }
 
-    res.json({ message: 'Agendamento atualizado.' });
+    res.json({ message: hasPhoneUpdate ? 'Agendamento e telefone atualizados.' : 'Agendamento atualizado.' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao atualizar gestão do paciente.' });

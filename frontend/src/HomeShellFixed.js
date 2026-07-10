@@ -252,6 +252,43 @@ function buildComplaintAgendaAlert(item) {
   };
 }
 
+const homeDeadlineGroupDefinitions = [
+  {
+    key: 'overdue',
+    title: 'Atrasados',
+    helper: 'Necessitam tratativa imediata',
+    empty: 'Nenhum item vencido.'
+  },
+  {
+    key: 'today',
+    title: 'No dia',
+    helper: 'Demandas com vencimento ou agenda para hoje',
+    empty: 'Nenhum item vencendo hoje.'
+  },
+  {
+    key: 'on-time',
+    title: 'Dentro do prazo',
+    helper: 'Acompanhamentos futuros e controlados',
+    empty: 'Nenhum item futuro no momento.'
+  }
+];
+
+function getHomeAgendaGroupKey(item) {
+  if (item?.deadlineStatus?.key === 'overdue') return 'overdue';
+  if (item?.deadlineStatus?.key === 'today') return 'today';
+  if (item?.deadlineStatus?.key === 'on-time') return 'on-time';
+  if (item?.tone === 'danger') return 'overdue';
+  if (item?.tone === 'warning') return 'today';
+  return 'on-time';
+}
+
+function buildHomeAgendaDeadlineGroups(items = []) {
+  return homeDeadlineGroupDefinitions.map((group) => ({
+    ...group,
+    items: items.filter((item) => getHomeAgendaGroupKey(item) === group.key)
+  }));
+}
+
 function canAccessWeeklyComplaintReport(user) {
   if (isMasterAdmin(user)) return true;
 
@@ -687,6 +724,8 @@ function HomeShellFixed() {
 
   const totalAlerts = notificationGroups.unread.length + registrationRequests.length;
   const visibleNotifications = notificationTab === 'read' ? notificationGroups.read : notificationGroups.unread;
+  const agendaDeadlineGroups = useMemo(() => buildHomeAgendaDeadlineGroups(agendaItems), [agendaItems]);
+  const treatmentDeadlineGroups = useMemo(() => buildHomeAgendaDeadlineGroups(complaintTreatmentItems), [complaintTreatmentItems]);
   const shareText = `Pesquisa de Satisfação Grupo Sorria: ${npsLink}`;
   const selectedNotificationDetails = useMemo(
     () => buildNotificationDetails(selectedNotification),
@@ -1430,28 +1469,42 @@ function HomeShellFixed() {
         ) : agendaItems.length === 0 ? (
           <p className="empty-state">Nenhuma pendência crítica ou agenda do dia disponível.</p>
         ) : (
-          <div className="home-agenda-list">
-            {agendaItems.map((item) => (
-              <button
-                key={item.key}
-                type="button"
-                className={`home-agenda-item ${item.tone}`}
-                onClick={() => navigate(item.link)}
-              >
-                <div className="home-agenda-item-top">
-                  <span>{item.type}</span>
-                  <strong>{item.title}</strong>
+          <div className="home-agenda-status-grid">
+            {agendaDeadlineGroups.map((group) => (
+              <section className={`home-agenda-status-column ${group.key}`} key={`agenda-${group.key}`}>
+                <div className="home-agenda-status-head">
+                  <div>
+                    <strong>{group.title}</strong>
+                    <small>{group.helper}</small>
+                  </div>
+                  <span>{group.items.length}</span>
                 </div>
-                <p>{item.description}</p>
-                <div className="home-agenda-item-footer">
-                  {item.deadlineStatus && (
-                    <span className={`schedule-deadline-indicator ${item.deadlineStatus.key}`} title={item.deadlineStatus.label}>
-                      {item.deadlineStatus.symbol}
-                    </span>
-                  )}
-                  <small>{item.detail}</small>
+                <div className="home-agenda-list compact">
+                  {group.items.map((item) => (
+                    <button
+                      key={item.key}
+                      type="button"
+                      className={`home-agenda-item ${item.tone}`}
+                      onClick={() => navigate(item.link)}
+                    >
+                      <div className="home-agenda-item-top">
+                        <span>{item.type}</span>
+                        <strong>{item.title}</strong>
+                      </div>
+                      <p>{item.description}</p>
+                      <div className="home-agenda-item-footer">
+                        {item.deadlineStatus && (
+                          <span className={`schedule-deadline-indicator ${item.deadlineStatus.key}`} title={item.deadlineStatus.label}>
+                            {item.deadlineStatus.symbol}
+                          </span>
+                        )}
+                        <small>{item.detail}</small>
+                      </div>
+                    </button>
+                  ))}
+                  {!group.items.length ? <p className="empty-mini">{group.empty}</p> : null}
                 </div>
-              </button>
+              </section>
             ))}
           </div>
         )}
@@ -1475,29 +1528,43 @@ function HomeShellFixed() {
           ) : complaintTreatmentItems.length === 0 ? (
             <p className="empty-state">Nenhum paciente oriundo de reclamação está em tratamento no momento.</p>
           ) : (
-            <div className="home-agenda-list">
-              {complaintTreatmentItems.map((item) => (
-                <button
-                  key={item.key}
-                  type="button"
-                  className="home-agenda-item treatment"
-                  onClick={() => navigate(item.link)}
-                >
-                  <div className="home-agenda-item-top">
-                    <span>Tratamento</span>
-                    <strong>{item.title}</strong>
+            <div className="home-agenda-status-grid">
+              {treatmentDeadlineGroups.map((group) => (
+                <section className={`home-agenda-status-column ${group.key}`} key={`treatment-${group.key}`}>
+                  <div className="home-agenda-status-head">
+                    <div>
+                      <strong>{group.title}</strong>
+                      <small>{group.helper}</small>
+                    </div>
+                    <span>{group.items.length}</span>
                   </div>
-                  <p>{item.description}</p>
-                  <div className="home-agenda-item-footer">
-                    {item.deadlineStatus && (
-                      <span className={`schedule-deadline-indicator ${item.deadlineStatus.key}`} title={item.deadlineStatus.label}>
-                        {item.deadlineStatus.symbol}
-                      </span>
-                    )}
-                    <small>{item.protocol} | {item.detail}</small>
+                  <div className="home-agenda-list compact">
+                    {group.items.map((item) => (
+                      <button
+                        key={item.key}
+                        type="button"
+                        className="home-agenda-item treatment"
+                        onClick={() => navigate(item.link)}
+                      >
+                        <div className="home-agenda-item-top">
+                          <span>Tratamento</span>
+                          <strong>{item.title}</strong>
+                        </div>
+                        <p>{item.description}</p>
+                        <div className="home-agenda-item-footer">
+                          {item.deadlineStatus && (
+                            <span className={`schedule-deadline-indicator ${item.deadlineStatus.key}`} title={item.deadlineStatus.label}>
+                              {item.deadlineStatus.symbol}
+                            </span>
+                          )}
+                          <small>{item.protocol} | {item.detail}</small>
+                        </div>
+                        {isSacOperator && <em className="home-agenda-sac-note">{item.sacNotice}</em>}
+                      </button>
+                    ))}
+                    {!group.items.length ? <p className="empty-mini">{group.empty}</p> : null}
                   </div>
-                  {isSacOperator && <em className="home-agenda-sac-note">{item.sacNotice}</em>}
-                </button>
+                </section>
               ))}
             </div>
           )}

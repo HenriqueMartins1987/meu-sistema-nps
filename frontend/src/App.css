@@ -1196,6 +1196,72 @@ a {
   grid-template-columns: 1fr;
 }
 
+.home-agenda-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+  align-items: start;
+}
+
+.home-agenda-status-column {
+  display: grid;
+  gap: 12px;
+  min-height: 220px;
+  border: 1px solid rgba(214, 222, 235, 0.96);
+  border-radius: 20px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 253, 0.92));
+  padding: 14px;
+}
+
+.home-agenda-status-column.overdue {
+  border-color: rgba(196, 69, 54, 0.24);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 245, 242, 0.94));
+}
+
+.home-agenda-status-column.today {
+  border-color: rgba(208, 140, 49, 0.28);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 250, 237, 0.94));
+}
+
+.home-agenda-status-column.on-time {
+  border-color: rgba(29, 143, 106, 0.22);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(240, 253, 248, 0.92));
+}
+
+.home-agenda-status-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.home-agenda-status-head div {
+  display: grid;
+  gap: 4px;
+}
+
+.home-agenda-status-head strong {
+  color: #142235;
+  font-size: 0.98rem;
+}
+
+.home-agenda-status-head small {
+  color: #64748b;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.home-agenda-status-head > span {
+  display: inline-grid;
+  place-items: center;
+  min-width: 34px;
+  min-height: 34px;
+  border-radius: 999px;
+  background: #142235;
+  color: #fff;
+  font-weight: 1000;
+}
+
 .home-agenda-item {
   display: grid;
   gap: 8px;
@@ -1627,6 +1693,97 @@ a {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
+}
+
+.reports-command-center {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.reports-command-center article {
+  display: grid;
+  gap: 6px;
+  min-height: 116px;
+  padding: 18px;
+  border: 1px solid rgba(221, 207, 188, 0.82);
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at top right, rgba(198, 152, 84, 0.12), transparent 36%),
+    rgba(255, 255, 255, 0.94);
+  box-shadow: 0 14px 28px rgba(18, 24, 34, 0.06);
+}
+
+.reports-command-center span,
+.reports-featured-actions .eyebrow {
+  color: #8b632f;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.reports-command-center strong {
+  color: #172235;
+  font-size: clamp(1.5rem, 3vw, 2.1rem);
+  line-height: 1;
+}
+
+.reports-command-center small {
+  color: #6c5f53;
+  font-weight: 780;
+}
+
+.reports-featured-actions {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  gap: 16px;
+  align-items: stretch;
+  padding: 20px;
+  border: 1px solid rgba(221, 207, 188, 0.82);
+  border-radius: 24px;
+  background: linear-gradient(135deg, rgba(255, 252, 246, 0.98), rgba(242, 247, 252, 0.96));
+}
+
+.reports-featured-actions h2 {
+  margin: 6px 0 0;
+  color: #172235;
+  font-size: 1.35rem;
+}
+
+.reports-featured-actions > div:last-child {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.reports-featured-actions button {
+  display: grid;
+  gap: 5px;
+  min-height: 74px;
+  border: 1px solid rgba(221, 207, 188, 0.9);
+  border-radius: 18px;
+  background: #fff;
+  color: #172235;
+  padding: 13px 15px;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.reports-featured-actions button:hover {
+  transform: translateY(-1px);
+  border-color: rgba(198, 152, 84, 0.58);
+  box-shadow: 0 12px 24px rgba(18, 24, 34, 0.08);
+}
+
+.reports-featured-actions button span {
+  font-weight: 950;
+}
+
+.reports-featured-actions button small {
+  color: #8b632f;
+  font-weight: 800;
 }
 
 .reports-hub-card {
@@ -3495,6 +3652,17 @@ a {
   font-size: 11px;
   font-weight: 700;
   line-height: 1.35;
+}
+
+.patient-phone-inline-editor {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+}
+
+.patient-phone-inline-editor .field {
+  min-height: 38px;
 }
 
 .meta-grid > div {
@@ -16117,6 +16285,57 @@ a {
   line-height: 1.35;
 }
 
+.agenda-duplicate-patients-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.agenda-duplicate-patient-list {
+  display: grid;
+  gap: 10px;
+  max-height: 360px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.agenda-duplicate-patient-list article {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.72fr) minmax(0, 1.28fr);
+  gap: 14px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid rgba(218, 226, 237, 0.92);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.94));
+}
+
+.agenda-duplicate-patient-list article > div:first-child {
+  display: grid;
+  gap: 4px;
+}
+
+.agenda-duplicate-patient-list strong {
+  color: #10213b;
+  font-size: 0.94rem;
+}
+
+.agenda-duplicate-patient-list small,
+.agenda-duplicate-patient-meta span {
+  color: #64748b;
+  font-size: 0.76rem;
+  line-height: 1.38;
+}
+
+.agenda-duplicate-patient-meta {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.agenda-duplicate-patient-meta span {
+  word-break: break-word;
+}
+
 .agenda-control-panel {
   padding: 16px;
   border: 1px solid rgba(211, 219, 232, 0.92);
@@ -17854,13 +18073,27 @@ a {
   gap: 10px;
 }
 
-.agenda-contact-grid article {
+.agenda-contact-grid article,
+.agenda-contact-tile {
   display: grid;
   gap: 4px;
   padding: 12px 13px;
   border-radius: 16px;
   border: 1px solid rgba(214, 222, 235, 0.96);
   background: rgba(255, 255, 255, 0.86);
+}
+
+.agenda-contact-tile {
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.agenda-contact-tile:hover {
+  transform: translateY(-1px);
+  border-color: rgba(73, 101, 255, 0.28);
+  box-shadow: 0 10px 20px rgba(15, 23, 42, 0.08);
 }
 
 .agenda-contact-grid span {
@@ -17879,6 +18112,55 @@ a {
 .agenda-contact-grid small {
   color: #64748b;
   font-size: 0.74rem;
+}
+
+.agenda-contact-edit-panel {
+  display: grid;
+  gap: 12px;
+  padding: 15px;
+  border: 1px solid rgba(29, 143, 106, 0.22);
+  border-radius: 20px;
+  background:
+    radial-gradient(circle at top right, rgba(29, 143, 106, 0.12), transparent 34%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(240, 253, 248, 0.94));
+}
+
+.agenda-contact-edit-panel > div:first-child {
+  display: grid;
+  gap: 5px;
+}
+
+.agenda-contact-edit-panel span {
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agenda-contact-edit-panel strong {
+  color: #0f513d;
+  font-size: 1rem;
+}
+
+.agenda-contact-edit-panel small {
+  color: #526579;
+  line-height: 1.4;
+}
+
+.agenda-contact-edit-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.agenda-contact-edit-meta span {
+  padding: 6px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.84);
+  border: 1px solid rgba(214, 222, 235, 0.8);
+  color: #38517c;
+  font-size: 0.68rem;
 }
 
 .agenda-assignee {
@@ -19778,5 +20060,19 @@ a {
   .complaints-dashboard-page .pagination-bar,
   .nps-dashboard-page .pagination-bar {
     align-items: stretch;
+  }
+}
+
+@media (max-width: 980px) {
+  .home-agenda-status-grid,
+  .reports-command-center,
+  .reports-featured-actions,
+  .reports-featured-actions > div:last-child,
+  .agenda-duplicate-patient-list article {
+    grid-template-columns: 1fr;
+  }
+
+  .patient-phone-inline-editor {
+    grid-template-columns: 1fr;
   }
 }
