@@ -689,6 +689,9 @@ app.use('/uploads', express.static(uploadDir, {
     res.setHeader('Content-Disposition', buildUploadContentDisposition(path.basename(filePath)));
   }
 }));
+// NPS Enterprise Management Layer
+app.use('/nps/enterprise', require('./routes/npsEnterpriseStandaloneRouter'));
+
 app.get(/^\/uploads\/(.+)$/, servePersistedUploadedFile);
 
 const initialPasswordChangeLimiter = rateLimit({
