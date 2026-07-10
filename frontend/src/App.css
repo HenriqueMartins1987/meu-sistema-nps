@@ -1200,17 +1200,44 @@ a {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
-  align-items: start;
+  align-items: stretch;
 }
 
 .home-agenda-status-column {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   gap: 12px;
-  min-height: 220px;
+  height: clamp(360px, 46vh, 520px);
+  min-height: 360px;
+  max-height: 520px;
+  overflow: hidden;
   border: 1px solid rgba(214, 222, 235, 0.96);
   border-radius: 20px;
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 253, 0.92));
   padding: 14px;
+}
+
+.home-agenda-status-column > .home-agenda-list.compact {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px 4px 2px 2px;
+  scrollbar-color: rgba(11, 111, 95, 0.35) rgba(226, 232, 240, 0.72);
+  scrollbar-width: thin;
+}
+
+.home-agenda-status-column > .home-agenda-list.compact::-webkit-scrollbar {
+  width: 8px;
+}
+
+.home-agenda-status-column > .home-agenda-list.compact::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(226, 232, 240, 0.72);
+}
+
+.home-agenda-status-column > .home-agenda-list.compact::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(11, 111, 95, 0.34);
 }
 
 .home-agenda-status-column.overdue {
@@ -1265,7 +1292,8 @@ a {
 .home-agenda-item {
   display: grid;
   gap: 8px;
-  min-height: 132px;
+  min-height: 142px;
+  align-content: start;
   text-align: left;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -1300,6 +1328,7 @@ a {
 .home-agenda-item-top {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .home-agenda-item-top span {
@@ -1313,6 +1342,25 @@ a {
 .home-agenda-item small {
   margin: 0;
   color: var(--muted);
+}
+
+.home-agenda-item p {
+  display: -webkit-box;
+  min-height: 38px;
+  overflow: hidden;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.home-agenda-item-top strong {
+  display: -webkit-box;
+  min-height: 42px;
+  overflow: hidden;
+  color: var(--ink);
+  line-height: 1.25;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .home-agenda-item-footer {
