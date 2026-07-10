@@ -22,56 +22,136 @@ function buildReportGroups(user) {
       key: 'complaints',
       eyebrow: 'Atendimento',
       title: 'Relatórios de Reclamações',
-      description: 'Acompanhamento semanal, dashboards operacionais e BI da voz do cliente.',
+      description: 'Acesse os painéis de acompanhamento das manifestações, prazos, unidades e tratativas do SAC.',
       items: [
-        { label: 'Relatório diário, semanal e mensal', path: '/gestao/relatorio-semanal', visible: canOpenWeeklyComplaintReport(user) && hasPermission(user, 'complaints_management'), meta: 'rotina operacional' },
-        { label: 'Dashboard de Reclamações', path: '/dashboard', visible: hasPermission(user, 'complaints_dashboard'), meta: 'visão executiva' },
-        { label: 'BI de Reclamações', path: '/bi', visible: hasPermission(user, 'complaints_dashboard'), meta: 'análise gerencial' },
-        { label: 'Gestão de Reclamações', path: '/gestao', visible: hasPermission(user, 'complaints_management'), meta: 'fila operacional' }
+        {
+          label: 'Relatório diário, semanal e mensal',
+          path: '/gestao/relatorio-semanal',
+          visible: canOpenWeeklyComplaintReport(user) && hasPermission(user, 'complaints_management'),
+          meta: 'Prazos vencidos, responsáveis, rankings, motivos e protocolos detalhados.'
+        },
+        {
+          label: 'Dashboard de Reclamações',
+          path: '/dashboard',
+          visible: hasPermission(user, 'complaints_dashboard'),
+          meta: 'Visão executiva com filtros, evolução, indicadores e recortes por unidade.'
+        },
+        {
+          label: 'BI de Reclamações',
+          path: '/bi',
+          visible: hasPermission(user, 'complaints_dashboard'),
+          meta: 'Análise gerencial para leitura estratégica da voz do cliente.'
+        },
+        {
+          label: 'Gestão de Reclamações',
+          path: '/gestao',
+          visible: hasPermission(user, 'complaints_management'),
+          meta: 'Fila operacional para cadastro, movimentação, tratativa e encerramento.'
+        }
       ]
     },
     {
       key: 'nps',
       eyebrow: 'Experiência',
       title: 'Relatórios NPS',
-      description: 'Indicadores de satisfação, pesquisas ativas e gestão de respostas dos pacientes.',
+      description: 'Acompanhe satisfação, perfis de resposta, detratores e indicações geradas pelo fluxo NPS.',
       items: [
-        { label: 'Gestão de NPS', path: '/gestao-nps', visible: hasPermission(user, 'nps_management'), meta: 'respostas e tratativas' },
-        { label: 'Dashboard NPS', path: '/dashboard-nps', visible: hasPermission(user, 'nps_dashboard'), meta: 'indicadores NPS' },
-        { label: 'Pesquisa NPS pública', path: '/pesquisa-nps', visible: hasPermission(user, 'nps_management'), meta: 'link de pesquisa' }
+        {
+          label: 'Gestão de NPS',
+          path: '/gestao-nps',
+          visible: hasPermission(user, 'nps_management'),
+          meta: 'Respostas, tratativas, envios com êxito e acompanhamento dos detratores.'
+        },
+        {
+          label: 'Dashboard NPS',
+          path: '/dashboard-nps',
+          visible: hasPermission(user, 'nps_dashboard'),
+          meta: 'Indicadores, evolução, distribuição por perfil e leitura por clínica.'
+        },
+        {
+          label: 'Pesquisa NPS pública',
+          path: '/pesquisa-nps',
+          visible: hasPermission(user, 'nps_management'),
+          meta: 'Link público da pesquisa para apoio operacional e validações.'
+        }
       ]
     },
     {
       key: 'financial',
       eyebrow: 'CRC',
       title: 'Relatórios Financeiros CRC',
-      description: 'Produtividade, campanhas e gestão financeira da operação CRC.',
+      description: 'Monitore produtividade, campanhas, gestão financeira e performance operacional do CRC.',
       items: [
-        { label: 'Dashboard Executivo CRC', path: '/home/financial-intelligence', visible: hasPermission(user, 'financial_dashboard'), meta: 'resumo executivo' },
-        { label: 'Produtividade x Campanha', path: '/home/financial-intelligence/campaigns', visible: hasPermission(user, 'financial_campaigns'), meta: 'campanhas e unidades' },
-        { label: 'Gestão Financeira CRC', path: '/home/financial-intelligence/manage', visible: hasPermission(user, 'financial_management'), meta: 'controle financeiro' }
+        {
+          label: 'Dashboard Executivo CRC',
+          path: '/home/financial-intelligence',
+          visible: hasPermission(user, 'financial_dashboard'),
+          meta: 'Resumo executivo de produtividade, conversões e performance financeira.'
+        },
+        {
+          label: 'Produtividade x Campanha',
+          path: '/home/financial-intelligence/campaigns',
+          visible: hasPermission(user, 'financial_campaigns'),
+          meta: 'Comparativo entre campanhas, unidades, retornos e resultado operacional.'
+        },
+        {
+          label: 'Gestão Financeira CRC',
+          path: '/home/financial-intelligence/manage',
+          visible: hasPermission(user, 'financial_management'),
+          meta: 'Controle de metas, custos, receitas e parâmetros financeiros do CRC.'
+        }
       ]
     },
     {
       key: 'whatsapp',
       eyebrow: 'WhatsApp',
       title: 'Relatórios e Operação WhatsApp',
-      description: 'BI de sessões, confirmações, histórico de mensagens e filas de disparo.',
+      description: 'Centralize gestão de sessões, confirmações, histórico, filas e auditoria dos disparos.',
       items: [
-        { label: 'Dashboard WhatsApp CRC', path: '/home/whatsapp-management/dashboard', visible: whatsappVisible && hasPermission(user, 'whatsapp_dashboard'), meta: 'BI operacional' },
-        { label: 'Confirmação e Agendamento', path: '/home/whatsapp-management/confirmation', visible: whatsappVisible && !isNpsOperator && hasPermission(user, 'whatsapp_reports'), meta: 'confirmações' },
-        { label: 'Histórico de mensagens', path: '/home/whatsapp-management/history', visible: whatsappVisible && hasPermission(user, 'whatsapp_history'), meta: 'auditoria' },
-        { label: 'Sessões / QR Code', path: '/home/whatsapp-management/instances', visible: whatsappVisible && hasPermission(user, 'whatsapp_instances'), meta: 'conexões' }
+        {
+          label: 'Dashboard WhatsApp CRC',
+          path: '/home/whatsapp-management/dashboard',
+          visible: whatsappVisible && hasPermission(user, 'whatsapp_dashboard'),
+          meta: 'Indicadores de atendimento, sessões, volume de mensagens e disponibilidade.'
+        },
+        {
+          label: 'Confirmação e Agendamento',
+          path: '/home/whatsapp-management/confirmation',
+          visible: whatsappVisible && !isNpsOperator && hasPermission(user, 'whatsapp_reports'),
+          meta: 'Acompanhamento de confirmações, retornos, agendamentos e pendências.'
+        },
+        {
+          label: 'Histórico de mensagens',
+          path: '/home/whatsapp-management/history',
+          visible: whatsappVisible && hasPermission(user, 'whatsapp_history'),
+          meta: 'Auditoria de conversas, entregas, falhas e mensagens enviadas.'
+        },
+        {
+          label: 'Sessões / QR Code',
+          path: '/home/whatsapp-management/instances',
+          visible: whatsappVisible && hasPermission(user, 'whatsapp_instances'),
+          meta: 'Controle das conexões, QR Code, status e sessões vinculadas.'
+        }
       ]
     },
     {
       key: 'patients',
       eyebrow: 'Pacientes',
       title: 'Relatórios de Pacientes',
-      description: 'Bases e dashboards de acompanhamento do paciente.',
+      description: 'Consulte bases, agenda, duplicidades e indicadores relacionados ao acompanhamento de pacientes.',
       items: [
-        { label: 'Gestão de Pacientes', path: '/pacientes', visible: hasPermission(user, 'patient_management'), meta: 'cadastro e agenda' },
-        { label: 'Dashboard de Pacientes', path: '/pacientes/dashboard', visible: hasPermission(user, 'patient_management'), meta: 'indicadores' }
+        {
+          label: 'Gestão de Pacientes',
+          path: '/pacientes',
+          visible: hasPermission(user, 'patient_management'),
+          meta: 'Cadastro, agenda do paciente, histórico e vínculos operacionais.'
+        },
+        {
+          label: 'Dashboard de Pacientes',
+          path: '/pacientes/dashboard',
+          visible: hasPermission(user, 'patient_management'),
+          meta: 'Indicadores de pacientes, duplicidades, pendências e acompanhamento.'
+        }
       ]
     }
   ];
@@ -85,13 +165,8 @@ export default function ReportsHub() {
   const navigate = useNavigate();
   const user = useMemo(() => readUser(), []);
   const groups = useMemo(() => buildReportGroups(user), [user]);
-  const totalLinks = groups.reduce((sum, group) => sum + group.items.length, 0);
-  const totalDashboards = groups.reduce((sum, group) => (
-    sum + group.items.filter((item) => String(item.label || '').toLowerCase().includes('dashboard')).length
-  ), 0);
-  const totalOperationalReports = Math.max(totalLinks - totalDashboards, 0);
   const primaryActions = groups
-    .flatMap((group) => group.items.map((item) => ({ ...item, group: group.title })))
+    .flatMap((group) => group.items.map((item) => ({ ...item, group: group.title, groupEyebrow: group.eyebrow })))
     .slice(0, 4);
 
   return (
@@ -100,44 +175,22 @@ export default function ReportsHub() {
         <div>
           <p className="eyebrow">Central executiva</p>
           <h1>Central de relatórios</h1>
-          <p>Todos os relatórios e dashboards liberados para seu perfil em um único ponto de acesso.</p>
+          <p>Relatórios e dashboards liberados para seu perfil, organizados por finalidade para consulta rápida e padronizada.</p>
         </div>
-        <div className="reports-hub-summary">
-          <span>Links liberados</span>
-          <strong>{totalLinks}</strong>
-          <small>{groups.length} módulos disponíveis</small>
-        </div>
-      </section>
-
-      <section className="reports-command-center" aria-label="Resumo da central de relatorios">
-        <article>
-          <span>Dashboards</span>
-          <strong>{totalDashboards}</strong>
-          <small>visoes executivas liberadas</small>
-        </article>
-        <article>
-          <span>Relatorios operacionais</span>
-          <strong>{totalOperationalReports}</strong>
-          <small>rotinas, auditoria e acompanhamento</small>
-        </article>
-        <article>
-          <span>Perfil</span>
-          <strong>{normalizeRoleValue(user?.role) || 'usuario'}</strong>
-          <small>acesso calculado por permissao</small>
-        </article>
       </section>
 
       {primaryActions.length ? (
-        <section className="reports-featured-actions" aria-label="Atalhos recomendados">
+        <section className="reports-featured-actions reports-featured-link-grid" aria-label="Atalhos recomendados">
           <div>
-            <p className="eyebrow">Atalhos recomendados</p>
-            <h2>Acesse rapidamente as frentes mais usadas</h2>
+            <p className="eyebrow">Acessos principais</p>
+            <h2>Escolha o relatório pelo objetivo da análise</h2>
+            <p className="base-subtitle">Os cards abaixo levam diretamente às visões mais usadas do seu perfil.</p>
           </div>
           <div>
             {primaryActions.map((item) => (
               <button type="button" key={`featured-${item.path}`} onClick={() => navigate(item.path)}>
                 <span>{item.label}</span>
-                <small>{item.group} - {item.meta}</small>
+                <small>{item.meta}</small>
               </button>
             ))}
           </div>

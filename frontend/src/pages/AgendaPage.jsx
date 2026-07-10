@@ -2265,13 +2265,70 @@ export default function AgendaPage({ initialView = 'agenda' }) {
     navigate('/agenda');
   };
 
+  const agendaFeatureCards = [
+    canUseAgendaAnalytics ? {
+      key: 'dashboard',
+      eyebrow: 'Indicadores',
+      title: isDashboardView ? 'Voltar para agenda' : 'Dashboard Agenda',
+      description: 'Evolução diária, semanal, mensal, produtividade, duplicidades e indicadores operacionais.',
+      tone: 'teal',
+      active: isDashboardView,
+      onClick: isDashboardView ? openAgendaOperationalView : openAgendaDashboardView
+    } : null,
+    canUseAgendaConfirmationPanel ? {
+      key: 'confirmations',
+      eyebrow: 'Confirmação',
+      title: showConfirmationPanel ? 'Ocultar confirmações' : 'Confirmações CRC',
+      description: 'Pacientes confirmados, pendentes, não confirmados e ações de acompanhamento.',
+      tone: 'gold',
+      active: showConfirmationPanel,
+      onClick: () => setShowConfirmationPanel((current) => !current)
+    } : null,
+    (canUseAgendaImportPanel || canUseAgendaConfirmationPanel) ? {
+      key: 'phones',
+      eyebrow: 'Contatos',
+      title: showEnrichmentPanel ? 'Ocultar telefones' : 'Telefones',
+      description: 'Status de contato, telefone pendente, revisão, WhatsApp e histórico por paciente.',
+      tone: 'leaf',
+      active: showEnrichmentPanel,
+      onClick: () => setShowEnrichmentPanel((current) => !current)
+    } : null,
+    canUseAgendaImportPanel ? {
+      key: 'import',
+      eyebrow: 'Importação',
+      title: showImportPanel ? 'Ocultar importação' : 'Importar agenda',
+      description: 'Planilhas, colagem direta, validação de pacientes, clínicas e dados para WhatsApp.',
+      tone: 'brand',
+      active: showImportPanel,
+      onClick: () => setShowImportPanel((current) => !current)
+    } : null,
+    canReplicateAgenda ? {
+      key: 'replicate',
+      eyebrow: 'Gestão',
+      title: showReplicationPanel ? 'Ocultar replicação' : 'Replicar agenda',
+      description: 'Copie tarefas entre colaboradores autorizados sem alterar a agenda original.',
+      tone: 'gold',
+      active: showReplicationPanel,
+      onClick: () => setShowReplicationPanel((current) => !current)
+    } : null,
+    {
+      key: 'new-item',
+      eyebrow: 'Cadastro',
+      title: 'Novo item',
+      description: 'Crie uma demanda, tarefa ou acompanhamento para o colaborador selecionado.',
+      tone: 'teal',
+      active: false,
+      onClick: () => openCreate('today', activeAgendaBoard?.userId ? String(activeAgendaBoard.userId) : (currentUserId || ''))
+    }
+  ].filter(Boolean);
+
   return (
     <main className="app-page agenda-page">
       <PageHeader
         eyebrow="Workspace"
         title="Agenda"
-        description=""
-        actions={(
+        description="Funcionalidades operacionais organizadas por cards para reduzir ruído visual e manter o mesmo padrão da gestão."
+        actions={false && (
           <>
             {canUseAgendaAnalytics ? (
               <button type="button" className={isDashboardView ? 'secondary-action' : 'outline-action'} onClick={isDashboardView ? openAgendaOperationalView : openAgendaDashboardView}>
@@ -2306,6 +2363,21 @@ export default function AgendaPage({ initialView = 'agenda' }) {
           </>
         )}
       />
+
+      <section className="management-shortcut-grid agenda-feature-grid" aria-label="Funcionalidades da agenda">
+        {agendaFeatureCards.map((card) => (
+          <button
+            key={card.key}
+            type="button"
+            className={`management-shortcut-card agenda-feature-card ${card.tone || ''} ${card.active ? 'active' : ''}`.trim()}
+            onClick={card.onClick}
+          >
+            <span>{card.eyebrow}</span>
+            <strong>{card.title}</strong>
+            <p>{card.description}</p>
+          </button>
+        ))}
+      </section>
 
       {reminderItem ? (
         <section className="agenda-reminder-toast">
