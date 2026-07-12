@@ -232,6 +232,8 @@ test('nps whatsapp inbound records promoter score and relational referral flow',
   let referralInsertParams = null;
   let referralUpdateSeen = false;
   let consentUpdateSeen = false;
+  let dentalCardInsertParams = null;
+  let dentalCardNotificationSeen = false;
 
   pool.query = buildQueryStub([
     {
@@ -323,6 +325,55 @@ test('nps whatsapp inbound records promoter score and relational referral flow',
         referralUpdateSeen = true;
         return [{ affectedRows: 1 }];
       }
+    },
+    {
+      match: (sql) => sql.includes('FROM dental_card_leads') && sql.includes("origem_cadastro = 'NPS_WHATSAPP_REFERRAL'"),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO dental_card_leads'),
+      reply: async (_sql, params) => {
+        dentalCardInsertParams = params;
+        return [{ insertId: 801 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO nps_referral_dental_card_links'),
+      reply: async () => [{ insertId: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM dental_card_leads WHERE id = ? LIMIT 1'),
+      reply: async () => [[{
+        id: 801,
+        unidade: 'Clinica Teste',
+        nome_lead: 'Maria Indicada',
+        telefone: '+5562991112233',
+        nome_indicador: 'Paciente Promotor',
+        created_at: '2026-07-12 10:00:00',
+        data_limite_retorno: '2026-07-13 10:00:00',
+        sla_retorno_status: 'pendente'
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM dental_card_notification_settings'),
+      reply: async () => [[{
+        user_id: 44,
+        name: 'Responsavel Dental',
+        role: 'crc_leader',
+        recebe_notificacao_sistema: 1,
+        recebe_notificacao_whatsapp: 0
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO notification_events'),
+      reply: async () => {
+        dentalCardNotificationSeen = true;
+        return [{ insertId: 901 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO dental_card_notification_logs'),
+      reply: async () => [{ insertId: 902 }]
     }
   ]);
 
@@ -375,6 +426,11 @@ test('nps whatsapp inbound records promoter score and relational referral flow',
   assert.equal(referralInsertParams[6], 'Maria Indicada');
   assert.equal(referralInsertParams[7], '+5562991112233');
   assert.equal(referralUpdateSeen, true);
+  assert.equal(dentalCardInsertParams[1], 'Maria Indicada');
+  assert.equal(dentalCardInsertParams[2], '+5562991112233');
+  assert.match(dentalCardInsertParams[4], /Lead indicado: Maria Indicada/);
+  assert.equal(referralResponse.body.payload.referral.dentalCard.created, true);
+  assert.equal(dentalCardNotificationSeen, true);
 });
 
 test('nps whatsapp inbound records neutral improvement without detractor or referral', async () => {
@@ -528,6 +584,42 @@ test('nps whatsapp inbound score parser accepts natural patient messages', () =>
   assert.equal(parseInboundNpsScore('sete'), 7);
   assert.equal(parseInboundNpsScore('nota 11'), null);
   assert.equal(parseInboundNpsScore('sem nota agora'), null);
+});
+
+test('nps promoter referral display is readable for operators', () => {
+  const { formatNpsReferralDisplay, parseNpsReferralText } = serverModule.__testables;
+  const referral = parseNpsReferralText('Nome: Maria Indicada | Celular: (62) 99111-2233');
+  const text = formatNpsReferralDisplay(referral, {
+    patient_name: 'Paciente Promotor',
+    patient_phone: '5562999669966',
+    clinic_name: 'Clinica Teste'
+  });
+
+  assert.match(referral.referralName, /Maria Indicada/);
+  assert.match(text, /Lead indicado: Maria Indicada/);
+  assert.match(text, /Telefone do lead: \+5562991112233/);
+  assert.match(text, /Paciente promotor: Paciente Promotor/);
+  assert.doesNotMatch(text, /\{|\}|"/);
+});
+
+test('nps detractor urgent whatsapp message is visually explicit', () => {
+  const message = serverModule.__testables.buildNpsDetractorUrgentWhatsAppMessage({
+    id: 503,
+    nps_protocol: 'NPS-000503',
+    patient_name: 'Paciente Detrator',
+    patient_phone: '+5562999669966',
+    clinic_name: 'Clinica Detratora',
+    score: 4
+  }, {
+    complaintId: 123,
+    protocol: 'GRC-2026-000123'
+  });
+
+  assert.match(message, /🚨🚨🚨/u);
+  assert.match(message, /VERIFICAR URGENTE/);
+  assert.match(message, /AVALIACAO NEGATIVA/);
+  assert.match(message, /Paciente Detrator/);
+  assert.match(message, /GRC-2026-000123/);
 });
 
 test('nps whatsapp inbound suppresses duplicate message ids', async () => {

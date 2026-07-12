@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import api from './api';
+import { io as createSocket } from 'socket.io-client';
+import api, { apiBaseUrl } from './api';
 import logo from './assets/logo3.png';
 import { hasPermission, isMasterAdmin, normalizeRoleValue, readUser } from './constants';
-import { clearSession, saveSession } from './session';
+import { clearSession, readToken, saveSession } from './session';
 
 const notificationTypeLabels = {
   complaint_assigned: 'Protocolo',
@@ -13,6 +14,7 @@ const notificationTypeLabels = {
   registration_request: 'Cadastro',
   registration_approved: 'Cadastro',
   registration_rejected: 'Cadastro',
+  nps_detractor_urgent: 'NPS urgente',
   nps_detractor_assigned: 'NPS detrator',
   nps_duplicate_phone: 'Alerta NPS'
 };
@@ -31,6 +33,9 @@ const notificationPayloadLabels = {
   actorName: 'Usuário',
   actor_name: 'Usuário',
   score: 'Nota',
+  profile: 'Perfil',
+  urgency: 'Urgencia',
+  patientPhone: 'Telefone do paciente',
   source: 'Origem',
   phone: 'Telefone',
   whatsapp: 'WhatsApp',
@@ -89,7 +94,21 @@ function formatNotificationPayloadValue(value) {
 }
 
 function isComplaintNotification(notification) {
-  return ['complaint_created', 'complaint_assigned', 'complaint_operational_alert'].includes(String(notification?.type || ''));
+  return ['complaint_created', 'complaint_assigned', 'complaint_operational_alert', 'nps_detractor_urgent'].includes(String(notification?.type || ''));
+}
+
+function getRealtimeSocketUrl() {
+  const base = String(apiBaseUrl || '').trim();
+  if (/^https?:\/\//i.test(base)) {
+    return base.replace(/\/api\/?$/i, '');
+  }
+  if (typeof window !== 'undefined' && !['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+    return process.env.REACT_APP_API_URL || 'https://meu-sistema-nps-backend.onrender.com';
+  }
+  if (typeof window !== 'undefined') {
+    return window.location.origin;
+  }
+  return undefined;
 }
 
 function formatNotificationPayloadKey(key) {
@@ -527,6 +546,50 @@ function HomeShellFixed() {
     loadNotifications();
     loadDentalCardBadge();
   }, [loadDentalCardBadge, loadNotifications]);
+
+  useEffect(() => {
+    if (mustChangePassword) return undefined;
+    const token = readToken();
+    if (!token) return undefined;
+
+    const socket = createSocket(getRealtimeSocketUrl(), {
+      path: '/socket.io',
+      transports: ['websocket', 'polling'],
+      auth: { token }
+    });
+
+    socket.on('notification:new', (notification = {}) => {
+      if (!notification?.id) return;
+      const nextNotification = {
+        ...notification,
+        payload: typeof notification.payload === 'string'
+          ? notification.payload
+          : JSON.stringify(notification.payload || {})
+      };
+
+      setNotificationGroups((prev) => {
+        if (prev.unread.some((item) => String(item.id) === String(nextNotification.id))) {
+          return prev;
+        }
+        return {
+          unread: [nextNotification, ...prev.unread].slice(0, 30),
+          read: prev.read
+        };
+      });
+
+      if (isComplaintNotification(nextNotification)) {
+        setNotificationsOpen(false);
+        setNotificationTab('unread');
+        setSelectedNotification(nextNotification);
+      }
+    });
+
+    socket.on('connect_error', (error) => {
+      console.warn('Tempo real de notificacoes indisponivel:', error.message || error);
+    });
+
+    return () => socket.disconnect();
+  }, [mustChangePassword]);
 
   useEffect(() => {
     if (mustChangePassword) return;

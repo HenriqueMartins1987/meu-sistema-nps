@@ -7965,9 +7965,13 @@ async function getNpsNotificationContext(npsId) {
        n.nps_protocol,
        n.clinic_id,
        n.patient_name,
+       n.patient_phone,
        n.score,
+       n.comment,
+       n.detractor_feedback,
        n.nps_profile,
        n.feedback_type,
+       n.converted_complaint_id,
        cl.name AS clinic_name,
        cl.city,
        cl.state
@@ -8618,6 +8622,152 @@ async function dispatchComplaintCreatedNotifications(complaintId, protocol) {
     console.warn('Nao foi possivel disparar notificacoes Twilio/e-mail da reclamacao:', error.message);
     return { notificationStatus: 'failed', results: [{ status: 'failed', error: error.message }] };
   }
+}
+
+function buildNpsDetractorUrgentWhatsAppMessage(nps = {}, complaintResult = {}) {
+  const protocol = complaintResult?.protocol || nps?.nps_protocol || `NPS-${nps?.id || 'SEM-PROTOCOLO'}`;
+  const complaintLine = complaintResult?.complaintId ? `RECLAMACAO GERADA: GRC #${complaintResult.complaintId}` : 'RECLAMACAO GERADA: verificar no sistema';
+
+  return [
+    '🚨🚨🚨 MENSAGEM URGENTE DO SISTEMA 🚨🚨🚨',
+    '',
+    '⚠️ VERIFICAR URGENTE - GESTAO DE NPS ⚠️',
+    '🔴 AVALIACAO NEGATIVA / DETRATOR RECEBIDA 🔴',
+    '',
+    `Paciente: ${nps.patient_name || 'Nao informado'}`,
+    `Telefone: ${nps.patient_phone || 'Nao informado'}`,
+    `Unidade: ${nps.clinic_name || nps.clinic_id || 'Nao informada'}`,
+    `Nota NPS: ${nps.score ?? 'Nao informada'}`,
+    `Protocolo NPS: ${protocol}`,
+    complaintLine,
+    '',
+    'ACAO IMEDIATA: Operador de SAC deve entrar em contato com o paciente e tratar a reclamacao no sistema.',
+    '🚨 VERIFICAR AGORA 🚨'
+  ].join('\n');
+}
+
+async function getSacOperatorNotificationUsers() {
+  const [users] = await pool.query(
+    `SELECT id, name, role
+       FROM users
+      WHERE active = 1
+        AND deleted_at IS NULL
+        AND (
+          role = 'sac_operator'
+          OR permissions LIKE '%complaints_management%'
+          OR permissions LIKE '%nps_management%'
+        )`
+  );
+
+  if (users.length) return users;
+
+  const [admins] = await pool.query(
+    "SELECT id, name, role FROM users WHERE active = 1 AND deleted_at IS NULL AND role IN ('master_admin', 'admin')"
+  );
+  return admins;
+}
+
+async function createNpsDetractorUrgentInAppNotifications(nps = {}, complaintResult = {}) {
+  const recipients = await getSacOperatorNotificationUsers();
+  const link = complaintResult?.complaintId
+    ? `${frontendUrl}/gestao/${complaintResult.complaintId}`
+    : `${frontendUrl}/gestao-nps?abrir=${nps.id}`;
+  const title = 'URGENTE: avaliacao detratora recebida';
+  const message = [
+    'Operador de SAC: acionar paciente imediatamente.',
+    `Paciente: ${nps.patient_name || 'Nao informado'}`,
+    `Telefone: ${nps.patient_phone || 'Nao informado'}`,
+    `Unidade: ${nps.clinic_name || nps.clinic_id || 'Nao informada'}`,
+    `Nota NPS: ${nps.score ?? 'Nao informada'}`,
+    complaintResult?.protocol ? `Reclamacao: ${complaintResult.protocol}` : 'Reclamacao: gerada automaticamente'
+  ].join('\n');
+  const payload = {
+    npsId: nps.id,
+    protocol: complaintResult?.protocol || nps.nps_protocol || null,
+    complaintId: complaintResult?.complaintId || nps.converted_complaint_id || null,
+    patientName: nps.patient_name || null,
+    patientPhone: nps.patient_phone || null,
+    clinicName: nps.clinic_name || null,
+    score: nps.score,
+    profile: 'detrator',
+    urgency: 'immediate_contact'
+  };
+
+  const notifications = await Promise.all(recipients.map((recipient) => (
+    createNotification(recipient.id, 'nps_detractor_urgent', title, message, link, payload)
+  )));
+
+  return notifications.map((notification) => notification.user_id).filter(Boolean);
+}
+
+async function dispatchNpsDetractorComplaintWhatsAppAlert(nps = {}, complaintResult = {}) {
+  const fixedRecipients = fixedComplaintWhatsAppRecipients.map((phone) => ({
+    name: `Fixo ${phone}`,
+    role: 'fixed_complaint_number',
+    phone,
+    sessionId: WHATSAPP_NOTIFICATION_INSTANCE_NAME
+  }));
+  const recipients = [
+    ...fixedRecipients,
+    ...buildComplaintWhatsappGroupRecipients(fixedRecipients)
+  ];
+  const message = buildNpsDetractorUrgentWhatsAppMessage(nps, complaintResult);
+
+  if (!recipients.length) {
+    return { notificationStatus: 'skipped', results: [] };
+  }
+
+  const results = await deliverWhatsAppOnlyNotifications({
+    eventType: 'COMPLAINT_NPS_DETRACTOR_URGENT',
+    protocol: complaintResult?.protocol || nps.nps_protocol,
+    recipients,
+    whatsappSender: sendDetailedComplaintWhatsApp,
+    whatsappMessage: message
+  });
+
+  return {
+    notificationStatus: summarizeNotificationStatus(results),
+    results
+  };
+}
+
+async function handleInboundNpsDetractorAutomation(responseRow = {}) {
+  if (!responseRow?.id || (responseRow.nps_profile || inferNpsProfile(responseRow.score)) !== 'detrator') {
+    return { skipped: true };
+  }
+
+  const actor = {
+    id: null,
+    name: 'Automacao NPS WhatsApp',
+    role: 'automacao',
+    email: null
+  };
+  const result = {
+    converted: null,
+    inAppNotified: [],
+    whatsappStatus: 'not_started'
+  };
+
+  try {
+    result.converted = await convertNpsToComplaint(responseRow.id, actor);
+  } catch (error) {
+    console.warn('Nao foi possivel converter detrator NPS automaticamente em reclamacao:', error.message);
+    result.error = error.message;
+  }
+
+  try {
+    const npsContext = await getNpsNotificationContext(responseRow.id);
+    if (npsContext) {
+      result.inAppNotified = await createNpsDetractorUrgentInAppNotifications(npsContext, result.converted || {});
+      const whatsapp = await dispatchNpsDetractorComplaintWhatsAppAlert(npsContext, result.converted || {});
+      result.whatsappStatus = whatsapp.notificationStatus;
+    }
+  } catch (error) {
+    console.warn('Nao foi possivel disparar alerta urgente de detrator NPS:', error.message);
+    result.alertError = error.message;
+  }
+
+  return result;
 }
 
 async function dispatchComplaintAssignedNotifications(complaintId, protocol) {
@@ -9739,7 +9889,7 @@ async function assertCrcOperatorClinicAccess(user, clinicId) {
 }
 
 async function createNotification(userId, type, title, message, link = null, payload = null) {
-  await pool.query(
+  const [result] = await pool.query(
     `INSERT INTO notification_events
      (user_id, type, title, message, link, payload)
      VALUES (?, ?, ?, ?, ?, ?)`,
@@ -9752,6 +9902,21 @@ async function createNotification(userId, type, title, message, link = null, pay
       payload ? JSON.stringify(payload) : null
     ]
   );
+
+  const notification = {
+    id: Number(result?.insertId || 0) || null,
+    user_id: userId || null,
+    type,
+    title,
+    message: message || null,
+    link: link || null,
+    payload: payload || null,
+    status: 'unread',
+    created_at: new Date().toISOString()
+  };
+
+  emitUserNotificationRealtime(notification);
+  return notification;
 }
 
 async function createNotificationForAdmins(type, title, message, link = null, payload = null) {
@@ -14596,6 +14761,108 @@ function parseNpsReferralText(text = '') {
   };
 }
 
+function formatNpsReferralDisplay(referral = {}, responseRow = {}, inviteRow = {}) {
+  const referralName = sanitizeFinancialString(referral.referralName || referral.referral_name || '', 180) || 'Nao informado';
+  const referralPhone = isCompleteBrazilPhone(normalizeBrazilPhone(referral.referralPhone || referral.referral_phone || ''))
+    ? normalizeBrazilPhone(referral.referralPhone || referral.referral_phone || '')
+    : 'Nao informado';
+  const referrerName = sanitizeFinancialString(responseRow?.patient_name || inviteRow?.patient_name || '', 180) || 'Nao informado';
+  const referrerPhone = isCompleteBrazilPhone(normalizeBrazilPhone(responseRow?.patient_phone || inviteRow?.patient_phone || ''))
+    ? normalizeBrazilPhone(responseRow?.patient_phone || inviteRow?.patient_phone || '')
+    : 'Nao informado';
+  const clinicName = sanitizeFinancialString(responseRow?.clinic_name || inviteRow?.clinic_name || '', 180) || 'Nao informada';
+
+  return [
+    'Indicacao recebida via WhatsApp NPS',
+    `Lead indicado: ${referralName}`,
+    `Telefone do lead: ${referralPhone}`,
+    `Paciente promotor: ${referrerName}`,
+    `Telefone do promotor: ${referrerPhone}`,
+    `Unidade: ${clinicName}`
+  ].join('\n');
+}
+
+async function linkNpsReferralToDentalCardLead(npsReferralId, dentalCardLeadId, responseRow = {}, inviteRow = {}) {
+  if (!npsReferralId || !dentalCardLeadId) return;
+  await pool.query(
+    `INSERT INTO nps_referral_dental_card_links
+     (nps_referral_id, dental_card_lead_id, nps_response_id, nps_invite_id)
+     VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE dental_card_lead_id = VALUES(dental_card_lead_id), updated_at = NOW()`,
+    [
+      npsReferralId,
+      dentalCardLeadId,
+      responseRow?.id || null,
+      inviteRow?.id || responseRow?.ecuro_nps_invite_id || null
+    ]
+  );
+}
+
+async function createDentalCardLeadFromNpsReferral(responseRow = {}, inviteRow = {}, referral = {}, npsReferralId = null) {
+  const referralPhone = isCompleteBrazilPhone(normalizeBrazilPhone(referral.referralPhone || referral.referral_phone || ''))
+    ? normalizeBrazilPhone(referral.referralPhone || referral.referral_phone || '')
+    : null;
+
+  if (!referralPhone) {
+    return { created: false, reason: 'missing_referral_phone' };
+  }
+
+  const referralName = sanitizeFinancialString(referral.referralName || referral.referral_name || 'Indicado via NPS', 180) || 'Indicado via NPS';
+  const clinicName = sanitizeFinancialString(responseRow?.clinic_name || inviteRow?.clinic_name || '', 180) || 'Unidade NPS nao informada';
+  const referrerName = sanitizeFinancialString(responseRow?.patient_name || inviteRow?.patient_name || '', 180) || 'Paciente promotor NPS';
+  const referralSummary = formatNpsReferralDisplay({
+    referralName,
+    referralPhone
+  }, responseRow, inviteRow);
+
+  const [existingRows] = await pool.query(
+    `SELECT id
+       FROM dental_card_leads
+      WHERE deleted_at IS NULL
+        AND telefone = ?
+        AND origem_cadastro = 'NPS_WHATSAPP_REFERRAL'
+      ORDER BY id DESC
+      LIMIT 1`,
+    [referralPhone]
+  );
+
+  if (existingRows[0]?.id) {
+    await linkNpsReferralToDentalCardLead(npsReferralId, existingRows[0].id, responseRow, inviteRow);
+    return { created: false, duplicate: true, id: Number(existingRows[0].id) };
+  }
+
+  const now = new Date();
+  const returnSla = resolveDentalReturnSla({ created_at: now }, now);
+  const [result] = await pool.query(
+    `INSERT INTO dental_card_leads
+     (data_indicacao, unidade, nome_lead, telefone, nome_indicador, tipo_indicador, origem, origem_cadastro, responsavel_cadastro, status, canal_contato, observacoes, data_limite_retorno, sla_retorno_status, created_by, updated_by)
+     VALUES (CURDATE(), ?, ?, ?, ?, 'Paciente NPS Promotor', 'NPS', 'NPS_WHATSAPP_REFERRAL', 'Automacao NPS WhatsApp', 'Novo Lead', 'WhatsApp', ?, ?, ?, 'Automacao NPS WhatsApp', 'Automacao NPS WhatsApp')`,
+    [
+      clinicName,
+      referralName,
+      referralPhone,
+      referrerName,
+      referralSummary,
+      returnSla.data_limite_retorno,
+      returnSla.sla_retorno_status
+    ]
+  );
+
+  const leadId = Number(result.insertId || 0) || null;
+  await linkNpsReferralToDentalCardLead(npsReferralId, leadId, responseRow, inviteRow);
+
+  try {
+    const [leadRows] = await pool.query('SELECT * FROM dental_card_leads WHERE id = ? LIMIT 1', [leadId]);
+    if (leadRows[0]) {
+      await notifyDentalCardRecipients(leadRows[0], 'nova_indicacao');
+    }
+  } catch (error) {
+    console.warn('Nao foi possivel notificar responsaveis Dental Card da indicacao NPS:', error.message);
+  }
+
+  return { created: true, id: leadId };
+}
+
 async function saveNpsReferralRecord(responseRow = {}, inviteRow = {}, payload = {}) {
   const responseId = Number(responseRow?.id || payload.npsResponseId || 0) || null;
   const inviteId = Number(inviteRow?.id || responseRow?.ecuro_nps_invite_id || payload.npsInviteId || 0) || null;
@@ -14613,6 +14880,10 @@ async function saveNpsReferralRecord(responseRow = {}, inviteRow = {}, payload =
   const referralStatus = sanitizeFinancialString(payload.referralStatus || payload.referral_status || 'received', 40) || 'received';
   const receivedAt = normalizeNullableMysqlDateTime(payload.referralReceivedAt || payload.referral_received_at) || toMysqlDateTime(new Date());
   const acceptedAt = normalizeNullableMysqlDateTime(payload.referralAcceptedAt || payload.referral_accepted_at) || receivedAt;
+  const formattedReferralComment = formatNpsReferralDisplay({
+    referralName,
+    referralPhone
+  }, responseRow, inviteRow);
 
   if (!responseId && !inviteId) {
     return { saved: false, reason: 'missing_response_or_invite' };
@@ -14676,13 +14947,19 @@ async function saveNpsReferralRecord(responseRow = {}, inviteRow = {}, payload =
             SET recommend_yes = 1,
                 contact_share_allowed = 1,
                 referral_name = COALESCE(?, referral_name),
-                referral_phone = COALESCE(?, referral_phone)
+                referral_phone = COALESCE(?, referral_phone),
+                comment = CASE WHEN ? IS NULL OR ? = '' THEN comment ELSE CONCAT(COALESCE(comment, ''), CASE WHEN comment IS NULL OR comment = '' THEN '' ELSE '\n\n' END, ?) END
           WHERE id = ?`,
-        [referralName, referralPhone, responseId]
+        [referralName, referralPhone, formattedReferralComment, formattedReferralComment, formattedReferralComment, responseId]
       );
     }
 
-    return { saved: true, duplicate: true, id: Number(existing.id) };
+    const dentalCard = await createDentalCardLeadFromNpsReferral(responseRow, inviteRow, {
+      referralName,
+      referralPhone
+    }, existing.id);
+
+    return { saved: true, duplicate: true, id: Number(existing.id), dentalCard };
   }
 
   const [result] = await pool.query(
@@ -14710,9 +14987,10 @@ async function saveNpsReferralRecord(responseRow = {}, inviteRow = {}, payload =
           SET recommend_yes = 1,
               contact_share_allowed = 1,
               referral_name = COALESCE(?, referral_name),
-              referral_phone = COALESCE(?, referral_phone)
+              referral_phone = COALESCE(?, referral_phone),
+              comment = CASE WHEN ? IS NULL OR ? = '' THEN comment ELSE CONCAT(COALESCE(comment, ''), CASE WHEN comment IS NULL OR comment = '' THEN '' ELSE '\n\n' END, ?) END
         WHERE id = ?`,
-      [referralName, referralPhone, responseId]
+      [referralName, referralPhone, formattedReferralComment, formattedReferralComment, formattedReferralComment, responseId]
     );
     await insertNpsLog(responseId, 'indicacao_registrada', 'Indicação do paciente promotor registrada no banco relacional.', {
       name: 'WhatsApp NPS',
@@ -14720,10 +14998,16 @@ async function saveNpsReferralRecord(responseRow = {}, inviteRow = {}, payload =
     });
   }
 
+  const dentalCard = await createDentalCardLeadFromNpsReferral(responseRow, inviteRow, {
+    referralName,
+    referralPhone
+  }, result.insertId);
+
   return {
     saved: true,
     duplicate: false,
-    id: Number(result.insertId || 0) || null
+    id: Number(result.insertId || 0) || null,
+    dentalCard
   };
 }
 
@@ -15106,6 +15390,9 @@ async function processInboundNpsWhatsAppMessage(payload = {}) {
     npsInviteId: inviteRow.id,
     npsResponseId: responseRow?.id || null
   });
+  const detractorAutomation = responseRow?.id && inferNpsProfile(numericScore) === 'detrator'
+    ? await handleInboundNpsDetractorAutomation(responseRow)
+    : null;
 
   return {
     success: true,
@@ -15119,7 +15406,8 @@ async function processInboundNpsWhatsAppMessage(payload = {}) {
     inviteId: inviteRow.id,
     responseId: responseRow?.id || null,
     score: numericScore,
-    inboundEventId: inboundEvent.id
+    inboundEventId: inboundEvent.id,
+    detractorAutomation
   };
 }
 
@@ -17744,6 +18032,14 @@ function emitWhatsAppRealtime(event, payload = {}, options = {}) {
   if (options.conversationId) {
     io.to(`whatsapp:conversation:${options.conversationId}`).emit(event, payload);
   }
+}
+
+function emitUserNotificationRealtime(notification = {}) {
+  if (!io || !notification?.user_id) return;
+  io.to(`whatsapp:user:${notification.user_id}`).emit('notification:new', {
+    ...notification,
+    payload: notification.payload || null
+  });
 }
 
 function emitWhatsAppDashboardRefresh(reason, payload = {}) {
@@ -42841,6 +43137,7 @@ Object.assign(app, {
     buildComplaintStalledTreatmentReminderWindowKey,
     buildComplaintCreatorAudit,
     buildComplaintWhatsAppMessage,
+    buildNpsDetractorUrgentWhatsAppMessage,
     listAgendaScheduledDatesBetween,
     buildDailyCoordinatorDemandReminderJobKey,
     buildDailyCoordinatorDemandReminderMessage,
@@ -42874,6 +43171,9 @@ Object.assign(app, {
     isPasswordChangeRouteAllowed,
     inferNpsProfile,
     parseInboundNpsScore,
+    parseNpsReferralText,
+    formatNpsReferralDisplay,
+    handleInboundNpsDetractorAutomation,
     isWhatsAppConnectedStatus,
     makeMysqlLockName,
     getStoredUploadFilename,
