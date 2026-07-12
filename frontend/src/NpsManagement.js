@@ -937,7 +937,7 @@ function NpsManagement() {
                   ? 'Pesquisas NPS finalizadas'
                   : 'Lista de respostas NPS'}
             </h2>
-            <p className="base-subtitle">O envio usa a sessão configurada no backend para NPS e pode ser alternado entre <strong>reclamacoes</strong> e <strong>nps</strong> apenas por variável de ambiente.</p>
+            <p className="base-subtitle">O envio usa a sessão dedicada de NPS configurada no backend, mantendo as mensagens separadas da operação de Reclamações.</p>
           </div>
 
           <div className="patient-tabs" role="tablist" aria-label="Visões da gestão NPS">

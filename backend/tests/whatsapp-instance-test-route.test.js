@@ -518,6 +518,18 @@ test('nps classification and formula ignore unanswered invites', () => {
   assert.equal(metrics.nps, 25);
 });
 
+test('nps whatsapp inbound score parser accepts natural patient messages', () => {
+  const { parseInboundNpsScore } = serverModule.__testables;
+
+  assert.equal(parseInboundNpsScore('10'), 10);
+  assert.equal(parseInboundNpsScore('Minha nota e 10'), 10);
+  assert.equal(parseInboundNpsScore('dou 9 para o atendimento'), 9);
+  assert.equal(parseInboundNpsScore('nota dez'), 10);
+  assert.equal(parseInboundNpsScore('sete'), 7);
+  assert.equal(parseInboundNpsScore('nota 11'), null);
+  assert.equal(parseInboundNpsScore('sem nota agora'), null);
+});
+
 test('nps whatsapp inbound suppresses duplicate message ids', async () => {
   pool.query = buildQueryStub([
     {

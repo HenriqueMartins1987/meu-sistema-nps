@@ -17848,9 +17848,9 @@ a {
 
 .agenda-board {
   display: grid;
-  grid-template-columns: repeat(4, minmax(300px, 1fr));
+  grid-template-columns: repeat(5, minmax(280px, 1fr));
   gap: 16px;
-  min-width: 1240px;
+  min-width: 1460px;
 }
 
 .agenda-column {
@@ -17888,6 +17888,10 @@ a {
 
 .agenda-column-doing::before {
   background: #f59e0b;
+}
+
+.agenda-column-sobrestado::before {
+  background: #8b5cf6;
 }
 
 .agenda-column-done::before {
@@ -18680,6 +18684,12 @@ a {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(255, 250, 240, 0.98)),
     radial-gradient(circle at top right, rgba(245, 158, 11, 0.12), transparent 34%);
+}
+
+.agenda-column-sobrestado {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(247, 245, 255, 0.98)),
+    radial-gradient(circle at top right, rgba(139, 92, 246, 0.12), transparent 34%);
 }
 
 .agenda-column-done {

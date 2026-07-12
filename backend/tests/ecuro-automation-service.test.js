@@ -64,13 +64,19 @@ test('buildNpsInviteIdempotencyKey uses invite id and normalized phone', () => {
   assert.equal(key, 'nps-91-5562999669966');
 });
 
-test('getNpsAutomationConfig prioritizes the configured whatsapp session', () => {
+test('getNpsAutomationConfig uses the dedicated NPS whatsapp session by default', () => {
+  const config = getNpsAutomationConfig({});
+
+  assert.equal(config.sessionId, 'nps');
+});
+
+test('getNpsAutomationConfig still honors an explicit whatsapp session override', () => {
   const config = getNpsAutomationConfig({
-    NPS_WHATSAPP_SESSION_ID: 'reclamacoes',
+    NPS_WHATSAPP_SESSION_ID: 'nps-homolog',
     WHATSAPP_NPS_INSTANCE_NAME: 'nps'
   });
 
-  assert.equal(config.sessionId, 'reclamacoes');
+  assert.equal(config.sessionId, 'nps-homolog');
 });
 
 test('buildNpsInviteMessage renders the professional default template', () => {

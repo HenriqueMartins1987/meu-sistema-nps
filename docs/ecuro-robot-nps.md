@@ -58,7 +58,7 @@ Camadas:
 - `ECURO_MAPPING_CAPTURE_SCREENSHOTS=true`
 - `ECURO_MAPPING_CAPTURE_HTML=true`
 - `ECURO_MAPPING_READ_ONLY=true`
-- `NPS_WHATSAPP_SESSION_ID=reclamacoes`
+- `NPS_WHATSAPP_SESSION_ID=nps`
 - `NPS_PUBLIC_URL=https://meu-sistema-nps-three.vercel.app/nps`
 - `NPS_DISPATCH_ENABLED=false`
 - `NPS_DISPATCH_WINDOW_START=08:00`
@@ -161,7 +161,7 @@ Payload mínimo:
 
 ```json
 {
-  "sessionId": "reclamacoes",
+  "sessionId": "nps",
   "phone": "+5562999999999",
   "message": "10",
   "messageId": "wamid-123",

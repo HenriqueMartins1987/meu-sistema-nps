@@ -22,6 +22,7 @@ const agendaColumns = [
   { key: 'todo', label: 'A fazer', helper: 'Ideias, pendências e próximas ações', eyebrow: 'Backlog' },
   { key: 'today', label: 'Hoje', helper: 'Prioridade do dia', eyebrow: 'Focus' },
   { key: 'doing', label: 'Em andamento', helper: 'Itens em execução', eyebrow: 'Running' },
+  { key: 'sobrestado', label: 'Sobrestado', helper: 'Pacientes aguardando fechamento de protocolo', eyebrow: 'Hold' },
   { key: 'done', label: 'Concluído', helper: 'Finalizados', eyebrow: 'Closed' }
 ];
 
@@ -114,6 +115,7 @@ const emptyDraft = {
   patient_phone: '',
   patient_has_scheduled: false,
   patient_scheduled_at: '',
+  patient_appointment_notes: '',
   patient_fake_appointment: false,
   prosthesis_not_delivered: false,
   prosthesis_laboratory: '',
@@ -217,6 +219,7 @@ function normalizeDraftFromItem(item = {}) {
     patient_phone: item.patient_phone || '',
     patient_has_scheduled: Boolean(item.patient_has_scheduled),
     patient_scheduled_at: toDatetimeLocal(item.patient_scheduled_at),
+    patient_appointment_notes: item.patient_appointment_notes || '',
     patient_fake_appointment: Boolean(item.patient_fake_appointment),
     prosthesis_not_delivered: Boolean(item.prosthesis_not_delivered),
     prosthesis_laboratory: item.prosthesis_laboratory || '',
@@ -654,6 +657,7 @@ function buildAgendaPreviewPayload(item = {}, source = 'task') {
       `Telefone: ${item.contact_phone_masked || item.patient_phone || '-'}`,
       `Status do contato: ${getAgendaContactStatusLabel(item.contact_status || '')}`,
       `Data da agenda: ${getAgendaDateMatchLabel(item.appointment_date_match_status || '')}`,
+      `Observacao do agendamento: ${item.patient_appointment_notes || '-'}`,
       `Agendamento: ${item.patient_fake_appointment ? 'Fake' : 'Regular'}`,
       `Peça: ${item.prosthesis_not_delivered ? `Não entregue - ${item.prosthesis_laboratory === 'Outros' ? (item.prosthesis_laboratory_other || 'Outros') : (item.prosthesis_laboratory || 'laboratório pendente')}` : 'Sem pendência'}`,
       `Reclamação CRC: ${item.complaint_protocol || (item.patient_complained ? 'Paciente reclamou' : 'Não registrada')}`,
@@ -876,6 +880,7 @@ function AgendaCard({
         {item.clinic_name ? <span>Unidade {item.clinic_name}</span> : null}
         {item.patient_name ? <span>Paciente {item.patient_name}</span> : null}
         {item.patient_has_scheduled && item.patient_scheduled_at ? <span>Agendado para {formatDateTime(item.patient_scheduled_at)}</span> : null}
+        {item.patient_appointment_notes ? <span>Obs. agendamento: {item.patient_appointment_notes}</span> : null}
         {item.patient_fake_appointment ? <span className="agenda-fake-meta">Agendamento fake</span> : null}
         {item.prosthesis_not_delivered ? <span className="agenda-lab-meta">Peça não entregue: {item.prosthesis_laboratory === 'Outros' ? (item.prosthesis_laboratory_other || 'Outros') : (item.prosthesis_laboratory || 'laboratório pendente')}</span> : null}
         {item.complaint_protocol ? <span className="agenda-complaint-meta">Reclamação {item.complaint_protocol}</span> : null}
@@ -920,6 +925,15 @@ function AgendaCard({
           }}
           >
             Iniciar
+          </button>
+        ) : null}
+        {item.status !== 'sobrestado' && item.status !== 'done' ? (
+          <button type="button" onClick={(event) => {
+            event.stopPropagation();
+            onStatus(item, 'sobrestado');
+          }}
+          >
+            Sobrestar
           </button>
         ) : null}
         {item.status !== 'done' ? (
@@ -1003,6 +1017,7 @@ export default function AgendaPage({ initialView = 'agenda' }) {
   const [draggingId, setDraggingId] = useState(null);
   const [openingWhatsappId, setOpeningWhatsappId] = useState(null);
   const [reprocessingContactId, setReprocessingContactId] = useState(null);
+  const [deduplicatingAgenda, setDeduplicatingAgenda] = useState(false);
   const [convertingComplaintId, setConvertingComplaintId] = useState(null);
   const [previewPopover, setPreviewPopover] = useState(null);
   const previewPopoverRef = useRef(null);
@@ -1133,6 +1148,24 @@ export default function AgendaPage({ initialView = 'agenda' }) {
       setFeedback(getApiErrorMessage(error, 'Nao foi possivel executar a busca de telefones.'));
     } finally {
       setEnrichmentLoading(false);
+    }
+  };
+
+  const deduplicateAgendaPatients = async () => {
+    setDeduplicatingAgenda(true);
+    setFeedback('');
+    try {
+      const response = await api.post('/api/agenda/items/deduplicate', { dry_run: false });
+      await Promise.all([loadItems(), loadDashboard()]);
+      const consolidated = Number(response.data?.consolidated || 0);
+      const skipped = Number(response.data?.skippedWithMultipleProtocols || 0);
+      setFeedback(skipped
+        ? `Varredura concluida: ${consolidated} duplicado(s) consolidado(s); ${skipped} grupo(s) com protocolos diferentes exigem revisao manual.`
+        : `Varredura concluida: ${consolidated} duplicado(s) consolidado(s).`);
+    } catch (error) {
+      setFeedback(getApiErrorMessage(error, 'Nao foi possivel consolidar duplicados da agenda.'));
+    } finally {
+      setDeduplicatingAgenda(false);
     }
   };
 
@@ -1870,6 +1903,7 @@ export default function AgendaPage({ initialView = 'agenda' }) {
       patient_phone: draft.demand_type === 'patient' ? draft.patient_phone : null,
       patient_has_scheduled: draft.demand_type === 'patient' ? Boolean(draft.patient_has_scheduled) : false,
       patient_scheduled_at: draft.demand_type === 'patient' && draft.patient_has_scheduled ? (draft.patient_scheduled_at || null) : null,
+      patient_appointment_notes: draft.demand_type === 'patient' ? draft.patient_appointment_notes : null,
       patient_fake_appointment: draft.demand_type === 'patient' ? Boolean(draft.patient_fake_appointment) : false,
       prosthesis_not_delivered: draft.demand_type === 'patient' ? Boolean(draft.prosthesis_not_delivered) : false,
       prosthesis_laboratory: draft.demand_type === 'patient' && draft.prosthesis_not_delivered ? draft.prosthesis_laboratory : null,
@@ -2697,7 +2731,9 @@ export default function AgendaPage({ initialView = 'agenda' }) {
                   <strong>Pacientes duplicados para auditoria</strong>
                   <span>Mostra quem aparece mais de uma vez na agenda, com datas e unidades para analise do indice de faltantes.</span>
                 </div>
-                <small>{agendaDuplicatePatientGroups.length} grupo(s)</small>
+                <button type="button" className="outline-action" onClick={deduplicateAgendaPatients} disabled={deduplicatingAgenda || !agendaDuplicatePatientGroups.length}>
+                  {deduplicatingAgenda ? 'Varrendo...' : `Corrigir ${agendaDuplicatePatientGroups.length} grupo(s)`}
+                </button>
               </div>
               <div className="agenda-duplicate-patient-list">
                 {agendaDuplicatePatientGroups.map((group) => (
@@ -4111,6 +4147,7 @@ export default function AgendaPage({ initialView = 'agenda' }) {
                       confirmation_status: event.target.value === 'patient' ? current.confirmation_status || 'pendente' : 'pendente',
                       patient_has_scheduled: event.target.value === 'patient' ? current.patient_has_scheduled : false,
                       patient_scheduled_at: event.target.value === 'patient' ? current.patient_scheduled_at : '',
+                      patient_appointment_notes: event.target.value === 'patient' ? current.patient_appointment_notes : '',
                       patient_fake_appointment: event.target.value === 'patient' ? current.patient_fake_appointment : false,
                       prosthesis_not_delivered: event.target.value === 'patient' ? current.prosthesis_not_delivered : false,
                       prosthesis_laboratory: event.target.value === 'patient' ? current.prosthesis_laboratory : '',
@@ -4239,6 +4276,15 @@ export default function AgendaPage({ initialView = 'agenda' }) {
                         value={draft.patient_scheduled_at}
                         disabled={!draft.patient_has_scheduled}
                         onChange={(event) => setDraft((current) => ({ ...current, patient_scheduled_at: event.target.value }))}
+                      />
+                    </label>
+                    <label className="agenda-span-2">
+                      Observacao do agendamento
+                      <textarea
+                        className="field agenda-textarea"
+                        value={draft.patient_appointment_notes}
+                        onChange={(event) => setDraft((current) => ({ ...current, patient_appointment_notes: event.target.value }))}
+                        placeholder="Registre contexto do horario, combinados com o paciente e pontos que devem permanecer na agenda."
                       />
                     </label>
                     <label className="agenda-span-2">
