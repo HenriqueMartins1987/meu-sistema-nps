@@ -740,6 +740,31 @@ test('whatsapp-service webhook extracts nested message and ack payloads', () => 
   assert.equal(status.status, 'lida');
 });
 
+test('whatsapp-service webhook extracts shared contact vCard details', () => {
+  const event = __testables.extractWhatsAppServiceEventMessage({
+    event: 'message',
+    sessionId: 'nps',
+    data: {
+      message: {
+        id: { id: 'VCARD-1', remote: '5562999669966@c.us', fromMe: false },
+        from: '5562999669966@c.us',
+        type: 'vcard',
+        contactMessage: {
+          displayName: 'Maria Vcard',
+          vcard: 'BEGIN:VCARD\\nVERSION:3.0\\nFN:Maria Vcard\\nTEL;type=CELL:+55 62 99111-2233\\nEND:VCARD'
+        }
+      }
+    }
+  });
+
+  assert.equal(event.sessionId, 'nps');
+  assert.equal(event.phone, '5562999669966');
+  assert.equal(event.text, 'Contato compartilhado: Maria Vcard +5562991112233');
+  assert.equal(event.contactName, 'Maria Vcard');
+  assert.equal(event.contactPhone, '+5562991112233');
+  assert.match(event.vcard, /BEGIN:VCARD/);
+});
+
 test('buildWelcomeMessage includes login and temporary password', () => {
   const message = buildWelcomeMessage({
     name: 'Carlos',

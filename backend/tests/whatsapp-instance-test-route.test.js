@@ -223,6 +223,8 @@ test('nps whatsapp inbound records promoter score and relational referral flow',
     id: 301,
     clinic_id: 7,
     clinic_name: 'Clinica Teste',
+    city: 'Goiania',
+    state: 'GO',
     patient_name: 'Paciente Promotor',
     patient_phone: '5562999669966',
     source: 'ecuro_last_consultation',
@@ -252,6 +254,8 @@ test('nps whatsapp inbound records promoter score and relational referral flow',
           id: 501,
           clinic_id: 7,
           clinic_name: 'Clinica Teste',
+          city: 'Goiania',
+          state: 'GO',
           patient_name: 'Paciente Promotor',
           patient_phone: '5562999669966',
           score: 10,
@@ -286,6 +290,8 @@ test('nps whatsapp inbound records promoter score and relational referral flow',
         id: 501,
         clinic_id: 7,
         clinic_name: 'Clinica Teste',
+        city: 'Goiania',
+        state: 'GO',
         patient_name: 'Paciente Promotor',
         patient_phone: '5562999669966',
         score: 10,
@@ -347,7 +353,7 @@ test('nps whatsapp inbound records promoter score and relational referral flow',
         id: 801,
         unidade: 'Clinica Teste',
         nome_lead: 'Maria Indicada',
-        telefone: '+5562991112233',
+      telefone: '+5562991112233',
         nome_indicador: 'Paciente Promotor',
         created_at: '2026-07-12 10:00:00',
         data_limite_retorno: '2026-07-13 10:00:00',
@@ -414,7 +420,10 @@ test('nps whatsapp inbound records promoter score and relational referral flow',
     .send({
       sessionId: 'nps',
       phone: '+5562999669966',
-      message: 'Maria Indicada +5562991112233',
+      message: '',
+      contactName: 'Maria Indicada',
+      contactPhone: '+5562991112233',
+      vcard: 'BEGIN:VCARD\nVERSION:3.0\nFN:Maria Indicada\nTEL;type=CELL:+55 62 99111-2233\nEND:VCARD',
       messageId: 'promoter-referral-1'
     });
 
@@ -426,9 +435,14 @@ test('nps whatsapp inbound records promoter score and relational referral flow',
   assert.equal(referralInsertParams[6], 'Maria Indicada');
   assert.equal(referralInsertParams[7], '+5562991112233');
   assert.equal(referralUpdateSeen, true);
+  assert.equal(dentalCardInsertParams[0], 'Clinica Teste - Goiania/GO');
   assert.equal(dentalCardInsertParams[1], 'Maria Indicada');
   assert.equal(dentalCardInsertParams[2], '+5562991112233');
   assert.match(dentalCardInsertParams[4], /Lead indicado: Maria Indicada/);
+  assert.match(dentalCardInsertParams[4], /Paciente promotor: Paciente Promotor/);
+  assert.match(dentalCardInsertParams[4], /Telefone do promotor: \+5562999669966/);
+  assert.match(dentalCardInsertParams[4], /Cidade\/UF: Goiania\/GO/);
+  assert.match(dentalCardInsertParams[4], /Origem do contato: Contato compartilhado\/vCard/);
   assert.equal(referralResponse.body.payload.referral.dentalCard.created, true);
   assert.equal(dentalCardNotificationSeen, true);
 });
@@ -592,14 +606,27 @@ test('nps promoter referral display is readable for operators', () => {
   const text = formatNpsReferralDisplay(referral, {
     patient_name: 'Paciente Promotor',
     patient_phone: '5562999669966',
-    clinic_name: 'Clinica Teste'
+    clinic_name: 'Clinica Teste',
+    city: 'Goiania',
+    state: 'GO'
   });
 
   assert.match(referral.referralName, /Maria Indicada/);
   assert.match(text, /Lead indicado: Maria Indicada/);
   assert.match(text, /Telefone do lead: \+5562991112233/);
   assert.match(text, /Paciente promotor: Paciente Promotor/);
+  assert.match(text, /Cidade\/UF: Goiania\/GO/);
   assert.doesNotMatch(text, /\{|\}|"/);
+});
+
+test('nps referral parser prefers vCard contact name and phone', () => {
+  const referral = serverModule.__testables.getNpsReferralFromPayload('', {
+    vcard: 'BEGIN:VCARD\nVERSION:3.0\nFN:Maria Vcard\nTEL;type=CELL:+55 62 99111-2233\nEND:VCARD'
+  });
+
+  assert.equal(referral.referralName, 'Maria Vcard');
+  assert.equal(referral.referralPhone, '+5562991112233');
+  assert.equal(referral.source, 'vcard');
 });
 
 test('nps detractor urgent whatsapp message is visually explicit', () => {

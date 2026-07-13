@@ -14761,6 +14761,98 @@ function parseNpsReferralText(text = '') {
   };
 }
 
+function extractVcardField(vcard = '', fieldName = '') {
+  const expression = new RegExp(`(?:^|\\n)${fieldName}(?:;[^:]*)?:(.+)`, 'i');
+  const match = String(vcard || '').match(expression);
+  return match ? match[1].replace(/\\n/g, '\n').replace(/\\\\,/g, ',').replace(/\\\\;/g, ';').trim() : '';
+}
+
+function parseWhatsAppVcardContact(rawValue = '') {
+  const rawText = (typeof rawValue === 'string'
+    ? rawValue
+    : JSON.stringify(rawValue || {})).replace(/\\n/g, '\n').replace(/\\r/g, '\r');
+  if (!/BEGIN:VCARD/i.test(rawText) && !/TEL(?:;[^:]*)?:/i.test(rawText)) {
+    return null;
+  }
+
+  const fullName = extractVcardField(rawText, 'FN');
+  const nameParts = extractVcardField(rawText, 'N')
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const phoneMatch = rawText.match(/(?:^|\n)TEL(?:;[^:]*)?:([^\n\r]+)/i);
+  const normalizedPhone = phoneMatch ? normalizeBrazilPhone(phoneMatch[1]) : '';
+  const referralName = sanitizeFinancialString(fullName || nameParts.reverse().join(' ') || '', 180) || null;
+
+  return {
+    referralName,
+    referralPhone: isCompleteBrazilPhone(normalizedPhone) ? normalizedPhone : null,
+    source: 'vcard'
+  };
+}
+
+function getNpsReferralFromPayload(text = '', payload = {}) {
+  const rawPayload = payload?.rawPayload || payload || {};
+  const vcardCandidates = [
+    payload.vcard,
+    payload.vCard,
+    payload.contactVcard,
+    payload.contact_vcard,
+    rawPayload.vcard,
+    rawPayload.vCard,
+    rawPayload.contactVcard,
+    rawPayload.contact_vcard,
+    rawPayload.message?.vcard,
+    rawPayload.message?.vCard,
+    rawPayload.message?.contactMessage?.vcard,
+    rawPayload.message?.contactsArrayMessage?.contacts?.[0]?.vcard,
+    rawPayload.data?.message?.vcard,
+    rawPayload.data?.message?.contactMessage?.vcard
+  ].filter(Boolean);
+  const vcardReferral = vcardCandidates.map(parseWhatsAppVcardContact).find((item) => item?.referralPhone || item?.referralName);
+  const explicitName = sanitizeFinancialString(
+    payload.contactName
+      || payload.contact_name
+      || rawPayload.contactName
+      || rawPayload.contact_name
+      || rawPayload.sharedContactName
+      || rawPayload.shared_contact_name
+      || rawPayload.message?.contactName
+      || rawPayload.message?.displayName,
+    180
+  ) || null;
+  const explicitPhone = isCompleteBrazilPhone(normalizeBrazilPhone(
+    payload.contactPhone
+      || payload.contact_phone
+      || rawPayload.contactPhone
+      || rawPayload.contact_phone
+      || rawPayload.sharedContactPhone
+      || rawPayload.shared_contact_phone
+      || rawPayload.message?.contactPhone
+      || rawPayload.message?.phone
+      || ''
+  ))
+    ? normalizeBrazilPhone(
+      payload.contactPhone
+        || payload.contact_phone
+        || rawPayload.contactPhone
+        || rawPayload.contact_phone
+        || rawPayload.sharedContactPhone
+        || rawPayload.shared_contact_phone
+        || rawPayload.message?.contactPhone
+        || rawPayload.message?.phone
+        || ''
+    )
+    : null;
+  const textReferral = parseNpsReferralText(text);
+
+  return {
+    referralName: vcardReferral?.referralName || explicitName || textReferral.referralName,
+    referralPhone: vcardReferral?.referralPhone || explicitPhone || textReferral.referralPhone,
+    source: vcardReferral?.source || (explicitName || explicitPhone ? 'shared_contact' : 'text')
+  };
+}
+
 function formatNpsReferralDisplay(referral = {}, responseRow = {}, inviteRow = {}) {
   const referralName = sanitizeFinancialString(referral.referralName || referral.referral_name || '', 180) || 'Nao informado';
   const referralPhone = isCompleteBrazilPhone(normalizeBrazilPhone(referral.referralPhone || referral.referral_phone || ''))
@@ -14771,6 +14863,13 @@ function formatNpsReferralDisplay(referral = {}, responseRow = {}, inviteRow = {
     ? normalizeBrazilPhone(responseRow?.patient_phone || inviteRow?.patient_phone || '')
     : 'Nao informado';
   const clinicName = sanitizeFinancialString(responseRow?.clinic_name || inviteRow?.clinic_name || '', 180) || 'Nao informada';
+  const clinicCity = sanitizeFinancialString(responseRow?.city || responseRow?.clinic_city || inviteRow?.city || inviteRow?.clinic_city || '', 120) || 'Nao informada';
+  const clinicState = sanitizeFinancialString(responseRow?.state || responseRow?.clinic_state || inviteRow?.state || inviteRow?.clinic_state || '', 40) || '';
+  const referralSource = referral.source === 'vcard'
+    ? 'Contato compartilhado/vCard'
+    : referral.source === 'shared_contact'
+      ? 'Contato compartilhado'
+      : 'Mensagem de texto';
 
   return [
     'Indicacao recebida via WhatsApp NPS',
@@ -14778,7 +14877,9 @@ function formatNpsReferralDisplay(referral = {}, responseRow = {}, inviteRow = {
     `Telefone do lead: ${referralPhone}`,
     `Paciente promotor: ${referrerName}`,
     `Telefone do promotor: ${referrerPhone}`,
-    `Unidade: ${clinicName}`
+    `Unidade: ${clinicName}`,
+    `Cidade/UF: ${clinicCity}${clinicState ? `/${clinicState}` : ''}`,
+    `Origem do contato: ${referralSource}`
   ].join('\n');
 }
 
@@ -14809,10 +14910,16 @@ async function createDentalCardLeadFromNpsReferral(responseRow = {}, inviteRow =
 
   const referralName = sanitizeFinancialString(referral.referralName || referral.referral_name || 'Indicado via NPS', 180) || 'Indicado via NPS';
   const clinicName = sanitizeFinancialString(responseRow?.clinic_name || inviteRow?.clinic_name || '', 180) || 'Unidade NPS nao informada';
+  const clinicCity = sanitizeFinancialString(responseRow?.city || responseRow?.clinic_city || inviteRow?.city || inviteRow?.clinic_city || '', 120);
+  const clinicState = sanitizeFinancialString(responseRow?.state || responseRow?.clinic_state || inviteRow?.state || inviteRow?.clinic_state || '', 40);
+  const dentalUnitName = clinicCity
+    ? `${clinicName} - ${clinicCity}${clinicState ? `/${clinicState}` : ''}`
+    : clinicName;
   const referrerName = sanitizeFinancialString(responseRow?.patient_name || inviteRow?.patient_name || '', 180) || 'Paciente promotor NPS';
   const referralSummary = formatNpsReferralDisplay({
     referralName,
-    referralPhone
+    referralPhone,
+    source: referral.source
   }, responseRow, inviteRow);
 
   const [existingRows] = await pool.query(
@@ -14838,7 +14945,7 @@ async function createDentalCardLeadFromNpsReferral(responseRow = {}, inviteRow =
      (data_indicacao, unidade, nome_lead, telefone, nome_indicador, tipo_indicador, origem, origem_cadastro, responsavel_cadastro, status, canal_contato, observacoes, data_limite_retorno, sla_retorno_status, created_by, updated_by)
      VALUES (CURDATE(), ?, ?, ?, ?, 'Paciente NPS Promotor', 'NPS', 'NPS_WHATSAPP_REFERRAL', 'Automacao NPS WhatsApp', 'Novo Lead', 'WhatsApp', ?, ?, ?, 'Automacao NPS WhatsApp', 'Automacao NPS WhatsApp')`,
     [
-      clinicName,
+      dentalUnitName,
       referralName,
       referralPhone,
       referrerName,
@@ -14878,11 +14985,13 @@ async function saveNpsReferralRecord(responseRow = {}, inviteRow = {}, payload =
     ? normalizeBrazilPhone(responseRow?.patient_phone || inviteRow?.patient_phone || payload.referrerPatientPhone || '')
     : null;
   const referralStatus = sanitizeFinancialString(payload.referralStatus || payload.referral_status || 'received', 40) || 'received';
+  const referralSource = sanitizeFinancialString(payload.referralSource || payload.referral_source || 'text', 80) || 'text';
   const receivedAt = normalizeNullableMysqlDateTime(payload.referralReceivedAt || payload.referral_received_at) || toMysqlDateTime(new Date());
   const acceptedAt = normalizeNullableMysqlDateTime(payload.referralAcceptedAt || payload.referral_accepted_at) || receivedAt;
   const formattedReferralComment = formatNpsReferralDisplay({
     referralName,
-    referralPhone
+    referralPhone,
+    source: referralSource
   }, responseRow, inviteRow);
 
   if (!responseId && !inviteId) {
@@ -14956,7 +15065,8 @@ async function saveNpsReferralRecord(responseRow = {}, inviteRow = {}, payload =
 
     const dentalCard = await createDentalCardLeadFromNpsReferral(responseRow, inviteRow, {
       referralName,
-      referralPhone
+      referralPhone,
+      source: referralSource
     }, existing.id);
 
     return { saved: true, duplicate: true, id: Number(existing.id), dentalCard };
@@ -15000,7 +15110,8 @@ async function saveNpsReferralRecord(responseRow = {}, inviteRow = {}, payload =
 
   const dentalCard = await createDentalCardLeadFromNpsReferral(responseRow, inviteRow, {
     referralName,
-    referralPhone
+    referralPhone,
+    source: referralSource
   }, result.insertId);
 
   return {
@@ -15015,11 +15126,12 @@ async function findLatestNpsInviteByPhone(patientPhone = '', sessionId = '') {
   const normalizedPhone = normalizeBrazilPhone(patientPhone || '');
   if (!isCompleteBrazilPhone(normalizedPhone)) return null;
   const [rows] = await pool.query(
-    `SELECT *
-       FROM nps_invites
-      WHERE patient_phone = ?
-        AND status IN ('pending', 'queued', 'sent', 'responded')
-      ORDER BY CASE WHEN session_id = ? THEN 0 ELSE 1 END, created_at DESC, id DESC
+    `SELECT i.*, cl.city, cl.state
+       FROM nps_invites i
+       LEFT JOIN clinics cl ON cl.id = i.clinic_id
+      WHERE i.patient_phone = ?
+        AND i.status IN ('pending', 'queued', 'sent', 'responded')
+      ORDER BY CASE WHEN i.session_id = ? THEN 0 ELSE 1 END, i.created_at DESC, i.id DESC
       LIMIT 1`,
     [normalizedPhone, String(sessionId || '').trim()]
   );
@@ -15157,7 +15269,7 @@ async function createNpsResponseFromInvite(inviteRow, numericScore, options = {}
   return rows[0] || null;
 }
 
-async function processInboundNpsFollowUpMessage({ responseRow, inviteRow, text, receivedAt, inboundEventId }) {
+async function processInboundNpsFollowUpMessage({ responseRow, inviteRow, text, receivedAt, inboundEventId, rawPayload = {} }) {
   const profile = responseRow?.nps_profile || inferNpsProfile(responseRow?.score);
   const comment = buildInboundNpsComment(text, receivedAt);
 
@@ -15211,10 +15323,11 @@ async function processInboundNpsFollowUpMessage({ responseRow, inviteRow, text, 
     }
 
     if (Number(responseRow.recommend_yes || 0) === 1 || yesNo === true) {
-      const referral = parseNpsReferralText(text);
+      const referral = getNpsReferralFromPayload(text, rawPayload);
       const savedReferral = await saveNpsReferralRecord(responseRow, inviteRow, {
         referralName: referral.referralName,
         referralPhone: referral.referralPhone,
+        referralSource: referral.source,
         referralStatus: referral.referralPhone ? 'received' : 'pending_phone',
         referralReceivedAt: receivedAt
       });
@@ -15281,7 +15394,11 @@ async function processInboundNpsFollowUpMessage({ responseRow, inviteRow, text, 
 async function processInboundNpsWhatsAppMessage(payload = {}) {
   const sessionId = String(payload.sessionId || '').trim();
   const patientPhone = normalizeBrazilPhone(payload.phone || payload.patientPhone || '');
-  const text = String(payload.text || payload.message || '').trim();
+  const explicitText = String(payload.text || payload.message || '').trim();
+  const payloadReferral = getNpsReferralFromPayload(explicitText, payload);
+  const text = explicitText || (payloadReferral.referralName || payloadReferral.referralPhone
+    ? `Contato compartilhado: ${payloadReferral.referralName || 'Sem nome'} ${payloadReferral.referralPhone || ''}`.trim()
+    : '');
   const receivedAt = payload.receivedAt ? new Date(payload.receivedAt) : new Date();
 
   if (!sessionId || !isCompleteBrazilPhone(patientPhone) || !text) {
@@ -15348,7 +15465,8 @@ async function processInboundNpsWhatsAppMessage(payload = {}) {
       inviteRow,
       text,
       receivedAt,
-      inboundEventId: inboundEvent.id
+      inboundEventId: inboundEvent.id,
+      rawPayload: payload
     });
     await updateNpsInboundEvent(inboundEvent.id, {
       processedStatus: followUp.type || 'comment_recorded',
@@ -26286,6 +26404,36 @@ function extractWhatsAppServiceEventMessage(body = {}) {
       item.message?.videoMessage?.caption
     ])
   );
+  const vcard = firstNonEmptyString(
+    ...candidates.flatMap((item) => [
+      item.vcard,
+      item.vCard,
+      item.contactVcard,
+      item.contact_vcard,
+      item.contactMessage?.vcard,
+      item.contactsArrayMessage?.contacts?.[0]?.vcard,
+      item.message?.vcard,
+      item.message?.vCard,
+      item.message?.contactMessage?.vcard,
+      item.message?.contactsArrayMessage?.contacts?.[0]?.vcard,
+      item._data?.vcard,
+      item._data?.vCard
+    ])
+  );
+  const contactName = firstNonEmptyString(
+    ...candidates.flatMap((item) => [
+      item.contactName,
+      item.contact_name,
+      item.displayName,
+      item.contactMessage?.displayName,
+      item.contactsArrayMessage?.contacts?.[0]?.displayName,
+      item.message?.contactMessage?.displayName,
+      item.message?.contactsArrayMessage?.contacts?.[0]?.displayName,
+      item._data?.notifyName
+    ])
+  );
+  const vcardContact = parseWhatsAppVcardContact(vcard);
+  const contactPhone = vcardContact?.referralPhone || null;
   const type = firstNonEmpty(...candidates.map((item) => item.type), ...candidates.map((item) => item.messageType), body.messageType) || 'chat';
   const hasMedia = candidates.some((item) => Boolean(item.hasMedia || item.mediaUrl || item.media_url || item.downloadUrl || item.url));
   const mediaUrl = firstNonEmpty(...candidates.flatMap((item) => [item.mediaUrl, item.media_url, item.downloadUrl, item.url]));
@@ -26300,11 +26448,16 @@ function extractWhatsAppServiceEventMessage(body = {}) {
       ...candidates.flatMap((item) => [item.sessionId, item.session_id, item.instanceName, item.instance])
     ),
     phone,
-    text: text || (hasMedia ? `[Mídia recebida: ${type}]` : ''),
+    text: text || (vcardContact?.referralName || vcardContact?.referralPhone
+      ? `Contato compartilhado: ${vcardContact.referralName || contactName || 'Sem nome'} ${vcardContact.referralPhone || ''}`.trim()
+      : (hasMedia ? `[Mídia recebida: ${type}]` : '')),
     fromMe,
     messageId: extractWhatsAppServiceMessageId(messageNode) || extractWhatsAppServiceMessageId(primary),
     pushName: firstNonEmpty(...candidates.flatMap((item) => [item.notifyName, item.pushName, item.senderName, item.name]), body.patientName, body.patient_name),
     messageType: String(type || '').toLowerCase(),
+    contactName: vcardContact?.referralName || contactName || null,
+    contactPhone,
+    vcard: vcard || null,
     mediaUrl,
     mediaMimeType,
     raw: messageNode
@@ -26553,6 +26706,9 @@ async function persistWhatsAppServiceMessageEvent(body = {}) {
       text: inbound.text,
       messageId: inbound.messageId,
       receivedAt: new Date(),
+      contactName: inbound.contactName,
+      contactPhone: inbound.contactPhone,
+      vcard: inbound.vcard,
       rawPayload: body
     }).catch((error) => ({
       success: false,
@@ -37343,6 +37499,9 @@ app.post('/nps/whatsapp/inbound', async (req, res) => {
       text: req.body?.message || req.body?.text || '',
       messageId: req.body?.messageId || req.body?.message_id || '',
       receivedAt: req.body?.timestamp || req.body?.receivedAt || null,
+      contactName: req.body?.contactName || req.body?.contact_name || req.body?.sharedContactName || req.body?.shared_contact_name || null,
+      contactPhone: req.body?.contactPhone || req.body?.contact_phone || req.body?.sharedContactPhone || req.body?.shared_contact_phone || null,
+      vcard: req.body?.vcard || req.body?.vCard || req.body?.contactVcard || req.body?.contact_vcard || null,
       rawPayload: req.body || {}
     });
 
@@ -43172,6 +43331,8 @@ Object.assign(app, {
     inferNpsProfile,
     parseInboundNpsScore,
     parseNpsReferralText,
+    parseWhatsAppVcardContact,
+    getNpsReferralFromPayload,
     formatNpsReferralDisplay,
     handleInboundNpsDetractorAutomation,
     isWhatsAppConnectedStatus,
