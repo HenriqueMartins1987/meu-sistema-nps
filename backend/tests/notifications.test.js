@@ -869,6 +869,40 @@ test('canRenotifyComplaint only allows master admin, Supervisor do CRC and Opera
   }), false);
 });
 
+test('coordinator return status flags targeted complaints without coordinator interaction', () => {
+  const status = __testables.buildComplaintCoordinatorReturnStatus({
+    assigned_coordinator_user_id: 77,
+    assigned_coordinator_name: 'Coordenadora Unidade',
+    forwarded_to_role: 'coordinator',
+    coordinator_due_date: '2026-07-20 18:00:00'
+  }, [], []);
+
+  assert.equal(status.coordinator_targeted, true);
+  assert.equal(status.coordinator_has_return, false);
+  assert.equal(status.coordinator_pending_without_return, true);
+});
+
+test('coordinator return status clears when coordinator has interacted', () => {
+  const baseComplaint = {
+    assigned_coordinator_user_id: 77,
+    forwarded_to_role: 'coordinator',
+    coordinator_due_date: '2026-07-20 18:00:00'
+  };
+
+  assert.equal(__testables.buildComplaintCoordinatorReturnStatus(baseComplaint, [
+    { actor_role: 'coordinator', action: 'treatment_saved' }
+  ], []).coordinator_pending_without_return, false);
+
+  assert.equal(__testables.buildComplaintCoordinatorReturnStatus(baseComplaint, [], [
+    { uploaded_by_role: 'coordinator' }
+  ]).coordinator_pending_without_return, false);
+
+  assert.equal(__testables.buildComplaintCoordinatorReturnStatus({
+    ...baseComplaint,
+    coordinator_treated_at: '2026-07-21 10:00:00'
+  }, [], []).coordinator_pending_without_return, false);
+});
+
 test('evidence permissions keep marketing limited to upload only', () => {
   assert.equal(__testables.canDeleteEvidence({
     role: 'master_admin',

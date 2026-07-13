@@ -530,6 +530,8 @@ function DashboardManagement() {
   const canViewDeleted = isMasterAdmin(currentUser);
   const canFilterByLeadership = isMasterAdmin(currentUser)
     || ['admin', 'supervisor_crc', 'manager'].includes(currentUserRole);
+  const canFilterCoordinatorReturn = isMasterAdmin(currentUser)
+    || ['admin', 'sac_operator'].includes(currentUserRole);
   const workspaceLinks = [
     {
       key: 'new-protocol',
@@ -579,6 +581,7 @@ function DashboardManagement() {
     manager: '',
     escalation: '',
     appointment: '',
+    coordinatorReturn: '',
     search: ''
   });
   const [page, setPage] = useState(1);
@@ -623,6 +626,16 @@ function DashboardManagement() {
   }, [canFilterByLeadership]);
 
   useEffect(() => {
+    if (canFilterCoordinatorReturn) return;
+
+    setFilters((prev) => (
+      prev.coordinatorReturn
+        ? { ...prev, coordinatorReturn: '' }
+        : prev
+    ));
+  }, [canFilterCoordinatorReturn]);
+
+  useEffect(() => {
     setPage(1);
   }, [filters, viewMode, pageSize]);
 
@@ -650,6 +663,8 @@ function DashboardManagement() {
     const matchesSla = !filters.sla || deadline.state === filters.sla;
     const matchesEscalation = !filters.escalation || deadline.role === filters.escalation;
     const matchesAppointment = !filters.appointment || Boolean(Number(item.appointment_sla_active || 0) && item.appointment_due_at);
+    const matchesCoordinatorReturn = !filters.coordinatorReturn
+      || (filters.coordinatorReturn === 'without_return' && Boolean(item.coordinator_pending_without_return));
     const searchable = [
       item.protocol,
       item.patient_name,
@@ -664,7 +679,7 @@ function DashboardManagement() {
     ].map(normalizeText).join(' ');
     const matchesSearch = !filters.search || searchable.includes(normalizeText(filters.search));
 
-    return matchesStatus && matchesType && matchesClinic && matchesCoordinator && matchesManager && matchesSla && matchesEscalation && matchesAppointment && matchesSearch;
+    return matchesStatus && matchesType && matchesClinic && matchesCoordinator && matchesManager && matchesSla && matchesEscalation && matchesAppointment && matchesCoordinatorReturn && matchesSearch;
   }).sort((a, b) => {
     const rankDiff = deadlineRank(a) - deadlineRank(b);
 
@@ -1245,6 +1260,16 @@ function DashboardManagement() {
               <option value="manager">Gerente</option>
               <option value="admin">Administração</option>
             </select>
+            {canFilterCoordinatorReturn && (
+              <select
+                className="field"
+                value={filters.coordinatorReturn}
+                onChange={(event) => setFilters({ ...filters, coordinatorReturn: event.target.value })}
+              >
+                <option value="">Todos os retornos</option>
+                <option value="without_return">Sem retorno do coordenador</option>
+              </select>
+            )}
             {canFilterByLeadership && (
               <>
                 <select

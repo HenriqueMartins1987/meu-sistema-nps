@@ -7116,6 +7116,39 @@ function appendMasterAdminComplaintVisibilityFilter(filters, user) {
   );
 }
 
+function isCoordinatorRoleValue(value) {
+  return normalizeAccessRole(value) === 'coordinator';
+}
+
+function buildComplaintCoordinatorReturnStatus(row = {}, logs = [], evidences = []) {
+  const isCoordinatorTarget = Boolean(
+    row.assigned_coordinator_user_id
+    || String(row.assigned_coordinator_name || '').trim()
+    || row.coordinator_id
+    || String(row.stored_coordinator_name || row.coordinator_name || '').trim()
+    || row.coordinator_assigned_at
+    || row.coordinator_due_date
+    || isCoordinatorRoleValue(row.forwarded_to_role)
+    || isCoordinatorRoleValue(row.assigned_responsible_role)
+    || isCoordinatorRoleValue(row.current_escalation_level)
+  );
+
+  const hasCoordinatorInteraction = Boolean(
+    row.coordinator_treated_at
+    || isCoordinatorRoleValue(row.treatment_by_role)
+    || isCoordinatorRoleValue(row.patient_contacted_by_role)
+    || isCoordinatorRoleValue(row.first_attendance_by_role)
+    || logs.some((log) => isCoordinatorRoleValue(log.actor_role))
+    || evidences.some((evidence) => isCoordinatorRoleValue(evidence.uploaded_by_role))
+  );
+
+  return {
+    coordinator_targeted: isCoordinatorTarget,
+    coordinator_has_return: hasCoordinatorInteraction,
+    coordinator_pending_without_return: isCoordinatorTarget && !hasCoordinatorInteraction
+  };
+}
+
 async function getComplaintRows(query = {}, user = null) {
   const filters = buildComplaintFilters(query);
   const includeDeleted = Boolean(query.include_deleted) && canViewDeletedRecords(user);
@@ -7435,6 +7468,11 @@ async function getComplaintRows(query = {}, user = null) {
 
     return rows.map((row) => ({
       ...row,
+      ...buildComplaintCoordinatorReturnStatus(
+        row,
+        logsByComplaint[row.id] || [],
+        evidencesByComplaint[row.id] || []
+      ),
       attachment_url: normalizeStoredUploadUrl(row.attachment_url),
       evidences: (evidencesByComplaint[row.id] || []).map((evidence) => ({
         ...evidence,
@@ -43488,6 +43526,7 @@ Object.assign(app, {
     canRenotifyComplaint,
     canReceiveComplaintNotification,
     buildComplaintAssignedNotificationRecipients,
+    buildComplaintCoordinatorReturnStatus,
     buildConfiguredComplaintAlertRecipient,
     calculateNpsMetrics,
     changeUserPassword,
