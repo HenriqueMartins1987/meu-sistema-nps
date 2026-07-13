@@ -288,6 +288,12 @@ function getComplaintServiceLabel(item) {
     : (item?.service_type || 'Nao informado');
 }
 
+function isNpsOriginComplaint(item) {
+  return String(item?.source_system || '').toUpperCase() === 'NPS'
+    || String(item?.channel || '').toUpperCase() === 'NPS'
+    || String(item?.complaint_type || '').toLowerCase().includes('nps');
+}
+
 function getCurrentResponsibleName(item) {
   return getPartnerInfo(item).label;
 }
@@ -619,7 +625,9 @@ function Dashboard() {
       item.manager_name,
       getPartnerLabel(item),
       item.complaint_type,
-      item.channel
+      item.channel,
+      item.source_system,
+      item.source_reference_protocol
     ].map(normalizeText).join(' ');
 
     return (
@@ -740,7 +748,7 @@ function Dashboard() {
       localizacao: `${item.city || 'Cidade não informada'} / ${item.state || 'UF'} - ${item.region || 'Região não informada'}`,
       classificacao: item.complaint_type || 'Não informado',
       detalhe_classificacao: item.complaint_type_other || '',
-      prioridade_origem: `${priorityLabel(item.priority)} - ${item.created_origin || 'Interno'}`,
+      prioridade_origem: `${priorityLabel(item.priority)} - ${isNpsOriginComplaint(item) ? 'Origem NPS' : (item.created_origin || 'Interno')}`,
       status: statusLabels[item.status] || item.status || 'Aberta',
       prazo: deadline === 'overdue' ? 'Vencida' : deadline === 'warning' ? 'Perto de vencer' : deadline === 'closed' ? 'Fechada' : 'No prazo',
       responsavel: getCurrentResponsibleName(item),
@@ -2179,6 +2187,9 @@ function Dashboard() {
                         <div className="table-cell-stack">
                           <span className="cell-primary">{item.protocol || item.id}</span>
                           <span className="cell-secondary">{item.channel || 'Canal não informado'}</span>
+                          {isNpsOriginComplaint(item) && (
+                            <span className="source-chip nps-origin">Origem NPS</span>
+                          )}
                         </div>
                       </td>
                       <td>
@@ -2196,7 +2207,12 @@ function Dashboard() {
                       <td>
                         <div className="table-cell-stack">
                           <span className="cell-primary">{item.complaint_type || 'Não informado'}</span>
-                          <span className="cell-secondary">{priorityLabel(item.priority)} - {item.created_origin || 'Interno'}</span>
+                          <span className="cell-secondary">
+                            {priorityLabel(item.priority)} - {isNpsOriginComplaint(item) ? 'Origem NPS' : (item.created_origin || 'Interno')}
+                          </span>
+                          {isNpsOriginComplaint(item) && item.source_reference_protocol && (
+                            <span className="cell-secondary">NPS {item.source_reference_protocol}</span>
+                          )}
                         </div>
                       </td>
                       <td>

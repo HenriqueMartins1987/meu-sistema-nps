@@ -3247,6 +3247,24 @@ a {
   font-size: 15px;
 }
 
+.source-chip {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.source-chip.nps-origin {
+  border: 1px solid rgba(176, 122, 53, 0.35);
+  color: #7a4d12;
+  background: #fff4dc;
+}
+
 .complaint-list-main h3 {
   margin: 0 0 4px;
 }
@@ -3278,6 +3296,14 @@ a {
   background: var(--surface-soft);
   font-size: 13px;
   font-weight: 800;
+}
+
+.complaint-list-meta .source-chip,
+.dashboard-clean-table .source-chip,
+.complaint-heading-meta .source-chip {
+  border-radius: 999px;
+  padding: 5px 8px;
+  font-size: 11px;
 }
 
 .operational-flow {

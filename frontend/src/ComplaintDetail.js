@@ -219,6 +219,12 @@ function renderChannelLabel(channel) {
   return `${icon} ${label}`;
 }
 
+function isNpsOriginComplaint(complaint) {
+  return String(complaint?.source_system || '').toUpperCase() === 'NPS'
+    || String(complaint?.channel || '').toUpperCase() === 'NPS'
+    || String(complaint?.complaint_type || '').toLowerCase().includes('nps');
+}
+
 function resolveUploadedFileUrl(value) {
   const rawValue = String(value || '').trim();
 
@@ -1337,6 +1343,7 @@ function ComplaintDetail() {
             <span>{complaint.clinic_name || 'Clínica não informada'}</span>
             <span>{complaint.city || 'Cidade'} / {complaint.state || 'UF'}</span>
             <span>{statusLabels[complaint.status] || 'Aberta'}</span>
+            {isNpsOriginComplaint(complaint) && <span className="source-chip nps-origin">Origem NPS</span>}
             <span>Cadastrado por {getComplaintCreatorName(complaint)}</span>
           </div>
         </div>
@@ -1477,7 +1484,7 @@ function ComplaintDetail() {
             <article className="summary-chip">
               <span>Canal</span>
               <strong>{renderChannelLabel(complaint.channel)}</strong>
-              <small>{complaint.created_origin || 'Interno'}</small>
+              <small>{isNpsOriginComplaint(complaint) ? `Origem NPS${complaint.source_reference_protocol ? ` - ${complaint.source_reference_protocol}` : ''}` : (complaint.created_origin || 'Interno')}</small>
             </article>
             <article className="summary-chip">
               <span>Serviço</span>
@@ -1591,7 +1598,12 @@ function ComplaintDetail() {
             </div>
             <div>
               <dt>Origem do cadastro</dt>
-              <dd>{complaint.created_origin || 'Interno'}</dd>
+              <dd>
+                {isNpsOriginComplaint(complaint) ? 'NPS' : (complaint.created_origin || 'Interno')}
+                {isNpsOriginComplaint(complaint) && (
+                  <small>{complaint.source_reference_protocol || complaint.source_reference_id || 'Pesquisa NPS vinculada'}</small>
+                )}
+              </dd>
             </div>
             <div>
               <dt>Tipo</dt>

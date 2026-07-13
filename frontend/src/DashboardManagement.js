@@ -31,6 +31,12 @@ function formatProtocol(item) {
   return `GRC-${year}-${String(item.id).padStart(6, '0')}`;
 }
 
+function isNpsOriginComplaint(item) {
+  return String(item?.source_system || '').toUpperCase() === 'NPS'
+    || String(item?.channel || '').toUpperCase() === 'NPS'
+    || String(item?.complaint_type || '').toLowerCase().includes('nps');
+}
+
 function formatShortDate(value) {
   if (!value) return 'Sem prazo';
   return new Intl.DateTimeFormat('pt-BR', {
@@ -425,6 +431,7 @@ function ComplaintListItem({ item, onOpen }) {
   const treatmentBalloon = buildTreatmentBalloon(item);
   const currentLevel = String(item.current_escalation_level || '').trim().toLowerCase();
   const shouldShowEscalationChip = escalation.role !== 'sac_operator' || currentLevel === 'sac_audit';
+  const npsOrigin = isNpsOriginComplaint(item);
 
   return (
     <button
@@ -438,6 +445,7 @@ function ComplaintListItem({ item, onOpen }) {
             {statusLabels[item.status] || 'Aberta'}
           </span>
           <strong>{formatProtocol(item)}</strong>
+          {npsOrigin && <span className="source-chip nps-origin">Origem NPS</span>}
         </div>
         <div>
           <span className="person-label">Paciente</span>
@@ -449,6 +457,9 @@ function ComplaintListItem({ item, onOpen }) {
       <div className="complaint-list-meta">
         <span>{item.complaint_type || 'Tipo não informado'}</span>
         <span>{item.channel || 'Canal não informado'}</span>
+        {npsOrigin && (
+          <span>NPS {item.source_reference_protocol || item.source_reference_id || 'vinculado'}</span>
+        )}
         <span>Origem {item.created_origin || 'Interno'}</span>
         <span>Cadastrado por {getComplaintCreatorName(item)}</span>
         <span>Prioridade {priorityLabel(item.priority)}</span>
@@ -644,6 +655,8 @@ function DashboardManagement() {
       item.patient_name,
       item.patient_phone,
       item.description,
+      item.source_system,
+      item.source_reference_protocol,
       item.clinic_name,
       item.city,
       item.state,
@@ -752,6 +765,7 @@ function DashboardManagement() {
       servico: item.service_type || 'Não informado',
       detalhe_servico: item.service_type_other || '',
       origem: item.created_origin || 'Interno',
+      origem_nps: isNpsOriginComplaint(item) ? (item.source_reference_protocol || item.source_reference_id || 'Sim') : '',
       cadastrado_por: getComplaintCreatorName(item),
       email_cadastrante: item.created_by_email || 'Não informado',
       status: statusLabels[item.status] || item.status || 'Aberta',
@@ -783,6 +797,7 @@ function DashboardManagement() {
       gerente_responsavel: '',
       tipo: '',
       origem: '',
+      origem_nps: '',
       cadastrado_por: '',
       email_cadastrante: '',
       status: '',
@@ -827,6 +842,7 @@ function DashboardManagement() {
       'Coordenador responsável',
       'Gerente responsável',
       'Origem',
+      'Origem NPS',
       'Cadastrado por',
       'Status',
       'Prioridade',
@@ -843,6 +859,7 @@ function DashboardManagement() {
       row.coordenador_responsavel,
       row.gerente_responsavel,
       row.origem,
+      row.origem_nps,
       row.cadastrado_por,
       row.status,
       row.prioridade,

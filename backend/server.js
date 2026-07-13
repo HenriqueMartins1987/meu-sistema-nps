@@ -5482,6 +5482,9 @@ async function ensureDatabaseSchema() {
   await ensureColumn('complaints', 'financial_involved', 'TINYINT(1) NOT NULL DEFAULT 0');
   await ensureColumn('complaints', 'financial_description', 'TEXT NULL');
   await ensureColumn('complaints', 'financial_amount', 'DECIMAL(12,2) NULL');
+  await ensureColumn('complaints', 'source_system', 'VARCHAR(80) NULL');
+  await ensureColumn('complaints', 'source_reference_id', 'INT NULL');
+  await ensureColumn('complaints', 'source_reference_protocol', 'VARCHAR(40) NULL');
   await ensureColumn('complaints', 'resolution_due_at', 'DATETIME NULL');
   await ensureColumn('complaints', 'due_warning_sent_at', 'TIMESTAMP NULL');
   await ensureColumn('complaints', 'appointment_due_at', 'DATETIME NULL');
@@ -5702,21 +5705,7 @@ async function ensureDatabaseSchema() {
   await ensureIndex('agenda_items', 'idx_agenda_lab_exception', 'INDEX idx_agenda_lab_exception (prosthesis_not_delivered, prosthesis_laboratory)');
   await ensureIndex('agenda_items', 'idx_agenda_complaint_link', 'INDEX idx_agenda_complaint_link (patient_complained, complaint_id)');
 
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS operator_clinics (
-      id INT AUTO_INCREMENT PRIMARY KEY,
-      operator_user_id INT NOT NULL,
-      clinic_id INT NOT NULL,
-      active TINYINT(1) NOT NULL DEFAULT 1,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      created_by VARCHAR(160) NULL,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-      updated_by VARCHAR(160) NULL,
-      UNIQUE KEY uniq_operator_clinic (operator_user_id, clinic_id),
-      INDEX idx_operator_clinics_operator (operator_user_id, active),
-      INDEX idx_operator_clinics_clinic (clinic_id, active)
-    )
-  `);
+  await ensureOperatorClinicsTable();
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS external_clinic_map (
@@ -7303,6 +7292,9 @@ async function getComplaintRows(query = {}, user = null) {
       c.created_by_name,
       c.created_by_role,
       c.created_by_email,
+      c.source_system,
+      c.source_reference_id,
+      c.source_reference_protocol,
       c.financial_involved,
       c.financial_description,
       c.financial_amount,
@@ -11396,6 +11388,46 @@ async function syncClinicLeadershipNamesFromUserLinks() {
             OR LOWER(TRIM(${column})) <> LOWER(TRIM(?))
           )`,
       [name, row.clinic_id, name]
+    );
+  }
+}
+
+async function ensureOperatorClinicsTable() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS operator_clinics (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      operator_user_id INT NOT NULL,
+      clinic_id INT NOT NULL,
+      active TINYINT(1) NOT NULL DEFAULT 1,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      created_by VARCHAR(160) NULL,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      updated_by VARCHAR(160) NULL,
+      UNIQUE KEY uniq_operator_clinic (operator_user_id, clinic_id),
+      INDEX idx_operator_clinics_operator (operator_user_id, active),
+      INDEX idx_operator_clinics_clinic (clinic_id, active)
+    )
+  `);
+}
+
+function isMissingOperatorClinicsTableError(error) {
+  return error?.code === 'ER_NO_SUCH_TABLE'
+    && String(error?.message || '').toLowerCase().includes('operator_clinics');
+}
+
+async function runOperatorClinicSyncQueries(normalizedOperatorId, normalizedClinicIds, actorName = null) {
+  await pool.query(
+    'UPDATE operator_clinics SET active = 0, updated_by = ? WHERE operator_user_id = ?',
+    [actorName || null, normalizedOperatorId]
+  );
+
+  for (const clinicId of normalizedClinicIds) {
+    // eslint-disable-next-line no-await-in-loop
+    await pool.query(
+      `INSERT INTO operator_clinics (operator_user_id, clinic_id, active, created_by, updated_by)
+       VALUES (?, ?, 1, ?, ?)
+       ON DUPLICATE KEY UPDATE active = VALUES(active), updated_by = VALUES(updated_by)`,
+      [normalizedOperatorId, clinicId, actorName || null, actorName || null]
     );
   }
 }
@@ -17761,8 +17793,8 @@ async function convertNpsToComplaint(npsId, user) {
   const creatorAudit = buildComplaintCreatorAudit(user, 'Externo');
   const [result] = await pool.query(
     `INSERT INTO complaints
-     (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, resolution_due_at, created_origin, created_by_user_id, created_by_name, created_by_role, created_by_email)
-     VALUES (?, ?, ?, 'NPS', 'Reclamação NPS', ?, 'Pesquisa de satisfação', 'aberta', ?, ?, ?, 'Externo', ?, ?, ?, ?)`,
+     (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, resolution_due_at, created_origin, created_by_user_id, created_by_name, created_by_role, created_by_email, source_system, source_reference_id, source_reference_protocol)
+     VALUES (?, ?, ?, 'NPS', 'Reclamação NPS', ?, 'Pesquisa de satisfação', 'aberta', ?, ?, ?, 'NPS', ?, ?, ?, ?, 'NPS', ?, ?)`,
     [
       nps.clinic_id || null,
       nps.patient_name || 'Paciente NPS',
@@ -17774,7 +17806,9 @@ async function convertNpsToComplaint(npsId, user) {
       creatorAudit.userId,
       creatorAudit.name,
       creatorAudit.role,
-      creatorAudit.email
+      creatorAudit.email,
+      nps.id,
+      nps.nps_protocol || null
     ]
   );
   const protocol = `GRC-${new Date().getFullYear()}-${String(result.insertId).padStart(6, '0')}`;
@@ -28652,16 +28686,15 @@ async function syncOperatorClinicLinks(operatorUserId, clinicIds = [], actorName
   if (!normalizedOperatorId) return;
   const normalizedClinicIds = normalizeClinicIds(clinicIds);
 
-  await pool.query('UPDATE operator_clinics SET active = 0, updated_by = ? WHERE operator_user_id = ?', [actorName || null, normalizedOperatorId]);
+  try {
+    await runOperatorClinicSyncQueries(normalizedOperatorId, normalizedClinicIds, actorName);
+  } catch (error) {
+    if (!isMissingOperatorClinicsTableError(error)) {
+      throw error;
+    }
 
-  for (const clinicId of normalizedClinicIds) {
-    // eslint-disable-next-line no-await-in-loop
-    await pool.query(
-      `INSERT INTO operator_clinics (operator_user_id, clinic_id, active, created_by, updated_by)
-       VALUES (?, ?, 1, ?, ?)
-       ON DUPLICATE KEY UPDATE active = VALUES(active), updated_by = VALUES(updated_by)`,
-      [normalizedOperatorId, clinicId, actorName || null, actorName || null]
-    );
+    await ensureOperatorClinicsTable();
+    await runOperatorClinicSyncQueries(normalizedOperatorId, normalizedClinicIds, actorName);
   }
 }
 
@@ -37748,7 +37781,7 @@ app.post('/nps/public', async (req, res) => {
       ]
     );
 
-    const shouldCreateManifestation = false;
+    const shouldCreateManifestation = npsProfile === 'detrator';
 
     if (shouldCreateManifestation) {
       const priority = priorityForNpsFeedback(numericScore, classification);
@@ -37756,8 +37789,8 @@ app.post('/nps/public', async (req, res) => {
       const creatorAudit = buildComplaintCreatorAudit(null, 'Externo');
       const [result] = await pool.query(
         `INSERT INTO complaints
-         (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, resolution_due_at, created_origin, created_by_user_id, created_by_name, created_by_role, created_by_email)
-         VALUES (?, ?, ?, 'NPS', ?, ?, 'Pesquisa de satisfação', 'aberta', ?, ?, ?, 'Externo', ?, ?, ?, ?)`,
+         (clinic_id, patient_name, patient_phone, channel, complaint_type, description, service_type, status, priority, due_at, resolution_due_at, created_origin, created_by_user_id, created_by_name, created_by_role, created_by_email, source_system, source_reference_id, source_reference_protocol)
+         VALUES (?, ?, ?, 'NPS', ?, ?, 'Pesquisa de satisfação', 'aberta', ?, ?, ?, 'NPS', ?, ?, ?, ?, 'NPS', ?, ?)`,
         [
           clinic_id || null,
           patient_name || 'Paciente NPS',
@@ -37770,7 +37803,9 @@ app.post('/nps/public', async (req, res) => {
           creatorAudit.userId,
           creatorAudit.name,
           creatorAudit.role,
-          creatorAudit.email
+          creatorAudit.email,
+          npsInsert.insertId,
+          null
         ]
       );
       const protocol = `GRC-${new Date().getFullYear()}-${String(result.insertId).padStart(6, '0')}`;
@@ -37790,6 +37825,14 @@ app.post('/nps/public', async (req, res) => {
 
     const protocol = formatNpsProtocol(npsInsert.insertId);
     await pool.query('UPDATE nps_responses SET nps_protocol = ? WHERE id = ?', [protocol, npsInsert.insertId]);
+    await pool.query(
+      `UPDATE complaints
+          SET source_reference_protocol = ?
+        WHERE source_system = 'NPS'
+          AND source_reference_id = ?
+          AND (source_reference_protocol IS NULL OR source_reference_protocol = '')`,
+      [protocol, npsInsert.insertId]
+    );
     if (npsProfile === 'promotor' && recommend_yes) {
       await saveNpsReferralRecord({
         id: npsInsert.insertId,

@@ -573,6 +573,110 @@ test('SAC operator can update only clinic links for partner/coordinator/manager 
   assert.deepEqual(response.body.clinicIds, [2, 3]);
 });
 
+test('SAC operator clinic link update creates missing operator_clinics table', async () => {
+  let deleteUserClinicLinks = false;
+  let createOperatorClinicsTable = false;
+  let operatorSyncAttempts = 0;
+  const insertedClinics = [];
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL'),
+      reply: async () => [[{
+        id: 81,
+        name: 'Murilo Soares',
+        email: 'murilo.soares@gci.com.br',
+        role: 'manager',
+        active: 1
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT role, name FROM users WHERE id = ? AND deleted_at IS NULL LIMIT 1'),
+      reply: async () => [[{ role: 'manager', name: 'Murilo Soares' }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes('c.manager_id = ?'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM clinics') && sql.includes('manager'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT id FROM clinics WHERE active = 1 AND id IN (?)'),
+      reply: async () => [[{ id: 7 }, { id: 8 }]]
+    },
+    {
+      match: (sql) => sql.includes('DELETE FROM user_clinics WHERE user_id = ?'),
+      reply: async () => {
+        deleteUserClinicLinks = true;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO user_clinics'),
+      reply: async (sql, params) => {
+        insertedClinics.push(params[1]);
+        return [{ insertId: insertedClinics.length }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE operator_clinics SET active = 0'),
+      reply: async () => {
+        operatorSyncAttempts += 1;
+        if (operatorSyncAttempts === 1) {
+          const error = new Error("Table 'nps_system.operator_clinics' doesn't exist");
+          error.code = 'ER_NO_SUCH_TABLE';
+          throw error;
+        }
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('CREATE TABLE IF NOT EXISTS operator_clinics'),
+      reply: async () => {
+        createOperatorClinicsTable = true;
+        return [{ affectedRows: 0 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO operator_clinics'),
+      reply: async () => [{ insertId: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE clinics') && sql.includes('SET manager = ?'),
+      reply: async () => [{ affectedRows: 2 }]
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/admin/users/81')
+    .set('Authorization', `Bearer ${signToken({
+      id: 7,
+      email: 'sac@example.com',
+      role: 'sac_operator',
+      name: 'Operador SAC',
+      permissions: ['complaints_management'],
+      clinicIds: [1],
+      mustChangePassword: false
+    })}`)
+    .send({ clinicIds: [7, 8] });
+
+  assert.equal(response.status, 200);
+  assert.equal(deleteUserClinicLinks, true);
+  assert.equal(createOperatorClinicsTable, true);
+  assert.equal(operatorSyncAttempts, 2);
+  assert.deepEqual(insertedClinics, [7, 8]);
+});
+
 test('SAC operator user-clinic screen lists only partner coordinator and manager users', async () => {
   pool.query = buildQueryStub([
     {
