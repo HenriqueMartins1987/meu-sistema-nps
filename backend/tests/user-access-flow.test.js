@@ -677,6 +677,85 @@ test('SAC operator clinic link update creates missing operator_clinics table', a
   assert.deepEqual(insertedClinics, [7, 8]);
 });
 
+test('master admin clinic-only update bypasses profile validation and auxiliary failures', async () => {
+  const insertedClinics = [];
+  let deletedUserClinicLinks = false;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL'),
+      reply: async () => [[{
+        id: 81,
+        name: 'Murilo Soares',
+        email: 'murilo.soares@gci.com.br',
+        role: 'manager',
+        phone: '',
+        whatsapp: '',
+        active: 1
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT clinic_id FROM user_clinics WHERE user_id = ?'),
+      reply: async () => [[{ clinic_id: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT id FROM clinics WHERE active = 1 AND id IN (?)'),
+      reply: async () => [[{ id: 7 }, { id: 8 }]]
+    },
+    {
+      match: (sql) => sql.includes('DELETE FROM user_clinics WHERE user_id = ?'),
+      reply: async () => {
+        deletedUserClinicLinks = true;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO user_clinics'),
+      reply: async (sql, params) => {
+        insertedClinics.push(params[1]);
+        return [{ insertId: insertedClinics.length }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE operator_clinics SET active = 0'),
+      reply: async () => {
+        const error = new Error('operator_clinics unavailable');
+        error.code = 'ER_LOCK_WAIT_TIMEOUT';
+        throw error;
+      }
+    },
+    {
+      match: (sql) => sql.includes('UPDATE clinics') && sql.includes('SET manager = ?'),
+      reply: async () => {
+        throw new Error('clinics leadership sync unavailable');
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/admin/users/81')
+    .set('Authorization', `Bearer ${signToken({
+      id: 1,
+      email: 'henrique.martins@grcconsultoria.net.br',
+      role: 'master_admin',
+      name: 'Administrador Master',
+      permissions: ['admin_panel'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({ clinicIds: [7, 8] });
+
+  assert.equal(response.status, 200);
+  assert.equal(deletedUserClinicLinks, true);
+  assert.deepEqual(insertedClinics, [7, 8]);
+  assert.equal(response.body.auxiliarySync.operatorClinicSync.ok, false);
+  assert.equal(response.body.auxiliarySync.clinicLeadershipSync.ok, false);
+});
+
 test('SAC operator user-clinic screen lists only partner coordinator and manager users', async () => {
   pool.query = buildQueryStub([
     {

@@ -28698,6 +28698,94 @@ async function syncOperatorClinicLinks(operatorUserId, clinicIds = [], actorName
   }
 }
 
+async function syncUserClinicAuxiliariesBestEffort({
+  current,
+  nextRole,
+  nextName,
+  previousClinicIds,
+  nextClinicIds,
+  actorName,
+  source
+}) {
+  const result = {
+    operatorClinicSync: null,
+    clinicLeadershipSync: null,
+    assignmentRepair: null
+  };
+
+  try {
+    await syncOperatorClinicLinks(current.id, nextClinicIds, actorName);
+    result.operatorClinicSync = { ok: true };
+  } catch (error) {
+    console.warn(`Não foi possível sincronizar operator_clinics (${source}):`, error.message);
+    result.operatorClinicSync = { ok: false, error: error.message };
+  }
+
+  try {
+    await syncClinicLeadershipForUser({
+      userId: current.id,
+      previousRole: current.role,
+      nextRole,
+      previousName: current.name,
+      nextName,
+      previousClinicIds,
+      nextClinicIds
+    });
+    result.clinicLeadershipSync = { ok: true };
+  } catch (error) {
+    console.warn(`Não foi possível sincronizar liderança das clínicas (${source}):`, error.message);
+    result.clinicLeadershipSync = { ok: false, error: error.message };
+  }
+
+  result.assignmentRepair = await repairPendingCoordinatorAssignmentsBestEffort(source);
+
+  return result;
+}
+
+async function saveUserClinicLinks(current, clinicIds = [], actor = null, options = {}) {
+  const normalizedNextClinicIds = normalizeClinicIds(clinicIds);
+
+  if (normalizedNextClinicIds.length) {
+    const [validClinics] = await pool.query(
+      'SELECT id FROM clinics WHERE active = 1 AND id IN (?)',
+      [normalizedNextClinicIds]
+    );
+    const validIds = new Set(validClinics.map((clinic) => Number(clinic.id)));
+    if (normalizedNextClinicIds.some((clinicId) => !validIds.has(clinicId))) {
+      const error = new Error('Uma ou mais clínicas informadas não estão ativas.');
+      error.statusCode = 400;
+      throw error;
+    }
+  }
+
+  const previousClinicIds = await getUserClinicIds(current.id);
+  await pool.query('DELETE FROM user_clinics WHERE user_id = ?', [current.id]);
+
+  for (const clinicId of normalizedNextClinicIds) {
+    // eslint-disable-next-line no-await-in-loop
+    await pool.query(
+      'INSERT INTO user_clinics (user_id, clinic_id, can_edit) VALUES (?, ?, 1)',
+      [current.id, clinicId]
+    );
+  }
+
+  const auxiliarySync = await syncUserClinicAuxiliariesBestEffort({
+    current,
+    nextRole: options.nextRole || current.role,
+    nextName: options.nextName || current.name,
+    previousClinicIds,
+    nextClinicIds: normalizedNextClinicIds,
+    actorName: getActorName(actor),
+    source: options.source || 'user_clinic_link_update'
+  });
+
+  return {
+    clinicIds: normalizedNextClinicIds,
+    auxiliarySync,
+    assignmentRepair: auxiliarySync.assignmentRepair
+  };
+}
+
 async function getOperatorClinicLinks(operatorUserId) {
   const [rows] = await pool.query(
     `SELECT clinic_id
@@ -36301,13 +36389,14 @@ app.patch('/admin/users/:id', authenticate, requireUserClinicLinkManager, async 
 
     const current = rows[0];
     const isSacClinicLinkUpdate = !isMasterAdminUser(req.user) && normalizeAccessRole(req.user?.role) === 'sac_operator';
+    const bodyKeys = Object.keys(req.body || {});
+    const isClinicIdsOnlyUpdate = bodyKeys.length > 0 && bodyKeys.every((key) => key === 'clinicIds' || key === 'clinic_ids');
 
     if (isSacClinicLinkUpdate) {
-      const bodyKeys = Object.keys(req.body || {});
       const targetRole = normalizeAccessRole(current.role);
       const targetEmail = String(current.email || '').trim().toLowerCase();
 
-      if (!bodyKeys.length || bodyKeys.some((key) => key !== 'clinicIds')) {
+      if (!isClinicIdsOnlyUpdate) {
         return res.status(403).json({ error: 'Operador de SAC pode alterar apenas as clínicas vinculadas ao usuário.' });
       }
 
@@ -36319,43 +36408,34 @@ app.patch('/admin/users/:id', authenticate, requireUserClinicLinkManager, async 
         return res.status(403).json({ error: 'Operador de SAC pode alterar clínicas apenas de coordenadores, gerentes e parceiros.' });
       }
 
-      const previousClinicIds = await getUserClinicIds(current.id);
-      const normalizedNextClinicIds = normalizeClinicIds(req.body.clinicIds);
-
-      if (normalizedNextClinicIds.length) {
-        const [validClinics] = await pool.query(
-          'SELECT id FROM clinics WHERE active = 1 AND id IN (?)',
-          [normalizedNextClinicIds]
-        );
-        const validIds = new Set(validClinics.map((clinic) => Number(clinic.id)));
-        if (normalizedNextClinicIds.some((clinicId) => !validIds.has(clinicId))) {
-          return res.status(400).json({ error: 'Uma ou mais clínicas informadas não estão ativas.' });
-        }
-      }
-
-      await pool.query('DELETE FROM user_clinics WHERE user_id = ?', [current.id]);
-      await Promise.all(normalizedNextClinicIds.map((clinicId) => (
-        pool.query(
-          'INSERT INTO user_clinics (user_id, clinic_id, can_edit) VALUES (?, ?, 1)',
-          [current.id, clinicId]
-        )
-      )));
-      await syncOperatorClinicLinks(current.id, normalizedNextClinicIds, getActorName(req.user));
-      await syncClinicLeadershipForUser({
-        userId: current.id,
-        previousRole: current.role,
-        nextRole: current.role,
-        previousName: current.name,
-        nextName: current.name,
-        previousClinicIds,
-        nextClinicIds: normalizedNextClinicIds
-      });
-      const assignmentRepair = await repairPendingCoordinatorAssignmentsBestEffort('sac_clinic_link_update');
+      const clinicUpdate = await saveUserClinicLinks(
+        current,
+        req.body.clinicIds || req.body.clinic_ids || [],
+        req.user,
+        { source: 'sac_clinic_link_update' }
+      );
 
       return res.json({
         message: 'Clínicas vinculadas ao usuário atualizadas com sucesso.',
-        clinicIds: normalizedNextClinicIds,
-        assignmentRepair
+        clinicIds: clinicUpdate.clinicIds,
+        assignmentRepair: clinicUpdate.assignmentRepair,
+        auxiliarySync: clinicUpdate.auxiliarySync
+      });
+    }
+
+    if (isClinicIdsOnlyUpdate) {
+      const clinicUpdate = await saveUserClinicLinks(
+        current,
+        req.body.clinicIds || req.body.clinic_ids || [],
+        req.user,
+        { source: 'admin_user_clinic_link_update' }
+      );
+
+      return res.json({
+        message: 'Clínicas vinculadas ao usuário atualizadas com sucesso.',
+        clinicIds: clinicUpdate.clinicIds,
+        assignmentRepair: clinicUpdate.assignmentRepair,
+        auxiliarySync: clinicUpdate.auxiliarySync
       });
     }
 
@@ -36503,26 +36583,11 @@ app.patch('/admin/users/:id', authenticate, requireUserClinicLinkManager, async 
     );
 
     if (Array.isArray(req.body.clinicIds)) {
-      const previousClinicIds = await getUserClinicIds(current.id);
-      const normalizedNextClinicIds = normalizeClinicIds(req.body.clinicIds);
-      await pool.query('DELETE FROM user_clinics WHERE user_id = ?', [current.id]);
-      await Promise.all(normalizedNextClinicIds.map((clinicId) => (
-        pool.query(
-          'INSERT INTO user_clinics (user_id, clinic_id, can_edit) VALUES (?, ?, 1)',
-          [current.id, clinicId]
-        )
-      )));
-      await syncOperatorClinicLinks(current.id, normalizedNextClinicIds, getActorName(req.user));
-      await syncClinicLeadershipForUser({
-        userId: current.id,
-        previousRole: current.role,
+      await saveUserClinicLinks(current, req.body.clinicIds, req.user, {
         nextRole,
-        previousName: current.name,
         nextName: req.body.name || current.name,
-        previousClinicIds,
-        nextClinicIds: normalizedNextClinicIds
+        source: 'admin_user_update'
       });
-      await repairPendingCoordinatorAssignmentsBestEffort('admin_user_clinic_link_update');
     }
 
     res.json({ message: 'Usuário atualizado com sucesso.' });

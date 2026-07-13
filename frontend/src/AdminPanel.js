@@ -77,6 +77,33 @@ function isCrcOperatorRole(role) {
   return role === 'crc_operator';
 }
 
+function normalizeIdList(values = []) {
+  return Array.from(new Set((Array.isArray(values) ? values : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isInteger(value) && value > 0)))
+    .sort((a, b) => a - b);
+}
+
+function sameIdList(left = [], right = []) {
+  const leftIds = normalizeIdList(left);
+  const rightIds = normalizeIdList(right);
+
+  return leftIds.length === rightIds.length
+    && leftIds.every((value, index) => value === rightIds[index]);
+}
+
+function getUserClinicIds(user = {}) {
+  return Array.isArray(user.clinics) ? user.clinics.map((clinic) => clinic.clinic_id) : [];
+}
+
+function sameStringList(left = [], right = []) {
+  const leftValues = Array.from(new Set((Array.isArray(left) ? left : []).map((value) => String(value)))).sort();
+  const rightValues = Array.from(new Set((Array.isArray(right) ? right : []).map((value) => String(value)))).sort();
+
+  return leftValues.length === rightValues.length
+    && leftValues.every((value, index) => value === rightValues[index]);
+}
+
 const sacClinicLinkEditableRoles = new Set(['partner', 'coordinator', 'manager']);
 
 function isSacClinicLinkEditableUser(user) {
@@ -425,6 +452,31 @@ function AdminPanel({ clinicLinksOnly = false }) {
         setFeedback('Clínicas vinculadas ao usuário atualizadas com sucesso.');
       } catch (error) {
         setFeedback(error.response?.data?.error || 'Não foi possível atualizar as clínicas vinculadas.');
+      }
+      return;
+    }
+
+    const onlyClinicIdsChanged = selectedUser
+      && !sameIdList(draft.clinicIds, getUserClinicIds(selectedUser))
+      && draft.name === (selectedUser.name || '')
+      && draft.email === (selectedUser.email || '')
+      && draft.role === (selectedUser.role || 'viewer')
+      && draft.position === (selectedUser.position || '')
+      && draft.phone === (selectedUser.phone ? formatBrazilPhoneInput(selectedUser.phone) : defaultBrazilPhone)
+      && draft.whatsapp === (selectedUser.whatsapp ? formatBrazilPhoneInput(selectedUser.whatsapp) : defaultBrazilPhone)
+      && draft.cpf === (selectedUser.cpf ? formatCpfInput(selectedUser.cpf) : '')
+      && draft.crcOperatorArea === (selectedUser.crc_operator_area || selectedUser.crcOperatorArea || '')
+      && draft.department === (selectedUser.department || '')
+      && draft.active === Boolean(selectedUser.active)
+      && sameStringList(draft.permissions, Array.isArray(selectedUser.permissions) ? selectedUser.permissions : []);
+
+    if (onlyClinicIdsChanged) {
+      try {
+        await api.patch(`/admin/users/${selectedUser.id}`, { clinicIds: draft.clinicIds || [] });
+        await loadData();
+        setFeedback('ClÃ­nicas vinculadas ao usuÃ¡rio atualizadas com sucesso.');
+      } catch (error) {
+        setFeedback(error.response?.data?.error || 'NÃ£o foi possÃ­vel atualizar as clÃ­nicas vinculadas.');
       }
       return;
     }
