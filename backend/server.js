@@ -11392,6 +11392,67 @@ async function syncClinicLeadershipNamesFromUserLinks() {
   }
 }
 
+async function syncUserClinicLinksFromClinicLeadershipNames() {
+  const [rows] = await pool.query(
+    `SELECT
+       u.id AS user_id,
+       c.id AS clinic_id,
+       u.role
+     FROM users u
+     INNER JOIN clinics c
+       ON c.active = 1
+      AND (
+        (
+          ${buildRoleAliasWhere('u.role', coordinatorAccessRoleAliases)}
+          AND LOWER(TRIM(COALESCE(c.coordinator_name, ''))) = LOWER(TRIM(COALESCE(u.name, '')))
+        )
+        OR (
+          ${buildRoleAliasWhere('u.role', managerAccessRoleAliases)}
+          AND LOWER(TRIM(COALESCE(c.manager, ''))) = LOWER(TRIM(COALESCE(u.name, '')))
+        )
+      )
+     WHERE u.active = 1
+       AND u.deleted_at IS NULL
+       AND TRIM(COALESCE(u.name, '')) <> ''`,
+    [
+      ...getRoleAliasParams(coordinatorAccessRoleAliases),
+      ...getRoleAliasParams(managerAccessRoleAliases)
+    ]
+  );
+
+  const links = rows
+    .map((row) => ({
+      userId: Number(row.user_id || 0),
+      clinicId: Number(row.clinic_id || 0)
+    }))
+    .filter((row) => row.userId > 0 && row.clinicId > 0);
+
+  for (const link of links) {
+    // eslint-disable-next-line no-await-in-loop
+    await pool.query(
+      'INSERT IGNORE INTO user_clinics (user_id, clinic_id, can_edit) VALUES (?, ?, 1)',
+      [link.userId, link.clinicId]
+    );
+  }
+
+  return {
+    matchedLinks: links.length
+  };
+}
+
+async function syncUserClinicLinksFromClinicLeadershipNamesBestEffort(source = 'user_admin_list') {
+  try {
+    return await syncUserClinicLinksFromClinicLeadershipNames();
+  } catch (error) {
+    console.warn(`Não foi possível reconciliar vínculos por liderança (${source}):`, error.message);
+    return {
+      skipped: true,
+      source,
+      error: error.message
+    };
+  }
+}
+
 async function ensureOperatorClinicsTable() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS operator_clinics (
@@ -35852,6 +35913,10 @@ app.get('/admin/users', authenticate, requireUserClinicLinkManager, async (req, 
       userWhere.push("LOWER(TRIM(COALESCE(email, ''))) NOT IN (?, ?, ?)");
       userParams.push(masterAdminEmail, defaultAdminEmail, 'admin@sorria.com');
     }
+
+    await syncUserClinicLinksFromClinicLeadershipNamesBestEffort(
+      clinicLinksOnly ? 'sac_user_clinic_list' : 'admin_user_list'
+    );
 
     const [users] = await pool.query(
       `SELECT id, name, username, email, role, position, phone, whatsapp, cpf, crc_operator_area, department, permissions, action_permissions, active, authorization_status, must_change_password, created_at, updated_at

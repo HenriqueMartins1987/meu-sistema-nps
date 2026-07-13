@@ -763,6 +763,10 @@ test('SAC operator user-clinic screen lists only partner coordinator and manager
       reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
     },
     {
+      match: (sql) => sql.includes('INNER JOIN clinics c') && sql.includes('COALESCE(c.manager'),
+      reply: async () => [[]]
+    },
+    {
       match: (sql) => sql.includes('SELECT id, name, username') && sql.includes('FROM users') && sql.includes('ORDER BY name ASC'),
       reply: async () => [[
         { id: 1, name: 'Parceiro', email: 'parceiro@example.com', role: 'partner', active: 1 },
@@ -797,6 +801,70 @@ test('SAC operator user-clinic screen lists only partner coordinator and manager
 
   assert.equal(response.status, 200);
   assert.deepEqual(response.body.map((user) => user.role), ['partner', 'coordinator', 'manager']);
+});
+
+test('admin users list reconciles manager clinic links from clinic leadership names', async () => {
+  const insertedLinks = [];
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1 }]]
+    },
+    {
+      match: (sql) => sql.includes('INNER JOIN clinics c') && sql.includes('COALESCE(c.manager'),
+      reply: async () => [[
+        { user_id: 81, clinic_id: 7, role: 'manager' },
+        { user_id: 81, clinic_id: 8, role: 'manager' }
+      ]]
+    },
+    {
+      match: (sql) => sql.includes('INSERT IGNORE INTO user_clinics'),
+      reply: async (_sql, params) => {
+        insertedLinks.push([params[0], params[1]]);
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('SELECT id, name, username') && sql.includes('FROM users') && sql.includes('ORDER BY name ASC'),
+      reply: async () => [[{
+        id: 81,
+        name: 'Murilo Soares',
+        username: 'murilo',
+        email: 'murilo@example.com',
+        role: 'manager',
+        position: 'Gerente',
+        active: 1,
+        authorization_status: 'approved',
+        permissions: null,
+        action_permissions: null
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT user_id, clinic_id, can_edit FROM user_clinics'),
+      reply: async () => [[
+        { user_id: 81, clinic_id: 7, can_edit: 1 },
+        { user_id: 81, clinic_id: 8, can_edit: 1 }
+      ]]
+    }
+  ]);
+
+  const response = await request(app)
+    .get('/admin/users')
+    .set('Authorization', `Bearer ${signToken({
+      id: 1,
+      email: 'henrique.martins@grcconsultoria.net.br',
+      role: 'master_admin',
+      name: 'Administrador Master',
+      permissions: ['admin_panel'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`);
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(insertedLinks, [[81, 7], [81, 8]]);
+  assert.equal(response.body[0].name, 'Murilo Soares');
+  assert.deepEqual(response.body[0].clinics.map((clinic) => clinic.clinic_id), [7, 8]);
 });
 
 test('SAC operator cannot change clinic links for roles outside partner/coordinator/manager', async () => {
