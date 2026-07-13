@@ -595,8 +595,12 @@ function DashboardManagement() {
       setFeedback('');
 
       try {
+        const params = {
+          ...(canViewDeleted ? { include_deleted: 1 } : {}),
+          ...(canFilterCoordinatorReturn && filters.coordinatorReturn === 'without_return' ? { coordinator_without_return: 1 } : {})
+        };
         const res = await api.get('/complaints', {
-          params: canViewDeleted ? { include_deleted: 1 } : undefined
+          params: Object.keys(params).length ? params : undefined
         });
         setComplaints(Array.isArray(res.data) ? res.data : []);
       } catch (error) {
@@ -607,7 +611,7 @@ function DashboardManagement() {
     };
 
     loadComplaints();
-  }, [canViewDeleted]);
+  }, [canFilterCoordinatorReturn, canViewDeleted, filters.coordinatorReturn]);
 
   useEffect(() => {
     if (!canViewDeleted && viewMode === 'deleted') {

@@ -7148,9 +7148,16 @@ function buildComplaintCoordinatorReturnStatus(row = {}, logs = [], evidences = 
   };
 }
 
+function shouldFilterCoordinatorWithoutReturn(query = {}) {
+  return String(query.coordinatorReturn || query.coordinator_return || '').trim() === 'without_return'
+    || toBooleanValue(query.coordinator_without_return)
+    || toBooleanValue(query.no_coordinator_return);
+}
+
 async function getComplaintRows(query = {}, user = null) {
   const filters = buildComplaintFilters(query);
   const includeDeleted = Boolean(query.include_deleted) && canViewDeletedRecords(user);
+  const onlyCoordinatorWithoutReturn = shouldFilterCoordinatorWithoutReturn(query);
 
   if (!includeDeleted) {
     appendComplaintWhereClause(filters, 'c.deleted_at IS NULL');
@@ -7465,7 +7472,7 @@ async function getComplaintRows(query = {}, user = null) {
       return acc;
     }, {});
 
-    return rows.map((row) => ({
+    const mappedRows = rows.map((row) => ({
       ...row,
       ...buildComplaintCoordinatorReturnStatus(
         row,
@@ -7479,6 +7486,10 @@ async function getComplaintRows(query = {}, user = null) {
       })),
       logs: logsByComplaint[row.id] || []
     }));
+
+    return onlyCoordinatorWithoutReturn
+      ? mappedRows.filter((row) => Boolean(row.coordinator_pending_without_return))
+      : mappedRows;
   }
 
   return rows;
@@ -43585,6 +43596,7 @@ Object.assign(app, {
     shouldRunDailyCoordinatorDemandReminders,
     shouldRunDailyCoordinatorDeliveryReport,
     shouldRunWeeklyAdminComplaintReport,
+    shouldFilterCoordinatorWithoutReturn,
     sendPasswordChangedNotifications,
     sendUserAccessNotifications,
     signUserToken

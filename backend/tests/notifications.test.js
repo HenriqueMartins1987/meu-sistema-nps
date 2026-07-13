@@ -915,6 +915,14 @@ test('coordinator return status clears when coordinator has interacted', () => {
   }, [], []).coordinator_pending_without_return, false);
 });
 
+test('coordinator no-return query filter only activates with explicit parameter', () => {
+  assert.equal(__testables.shouldFilterCoordinatorWithoutReturn({ coordinator_without_return: 1 }), true);
+  assert.equal(__testables.shouldFilterCoordinatorWithoutReturn({ coordinatorReturn: 'without_return' }), true);
+  assert.equal(__testables.shouldFilterCoordinatorWithoutReturn({ coordinator_return: 'without_return' }), true);
+  assert.equal(__testables.shouldFilterCoordinatorWithoutReturn({ coordinator_without_return: 0 }), false);
+  assert.equal(__testables.shouldFilterCoordinatorWithoutReturn({}), false);
+});
+
 test('evidence permissions keep marketing limited to upload only', () => {
   assert.equal(__testables.canDeleteEvidence({
     role: 'master_admin',
