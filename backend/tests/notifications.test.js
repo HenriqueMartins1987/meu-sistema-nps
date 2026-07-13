@@ -882,6 +882,18 @@ test('coordinator return status flags targeted complaints without coordinator in
   assert.equal(status.coordinator_pending_without_return, true);
 });
 
+test('coordinator return status ignores only registered clinic coordinator names', () => {
+  const status = __testables.buildComplaintCoordinatorReturnStatus({
+    stored_coordinator_name: 'Coordenadora Unidade',
+    coordinator_name: 'Coordenadora Unidade',
+    status: 'aberta'
+  }, [], []);
+
+  assert.equal(status.coordinator_targeted, false);
+  assert.equal(status.coordinator_has_return, false);
+  assert.equal(status.coordinator_pending_without_return, false);
+});
+
 test('coordinator return status clears when coordinator has interacted', () => {
   const baseComplaint = {
     assigned_coordinator_user_id: 77,

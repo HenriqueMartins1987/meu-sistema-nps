@@ -7125,7 +7125,6 @@ function buildComplaintCoordinatorReturnStatus(row = {}, logs = [], evidences = 
     row.assigned_coordinator_user_id
     || String(row.assigned_coordinator_name || '').trim()
     || row.coordinator_id
-    || String(row.stored_coordinator_name || row.coordinator_name || '').trim()
     || row.coordinator_assigned_at
     || row.coordinator_due_date
     || isCoordinatorRoleValue(row.forwarded_to_role)
