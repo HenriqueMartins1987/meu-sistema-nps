@@ -28,6 +28,7 @@ const DEFAULT_SELECTORS = {
       'main h2'
     ],
     clinicSelector: [
+      'input[aria-haspopup="listbox"]',
       '[data-testid="clinic-selector"]',
       'button[aria-haspopup="listbox"]',
       'header button',
@@ -1784,7 +1785,50 @@ function clinicOptionMatches(candidate = {}, target = {}) {
   return candidateLabel === targetLabel || candidateLabel.includes(targetLabel) || targetLabel.includes(candidateLabel);
 }
 
+async function prepareEcuroClinicAutocomplete(page) {
+  try {
+    for (let i = 0; i < 3; i += 1) {
+      const ready = await page.waitForFunction(() => document.body && document.body.innerText.trim().length > 50, { timeout: 20000 }).catch(() => null);
+      if (ready) break;
+      console.log('ECURO_APP_BLANK reload attempt ' + (i + 1));
+      await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => null);
+      await page.waitForTimeout(4000);
+    }
+    const summary = await page.evaluate(() => {
+      const isVis = (el) => { const st = getComputedStyle(el); const r = el.getBoundingClientRect(); return st.display !== 'none' && st.visibility !== 'hidden' && r.width > 0 && r.height > 0; };
+      return Array.from(document.querySelectorAll('[aria-haspopup]')).map((el) => ({ tag: el.tagName, pop: el.getAttribute('aria-haspopup'), vis: isVis(el), text: String(el.innerText || el.value || el.getAttribute('placeholder') || '').slice(0, 60) }));
+    }).catch(() => []);
+    console.log('ECURO_HASPOPUP ' + JSON.stringify(summary));
+    const pageInfo = await page.evaluate(() => ({ url: location.href, els: document.querySelectorAll('*').length, frames: window.frames.length, body: String(document.body ? document.body.innerText : '').replace(/\s+/g, ' ').slice(0, 200) })).catch((e) => ({ err: String(e) }));
+    console.log('ECURO_PAGEINFO ' + JSON.stringify(pageInfo));
+    const input = page.locator('input[aria-haspopup="listbox"]:visible').first();
+    if (!(await input.count())) return;
+    await input.click({ timeout: 2000 }).catch(() => null);
+    await input.fill('').catch(() => null);
+    await page.keyboard.press('ArrowDown').catch(() => null);
+    await page.waitForTimeout(400);
+    const optionCount = await page.locator('[role="option"], .mat-mdc-option, mat-option').count().catch(() => 0);
+    if (!optionCount) {
+      await input.type(' ', { delay: 50 }).catch(() => null);
+      await page.keyboard.press('Backspace').catch(() => null);
+      await page.waitForTimeout(600);
+    }
+    const panelInfo = await page.evaluate(() => {
+      const inp = Array.from(document.querySelectorAll('input[aria-haspopup="listbox"]')).find((el) => el.offsetWidth > 0);
+      const opts = Array.from(document.querySelectorAll('[role="option"], mat-option, .mat-mdc-option'));
+      return { expanded: inp ? inp.getAttribute('aria-expanded') : null, value: inp ? inp.value : null, optCount: opts.length, sample: opts.slice(0, 5).map((o) => String(o.innerText || '').slice(0, 50)) };
+    }).catch((e) => ({ err: String(e) }));
+    console.log('ECURO_PANEL ' + JSON.stringify(panelInfo));
+  } catch (err) {}
+}
+
 async function clickEcuroClinicSelector(page, config) {
+  await prepareEcuroClinicAutocomplete(page);
+  const alreadyOpen = await page.evaluate(() => {
+    const inp = Array.from(document.querySelectorAll('input[aria-haspopup="listbox"]')).find((el) => el.offsetWidth > 0);
+    return Boolean(inp && inp.getAttribute('aria-expanded') === 'true');
+  }).catch(() => false);
+  if (alreadyOpen) return true;
   if (await clickFirstVisible(page, config.selectors.navigation.clinicSelector || [])) {
     await page.waitForTimeout(700);
     return true;
