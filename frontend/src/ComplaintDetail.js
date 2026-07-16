@@ -4,6 +4,7 @@ import api, { apiBaseUrl } from './api';
 import {
   complaintAttendanceFollowUpLabel,
   complaintAttendanceFollowUpStatus,
+  complaintResolvedPendingReviewStatus,
   hasActionPermission,
   isAdmin as isAdminUser,
   isMasterAdmin,
@@ -80,7 +81,7 @@ const forwardingOptions = [
   { value: 'supervisor_crc', label: 'Supervisor do CRC' }
 ];
 
-const reassignForwardingOptions = forwardingOptions.filter((option) => ['coordinator', 'manager', 'admin'].includes(option.value));
+const reassignForwardingOptions = forwardingOptions;
 const returnToSacOption = [{ value: 'sac_operator', label: 'Operador de SAC' }];
 const channelIconMap = {
   whatsapp: '💬',
@@ -536,6 +537,7 @@ function ComplaintDetail() {
       : fallback
   );
   const canOperationalClose = accessFlag('canCloseComplaint', (isMasterUser || ['admin', 'master_admin'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_close'));
+  const canMarkResolvedPendingReview = accessFlag('canMarkResolvedPendingReview', isMasterUser || normalizedUserRole === 'sac_operator');
   const canFormalTreatment = accessFlag('canAddTreatment', (treatmentRoles.includes(normalizedUserRole) || isAdmin) && hasActionPermission(user, 'treatment_register'));
   const canRecordTreatment = accessFlag('canRecordTreatment', Boolean(user?.role) && normalizedUserRole !== 'viewer' && hasActionPermission(user, 'treatment_register'));
   const canAttachEvidence = accessFlag('canAttachEvidence', (evidenceRoles.includes(normalizedUserRole) || isAdmin) && hasActionPermission(user, 'evidence_attach'));
@@ -549,6 +551,7 @@ function ComplaintDetail() {
   const canCreatePatientTreatment = accessFlag('canManagePatientTreatment', (isMasterUser || ['admin', 'master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole)) && hasActionPermission(user, 'patient_treatment_manage'));
   const canReturnToSac = ['coordinator', 'manager'].includes(normalizedUserRole);
   const canReassignForward = accessFlag('canReassignComplaint', (canReturnToSac || isAdmin || isMasterUser || ['master_admin', 'supervisor_crc', 'sac_operator'].includes(normalizedUserRole)) && hasActionPermission(user, 'complaints_reassign'));
+  const canDirectlyReassign = normalizedUserRole === 'sac_operator' || isAdmin || isMasterUser;
   const reassignOptions = canReturnToSac ? returnToSacOption : reassignForwardingOptions;
   const activeUnitOptions = useMemo(() => (
     unitOptions
@@ -568,6 +571,7 @@ function ComplaintDetail() {
   const hasSacApproval = Boolean(complaint?.sac_approval_at);
   const hasPatientContact = Boolean(complaint?.patient_contacted_at);
   const isDeletedRecord = Boolean(complaint?.deleted_at);
+  const isPendingFinalReview = complaint?.status === complaintResolvedPendingReviewStatus;
   const clinicResponsibleLabel = complaint?.assigned_responsible_name
     || complaint?.coordinator_name
     || complaint?.manager_name
@@ -822,7 +826,7 @@ function ComplaintDetail() {
       return;
     }
 
-    if (!canReturnToSac && !hasPatientContact && !hasFirstAttendance) {
+    if (!canReturnToSac && !canDirectlyReassign && !hasPatientContact && !hasFirstAttendance) {
       if (!canMarkPatientContact) {
         setFeedback('Registre e salve uma tratativa antes de encaminhar a demanda para a unidade.');
         return;
@@ -1045,6 +1049,27 @@ function ComplaintDetail() {
       await loadComplaint();
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Erro ao fechar o protocolo.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleMarkResolvedPendingReview = async () => {
+    const confirmed = window.confirm(
+      'Tem certeza de que deseja classificar esta demanda como resolvida? Ela ficará aguardando o parecer final dos administradores.'
+    );
+
+    if (!confirmed) return;
+
+    setSaving(true);
+    setFeedback('');
+
+    try {
+      await api.patch(`/complaints/${id}`, { mark_resolved_pending_review: true });
+      setFeedback('Demanda classificada como resolvida e enviada para parecer final da Administração.');
+      await loadComplaint();
+    } catch (error) {
+      setFeedback(error.response?.data?.error || 'Erro ao classificar a demanda como resolvida.');
     } finally {
       setSaving(false);
     }
@@ -2079,17 +2104,17 @@ function ComplaintDetail() {
           {feedback && <p className="form-feedback">{feedback}</p>}
 
           <div className="row-actions">
-            {canRecordTreatment && complaint.status !== 'resolvida' && (
+            {canRecordTreatment && complaint.status !== 'resolvida' && !isPendingFinalReview && (
               <button className="secondary-action" onClick={handleSaveTreatment} disabled={saving || !comment.trim() || isDeletedRecord}>
                 {saving ? 'Salvando...' : 'Salvar atualização'}
               </button>
             )}
-            {canSupervisorAccept && isHighPriority && complaint.status !== 'resolvida' && (
+            {canSupervisorAccept && isHighPriority && complaint.status !== 'resolvida' && !isPendingFinalReview && (
               <button className="outline-action" onClick={handleSupervisorAccept} disabled={saving || !comment.trim() || isDeletedRecord}>
                 Registrar aceite CRC
               </button>
             )}
-            {canMarkPatientContact && complaint.status !== 'resolvida' && (
+            {canMarkPatientContact && complaint.status !== 'resolvida' && !isPendingFinalReview && (
               <button className="outline-action" onClick={handlePatientContact} disabled={saving || !canMarkPatientContact || isDeletedRecord}>
                 {hasPatientContact ? 'Contato já registrado' : 'Registrar contato com paciente'}
               </button>
@@ -2101,9 +2126,21 @@ function ComplaintDetail() {
             )}
             {canReassignForward && complaint.status !== 'resolvida' && !isDeletedRecord && (
               <button className="outline-action" onClick={handleOpenReassignForward} disabled={saving}>
-                {canReturnToSac ? 'Devolver para Operador de SAC' : 'Encaminhar para unidade'}
+                {canReturnToSac
+                  ? 'Devolver para Operador de SAC'
+                  : normalizedUserRole === 'sac_operator'
+                    ? 'Remanejar reclamação'
+                    : 'Encaminhar para unidade'}
               </button>
             )}
+            {canMarkResolvedPendingReview
+              && complaint.status !== complaintResolvedPendingReviewStatus
+              && !['resolvida', 'encerrada', 'cancelada'].includes(complaint.status)
+              && !isDeletedRecord && (
+                <button className="secondary-action resolved-action" onClick={handleMarkResolvedPendingReview} disabled={saving}>
+                  {saving ? 'Salvando...' : 'Resolvido'}
+                </button>
+              )}
             {canOperationalClose && (
               <button className="primary-action" onClick={handleClose} disabled={saving || !canCloseNow || isDeletedRecord}>
                 {saving ? 'Fechando...' : 'Fechar protocolo'}
@@ -2137,14 +2174,16 @@ function ComplaintDetail() {
               {forwardModalMode === 'reassign'
                 ? canReturnToSac
                   ? 'Devolver para o Operador de SAC'
-                  : 'Reencaminhar demanda'
+                  : normalizedUserRole === 'sac_operator'
+                    ? 'Remanejar reclamação'
+                    : 'Reencaminhar demanda'
                 : 'Selecionar próximo responsável'}
             </h2>
             <p>
               {forwardModalMode === 'reassign'
                 ? canReturnToSac
                   ? 'Ao confirmar, a demanda voltará para o Operador de SAC e o histórico da tratativa ficará registrado.'
-                  : 'Ao confirmar, a reclamação será enviada novamente para Coordenador, Gerente ou Administrador e o histórico ficará registrado.'
+                  : 'Ao confirmar, a reclamação será enviada novamente para Coordenador, Gerente, Administrador ou Supervisor do CRC e o histórico ficará registrado.'
                 : 'Ao confirmar, o contato com o paciente será registrado e a reclamação será encaminhada para o responsável escolhido.'}
             </p>
 

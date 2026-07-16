@@ -3218,6 +3218,46 @@ a {
   border-left-color: var(--leaf);
 }
 
+.complaint-list-item.deadline-resolved-pending,
+.complaint-list-item.resolved-pending-review {
+  border-color: rgba(31, 122, 77, 0.38);
+  border-left-color: #1f7a4d;
+  background: linear-gradient(135deg, #f4fff8 0%, #e8f8ee 100%);
+}
+
+.resolution-review-box {
+  border-color: rgba(31, 122, 77, 0.32);
+  background: linear-gradient(135deg, rgba(247, 255, 250, 0.98), rgba(231, 247, 237, 0.96));
+}
+
+.resolution-review-heading h2,
+.resolution-review-heading .eyebrow {
+  color: #17633e;
+}
+
+.resolution-review-heading p:last-child {
+  margin: 8px 0 0;
+  color: #35624a;
+}
+
+.resolution-review-chip {
+  display: inline-flex;
+  width: fit-content;
+  border: 1px solid rgba(31, 122, 77, 0.28);
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: #dff4e7;
+  color: #17633e;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.resolved-action {
+  border-color: #1f7a4d !important;
+  background: #e6f7ed !important;
+  color: #17633e !important;
+}
+
 .complaint-list-item:hover {
   border-color: var(--brand);
   box-shadow: var(--shadow-sm);

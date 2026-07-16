@@ -3525,8 +3525,187 @@ test('complaint detail exposes normalized SAC access when role is stored as labe
   assert.equal(response.body.access.canChangeComplaintUnit, true);
   assert.equal(response.body.access.canEditPatientPhone, true);
   assert.equal(response.body.access.canCloseComplaint, false);
+  assert.equal(response.body.access.canMarkResolvedPendingReview, true);
   assert.equal(response.body.access.canMarkPatientContact, true);
   assert.equal(response.body.access.canReassignComplaint, true);
+});
+
+test('resolved pending review classification and visibility follow the required roles', () => {
+  const { canMarkComplaintResolvedPendingReview, canViewComplaintResolvedPendingReview } = serverModule.__testables;
+
+  assert.equal(canMarkComplaintResolvedPendingReview({ role: 'sac_operator' }), true);
+  assert.equal(canMarkComplaintResolvedPendingReview({ role: 'master_admin' }), true);
+  assert.equal(canMarkComplaintResolvedPendingReview({ role: 'admin' }), false);
+  assert.equal(canMarkComplaintResolvedPendingReview({ role: 'coordinator' }), false);
+
+  assert.equal(canViewComplaintResolvedPendingReview({ role: 'sac_operator' }), true);
+  assert.equal(canViewComplaintResolvedPendingReview({ role: 'master_admin' }), true);
+  assert.equal(canViewComplaintResolvedPendingReview({ role: 'admin' }), true);
+  assert.equal(canViewComplaintResolvedPendingReview({ role: 'supervisor_crc' }), false);
+  assert.equal(canViewComplaintResolvedPendingReview({ role: 'coordinator' }), false);
+});
+
+test('SAC operator classifies a complaint as resolved pending final review without closing it', async () => {
+  let updateSql = '';
+  let updateParams = [];
+  const logActions = [];
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{
+        must_change_password: 0,
+        token_version: 1,
+        active: 1,
+        role: 'sac_operator',
+        permissions: JSON.stringify(['complaints_management']),
+        action_permissions: null
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaints c') && sql.includes('WHERE') && sql.includes('c.id = ?'),
+      reply: async () => [[{
+        id: 48,
+        protocol: 'GRC-2026-000048',
+        clinic_id: 1,
+        patient_name: 'Paciente Resolvido',
+        status: 'em_andamento',
+        operator_comment: 'Tratativa concluída pelo SAC',
+        priority: 'media',
+        deleted_at: null,
+        created_at: new Date('2026-07-16T12:00:00.000Z'),
+        updated_at: new Date('2026-07-16T13:00:00.000Z')
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_evidences') && sql.includes('complaint_id IN'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('FROM complaint_logs') && sql.includes('complaint_id IN'),
+      reply: async () => [[]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE complaints') && sql.includes('SET status = ?'),
+      reply: async (sql, params) => {
+        updateSql = sql;
+        updateParams = params;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO complaint_logs'),
+      reply: async (_sql, params) => {
+        logActions.push(params[1]);
+        return [{ insertId: 1 }];
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/complaints/48')
+    .set('Authorization', `Bearer ${signToken({
+      id: 9,
+      email: 'sac@example.com',
+      role: 'sac_operator',
+      name: 'Operador SAC',
+      permissions: ['complaints_management'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({ mark_resolved_pending_review: true });
+
+  assert.equal(response.status, 200);
+  assert.match(updateSql, /closed_at = NULL/);
+  assert.equal(updateParams[0], 'resolvido_aguardando_parecer_final');
+  assert.ok(logActions.includes('resolved_pending_final_review'));
+  assert.ok(!logActions.includes('closed'));
+});
+
+test('finishing a linked patient treatment sends the complaint to administrator final review', async () => {
+  let complaintUpdateSql = '';
+  let complaintUpdateParams = [];
+  const complaintLogActions = [];
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{
+        must_change_password: 0,
+        token_version: 1,
+        active: 1,
+        role: 'sac_operator',
+        permissions: JSON.stringify(['patient_management']),
+        action_permissions: null
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('FROM patient_interactions WHERE id = ?') && sql.includes('complaint_id'),
+      reply: async () => [[{
+        id: 91,
+        protocol: 'PAC-2026-000091',
+        complaint_id: 48,
+        patient_name: 'Paciente Agendado',
+        patient_phone: '+5562999999999',
+        clinic_name: 'Unidade Teste',
+        interaction_type: 'tratamento',
+        scheduled_at: new Date('2026-07-16T12:00:00.000Z'),
+        no_show_alert_sent_at: null
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE patient_interactions SET'),
+      reply: async () => [{ affectedRows: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO patient_interaction_logs'),
+      reply: async () => [{ insertId: 1 }]
+    },
+    {
+      match: (sql) => sql.includes('SELECT id, protocol, status, appointment_sla_active, deleted_at') && sql.includes('FROM complaints'),
+      reply: async () => [[{
+        id: 48,
+        protocol: 'GRC-2026-000048',
+        status: 'aguardando_comparecimento_conclusao_atendimento',
+        appointment_sla_active: 1,
+        deleted_at: null
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('UPDATE complaints') && sql.includes('appointment_sla_active = 0'),
+      reply: async (sql, params) => {
+        complaintUpdateSql = sql;
+        complaintUpdateParams = params;
+        return [{ affectedRows: 1 }];
+      }
+    },
+    {
+      match: (sql) => sql.includes('INSERT INTO complaint_logs'),
+      reply: async (_sql, params) => {
+        complaintLogActions.push(params[1]);
+        return [{ insertId: 1 }];
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/patient-interactions/91')
+    .set('Authorization', `Bearer ${signToken({
+      id: 9,
+      email: 'sac@example.com',
+      role: 'sac_operator',
+      name: 'Operador SAC',
+      permissions: ['patient_management'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({ status: 'Encerrado', action: 'Registro encerrado' });
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body.complaintMovedToFinalReview, true);
+  assert.match(complaintUpdateSql, /current_escalation_level = 'admin'/);
+  assert.equal(complaintUpdateParams[0], 'resolvido_aguardando_parecer_final');
+  assert.ok(complaintLogActions.includes('patient_treatment_completed_pending_final_review'));
 });
 
 test('uploaded file route serves persisted database fallback when disk file is missing', async () => {
