@@ -193,6 +193,10 @@ function buildTopLabel(items) {
     .map(([label, total]) => ({ label, total }))[0];
 }
 
+function getComplaintChannelLabel(item) {
+  return String(item?.channel || '').trim() || 'Não informado';
+}
+
 function buildSummaryRows(items) {
   return items.map((item) => ({
     id: item.id,
@@ -200,6 +204,7 @@ function buildSummaryRows(items) {
     data_cadastro: formatFullDateTime(item.created_at),
     paciente: item.patient_name || 'Não informado',
     clinica: item.clinic_name || 'Não informado',
+    canal_entrada: getComplaintChannelLabel(item),
     responsavel_atual: getCurrentResponsibleLabel(item),
     profissional_envolvido: getWeeklyProfessionalLabel(item),
     motivo: getWeeklyReasonLabel(item),
@@ -213,10 +218,12 @@ function buildSummaryRows(items) {
 function buildHighlights(items) {
   const clinics = new Set();
   const professionals = new Set();
+  const channels = new Set();
   const openCount = items.filter((item) => !isComplaintClosedStatus(item.status)).length;
   const resolvedCount = items.filter((item) => isComplaintClosedStatus(item.status)).length;
   const overdueCount = items.filter((item) => deadlineTone(item) === 'overdue').length;
   const topClinic = buildTopLabel(items.map((item) => item.clinic_name).filter(Boolean));
+  const topChannel = buildTopLabel(items.map(getComplaintChannelLabel));
   const topReason = buildTopLabel(items.map((item) => (
     item.complaint_type_other
       ? `${item.complaint_type || 'Outros'}: ${item.complaint_type_other}`
@@ -226,16 +233,19 @@ function buildHighlights(items) {
   items.forEach((item) => {
     if (item.clinic_name) clinics.add(item.clinic_name);
     professionals.add(getWeeklyProfessionalLabel(item));
+    channels.add(getComplaintChannelLabel(item));
   });
 
   return {
     total: items.length,
     clinics: clinics.size,
     professionals: professionals.size,
+    channels: channels.size,
     openCount,
     resolvedCount,
     overdueCount,
     topClinic,
+    topChannel,
     topReason
   };
 }
@@ -246,6 +256,7 @@ function buildExcelHeaders(rows) {
     data_cadastro: '',
     paciente: '',
     clinica: '',
+    canal_entrada: '',
     responsavel_atual: '',
     profissional_envolvido: '',
     motivo: '',
@@ -288,6 +299,7 @@ function exportComplaintReportPdf({
     row.data_cadastro,
     row.paciente,
     row.clinica,
+    row.canal_entrada,
     row.responsavel_atual,
     row.profissional_envolvido,
     row.motivo,
@@ -369,6 +381,7 @@ function exportComplaintReportPdf({
                   <th>Data de cadastro</th>
                   <th>Paciente</th>
                   <th>Clínica</th>
+                  <th>Canal de entrada</th>
                   <th>Responsável atual</th>
                   <th>Profissional envolvido</th>
                   <th>Motivo</th>
@@ -474,6 +487,11 @@ function ComplaintReportSection({
           <strong>{highlights.resolvedCount}</strong>
           <p>Protocolos do período que já foram encerrados</p>
         </article>
+        <article className="weekly-report-card">
+          <span>Canais de entrada</span>
+          <strong>{highlights.channels}</strong>
+          <p>Origens utilizadas para registrar as demandas</p>
+        </article>
       </div>
 
       <div className="weekly-report-insights">
@@ -488,6 +506,11 @@ function ComplaintReportSection({
           <p>{highlights.topReason ? `${highlights.topReason.total} ocorrência(s) concentradas nesse tema.` : 'Nenhum motivo recorrente identificado no período selecionado.'}</p>
         </article>
         <article className="weekly-report-insight-card">
+          <span>Principal canal de entrada</span>
+          <strong>{highlights.topChannel?.label || 'Não informado'}</strong>
+          <p>{highlights.topChannel ? `${highlights.topChannel.total} registro(s), ${Math.round((highlights.topChannel.total / Math.max(highlights.total, 1)) * 100)}% do período.` : 'Nenhum canal identificado no período selecionado.'}</p>
+        </article>
+        <article className="weekly-report-insight-card">
           <span>Prazos vencidos</span>
           <strong>{highlights.overdueCount}</strong>
           <p>Demandas que ultrapassaram o prazo de retorno operacional</p>
@@ -499,7 +522,7 @@ function ComplaintReportSection({
           <span className="eyebrow">Base detalhada</span>
           <strong>{rows.length} protocolo(s) no período analisado</strong>
         </div>
-        <p>Leitura rápida de paciente, unidade, dono atual, profissional envolvido e motivo principal.</p>
+        <p>Leitura rápida de paciente, unidade, canal de entrada, dono atual, profissional envolvido e motivo principal.</p>
       </div>
 
       <div className="data-table-wrap weekly-report-table-wrap">
@@ -510,6 +533,7 @@ function ComplaintReportSection({
               <th>Data de cadastro</th>
               <th>Paciente</th>
               <th>Clínica</th>
+              <th>Canal de entrada</th>
               <th>Responsável atual</th>
               <th>Profissional envolvido</th>
               <th>Motivo</th>
@@ -519,7 +543,7 @@ function ComplaintReportSection({
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan="8">Carregando relatório...</td>
+                <td colSpan="9">Carregando relatório...</td>
               </tr>
             ) : paginatedRows.length ? (
               paginatedRows.map((row) => (
@@ -541,6 +565,7 @@ function ComplaintReportSection({
                       <strong>{row.clinica}</strong>
                     </div>
                   </td>
+                  <td><span className="weekly-report-channel-badge">{row.canal_entrada}</span></td>
                   <td>
                     <div className="weekly-report-primary-cell">
                       <strong>{row.responsavel_atual}</strong>
@@ -556,7 +581,7 @@ function ComplaintReportSection({
               ))
             ) : (
               <tr>
-                <td colSpan="8">{emptyLabel}</td>
+                <td colSpan="9">{emptyLabel}</td>
               </tr>
             )}
           </tbody>
