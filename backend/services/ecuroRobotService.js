@@ -2799,6 +2799,20 @@ function shouldStopWhenOlderThanEligibleDates(pageResults = [], eligibleDates = 
   return shouldStopWhenOlderThanTarget(pageResults, oldestEligibleDate);
 }
 
+function computeLastConsultationDateRange(pageResults = []) {
+  const dates = pageResults.map((row) => row.lastConsultationDate || '').filter(Boolean);
+  if (!dates.length) return null;
+  return {
+    min: dates.reduce((min, value) => (value < min ? value : min)),
+    max: dates.reduce((max, value) => (value > max ? value : max))
+  };
+}
+
+function detectSortOrderViolation(previousPageDateRange, currentPageDateRange) {
+  if (!previousPageDateRange || !currentPageDateRange) return false;
+  return currentPageDateRange.max > previousPageDateRange.min;
+}
+
 async function collectPatientDirectoryRows(page, config, payload = {}) {
   const targetDate = resolveEcuroTargetDate(payload);
   const eligibleDates = getNpsEligibleDates(config, payload);
@@ -2875,6 +2889,9 @@ async function collectPatientDirectoryRows(page, config, payload = {}) {
     };
   }
 
+  let sortOrderConfirmedDescending = true;
+  let previousPageDateRange = null;
+
   while (pagesVisited < maxPages && results.length < maxPatients) {
     const extractedPage = await extractPatientsFromEcuroPatientsPage(page, config, payload);
     const table = extractedPage.table || buildEcuroPatientTableFromCandidateRows([]);
@@ -2886,6 +2903,19 @@ async function collectPatientDirectoryRows(page, config, payload = {}) {
       eligibleDates,
       source: payload.source || 'ecuro_last_consultation'
     });
+
+    // The early-stop below only holds if Ecuro lists patients ordered by
+    // Ultima Consulta descending. Verify that invariant page by page instead
+    // of trusting it blindly: a newer date showing up after older ones were
+    // already read means the assumption is false for this clinic, so early
+    // stop is disabled for the remainder of the scan to avoid dropping
+    // eligible patients that would otherwise sit on later pages.
+    const currentPageDateRange = computeLastConsultationDateRange(pageResults);
+    if (sortOrderConfirmedDescending && detectSortOrderViolation(previousPageDateRange, currentPageDateRange)) {
+      sortOrderConfirmedDescending = false;
+    }
+    if (currentPageDateRange) previousPageDateRange = currentPageDateRange;
+
     diagnostics = {
       ...diagnostics,
       ...(extractedPage.diagnostics || {}),
@@ -2893,7 +2923,8 @@ async function collectPatientDirectoryRows(page, config, payload = {}) {
       clinicCode,
       targetDate: formatDateKeyToBrazilian(targetDate),
       eligibleDates: formatEligibleDatesForPayload(eligibleDates),
-      pageSize
+      pageSize,
+      sortOrderConfirmedDescending
     };
 
     totalRowsRead += pageResults.length;
@@ -2904,7 +2935,11 @@ async function collectPatientDirectoryRows(page, config, payload = {}) {
 
     pagesVisited += 1;
     if (results.length >= maxPatients) break;
-    if (config.stopWhenOlderThanTarget && shouldStopWhenOlderThanEligibleDates(pageResults, eligibleDates)) break;
+    if (
+      config.stopWhenOlderThanTarget
+      && sortOrderConfirmedDescending
+      && shouldStopWhenOlderThanEligibleDates(pageResults, eligibleDates)
+    ) break;
 
     const moved = await clickNextPatientsPage(page, config);
     if (!moved) break;
@@ -2919,6 +2954,7 @@ async function collectPatientDirectoryRows(page, config, payload = {}) {
     pageSize,
     pagesVisited,
     totalRowsRead,
+    sortOrderConfirmedDescending,
     diagnostics,
     results
   };
@@ -3925,6 +3961,20 @@ async function executeBrowserCompletionCheck(job, payload = {}, config = getEcur
         targetDate: collection.targetDate || ''
       }
     });
+    if (collection.sortOrderConfirmedDescending === false) {
+      logRobotJobEvent(job.id, {
+        level: 'warning',
+        step: 'collect_patients',
+        action: 'sort_order_violation',
+        currentStep: 'collect_patients',
+        currentUrl: page.url(),
+        message: 'A tabela de pacientes do Ecuro nao estava ordenada por Ultima Consulta decrescente. A parada antecipada de paginas foi desativada para nao descartar pacientes elegiveis; todas as paginas ate o limite configurado foram lidas.',
+        metadata: {
+          clinicName: collection.clinicName || '',
+          pagesVisited: collection.pagesVisited || 0
+        }
+      });
+    }
     let collectionErrorMessage = null;
     if (!extractedRows.length) {
       collectionErrorMessage = 'Robo autenticou no Ecuro, mas nao conseguiu extrair linhas da tabela de pacientes. Verifique seletores/estrutura DOM.';
@@ -4050,6 +4100,7 @@ function buildClinicRunSummary(clinic = {}, patch = {}) {
     selectedExcelExportEndpoint: patch.selectedExcelExportEndpoint || null,
     pageSizeUsed: patch.pageSizeUsed || null,
     pagesRead: Number(patch.pagesRead || 0),
+    sortOrderConfirmedDescending: patch.sortOrderConfirmedDescending !== false,
     errorMessage: patch.errorMessage || null
   };
 }
@@ -4261,6 +4312,7 @@ async function executeBrowserAllClinicsNpsAutomation(job, payload = {}, config =
           status: collection.totalRowsRead > 0 ? 'completed' : 'partial',
           pageSizeUsed: collection.pageSize?.pageSizeAfter || collection.pageSize?.pageSizeBefore || null,
           pagesRead: collection.pagesVisited || 0,
+          sortOrderConfirmedDescending: collection.sortOrderConfirmedDescending,
           errorMessage: collection.totalRowsRead > 0 ? null : 'Nenhuma linha de paciente foi extraida para esta clinica.'
         }));
 
@@ -4292,9 +4344,21 @@ async function executeBrowserAllClinicsNpsAutomation(job, payload = {}, config =
             clinic,
             pagesVisited: collection.pagesVisited || 0,
             pageSize: collection.pageSize || null,
-            eligibleDates: eligibleDateLabels
+            eligibleDates: eligibleDateLabels,
+            sortOrderConfirmedDescending: collection.sortOrderConfirmedDescending
           }
         });
+        if (collection.sortOrderConfirmedDescending === false) {
+          logRobotJobEvent(job.id, {
+            level: 'warning',
+            step: 'collect_patients',
+            action: 'sort_order_violation',
+            currentStep: 'collect_patients',
+            currentUrl: page.url(),
+            message: `Clinica ${clinic.fullLabel || clinic.clinicName}: a tabela de pacientes nao estava ordenada por Ultima Consulta decrescente. A parada antecipada foi desativada e todas as paginas ate o limite configurado foram lidas para nao descartar elegiveis.`,
+            metadata: { clinic, pagesVisited: collection.pagesVisited || 0 }
+          });
+        }
       } catch (clinicError) {
         totalFailed += 1;
         clinics.push(buildClinicRunSummary(clinic, {
@@ -5259,7 +5323,9 @@ module.exports = {
   buildInviteToken,
   buildJobId,
   buildPatientDirectoryRecord,
+  computeLastConsultationDateRange,
   detectManualActionRequired,
+  detectSortOrderViolation,
   discoverEcuroNetworkEndpoints,
   discoverEcuroClinics,
   evaluateNpsEligibility,
@@ -5284,6 +5350,7 @@ module.exports = {
   normalizeExcelDate,
   parseEcuroPatientsExcel,
   resolveEcuroTargetDate,
+  shouldStopWhenOlderThanEligibleDates,
   runDiscoverClinicsJob,
   runDiscoverNetworkJob,
   runEcuroAllClinicsNpsAutomation,
