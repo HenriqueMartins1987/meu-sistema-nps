@@ -17,6 +17,8 @@ const {
   matchesCronExpression
 } = require('../services/ecuroCompletionService');
 const {
+  computeLastConsultationDateRange,
+  detectSortOrderViolation,
   extractEcuroPatientRowsFromText,
   extractPatientsFromNetworkResponses,
   getNpsEligibleDates,
@@ -33,6 +35,7 @@ const {
   normalizeExcelDate,
   parseEcuroPatientsExcel,
   resolveEcuroTargetDate,
+  shouldStopWhenOlderThanEligibleDates,
   summarizeCompletionResults
 } = require('../services/ecuroRobotService');
 
@@ -423,6 +426,48 @@ test('matchesCronExpression supports monday-saturday nightly execution', () => {
 test('buildNpsInviteToken yields long opaque values', () => {
   const token = buildNpsInviteToken('sample');
   assert.equal(token.length, 64);
+});
+
+test('computeLastConsultationDateRange ignores rows without a parsed date', () => {
+  assert.equal(computeLastConsultationDateRange([{ lastConsultationDate: null }, { lastConsultationDate: '' }]), null);
+  assert.deepEqual(computeLastConsultationDateRange([
+    { lastConsultationDate: '2026-06-29' },
+    { lastConsultationDate: '2026-06-27' },
+    { lastConsultationDate: '2026-06-30' }
+  ]), { min: '2026-06-27', max: '2026-06-30' });
+});
+
+test('detectSortOrderViolation catches a newer date appearing after older pages were already read', () => {
+  const page1Range = computeLastConsultationDateRange([{ lastConsultationDate: '2026-06-29' }, { lastConsultationDate: '2026-06-28' }]);
+  const sortedNextPageRange = computeLastConsultationDateRange([{ lastConsultationDate: '2026-06-27' }]);
+  const outOfOrderNextPageRange = computeLastConsultationDateRange([{ lastConsultationDate: '2026-06-30' }]);
+
+  assert.equal(detectSortOrderViolation(page1Range, sortedNextPageRange), false);
+  assert.equal(detectSortOrderViolation(page1Range, outOfOrderNextPageRange), true);
+  assert.equal(detectSortOrderViolation(null, sortedNextPageRange), false);
+});
+
+test('regression: a patients table not sorted by last consultation must not let pagination stop early and drop eligible patients', () => {
+  // Reproduces the reported bug: the Ecuro directory returns a page full of
+  // old patients (say, sorted alphabetically) followed by a page that still
+  // has patients eligible for today's NPS dispatch. The naive "stop when the
+  // whole page is older than target" heuristic would quit after page 1 and
+  // silently drop the eligible patient on page 2.
+  const targetDate = '2026-07-01';
+  const page1 = mapPatientDirectoryRows({
+    headerIndexes: { patientFirstName: 0, patientLastName: 1, patientPhone: 2, lastConsultationDate: 3 },
+    rows: [['Ana', 'Alves', '(62) 99966-9966', '20/06/2026']]
+  }, { targetDate });
+  const page2 = mapPatientDirectoryRows({
+    headerIndexes: { patientFirstName: 0, patientLastName: 1, patientPhone: 2, lastConsultationDate: 3 },
+    rows: [['Bruno', 'Costa', '(62) 98888-7777', '01/07/2026']]
+  }, { targetDate });
+
+  assert.equal(shouldStopWhenOlderThanEligibleDates(page1, [targetDate]), true);
+
+  const page1Range = computeLastConsultationDateRange(page1);
+  const page2Range = computeLastConsultationDateRange(page2);
+  assert.equal(detectSortOrderViolation(page1Range, page2Range), true, 'the out-of-order page must be detected so early stop is disabled');
 });
 
 test('getEcuroRobotConfigStatus exposes safe mapping and visual defaults', () => {
