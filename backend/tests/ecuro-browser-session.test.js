@@ -243,7 +243,7 @@ test('createAuthenticatedEcuroSession succeeds when dashboard patients returns H
   assert.equal(config.fakeState.contextOptions.acceptDownloads, true);
   assert.equal(config.fakeState.contextOptions.httpCredentials.origin, 'https://ecuro.com.br');
   assert.equal(config.fakeState.contextOptions.httpCredentials.username, 'level1-user');
-  assert.equal(config.fakeState.page.defaultTimeout, 1000);
+  assert.equal(config.fakeState.page.defaultTimeout, 10000);
 
   await session.close();
   assert.equal(config.fakeState.contextClosed, true);
