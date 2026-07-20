@@ -336,32 +336,37 @@ async function ensureEcuroApplicationLogin(page, config = {}) {
   const baseUrl = normalizeBaseUrl(config.baseUrl);
   const timeout = getTimeout(config);
 
-  const firstLoginWaitMs = Math.max(
-    0,
-    Number(
-      process.env.ECURO_FIRST_LOGIN_WAIT_MS || 35000
-    ) || 35000
+  const resolveWaitMs = (configuredValue, environmentValue, defaultValue, minimum = 0) => {
+    const rawValue = configuredValue ?? environmentValue ?? defaultValue;
+    const parsedValue = Number(rawValue);
+    return Math.max(minimum, Number.isFinite(parsedValue) ? parsedValue : defaultValue);
+  };
+
+  const firstLoginWaitMs = resolveWaitMs(
+    config.firstLoginWaitMs,
+    process.env.ECURO_FIRST_LOGIN_WAIT_MS,
+    35000
   );
 
-  const secondLoginMaxWaitMs = Math.max(
+  const secondLoginMaxWaitMs = resolveWaitMs(
+    config.secondLoginMaxWaitMs,
+    process.env.ECURO_SECOND_LOGIN_MAX_WAIT_MS,
+    60000,
+    config.secondLoginMaxWaitMs === undefined ? 10000 : 0
+  );
+
+  const postLoginStabilityMs = resolveWaitMs(
+    config.postLoginStabilityMs,
+    process.env.ECURO_POST_LOGIN_STABILITY_MS,
+    20000,
+    config.postLoginStabilityMs === undefined ? 5000 : 0
+  );
+
+  const patientsStabilityMs = resolveWaitMs(
+    config.patientsStabilityMs,
+    process.env.ECURO_PATIENTS_STABILITY_MS,
     10000,
-    Number(
-      process.env.ECURO_SECOND_LOGIN_MAX_WAIT_MS || 60000
-    ) || 60000
-  );
-
-  const postLoginStabilityMs = Math.max(
-    5000,
-    Number(
-      process.env.ECURO_POST_LOGIN_STABILITY_MS || 20000
-    ) || 20000
-  );
-
-  const patientsStabilityMs = Math.max(
-    5000,
-    Number(
-      process.env.ECURO_PATIENTS_STABILITY_MS || 10000
-    ) || 10000
+    config.patientsStabilityMs === undefined ? 5000 : 0
   );
 
   const authFailures = Array.isArray(config.authFailures)

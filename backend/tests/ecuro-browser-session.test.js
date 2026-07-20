@@ -170,6 +170,10 @@ function buildConfig(overrides = {}, scenario = {}) {
     level2Password: 'level2-pass',
     headless: true,
     timeoutMs: 1000,
+    firstLoginWaitMs: 0,
+    secondLoginMaxWaitMs: 0,
+    postLoginStabilityMs: 0,
+    patientsStabilityMs: 0,
     chromium: fake.chromium,
     fakeState: fake.state,
     ...overrides
