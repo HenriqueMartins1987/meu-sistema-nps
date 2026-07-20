@@ -9676,14 +9676,25 @@ function parsePermissionsFromUser(user) {
   const normalizedRole = normalizeAccessRole(role);
   const defaultPermissions = defaultPermissionsForRole(role);
   let permissions = defaultPermissions;
+  let hasExplicitPermissions = false;
 
   try {
-    permissions = user?.permissions ? JSON.parse(user.permissions) : permissions;
+    if (Array.isArray(user?.permissions)) {
+      permissions = user.permissions;
+      hasExplicitPermissions = true;
+    } else if (user?.permissions !== null && user?.permissions !== undefined && String(user.permissions).trim() !== '') {
+      permissions = JSON.parse(user.permissions);
+      hasExplicitPermissions = Array.isArray(permissions);
+    }
   } catch (error) {
     permissions = defaultPermissions;
   }
 
   const parsedPermissions = Array.isArray(permissions) ? permissions : defaultPermissions;
+  if (hasExplicitPermissions) {
+    return Array.from(new Set(parsedPermissions.filter((permission) => screenPermissions[permission])));
+  }
+
   const identity = [user?.username, user?.email, user?.name]
     .map((value) => String(value || '').trim().toLowerCase())
     .filter(Boolean);
@@ -36606,6 +36617,32 @@ app.patch('/admin/users/:id', authenticate, requireUserClinicLinkManager, async 
       });
     }
 
+    const isPermissionsOnlyUpdate = bodyKeys.length === 1 && bodyKeys[0] === 'permissions';
+    if (isPermissionsOnlyUpdate) {
+      if (!isMasterAdminUser(req.user)) {
+        return res.status(403).json({ error: 'Apenas o Administrador Master pode alterar permissões de acesso.' });
+      }
+
+      if (!Array.isArray(req.body.permissions)) {
+        return res.status(400).json({ error: 'Informe uma lista válida de permissões.' });
+      }
+
+      const permissions = Array.from(new Set(
+        req.body.permissions.filter((permission) => screenPermissions[permission])
+      ));
+
+      await pool.query(
+        `UPDATE users
+            SET permissions = ?,
+                token_version = COALESCE(token_version, 1) + 1,
+                updated_at = NOW()
+          WHERE id = ?`,
+        [JSON.stringify(permissions), current.id]
+      );
+
+      return res.json({ message: 'Permissões do usuário atualizadas com sucesso.', permissions });
+    }
+
     const requestedRole = normalizeAccessRole(req.body.role || current.role);
     const currentEmail = String(current.email || '').toLowerCase();
     const requestedEmail = Object.prototype.hasOwnProperty.call(req.body || {}, 'email')
@@ -43659,6 +43696,7 @@ Object.assign(app, {
   startServer,
   __testables: {
     buildAuthenticatedUser,
+    parsePermissionsFromUser,
     buildBrazilPhoneMatchCandidates,
     buildComplaintNotificationEmail,
     findLatestNpsInviteByPhone,
