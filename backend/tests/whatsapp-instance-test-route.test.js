@@ -243,7 +243,7 @@ test('nps whatsapp inbound records promoter score and relational referral flow',
       reply: async () => [{ insertId: 1001 }]
     },
     {
-      match: (sql) => sql.includes('FROM nps_invites') && sql.includes('patient_phone = ?'),
+      match: (sql) => sql.includes('FROM nps_invites') && sql.includes('patient_phone IN (?)'),
       reply: async () => [[inviteRow]]
     },
     {
@@ -463,7 +463,7 @@ test('nps whatsapp inbound records neutral improvement without detractor or refe
 
   pool.query = buildQueryStub([
     { match: (sql) => sql.includes('INSERT INTO nps_whatsapp_inbound_events'), reply: async () => [{ insertId: 1002 }] },
-    { match: (sql) => sql.includes('FROM nps_invites') && sql.includes('patient_phone = ?'), reply: async () => [[inviteRow]] },
+    { match: (sql) => sql.includes('FROM nps_invites') && sql.includes('patient_phone IN (?)'), reply: async () => [[inviteRow]] },
     {
       match: (sql) => sql.includes('FROM nps_responses') && sql.includes('ecuro_nps_invite_id = ?'),
       reply: async () => insertedResponseParams ? [[{
@@ -521,7 +521,7 @@ test('nps whatsapp inbound records detractor feedback as registered management i
 
   pool.query = buildQueryStub([
     { match: (sql) => sql.includes('INSERT INTO nps_whatsapp_inbound_events'), reply: async () => [{ insertId: 1003 }] },
-    { match: (sql) => sql.includes('FROM nps_invites') && sql.includes('patient_phone = ?'), reply: async () => [[inviteRow]] },
+    { match: (sql) => sql.includes('FROM nps_invites') && sql.includes('patient_phone IN (?)'), reply: async () => [[inviteRow]] },
     {
       match: (sql) => sql.includes('FROM nps_responses') && sql.includes('ecuro_nps_invite_id = ?'),
       reply: async () => insertedResponseParams ? [[{

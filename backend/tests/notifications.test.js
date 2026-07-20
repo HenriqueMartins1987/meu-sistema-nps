@@ -1115,3 +1115,37 @@ test('decodeUploadedText preserves accents from UTF-8 and Windows-1252 uploads',
     'pasta comprovante clínica.pdf'
   );
 });
+
+test('buildBrazilPhoneMatchCandidates covers both with and without the mobile 9 digit', () => {
+  assert.deepEqual(
+    __testables.buildBrazilPhoneMatchCandidates('557799906043').sort(),
+    ['+557799906043', '+5577999906043'].sort()
+  );
+  assert.deepEqual(
+    __testables.buildBrazilPhoneMatchCandidates('5577999906043').sort(),
+    ['+557799906043', '+5577999906043'].sort()
+  );
+  assert.deepEqual(__testables.buildBrazilPhoneMatchCandidates(''), []);
+});
+
+test('regression: findLatestNpsInviteByPhone matches an invite stored without the legacy mobile 9 digit', async () => {
+  const originalQuery = serverModule.pool.query;
+  let capturedParams = null;
+
+  serverModule.pool.query = async (sql, params = []) => {
+    capturedParams = params;
+    assert.match(sql, /i\.patient_phone IN \(\?\)/);
+    return [[{ id: 24, patient_phone: '+557799906043', status: 'sent' }]];
+  };
+
+  try {
+    // Patient replies from her real number (with the 9); the invite was
+    // stored missing that digit. Before the fix this returned null and the
+    // reply was silently dropped as "invite_not_found".
+    const invite = await __testables.findLatestNpsInviteByPhone('+5577999906043', 'nps');
+    assert.equal(invite.id, 24);
+    assert.deepEqual(capturedParams[0].sort(), ['+557799906043', '+5577999906043'].sort());
+  } finally {
+    serverModule.pool.query = originalQuery;
+  }
+});

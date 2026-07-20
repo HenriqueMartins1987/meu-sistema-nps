@@ -2223,6 +2223,26 @@ function isCompleteBrazilPhone(value) {
   return digits.length === 13 && digits.startsWith('55');
 }
 
+// Brazilian mobile numbers gained a mandatory leading "9" between 2012-2016,
+// but some records (older Ecuro exports, manual entries) still store the
+// 8-digit legacy local format. Invite matching on inbound WhatsApp replies
+// must accept either form or a real reply silently fails to find its invite.
+function buildBrazilPhoneMatchCandidates(value) {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) return [];
+  const withCountry = digits.startsWith('55') ? digits : `55${digits}`;
+  const local = withCountry.slice(2);
+  const candidates = new Set([`+${withCountry}`.slice(0, 14)]);
+
+  if (local.length === 11 && local[2] === '9') {
+    candidates.add(`+55${local.slice(0, 2)}${local.slice(3)}`);
+  } else if (local.length === 10) {
+    candidates.add(`+55${local.slice(0, 2)}9${local.slice(2)}`);
+  }
+
+  return Array.from(candidates);
+}
+
 const sensitiveActivityKeys = new Set([
   'password',
   'senha',
@@ -15264,17 +15284,17 @@ async function saveNpsReferralRecord(responseRow = {}, inviteRow = {}, payload =
 }
 
 async function findLatestNpsInviteByPhone(patientPhone = '', sessionId = '') {
-  const normalizedPhone = normalizeBrazilPhone(patientPhone || '');
-  if (!isCompleteBrazilPhone(normalizedPhone)) return null;
+  const phoneCandidates = buildBrazilPhoneMatchCandidates(patientPhone || '');
+  if (!phoneCandidates.length) return null;
   const [rows] = await pool.query(
     `SELECT i.*, cl.city, cl.state
        FROM nps_invites i
        LEFT JOIN clinics cl ON cl.id = i.clinic_id
-      WHERE i.patient_phone = ?
+      WHERE i.patient_phone IN (?)
         AND i.status IN ('pending', 'queued', 'sent', 'responded')
       ORDER BY CASE WHEN i.session_id = ? THEN 0 ELSE 1 END, i.created_at DESC, i.id DESC
       LIMIT 1`,
-    [normalizedPhone, String(sessionId || '').trim()]
+    [phoneCandidates, String(sessionId || '').trim()]
   );
   return rows[0] || null;
 }
@@ -43510,7 +43530,9 @@ Object.assign(app, {
   startServer,
   __testables: {
     buildAuthenticatedUser,
+    buildBrazilPhoneMatchCandidates,
     buildComplaintNotificationEmail,
+    findLatestNpsInviteByPhone,
     buildComplaintExpiredResponsibleReminderJobKey,
     buildComplaintExpiredResponsibleReminderWindowKey,
     buildComplaintStalledTreatmentReminderJobKey,
