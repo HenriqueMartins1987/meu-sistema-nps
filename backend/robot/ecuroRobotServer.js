@@ -33,6 +33,22 @@ const {
   upsertClinics
 } = require('../services/ecuroSequentialExcelService');
 
+// The service has crashed and been silently restarted by pm2 several times
+// in production with an empty error log, which points at an uncaught
+// exception or rejection escaping without ever reaching Node's default
+// stderr reporting in this process manager setup. Log the full error and
+// stack before letting the process exit so pm2's restart at least leaves a
+// diagnosable trail next time.
+process.on('uncaughtException', (error) => {
+  console.error('[ecuro-robot-service] uncaughtException:', error?.stack || error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[ecuro-robot-service] unhandledRejection:', reason?.stack || reason);
+  process.exit(1);
+});
+
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 
