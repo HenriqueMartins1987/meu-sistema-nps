@@ -70,9 +70,15 @@ class FakePage {
 
   async waitForTimeout() {}
 
+  async screenshot() {}
+
+  isClosed() {
+    return false;
+  }
+
   async goto(url) {
     const baseUrl = this.scenario.baseUrl || 'https://ecuro.com.br';
-    if (url === baseUrl) {
+    if (url.replace(/\/$/, '') === baseUrl.replace(/\/$/, '')) {
       this.currentUrl = this.scenario.initialUrl || `${baseUrl}/login`;
       this.titleValue = this.scenario.initialTitle || '';
       return createResponse(this.scenario.initialStatus || 200);
