@@ -1447,16 +1447,20 @@ function getRequestIp(req) {
 }
 
 function toMysqlDateTime(date) {
+  // Values coming back from the Ecuro robot HTTP API (logs, artifacts) cross
+  // a JSON boundary, so timestamps arrive as ISO strings rather than Date
+  // instances. Coerce here so callers don't have to remember to parse first.
+  const parsed = date instanceof Date ? date : new Date(date);
   const pad = (value) => String(value).padStart(2, '0');
 
   return [
-    date.getFullYear(),
-    pad(date.getMonth() + 1),
-    pad(date.getDate())
+    parsed.getFullYear(),
+    pad(parsed.getMonth() + 1),
+    pad(parsed.getDate())
   ].join('-') + ' ' + [
-    pad(date.getHours()),
-    pad(date.getMinutes()),
-    pad(date.getSeconds())
+    pad(parsed.getHours()),
+    pad(parsed.getMinutes()),
+    pad(parsed.getSeconds())
   ].join(':');
 }
 
@@ -43658,6 +43662,7 @@ Object.assign(app, {
     buildBrazilPhoneMatchCandidates,
     buildComplaintNotificationEmail,
     findLatestNpsInviteByPhone,
+    toMysqlDateTime,
     buildComplaintExpiredResponsibleReminderJobKey,
     buildComplaintExpiredResponsibleReminderWindowKey,
     buildComplaintStalledTreatmentReminderJobKey,

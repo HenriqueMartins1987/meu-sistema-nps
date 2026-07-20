@@ -1116,6 +1116,17 @@ test('decodeUploadedText preserves accents from UTF-8 and Windows-1252 uploads',
   );
 });
 
+test('regression: toMysqlDateTime accepts ISO date strings crossing the Ecuro robot HTTP boundary', () => {
+  // Robot logs/artifacts arrive over JSON (no Date type), so a plain string
+  // timestamp used to crash the whole job with "date.getFullYear is not a
+  // function" before any patient was ever processed.
+  assert.match(__testables.toMysqlDateTime('2026-07-18T22:34:10.123Z'), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  assert.equal(
+    __testables.toMysqlDateTime(new Date(Date.UTC(2026, 6, 18, 22, 34, 10))),
+    __testables.toMysqlDateTime('2026-07-18T22:34:10.000Z')
+  );
+});
+
 test('buildBrazilPhoneMatchCandidates covers both with and without the mobile 9 digit', () => {
   assert.deepEqual(
     __testables.buildBrazilPhoneMatchCandidates('557799906043').sort(),
