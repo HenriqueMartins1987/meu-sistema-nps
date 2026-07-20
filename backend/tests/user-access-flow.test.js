@@ -42,6 +42,69 @@ test.afterEach(() => {
   emailService.sendEmail = originalSendEmail;
 });
 
+test('explicit screen permissions are not expanded by role or named access rules', () => {
+  const expected = ['home', 'complaints_management'];
+
+  assert.deepEqual(serverModule.__testables.parsePermissionsFromUser({
+    role: 'manager',
+    permissions: JSON.stringify(expected)
+  }), expected);
+
+  assert.deepEqual(serverModule.__testables.parsePermissionsFromUser({
+    role: 'crc_operator',
+    name: 'Igor Silva Cruz',
+    permissions: expected
+  }), expected);
+});
+
+test('master admin can update only permissions without revalidating legacy profile fields', async () => {
+  let updateParams = null;
+
+  pool.query = buildQueryStub([
+    {
+      match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
+      reply: async () => [[{ must_change_password: 0, token_version: 1, active: 1, role: 'master_admin', permissions: '["admin_panel"]', action_permissions: '[]' }]]
+    },
+    {
+      match: (sql) => sql.includes('SELECT * FROM users WHERE id = ? AND deleted_at IS NULL'),
+      reply: async () => [[{
+        id: 346,
+        name: 'Operador Legado',
+        role: 'crc_operator',
+        cpf: null,
+        phone: '+5562999999999',
+        whatsapp: '+5562999999999',
+        permissions: '["dental_card"]',
+        active: 1
+      }]]
+    },
+    {
+      match: (sql) => sql.includes('SET permissions = ?') && sql.includes('token_version = COALESCE'),
+      reply: async (_sql, params) => {
+        updateParams = params;
+        return [{ affectedRows: 1 }];
+      }
+    }
+  ]);
+
+  const response = await request(app)
+    .patch('/admin/users/346')
+    .set('Authorization', `Bearer ${signToken({
+      id: 1,
+      email: 'henrique.martins@grcconsultoria.net.br',
+      role: 'master_admin',
+      name: 'Administrador Master',
+      permissions: ['admin_panel'],
+      clinicIds: [],
+      mustChangePassword: false
+    })}`)
+    .send({ permissions: ['home', 'complaints_management'] });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body.permissions, ['home', 'complaints_management']);
+  assert.deepEqual(updateParams, ['["home","complaints_management"]', 346]);
+});
+
 test('weekly demand reminder schedule runs once on Monday after configured hour', async () => {
   const mondayAtEightSaoPaulo = new Date('2026-05-04T11:00:00.000Z');
   const mondayBeforeEightSaoPaulo = new Date('2026-05-04T10:59:00.000Z');
