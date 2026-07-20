@@ -4,6 +4,8 @@ import api from './api';
 import {
   complaintAttendanceFollowUpLabel,
   complaintAttendanceFollowUpStatus,
+  complaintResolvedPendingReviewLabel,
+  complaintResolvedPendingReviewStatus,
   complaintTypes,
   hasPermission,
   isMasterAdmin,
@@ -238,6 +240,17 @@ function buildEscalationInfo(item) {
     };
   }
 
+  if (status === complaintResolvedPendingReviewStatus) {
+    return {
+      state: 'resolved-pending',
+      label: complaintResolvedPendingReviewLabel,
+      owner: 'Administradores',
+      detail: 'Aguardando parecer final para finalizar',
+      dueAt: item.updated_at || item.created_at,
+      role: 'admin'
+    };
+  }
+
   if (status === complaintAttendanceFollowUpStatus && Number(item.appointment_sla_active || 0)) {
     const appointmentDueAt = item.appointment_due_at || item.due_at;
     const appointmentDeadline = buildDeadlineInfo({ ...item, due_at: appointmentDueAt });
@@ -339,6 +352,14 @@ function buildOperationalStage(item) {
     };
   }
 
+  if (item.status === complaintResolvedPendingReviewStatus) {
+    return {
+      owner: 'Administração',
+      label: 'Demanda resolvida; aguardando parecer final dos administradores',
+      since: item.updated_at || item.created_at
+    };
+  }
+
   if (item.status === complaintAttendanceFollowUpStatus) {
     return {
       owner: item.assigned_responsible_name || item.forwarded_to_label || 'Operação da unidade',
@@ -432,11 +453,12 @@ function ComplaintListItem({ item, onOpen }) {
   const currentLevel = String(item.current_escalation_level || '').trim().toLowerCase();
   const shouldShowEscalationChip = escalation.role !== 'sac_operator' || currentLevel === 'sac_audit';
   const npsOrigin = isNpsOriginComplaint(item);
+  const isResolvedPendingReview = item.status === complaintResolvedPendingReviewStatus;
 
   return (
     <button
       type="button"
-      className={`complaint-list-item deadline-${escalation.state}`}
+      className={`complaint-list-item deadline-${escalation.state}${isResolvedPendingReview ? ' resolved-pending-review' : ''}`}
       onClick={onOpen}
     >
       <div className="complaint-list-main">
@@ -445,6 +467,9 @@ function ComplaintListItem({ item, onOpen }) {
             {statusLabels[item.status] || 'Aberta'}
           </span>
           <strong>{formatProtocol(item)}</strong>
+          {isResolvedPendingReview && (
+            <span className="resolution-review-chip">Resolvida · aguardando parecer final</span>
+          )}
           {npsOrigin && <span className="source-chip nps-origin">Origem NPS</span>}
         </div>
         <div>
@@ -528,6 +553,8 @@ function DashboardManagement() {
   const currentUser = readUser();
   const currentUserRole = normalizeRoleValue(currentUser?.role);
   const canViewDeleted = isMasterAdmin(currentUser);
+  const canViewResolvedPendingReview = isMasterAdmin(currentUser)
+    || ['admin', 'master_admin', 'sac_operator'].includes(currentUserRole);
   const canFilterByLeadership = isMasterAdmin(currentUser)
     || ['admin', 'supervisor_crc', 'manager'].includes(currentUserRole);
   const canFilterCoordinatorReturn = isMasterAdmin(currentUser)
@@ -644,8 +671,15 @@ function DashboardManagement() {
   }, [filters, viewMode, pageSize]);
 
   const operationalComplaints = useMemo(() => complaints.filter((item) => !item.deleted_at), [complaints]);
+  const resolvedPendingReviewComplaints = useMemo(() => (
+    canViewResolvedPendingReview
+      ? operationalComplaints.filter((item) => item.status === complaintResolvedPendingReviewStatus)
+      : []
+  ), [canViewResolvedPendingReview, operationalComplaints]);
   const activeComplaints = useMemo(() => (
-    operationalComplaints.filter((item) => !isClosedDashboardStatus(item.status))
+    operationalComplaints.filter((item) => (
+      !isClosedDashboardStatus(item.status) && item.status !== complaintResolvedPendingReviewStatus
+    ))
   ), [operationalComplaints]);
   const finishedComplaints = useMemo(() => (
     operationalComplaints.filter((item) => isClosedDashboardStatus(item.status))
@@ -783,6 +817,7 @@ function DashboardManagement() {
       detalhe_tipo: item.complaint_type_other || '',
       servico: item.service_type || 'Não informado',
       detalhe_servico: item.service_type_other || '',
+      canal_entrada: String(item.channel || '').trim() || 'Não informado',
       origem: item.created_origin || 'Interno',
       origem_nps: isNpsOriginComplaint(item) ? (item.source_reference_protocol || item.source_reference_id || 'Sim') : '',
       cadastrado_por: getComplaintCreatorName(item),
@@ -815,6 +850,7 @@ function DashboardManagement() {
       coordenador_responsavel: '',
       gerente_responsavel: '',
       tipo: '',
+      canal_entrada: '',
       origem: '',
       origem_nps: '',
       cadastrado_por: '',
@@ -858,6 +894,7 @@ function DashboardManagement() {
       'Data de cadastro',
       'Paciente',
       'Clínica',
+      'Canal de entrada',
       'Coordenador responsável',
       'Gerente responsável',
       'Origem',
@@ -875,6 +912,7 @@ function DashboardManagement() {
       row.data_cadastro,
       row.paciente,
       row.clinica,
+      row.canal_entrada,
       row.coordenador_responsavel,
       row.gerente_responsavel,
       row.origem,
@@ -1165,6 +1203,32 @@ function DashboardManagement() {
         </button>
       </section>
 
+      {canViewResolvedPendingReview && (
+        <section className="management-panel resolution-review-box" aria-label="Demandas resolvidas aguardando parecer final">
+          <div className="panel-heading resolution-review-heading">
+            <div>
+              <p className="eyebrow">Controle de resolução</p>
+              <h2>Resolvidas · aguardando parecer final ({resolvedPendingReviewComplaints.length})</h2>
+              <p>Demandas classificadas como resolvidas pelo SAC ou Administrador Master, ainda sem o fechamento administrativo definitivo.</p>
+            </div>
+          </div>
+
+          {resolvedPendingReviewComplaints.length === 0 ? (
+            <p className="empty-state">Nenhuma demanda está aguardando parecer final.</p>
+          ) : (
+            <div className="complaint-list management-list resolution-review-list">
+              {resolvedPendingReviewComplaints.map((item) => (
+                <ComplaintListItem
+                  item={item}
+                  key={item.id}
+                  onOpen={() => navigate(`/gestao/${item.id}`)}
+                />
+              ))}
+            </div>
+          )}
+        </section>
+      )}
+
       <section className="management-panel">
         <div className="panel-heading">
           <div>
@@ -1238,7 +1302,7 @@ function DashboardManagement() {
               onChange={(event) => setFilters({ ...filters, status: event.target.value })}
             >
               <option value="">Todos os status</option>
-              {statusOptions.map((status) => (
+              {statusOptions.filter((status) => status.value !== complaintResolvedPendingReviewStatus).map((status) => (
                 <option key={status.value} value={status.value}>{status.label}</option>
               ))}
             </select>

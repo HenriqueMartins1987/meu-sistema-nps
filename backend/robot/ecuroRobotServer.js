@@ -213,20 +213,64 @@ app.post('/ecuro/excel/dry-run-sequential-clinics', async (req, res) => {
   }
 });
 
-app.post('/ecuro/excel/run-sequential-clinics', async (req, res) => {
-  try {
-    const job = await runSequentialExcelClinicsJob({
-      ...(req.body || {}),
-      source: req.body?.source || 'ecuro_excel_sequential_clinics',
-      jobType: 'ecuro_daily_nps_collection_job',
-      dateMode: req.body?.dateMode || 'today',
-      dryRun: true
-    }, getEcuroRobotConfig());
-    return res.status(job.status === 'manual_action_required' ? 409 : 200).json({ success: true, job, warning: 'Envio real bloqueado: dryRun permanece ativo no robô.' });
-  } catch (error) {
-    return res.status(error.statusCode || 500).json({ success: false, error: error.message || 'Erro ao executar sequencial por clinica no Ecuro.' });
+app.post(
+  '/ecuro/excel/run-sequential-clinics',
+  async (req, res) => {
+    try {
+      const dryRun =
+        req.body?.dryRun === undefined
+          ? String(
+              process.env.ECURO_ROBOT_DRY_RUN
+              || 'true'
+            ).toLowerCase() !== 'false'
+          : String(
+              req.body.dryRun
+            ).toLowerCase() !== 'false';
+
+      const job =
+        await runSequentialExcelClinicsJob(
+          {
+            ...(req.body || {}),
+            source:
+              req.body?.source
+              || 'ecuro_excel_sequential_clinics',
+            jobType:
+              'ecuro_daily_nps_collection_job',
+            dateMode:
+              req.body?.dateMode
+              || process.env.ECURO_NPS_DATE_MODE
+              || 'today',
+            dryRun
+          },
+          getEcuroRobotConfig()
+        );
+
+      return res
+        .status(
+          job.status
+            === 'manual_action_required'
+            ? 409
+            : 200
+        )
+        .json({
+          success: true,
+          job,
+          warning: dryRun
+            ? 'Execução em dry-run.'
+            : 'Execução em produção controlada.'
+        });
+    } catch (error) {
+      return res
+        .status(error.statusCode || 500)
+        .json({
+          success: false,
+          error:
+            error.message
+            || 'Erro ao executar sequencial por clínica no Ecuro.'
+        });
+    }
   }
-});
+);
 
 app.post('/ecuro/excel/dry-run-all-clinics', async (req, res) => {
   try {

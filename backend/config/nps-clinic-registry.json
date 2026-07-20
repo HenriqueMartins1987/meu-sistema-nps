@@ -1,0 +1,365 @@
+{
+  "version": "2026-07-unidades-v1",
+  "rule": "Usar clinicCode como chave oficial. Sempre exibir displayName nas mensagens NPS.",
+  "displayPrefix": "Sorria",
+  "clinics": [
+    {
+      "code": "GO002",
+      "baseName": "Águas Lindas",
+      "city": "Águas Lindas de Goiás",
+      "uf": "GO",
+      "displayName": "Sorria Águas Lindas · Águas Lindas de Goiás / GO"
+    },
+    {
+      "code": "SGA01",
+      "baseName": "Anápolis 1",
+      "city": "Anápolis",
+      "uf": "GO",
+      "displayName": "Sorria Anápolis 1 · Anápolis / GO"
+    },
+    {
+      "code": "SGA02",
+      "baseName": "Anápolis 2",
+      "city": "Anápolis",
+      "uf": "GO",
+      "displayName": "Sorria Anápolis 2 · Anápolis / GO"
+    },
+    {
+      "code": "GO030",
+      "baseName": "Barreiras",
+      "city": "Barreiras",
+      "uf": "BA",
+      "displayName": "Sorria Barreiras · Barreiras / BA"
+    },
+    {
+      "code": "PB002",
+      "baseName": "Campina Grande",
+      "city": "Campina Grande",
+      "uf": "PB",
+      "displayName": "Sorria Campina Grande · Campina Grande / PB"
+    },
+    {
+      "code": "GO022",
+      "baseName": "Canaã",
+      "city": "Goiânia",
+      "uf": "GO",
+      "displayName": "Sorria Canaã · Goiânia / GO"
+    },
+    {
+      "code": "GO025",
+      "baseName": "Castelo Branco",
+      "city": "Goiânia",
+      "uf": "GO",
+      "displayName": "Sorria Castelo Branco · Goiânia / GO"
+    },
+    {
+      "code": "GO028",
+      "baseName": "Catalão",
+      "city": "Catalão",
+      "uf": "GO",
+      "displayName": "Sorria Catalão · Catalão / GO"
+    },
+    {
+      "code": "GO024",
+      "baseName": "Ceilândia",
+      "city": "Brasília",
+      "uf": "DF",
+      "displayName": "Sorria Ceilândia · Brasília / DF"
+    },
+    {
+      "code": "GO010",
+      "baseName": "Formosa",
+      "city": "Formosa",
+      "uf": "GO",
+      "displayName": "Sorria Formosa · Formosa / GO"
+    },
+    {
+      "code": "GO009",
+      "baseName": "Garavelo",
+      "city": "Aparecida de Goiânia",
+      "uf": "GO",
+      "displayName": "Sorria Garavelo · Aparecida de Goiânia / GO"
+    },
+    {
+      "code": "PE002",
+      "baseName": "Goiana",
+      "city": "Goiana",
+      "uf": "PE",
+      "displayName": "Sorria Goiana · Goiana / PE"
+    },
+    {
+      "code": "SGG03",
+      "baseName": "Goiânia 3",
+      "city": "Goiânia",
+      "uf": "GO",
+      "displayName": "Sorria Goiânia 3 · Goiânia / GO"
+    },
+    {
+      "code": "GO006",
+      "baseName": "Goiânia I",
+      "city": "Goiânia",
+      "uf": "GO",
+      "displayName": "Sorria Goiânia I · Goiânia / GO"
+    },
+    {
+      "code": "GO007",
+      "baseName": "Goiânia II",
+      "city": "Goiânia",
+      "uf": "GO",
+      "displayName": "Sorria Goiânia II · Goiânia / GO"
+    },
+    {
+      "code": "GO018",
+      "baseName": "Goianira",
+      "city": "Goianira",
+      "uf": "GO",
+      "displayName": "Sorria Goianira · Goianira / GO"
+    },
+    {
+      "code": "GO013",
+      "baseName": "Gold Bueno",
+      "city": "Goiânia",
+      "uf": "GO",
+      "displayName": "Sorria Gold Bueno · Goiânia / GO"
+    },
+    {
+      "code": "GO016",
+      "baseName": "Independência",
+      "city": "Goiânia",
+      "uf": "GO",
+      "displayName": "Sorria Independência · Goiânia / GO"
+    },
+    {
+      "code": "SGI01",
+      "baseName": "Inhumas",
+      "city": "Inhumas",
+      "uf": "GO",
+      "displayName": "Sorria Inhumas · Inhumas / GO"
+    },
+    {
+      "code": "GO014",
+      "baseName": "Itumbiara",
+      "city": "Itumbiara",
+      "uf": "GO",
+      "displayName": "Sorria Itumbiara · Itumbiara / GO"
+    },
+    {
+      "code": "MT002",
+      "baseName": "Jaciara",
+      "city": "Jaciara",
+      "uf": "MT",
+      "displayName": "Sorria Jaciara · Jaciara / MT"
+    },
+    {
+      "code": "GO020",
+      "baseName": "Jardim Ingá",
+      "city": "Luziânia",
+      "uf": "GO",
+      "displayName": "Sorria Jardim Ingá · Luziânia / GO"
+    },
+    {
+      "code": "GO011",
+      "baseName": "Jataí",
+      "city": "Jataí",
+      "uf": "GO",
+      "displayName": "Sorria Jataí · Jataí / GO"
+    },
+    {
+      "code": "PB001",
+      "baseName": "João Pessoa",
+      "city": "João Pessoa",
+      "uf": "PB",
+      "displayName": "Sorria João Pessoa · João Pessoa / PB"
+    },
+    {
+      "code": "SGL01",
+      "baseName": "Luziânia",
+      "city": "Luziânia",
+      "uf": "GO",
+      "displayName": "Sorria Luziânia · Luziânia / GO"
+    },
+    {
+      "code": "GO003",
+      "baseName": "Madre Germano",
+      "city": "Goiânia",
+      "uf": "GO",
+      "displayName": "Sorria Madre Germano · Goiânia / GO"
+    },
+    {
+      "code": "GO015",
+      "baseName": "Mangalô",
+      "city": "Goiânia",
+      "uf": "GO",
+      "displayName": "Sorria Mangalô · Goiânia / GO"
+    },
+    {
+      "code": "GO021",
+      "baseName": "Morrinhos",
+      "city": "Morrinhos",
+      "uf": "GO",
+      "displayName": "Sorria Morrinhos · Morrinhos / GO"
+    },
+    {
+      "code": "GO012",
+      "baseName": "Novo Gama",
+      "city": "Novo Gama",
+      "uf": "GO",
+      "displayName": "Sorria Novo Gama · Novo Gama / GO"
+    },
+    {
+      "code": "DF003",
+      "baseName": "Núcleo",
+      "city": "Brasília",
+      "uf": "DF",
+      "displayName": "Sorria Núcleo · Brasília / DF"
+    },
+    {
+      "code": "GO029",
+      "baseName": "Paracatu",
+      "city": "Paracatu",
+      "uf": "MG",
+      "displayName": "Sorria Paracatu · Paracatu / MG"
+    },
+    {
+      "code": "DF001",
+      "baseName": "Paranoá",
+      "city": "Brasília",
+      "uf": "DF",
+      "displayName": "Sorria Paranoá · Brasília / DF"
+    },
+    {
+      "code": "GO023",
+      "baseName": "Parque Anhanguera",
+      "city": "Goiânia",
+      "uf": "GO",
+      "displayName": "Sorria Parque Anhanguera · Goiânia / GO"
+    },
+    {
+      "code": "GO005",
+      "baseName": "Planaltina",
+      "city": "Planaltina",
+      "uf": "GO",
+      "displayName": "Sorria Planaltina · Planaltina / GO"
+    },
+    {
+      "code": "GO026",
+      "baseName": "Plano Piloto",
+      "city": "Brasília",
+      "uf": "DF",
+      "displayName": "Sorria Plano Piloto · Brasília / DF"
+    },
+    {
+      "code": "RO001",
+      "baseName": "Porto Velho",
+      "city": "Porto Velho",
+      "uf": "RO",
+      "displayName": "Sorria Porto Velho · Porto Velho / RO"
+    },
+    {
+      "code": "GO017",
+      "baseName": "Quirinópolis",
+      "city": "Quirinópolis",
+      "uf": "GO",
+      "displayName": "Sorria Quirinópolis · Quirinópolis / GO"
+    },
+    {
+      "code": "SGRV1",
+      "baseName": "Rio Verde",
+      "city": "Rio Verde",
+      "uf": "GO",
+      "displayName": "Sorria Rio Verde · Rio Verde / GO"
+    },
+    {
+      "code": "MT001",
+      "baseName": "Rondonópolis",
+      "city": "Rondonópolis",
+      "uf": "MT",
+      "displayName": "Sorria Rondonópolis · Rondonópolis / MT"
+    },
+    {
+      "code": "GO004",
+      "baseName": "Santa Rita",
+      "city": "Santa Rita",
+      "uf": "MA",
+      "displayName": "Sorria Santa Rita · Santa Rita / MA"
+    },
+    {
+      "code": "PE004",
+      "baseName": "Santo Antão",
+      "city": "Vitória de Santo Antão",
+      "uf": "PE",
+      "displayName": "Sorria Santo Antão · Vitória de Santo Antão / PE"
+    },
+    {
+      "code": "GO001",
+      "baseName": "Santo Antônio",
+      "city": "Santo Antônio de Goiás",
+      "uf": "GO",
+      "displayName": "Sorria Santo Antônio · Santo Antônio de Goiás / GO"
+    },
+    {
+      "code": "GO031",
+      "baseName": "Santo Hilário",
+      "city": "Goiânia",
+      "uf": "GO",
+      "displayName": "Sorria Santo Hilário · Goiânia / GO"
+    },
+    {
+      "code": "GSC01",
+      "baseName": "Senador Canedo",
+      "city": "Senador Canedo",
+      "uf": "GO",
+      "displayName": "Sorria Senador Canedo · Senador Canedo / GO"
+    },
+    {
+      "code": "DF002",
+      "baseName": "Taguatinga",
+      "city": "Brasília",
+      "uf": "DF",
+      "displayName": "Sorria Taguatinga · Brasília / DF"
+    },
+    {
+      "code": "SJT01",
+      "baseName": "Trindade Centro",
+      "city": "Trindade",
+      "uf": "GO",
+      "displayName": "Sorria Trindade Centro · Trindade / GO"
+    },
+    {
+      "code": "SGM01",
+      "baseName": "Trindade Maysa",
+      "city": "Trindade",
+      "uf": "GO",
+      "displayName": "Sorria Trindade Maysa · Trindade / GO"
+    },
+    {
+      "code": "GO019",
+      "baseName": "Vila Concórdia",
+      "city": "Goiânia",
+      "uf": "GO",
+      "displayName": "Sorria Vila Concórdia · Goiânia / GO"
+    },
+    {
+      "code": "GO027",
+      "baseName": "Vila Nova",
+      "city": "Goiânia",
+      "uf": "GO",
+      "displayName": "Sorria Vila Nova · Goiânia / GO"
+    },
+    {
+      "code": "GO008",
+      "baseName": "Villa Brasília",
+      "city": "Aparecida de Goiânia",
+      "uf": "GO",
+      "displayName": "Sorria Villa Brasília · Aparecida de Goiânia / GO"
+    }
+  ],
+  "pendingCode": [
+    {
+      "baseName": "Pernambuco",
+      "city": "Recife",
+      "uf": "PE",
+      "reason": "Arquivo UNIDADES.docx não informou código após o travessão. Não liberar envio por esta unidade até confirmar o código."
+    }
+  ]
+}

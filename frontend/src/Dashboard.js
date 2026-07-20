@@ -118,6 +118,10 @@ function groupCount(items, key) {
     .sort((a, b) => b.total - a.total || String(a.label).localeCompare(String(b.label), 'pt-BR'));
 }
 
+function getChannelLabel(value) {
+  return String(value || '').trim() || 'Não informado';
+}
+
 function buildBarData(rows, color = '#0b6f5f') {
   return {
     labels: rows.map((row) => row.label),
@@ -639,7 +643,7 @@ function Dashboard() {
       && (!filters.status || item.status === filters.status)
       && (!filters.type || item.complaint_type === filters.type)
       && (!filters.priority || item.priority === filters.priority)
-      && (!filters.channel || item.channel === filters.channel)
+      && (!filters.channel || getChannelLabel(item.channel) === filters.channel)
       && (!filters.sla || buildDeadlineInfo(item) === filters.sla)
       && (!filters.year || createdYear === filters.year)
       && (!filters.month || createdMonth === filters.month)
@@ -723,7 +727,12 @@ function Dashboard() {
   const byState = useMemo(() => groupCount(filteredRows, (item) => item.state).slice(0, 10), [filteredRows]);
   const byRegion = useMemo(() => groupCount(filteredRows, (item) => item.region), [filteredRows]);
   const byPriority = useMemo(() => groupCount(filteredRows, (item) => priorityLabel(item.priority)), [filteredRows]);
-  const byChannel = useMemo(() => groupCount(filteredRows, (item) => item.channel).slice(0, 10), [filteredRows]);
+  const byChannel = useMemo(() => groupCount(filteredRows, (item) => getChannelLabel(item.channel)).slice(0, 10), [filteredRows]);
+  const channelRanking = useMemo(() => byChannel.map((item, index) => ({
+    ...item,
+    position: index + 1,
+    share: Math.round((item.total / Math.max(filteredRows.length, 1)) * 100)
+  })), [byChannel, filteredRows.length]);
   const byCoordinatorAll = useMemo(() => groupCount(filteredRows, getPartnerLabel), [filteredRows]);
   const byCoordinator = useMemo(() => byCoordinatorAll.slice(0, 10), [byCoordinatorAll]);
   const bySla = useMemo(() => groupCount(filteredRows, (item) => slaLabel(buildDeadlineInfo(item))), [filteredRows]);
@@ -748,6 +757,7 @@ function Dashboard() {
       localizacao: `${item.city || 'Cidade não informada'} / ${item.state || 'UF'} - ${item.region || 'Região não informada'}`,
       classificacao: item.complaint_type || 'Não informado',
       detalhe_classificacao: item.complaint_type_other || '',
+      canal_entrada: getChannelLabel(item.channel),
       prioridade_origem: `${priorityLabel(item.priority)} - ${isNpsOriginComplaint(item) ? 'Origem NPS' : (item.created_origin || 'Interno')}`,
       status: statusLabels[item.status] || item.status || 'Aberta',
       prazo: deadline === 'overdue' ? 'Vencida' : deadline === 'warning' ? 'Perto de vencer' : deadline === 'closed' ? 'Fechada' : 'No prazo',
@@ -2035,10 +2045,39 @@ function Dashboard() {
               </div>
             </article>
 
-            <article className="chart-card">
-              <h2>Canal de entrada</h2>
-              <div className="chart-box">
-                <Bar data={buildBarData(byChannel, '#5d6d7e')} options={chartOptions} />
+            <article className="chart-card dashboard-channel-ranking-card">
+              <div className="dashboard-section-head">
+                <div>
+                  <p className="eyebrow">Ranking de origem</p>
+                  <h2>Canais de entrada</h2>
+                  <p className="base-subtitle">Volume e participação de cada canal no cenário filtrado.</p>
+                </div>
+                <span className="dashboard-channel-ranking-total">{filteredRows.length} protocolos</span>
+              </div>
+              <div className="dashboard-channel-ranking-list">
+                {channelRanking.length ? channelRanking.map((item) => (
+                  <button
+                    className={`dashboard-channel-ranking-item ${filters.channel === item.label ? 'active' : ''}`}
+                    key={item.label}
+                    type="button"
+                    onClick={() => toggleFilter('channel', item.label)}
+                    aria-pressed={filters.channel === item.label}
+                  >
+                    <span className="dashboard-channel-ranking-position">{String(item.position).padStart(2, '0')}</span>
+                    <span className="dashboard-channel-ranking-copy">
+                      <strong>{item.label}</strong>
+                      <span className="dashboard-channel-ranking-track" aria-hidden="true">
+                        <span style={{ width: `${item.share}%` }} />
+                      </span>
+                    </span>
+                    <span className="dashboard-channel-ranking-metric">
+                      <strong>{item.total}</strong>
+                      <small>{item.share}%</small>
+                    </span>
+                  </button>
+                )) : (
+                  <p className="empty-state">Nenhum canal encontrado no cenário selecionado.</p>
+                )}
               </div>
             </article>
             </div>

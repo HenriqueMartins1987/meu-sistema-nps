@@ -46,6 +46,8 @@ export const channels = [
 
 export const complaintAttendanceFollowUpStatus = 'aguardando_comparecimento_conclusao_atendimento';
 export const complaintAttendanceFollowUpLabel = 'Tratativa Realizada - Aguardando Comparecimento/Conclusão do Atendimento';
+export const complaintResolvedPendingReviewStatus = 'resolvido_aguardando_parecer_final';
+export const complaintResolvedPendingReviewLabel = 'Resolvido - aguardando parecer final da Administração';
 
 export const statusOptions = [
   { value: 'aberta', label: 'Aberta' },
@@ -61,6 +63,7 @@ export const statusOptions = [
   { value: 'devolvida_complementacao', label: 'Devolvida para Complementação' },
   { value: complaintAttendanceFollowUpStatus, label: complaintAttendanceFollowUpLabel },
   { value: 'em_andamento', label: 'Em andamento' },
+  { value: complaintResolvedPendingReviewStatus, label: complaintResolvedPendingReviewLabel },
   { value: 'resolvida', label: 'Resolvida' },
   { value: 'encerrada', label: 'Encerrada' },
   { value: 'reaberta', label: 'Reaberta' },

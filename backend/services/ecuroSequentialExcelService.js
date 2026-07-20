@@ -12,7 +12,7 @@ const {
   summarizeCompletionResults
 } = require('./ecuroRobotService');
 const { normalizePhone, normalizeText } = require('./patientEnrichmentService');
-const { createAuthenticatedEcuroSession } = require('./ecuroBrowserSession');
+const { createAuthenticatedEcuroSession, ensureEcuroApplicationLogin } = require('./ecuroBrowserSession');
 
 function ensureDir(dirPath) {
   if (!dirPath) return;
@@ -225,11 +225,57 @@ async function waitForPageSettled(page, ms = 1200) {
 }
 
 async function navigatePatients(page, config) {
-  const destination = String(config.selectors.navigation.completedPagePath || `${config.baseUrl}/dashboard/patients`).trim();
-  const targetUrl = destination.startsWith('http') ? destination : `${config.baseUrl}${destination.startsWith('/') ? '' : '/'}${destination}`;
-  await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: config.timeoutMs });
+  const currentUrl =
+    typeof page.url === 'function'
+      ? page.url()
+      : '';
+
+  // O fluxo de autenticação já termina nesta página.
+  // Evita um novo carregamento completo que pode invalidar a sessão SPA.
+  if (/\/dashboard\/patients(?:[/?#]|$)/i.test(currentUrl)) {
+    await waitForPageSettled(page, 1500);
+    return {
+      reusedCurrentPage: true,
+      currentUrl
+    };
+  }
+
+  const destination = String(
+    config.selectors.navigation.completedPagePath
+    || `${config.baseUrl}/dashboard/patients`
+  ).trim();
+
+  const targetUrl = destination.startsWith('http')
+    ? destination
+    : `${config.baseUrl}${destination.startsWith('/') ? '' : '/'}${destination}`;
+
+  await page.goto(targetUrl, {
+    waitUntil: 'domcontentloaded',
+    timeout: config.timeoutMs
+  });
+
   await waitForPageSettled(page, 2500);
   await page.waitForTimeout(1500);
+
+  const finalUrl =
+    typeof page.url === 'function'
+      ? page.url()
+      : '';
+
+  if (/\/login(?:[/?#]|$)/i.test(finalUrl)) {
+    const error = new Error(
+      'Ecuro redirecionou para /login durante a navegação para pacientes.'
+    );
+
+    error.code = 'ecuro_session_invalidated_during_navigation';
+
+    throw error;
+  }
+
+  return {
+    reusedCurrentPage: false,
+    currentUrl: finalUrl
+  };
 }
 
 async function getCurrentClinicFromPage(page, payloadClinic = {}) {
@@ -256,86 +302,968 @@ async function getCurrentClinicFromPage(page, payloadClinic = {}) {
   return parsed || normalizeClinicRecord(payloadClinic, 0);
 }
 
+
+async function ensureEcuroDashboardReady(
+  page,
+  config = {},
+  job = null,
+  step = 'ensure_dashboard_ready'
+) {
+  const baseUrl =
+    String(
+      config.baseUrl
+      || process.env.EXTERNAL_PORTAL_BASE_URL
+      || 'https://ecuro.com.br'
+    )
+      .trim()
+      .replace(/\/+$/, '');
+
+  const timeout = Math.max(
+    10000,
+    Number(
+      config.timeoutMs
+      || process.env.ROBOT_TIMEOUT_MS
+      || 60000
+    ) || 60000
+  );
+
+  const writeLog = (
+    level,
+    action,
+    message
+  ) => {
+    if (
+      job
+      && typeof addLog === 'function'
+    ) {
+      addLog(job, {
+        level,
+        step,
+        action,
+        message,
+        url:
+          typeof page.url === 'function'
+            ? page.url()
+            : ''
+      });
+    }
+  };
+
+  const currentUrl =
+    typeof page.url === 'function'
+      ? page.url()
+      : '';
+
+  if (/\/login(?:[/?#]|$)/i.test(currentUrl)) {
+    writeLog(
+      'warning',
+      'relogin',
+      'Ecuro voltou para login. Reautenticando antes de continuar.'
+    );
+
+    await ensureEcuroApplicationLogin(
+      page,
+      {
+        ...config,
+        baseUrl
+      }
+    );
+  }
+
+  if (
+    !/\/dashboard\/patients(?:[/?#]|$)/i.test(
+      page.url()
+    )
+  ) {
+    writeLog(
+      'info',
+      'navigate_patients',
+      'Navegando para a página de pacientes.'
+    );
+
+    await page.goto(
+      `${baseUrl}/dashboard/patients`,
+      {
+        waitUntil: 'domcontentloaded',
+        timeout
+      }
+    );
+  }
+
+  await page.waitForFunction(
+    () => {
+      const body =
+        String(
+          document.body?.innerText || ''
+        )
+          .replace(/\s+/g, ' ')
+          .trim();
+
+      const onPatients =
+        /\/dashboard\/patients(?:[/?#]|$)/i
+          .test(window.location.href);
+
+      const tableReady =
+        /PRIMEIRO NOME/i.test(body)
+        && /NÚMERO DE TELEFONE|NUMERO DE TELEFONE/i
+          .test(body);
+
+      const stillLoading =
+        /Loading…?|Carregando/i.test(body)
+        && body.length < 500;
+
+      return (
+        onPatients
+        && tableReady
+        && !stillLoading
+      );
+    },
+    null,
+    {
+      timeout
+    }
+  ).catch(() => null);
+
+  const finalUrl =
+    typeof page.url === 'function'
+      ? page.url()
+      : '';
+
+  if (/\/login(?:[/?#]|$)/i.test(finalUrl)) {
+    const error = new Error(
+      'Ecuro retornou para /login ao preparar o dashboard.'
+    );
+
+    error.code =
+      'ecuro_dashboard_session_lost';
+
+    throw error;
+  }
+
+  if (
+    !/\/dashboard\/patients(?:[/?#]|$)/i.test(
+      finalUrl
+    )
+  ) {
+    const error = new Error(
+      `Ecuro não permaneceu na página de pacientes: ${finalUrl}`
+    );
+
+    error.code =
+      'ecuro_patients_page_not_ready';
+
+    throw error;
+  }
+
+  writeLog(
+    'info',
+    'dashboard_ready',
+    'Página de pacientes validada e pronta.'
+  );
+
+  return {
+    ready: true,
+    currentUrl: finalUrl
+  };
+}
+
+
+async function waitForClinicUiReady(page, config = {}) {
+  const timeout = Math.max(
+    10000,
+    Number(
+      process.env.ECURO_CLINIC_CONTEXT_WAIT_MS
+      || config.clinicContextWaitMs
+      || 45000
+    ) || 45000
+  );
+
+  if (/\/login(?:[/?#]|$)/i.test(page.url())) {
+    const error = new Error(
+      'Ecuro voltou para /login antes de carregar o contexto da clínica.'
+    );
+
+    error.code = 'ecuro_login_before_clinic_context';
+    throw error;
+  }
+
+  await page.waitForFunction(
+    () => {
+      const body = String(
+        document.body?.innerText || ''
+      ).replace(/\s+/g, ' ').trim();
+
+      const onPatients =
+        /\/dashboard\/patients(?:[/?#]|$)/i.test(
+          window.location.href
+        );
+
+      const pageHasApplication =
+        /ECURO/i.test(body);
+
+      const onlyLoading =
+        /Loading…?|Carregando/i.test(body)
+        && body.length < 300;
+
+      return onPatients
+        && pageHasApplication
+        && !onlyLoading;
+    },
+    null,
+    {
+      timeout
+    }
+  ).catch(() => null);
+
+  await page.waitForTimeout(1500);
+
+  if (/\/login(?:[/?#]|$)/i.test(page.url())) {
+    const error = new Error(
+      'Ecuro perdeu a sessão enquanto aguardava o contexto da clínica.'
+    );
+
+    error.code = 'ecuro_login_during_clinic_context';
+    throw error;
+  }
+}
+
+async function getTopPageText(page) {
+  return page.evaluate(() => {
+    const textOf = (value) =>
+      String(value || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const visible = (element) => {
+      if (!element) return false;
+
+      const style =
+        window.getComputedStyle(element);
+
+      const rect =
+        element.getBoundingClientRect();
+
+      return style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && rect.width > 0
+        && rect.height > 0
+        && rect.top >= 0
+        && rect.top < 280;
+    };
+
+    return Array
+      .from(
+        document.querySelectorAll(
+          'header *, .v-app-bar *, .v-toolbar *, main h1, main h2'
+        )
+      )
+      .filter(visible)
+      .map((element) =>
+        textOf(
+          element.innerText
+          || element.textContent
+        )
+      )
+      .filter(Boolean)
+      .join(' | ');
+  }).catch(() => '');
+}
+
 async function clickClinicSelector(page) {
   return page.evaluate(() => {
-    const textOf = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-    const isVisible = (element) => {
+    const textOf = (element) =>
+      String(
+        element?.innerText
+        || element?.textContent
+        || element?.getAttribute?.('aria-label')
+        || element?.getAttribute?.('title')
+        || ''
+      )
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const visible = (element) => {
       if (!element) return false;
-      const style = window.getComputedStyle(element);
-      const rect = element.getBoundingClientRect();
-      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+
+      const style =
+        window.getComputedStyle(element);
+
+      const rect =
+        element.getBoundingClientRect();
+
+      return style.display !== 'none'
+        && style.visibility !== 'hidden'
+        && rect.width > 0
+        && rect.height > 0;
     };
-    const candidates = Array.from(document.querySelectorAll('button, [role="button"], body *'))
-      .filter(isVisible)
-      .filter((element) => /[A-Z0-9]{4,}\s*-\s+.+/i.test(textOf(element.innerText || element.textContent)))
-      .sort((left, right) => left.getBoundingClientRect().top - right.getBoundingClientRect().top);
-    const target = candidates[0];
-    if (!target) return false;
-    target.click();
-    return true;
-  }).catch(() => false);
-}
 
-async function selectClinicIfNeeded(page, clinic, config) {
-  const current = await getCurrentClinicFromPage(page, clinic);
-  if (!clinic?.clinicCode && !clinic?.fullLabel && !clinic?.clinicName) {
-    return { selected: true, usedCurrent: true, clinic: current };
-  }
-  const currentText = normalizeText(current.fullLabel || current.clinicName || '');
-  const targetCode = normalizeText(clinic.clinicCode || '');
-  const targetText = normalizeText(clinic.fullLabel || clinic.clinicName || '');
-  if ((targetCode && normalizeText(current.clinicCode || '').includes(targetCode)) || (targetText && (currentText.includes(targetText) || targetText.includes(currentText)))) {
-    return { selected: true, usedCurrent: true, clinic: { ...clinic, ...current, fullLabel: current.fullLabel || clinic.fullLabel } };
-  }
+    const selectors = [
+      '[data-testid="clinic-selector"]',
+      '[aria-haspopup="listbox"]',
+      '[aria-haspopup="menu"]',
+      '[role="combobox"]',
+      'header button',
+      'header [role="button"]',
+      '.v-app-bar button',
+      '.v-app-bar [role="button"]',
+      '.v-toolbar button',
+      '.v-toolbar [role="button"]'
+    ];
 
-  for (let attempt = 1; attempt <= Math.max(1, config.clinicSelectionMaxAttempts || 3); attempt += 1) {
-    // eslint-disable-next-line no-await-in-loop
-    const opened = await clickClinicSelector(page);
-    // eslint-disable-next-line no-await-in-loop
-    await page.waitForTimeout(700);
-    if (!opened) continue;
+    const seen = new Set();
+    const candidates = [];
 
-    // eslint-disable-next-line no-await-in-loop
-    const selected = await page.evaluate((target) => {
-      const normalizeValue = (value) => String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
-      const textOf = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-      const isVisible = (element) => {
-        if (!element) return false;
-        const style = window.getComputedStyle(element);
-        const rect = element.getBoundingClientRect();
-        return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
-      };
-      const targetCodeNorm = normalizeValue(target.clinicCode || '');
-      const targetTextNorm = normalizeValue(target.fullLabel || target.clinicName || '');
-      const options = Array.from(document.querySelectorAll('[role="option"], [role="listbox"] *, .v-overlay *, .v-menu__content *, .cdk-overlay-pane *, li, button, [role="button"]'))
-        .filter(isVisible)
-        .map((element) => ({ element, text: textOf(element.innerText || element.textContent) }))
-        .filter((item) => item.text);
-      const match = options.find((item) => {
-        const normalized = normalizeValue(item.text);
-        return (targetCodeNorm && normalized.includes(targetCodeNorm)) || (targetTextNorm && (normalized.includes(targetTextNorm) || targetTextNorm.includes(normalized)));
-      });
-      if (!match) return false;
-      match.element.click();
-      return true;
-    }, clinic).catch(() => false);
+    for (const selector of selectors) {
+      for (
+        const element of
+        document.querySelectorAll(selector)
+      ) {
+        if (
+          seen.has(element)
+          || !visible(element)
+        ) {
+          continue;
+        }
 
-    if (selected) {
-      // eslint-disable-next-line no-await-in-loop
-      await waitForPageSettled(page, config.clinicSelectionWaitMs || 3000);
-      // eslint-disable-next-line no-await-in-loop
-      const after = await getCurrentClinicFromPage(page, clinic);
-      return { selected: true, attempts: attempt, clinic: { ...clinic, ...after, fullLabel: after.fullLabel || clinic.fullLabel || clinic.clinicName || clinic.clinicCode } };
+        seen.add(element);
+
+        const rect =
+          element.getBoundingClientRect();
+
+        const text =
+          textOf(element);
+
+        const ariaHaspopup =
+          element.getAttribute('aria-haspopup') || '';
+
+        let score = 0;
+
+        if (/arrow_drop_down|expand_more/i.test(text)) {
+          score += 150;
+        }
+
+        if (/listbox|menu/i.test(ariaHaspopup)) {
+          score += 100;
+        }
+
+        if (
+          /\b[A-Z]{1,4}\d{2,6}\b/i.test(text)
+        ) {
+          score += 90;
+        }
+
+        if (
+          /cl[ií]nica|unidade|sorria/i.test(text)
+        ) {
+          score += 70;
+        }
+
+        if (rect.top >= 0 && rect.top < 220) {
+          score += 40;
+        }
+
+        if (rect.width >= 80) {
+          score += 10;
+        }
+
+        if (/sair|logout|menu|close/i.test(text)) {
+          score -= 80;
+        }
+
+        candidates.push({
+          element,
+          text,
+          score,
+          top: rect.top,
+          left: rect.left
+        });
+      }
     }
+
+    candidates.sort(
+      (left, right) =>
+        right.score - left.score
+        || left.top - right.top
+        || left.left - right.left
+    );
+
+    const selected =
+      candidates.find(
+        (candidate) => candidate.score > 0
+      );
+
+    if (!selected) {
+      return {
+        clicked: false,
+        candidates: candidates
+          .slice(0, 10)
+          .map(({ text, score, top, left }) => ({
+            text,
+            score,
+            top,
+            left
+          }))
+      };
+    }
+
+    selected.element.click();
+
+    return {
+      clicked: true,
+      text: selected.text,
+      score: selected.score,
+      candidates: candidates
+        .slice(0, 10)
+        .map(({ text, score, top, left }) => ({
+          text,
+          score,
+          top,
+          left
+        }))
+    };
+  }).catch((error) => ({
+    clicked: false,
+    error: error.message
+  }));
+}
+
+async function selectClinicFromScrollableMenu(
+  page,
+  clinic,
+  config = {}
+) {
+  const target = {
+    clinicCode:
+      String(clinic.clinicCode || '').trim(),
+
+    fullLabel:
+      String(
+        clinic.fullLabel
+        || clinic.clinicName
+        || ''
+      ).trim()
+  };
+
+  const maximumPasses = Math.max(
+    10,
+    Number(
+      process.env.ECURO_CLINIC_SCROLL_MAX_PASSES
+      || 40
+    ) || 40
+  );
+
+  let lastResult = null;
+
+  for (
+    let pass = 0;
+    pass < maximumPasses;
+    pass += 1
+  ) {
     // eslint-disable-next-line no-await-in-loop
-    await page.keyboard.press('Escape').catch(() => null);
+    lastResult = await page.evaluate(
+      ({ target, pass }) => {
+        const normalize = (value) =>
+          String(value || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        const textOf = (element) =>
+          String(
+            element?.innerText
+            || element?.textContent
+            || element?.getAttribute?.('aria-label')
+            || element?.getAttribute?.('title')
+            || ''
+          )
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        const visible = (element) => {
+          if (!element) return false;
+
+          const style =
+            window.getComputedStyle(element);
+
+          const rect =
+            element.getBoundingClientRect();
+
+          return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && rect.width > 0
+            && rect.height > 0;
+        };
+
+        const targetCode =
+          normalize(target.clinicCode);
+
+        const targetLabel =
+          normalize(target.fullLabel);
+
+        const optionSelectors = [
+          '[role="option"]',
+          '[role="menuitem"]',
+          '[role="listbox"] *',
+          '.v-overlay-container *',
+          '.v-overlay *',
+          '.v-menu__content *',
+          '.cdk-overlay-pane *',
+          '.mat-menu-panel *',
+          'li',
+          'button',
+          '[role="button"]'
+        ];
+
+        const optionSet = new Set();
+
+        for (const selector of optionSelectors) {
+          for (
+            const element of
+            document.querySelectorAll(selector)
+          ) {
+            if (visible(element)) {
+              optionSet.add(element);
+            }
+          }
+        }
+
+        const options = Array
+          .from(optionSet)
+          .map((element) => ({
+            element,
+            text: textOf(element)
+          }))
+          .filter((item) =>
+            item.text
+            && item.text.length <= 300
+          );
+
+        const matches = options
+          .map((item) => {
+            const normalized =
+              normalize(item.text);
+
+            let score = 0;
+
+            if (
+              targetCode
+              && normalized === targetCode
+            ) {
+              score += 300;
+            }
+
+            if (
+              targetCode
+              && normalized.includes(targetCode)
+            ) {
+              score += 220;
+            }
+
+            if (
+              targetLabel
+              && normalized === targetLabel
+            ) {
+              score += 200;
+            }
+
+            if (
+              targetLabel
+              && (
+                normalized.includes(targetLabel)
+                || targetLabel.includes(normalized)
+              )
+            ) {
+              score += 140;
+            }
+
+            return {
+              ...item,
+              score
+            };
+          })
+          .filter((item) => item.score > 0)
+          .sort(
+            (left, right) =>
+              right.score - left.score
+          );
+
+        if (matches.length) {
+          matches[0].element.click();
+
+          return {
+            clicked: true,
+            matchedText: matches[0].text,
+            score: matches[0].score,
+            pass
+          };
+        }
+
+        const scrollable = Array
+          .from(
+            document.querySelectorAll(
+              '[role="listbox"], '
+              + '.v-overlay-container *, '
+              + '.v-overlay *, '
+              + '.v-menu__content *, '
+              + '.cdk-overlay-pane *, '
+              + '.mat-menu-panel *, '
+              + 'div'
+            )
+          )
+          .filter(visible)
+          .filter((element) => {
+            const style =
+              window.getComputedStyle(element);
+
+            return (
+              /(auto|scroll)/i.test(
+                style.overflowY
+              )
+              && element.scrollHeight
+                > element.clientHeight + 20
+            );
+          });
+
+        let moved = false;
+
+        for (const container of scrollable) {
+          const before =
+            container.scrollTop;
+
+          if (pass === 0) {
+            container.scrollTop = 0;
+          } else {
+            container.scrollTop =
+              Math.min(
+                container.scrollHeight,
+                container.scrollTop
+                  + Math.max(
+                    150,
+                    container.clientHeight * 0.75
+                  )
+              );
+          }
+
+          if (container.scrollTop !== before) {
+            moved = true;
+          }
+        }
+
+        return {
+          clicked: false,
+          moved,
+          pass,
+          visibleOptions: options
+            .slice(0, 25)
+            .map((item) => item.text)
+        };
+      },
+      {
+        target,
+        pass
+      }
+    ).catch((error) => ({
+      clicked: false,
+      error: error.message,
+      pass
+    }));
+
+    if (lastResult?.clicked) {
+      return lastResult;
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    await page.waitForTimeout(
+      config.clinicSelectionWaitMs
+        ? Math.min(
+            700,
+            Number(config.clinicSelectionWaitMs)
+          )
+        : 350
+    );
   }
 
-  if (process.env.ECURO_ALLOW_CURRENT_CLINIC_FALLBACK !== 'false') {
-    return { selected: true, usedCurrentFallback: true, clinic: current };
-  }
-  return { selected: false, clinic: current };
+  return lastResult || {
+    clicked: false,
+    reason: 'clinic_not_found_after_scroll'
+  };
 }
+
+async function confirmClinicSelected(
+  page,
+  clinic,
+  timeout
+) {
+  const target = {
+    clinicCode:
+      String(clinic.clinicCode || '').trim(),
+
+    fullLabel:
+      String(
+        clinic.fullLabel
+        || clinic.clinicName
+        || ''
+      ).trim()
+  };
+
+  try {
+    await page.waitForFunction(
+      (target) => {
+        const normalize = (value) =>
+          String(value || '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLowerCase()
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        const visible = (element) => {
+          if (!element) return false;
+
+          const style =
+            window.getComputedStyle(element);
+
+          const rect =
+            element.getBoundingClientRect();
+
+          return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && rect.width > 0
+            && rect.height > 0
+            && rect.top >= 0
+            && rect.top < 280;
+        };
+
+        const text = Array
+          .from(
+            document.querySelectorAll(
+              'header *, '
+              + '.v-app-bar *, '
+              + '.v-toolbar *, '
+              + 'main h1, main h2'
+            )
+          )
+          .filter(visible)
+          .map((element) =>
+            normalize(
+              element.innerText
+              || element.textContent
+            )
+          )
+          .join(' | ');
+
+        const code =
+          normalize(target.clinicCode);
+
+        const label =
+          normalize(target.fullLabel);
+
+        return (
+          (code && text.includes(code))
+          || (
+            label
+            && (
+              text.includes(label)
+              || label.includes(text)
+            )
+          )
+        );
+      },
+      target,
+      {
+        timeout
+      }
+    );
+
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+async function selectClinicIfNeeded(
+  page,
+  clinic,
+  config
+) {
+  await waitForClinicUiReady(
+    page,
+    config
+  );
+
+  const targetCode =
+    normalizeText(clinic.clinicCode || '');
+
+  const targetText =
+    normalizeText(
+      clinic.fullLabel
+      || clinic.clinicName
+      || ''
+    );
+
+  const topText =
+    normalizeText(
+      await getTopPageText(page)
+    );
+
+  if (
+    (targetCode && topText.includes(targetCode))
+    || (
+      targetText
+      && (
+        topText.includes(targetText)
+        || targetText.includes(topText)
+      )
+    )
+  ) {
+    return {
+      selected: true,
+      usedCurrent: true,
+      clinic
+    };
+  }
+
+  const attempts = Math.max(
+    1,
+    Number(
+      config.clinicSelectionMaxAttempts
+      || process.env.ECURO_CLINIC_SELECTION_MAX_ATTEMPTS
+      || 5
+    ) || 5
+  );
+
+  let lastDiagnostic = null;
+
+  for (
+    let attempt = 1;
+    attempt <= attempts;
+    attempt += 1
+  ) {
+    if (/\/login(?:[/?#]|$)/i.test(page.url())) {
+      const error = new Error(
+        'Ecuro encerrou a sessão antes da seleção da clínica.'
+      );
+
+      error.code =
+        'ecuro_login_before_clinic_selection';
+
+      throw error;
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    const opened =
+      await clickClinicSelector(page);
+
+    lastDiagnostic = {
+      attempt,
+      opened
+    };
+
+    if (!opened?.clicked) {
+      // eslint-disable-next-line no-await-in-loop
+      await page.waitForTimeout(1000);
+      continue;
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    await page.waitForTimeout(900);
+
+    // eslint-disable-next-line no-await-in-loop
+    const selected =
+      await selectClinicFromScrollableMenu(
+        page,
+        clinic,
+        config
+      );
+
+    lastDiagnostic = {
+      ...lastDiagnostic,
+      selected
+    };
+
+    if (!selected?.clicked) {
+      // eslint-disable-next-line no-await-in-loop
+      await page.keyboard
+        .press('Escape')
+        .catch(() => null);
+
+      continue;
+    }
+
+    // eslint-disable-next-line no-await-in-loop
+    await waitForPageSettled(
+      page,
+      config.clinicSelectionWaitMs || 5000
+    );
+
+    // eslint-disable-next-line no-await-in-loop
+    const confirmed =
+      await confirmClinicSelected(
+        page,
+        clinic,
+        Math.max(
+          5000,
+          Number(
+            config.clinicSelectionWaitMs
+            || process.env.ECURO_CLINIC_SELECTION_WAIT_MS
+            || 5000
+          ) || 5000
+        )
+      );
+
+    if (confirmed) {
+      const current =
+        await getCurrentClinicFromPage(
+          page,
+          clinic
+        );
+
+      return {
+        selected: true,
+        attempts: attempt,
+        clinic: {
+          ...clinic,
+          ...current,
+          fullLabel:
+            current.fullLabel
+            || clinic.fullLabel
+            || clinic.clinicName
+            || clinic.clinicCode
+        },
+        diagnostic: lastDiagnostic
+      };
+    }
+  }
+
+  if (
+    String(
+      process.env.ECURO_ALLOW_CURRENT_CLINIC_FALLBACK
+      || 'false'
+    ).toLowerCase() === 'true'
+  ) {
+    const current =
+      await getCurrentClinicFromPage(
+        page,
+        clinic
+      );
+
+    return {
+      selected: true,
+      usedCurrentFallback: true,
+      clinic: current,
+      diagnostic: lastDiagnostic
+    };
+  }
+
+  return {
+    selected: false,
+    clinic,
+    diagnostic: lastDiagnostic
+  };
+}
+
 
 async function getDownloadCandidates(page) {
   return page.evaluate(() => {
@@ -560,25 +1488,56 @@ async function captureFailureArtifacts(page, config, job, reason, payload = {}) 
   return artifacts;
 }
 
-function createSequentialJob(payload, type = 'ecuro_daily_nps_collection_job') {
+function createSequentialJob(
+  payload,
+  type = 'ecuro_daily_nps_collection_job'
+) {
+  const jobDryRun =
+    payload?.dryRun === undefined
+      ? String(
+          process.env.ECURO_ROBOT_DRY_RUN
+          || 'true'
+        ).toLowerCase() !== 'false'
+      : String(
+          payload.dryRun
+        ).toLowerCase() !== 'false';
+
   const job = jobStore.create({
     jobType: type,
     clinicId: payload.clinicId || null,
-    clinicName: payload.clinicName || payload.clinicCode || '',
-    appointmentDate: payload.targetDate || '',
-    payload: { ...payload, dryRun: true }
+    clinicName:
+      payload.clinicName
+      || payload.clinicCode
+      || '',
+    appointmentDate:
+      payload.targetDate || '',
+    payload: {
+      ...payload,
+      dryRun: jobDryRun
+    }
   });
+
   job.status = 'running';
   job.startedAt = new Date().toISOString();
   job.logs = [];
   job.artifacts = [];
-  jobStore.update(job.id, { status: 'running', startedAt: job.startedAt, logs: [], artifacts: [] });
+
+  jobStore.update(job.id, {
+    status: 'running',
+    startedAt: job.startedAt,
+    logs: [],
+    artifacts: []
+  });
+
   return job;
 }
 
 async function processClinicExcel({ page, config, job, clinic, targetDate, source, dryRun, selectClinic = true, index = 0, total = 1 }) {
+  await ensureEcuroDashboardReady(page, config, job, 'before_clinic_start');
+
   const startedAt = new Date().toISOString();
   let activeClinic = clinic;
+
   addLog(job, { level: 'info', step: 'clinic_start', action: 'processing', message: `Iniciando clínica ${clinic.fullLabel || clinic.clinicName || clinic.clinicCode || 'atual'} (${index + 1}/${total}).`, url: page.url(), metadata: { clinic } });
 
   if (selectClinic) {
@@ -594,6 +1553,8 @@ async function processClinicExcel({ page, config, job, clinic, targetDate, sourc
   }
   upsertClinics([{ ...activeClinic, lastSelectedAt: new Date().toISOString() }]);
   await waitForPageSettled(page, 2000);
+
+  await ensureEcuroDashboardReady(page, config, job, 'before_excel_download');
 
   const download = await downloadExcelFromCurrentPage(page, activeClinic, config, targetDate, job);
   job.artifacts = [...(job.artifacts || []), buildJobStoreArtifact(job.id, 'excel_export', download.filePath, 'excel_export', { clinic: activeClinic, targetDate })];
@@ -635,14 +1596,62 @@ async function processClinicExcel({ page, config, job, clinic, targetDate, sourc
   return { run, patients, download, parsed, queueItems: persisted.queueItems };
 }
 
-async function runSequentialExcelClinicsJob(payload = {}, config = getEcuroRobotConfig()) {
-  const dryRun = true;
-  const source = payload.source || 'ecuro_excel_sequential_clinics';
-  const targetDate = resolveEcuroTargetDate({ ...payload, dateMode: 'today' });
-  const job = createSequentialJob({ ...payload, targetDate, source, dryRun }, 'ecuro_daily_nps_collection_job');
-  const clinicsFromConfig = resolveClinicsForSequentialRun(payload);
-  const maxClinics = Math.max(1, Number(payload.maxClinics || payload.max_clinics || config.maxClinicsPerRunHomolog || 2) || 2);
-  const clinicsToProcess = clinicsFromConfig.slice(0, maxClinics);
+async function runSequentialExcelClinicsJob(
+  payload = {},
+  config = getEcuroRobotConfig()
+) {
+  const dryRun =
+    payload.dryRun === undefined
+      ? String(
+          process.env.ECURO_ROBOT_DRY_RUN
+          || 'true'
+        ).toLowerCase() !== 'false'
+      : String(
+          payload.dryRun
+        ).toLowerCase() !== 'false';
+
+  const source =
+    payload.source
+    || 'ecuro_excel_sequential_clinics';
+
+  const targetDate =
+    resolveEcuroTargetDate({
+      ...payload,
+      dateMode:
+        payload.dateMode
+        || process.env.ECURO_NPS_DATE_MODE
+        || 'today'
+    });
+
+  const job = createSequentialJob(
+    {
+      ...payload,
+      targetDate,
+      source,
+      dryRun
+    },
+    'ecuro_daily_nps_collection_job'
+  );
+
+  const clinicsFromConfig =
+    resolveClinicsForSequentialRun(payload);
+
+  const maxClinics = Math.max(
+    1,
+    Number(
+      payload.maxClinics
+      || payload.max_clinics
+      || process.env.ECURO_MAX_CLINICS_PER_RUN
+      || config.maxClinicsPerRun
+      || 999
+    ) || 999
+  );
+
+  const clinicsToProcess =
+    clinicsFromConfig.slice(
+      0,
+      maxClinics
+    );
   ensureDir(config.exportDir);
   let session;
   let page;
@@ -659,6 +1668,7 @@ async function runSequentialExcelClinicsJob(payload = {}, config = getEcuroRobot
     ({ page } = session);
     addLog(job, { level: 'info', step: 'login', action: 'authenticated', message: 'Sessao autenticada Ecuro criada para processamento sequencial por clínica.', url: page.url() });
     await navigatePatients(page, config);
+    await ensureEcuroDashboardReady(page, config, job, 'after_navigate_patients');
 
     let effectiveClinics = clinicsToProcess;
     if (!effectiveClinics.length) {

@@ -646,9 +646,9 @@ function PatientManagementPage() {
     setFeedback('');
 
     try {
-      await api.patch(`/patient-interactions/${selectedRecord.id}`, { status, action });
+      const response = await api.patch(`/patient-interactions/${selectedRecord.id}`, { status, action });
       await refreshSelectedRecord(selectedRecord.id);
-      setFeedback('Agendamento atualizado com histórico.');
+      setFeedback(response.data?.message || 'Agendamento atualizado com histórico.');
     } catch (error) {
       setFeedback(error.response?.data?.error || 'Não foi possível atualizar o agendamento.');
     } finally {

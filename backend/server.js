@@ -972,6 +972,8 @@ const partnerVideoContactSeeds = [
 const closedComplaintStatuses = new Set(['resolvida', 'cancelada', 'finalizada', 'finalizado', 'fechada', 'fechado', 'encerrada', 'encerrado']);
 const complaintAttendanceFollowUpStatus = 'aguardando_comparecimento_conclusao_atendimento';
 const complaintAttendanceFollowUpLabel = 'Tratativa Realizada - Aguardando Comparecimento/Conclusão do Atendimento';
+const complaintResolvedPendingReviewStatus = 'resolvido_aguardando_parecer_final';
+const complaintResolvedPendingReviewLabel = 'Resolvido - aguardando parecer final da Administração';
 const complaintStatusLabels = {
   aberta: 'Aberta',
   em_analise_sac: 'Em análise pelo SAC',
@@ -985,6 +987,7 @@ const complaintStatusLabels = {
   retornada_sac_auditoria: 'Retornada ao SAC para Auditoria',
   devolvida_complementacao: 'Devolvida para Complementação',
   [complaintAttendanceFollowUpStatus]: complaintAttendanceFollowUpLabel,
+  [complaintResolvedPendingReviewStatus]: complaintResolvedPendingReviewLabel,
   resolvida: 'Resolvida',
   encerrada: 'Encerrada',
   reaberta: 'Reaberta',
@@ -2039,6 +2042,16 @@ function canCloseComplaint(user) {
   return (['admin', 'master_admin'].includes(normalizedRole) || isMasterAdminUser(user)) && hasActionPermission(user, 'complaints_close');
 }
 
+function canMarkComplaintResolvedPendingReview(user) {
+  const normalizedRole = normalizeAccessRole(user?.role);
+  return normalizedRole === 'sac_operator' || isMasterAdminUser(user);
+}
+
+function canViewComplaintResolvedPendingReview(user) {
+  const normalizedRole = normalizeAccessRole(user?.role);
+  return ['admin', 'master_admin', 'sac_operator'].includes(normalizedRole) || isMasterAdminUser(user);
+}
+
 function canSupervisorApprove(user) {
   return normalizeAccessRole(user?.role) === 'supervisor_crc' || isAdminUser(user);
 }
@@ -2164,6 +2177,7 @@ function buildComplaintAccessPayload(user) {
     canChangeComplaintUnit: canChangeComplaintUnit(user),
     canEditPatientPhone: canEditComplaintPatientPhone(user),
     canCloseComplaint: canCloseComplaint(user),
+    canMarkResolvedPendingReview: canMarkComplaintResolvedPendingReview(user),
     canMarkPatientContact: canMarkPatientContact(user),
     canRegisterFirstAttendance: canRegisterFirstAttendance(user),
     canReassignComplaint: canReassignComplaint(user),
@@ -3658,6 +3672,11 @@ async function insertPatientInteractionLog(interactionId, action, message, user)
 function isActivePatientInteractionStatus(status) {
   const normalized = normalizeComplaintStatusValue(status || 'Registrado');
   return !['cancelado', 'cancelada', 'encerrado', 'encerrada', 'finalizado', 'finalizada', 'fechado', 'fechada', 'concluido', 'concluida'].includes(normalized);
+}
+
+function isCompletedPatientInteractionStatus(status) {
+  const normalized = normalizeComplaintStatusValue(status);
+  return ['encerrado', 'encerrada', 'finalizado', 'finalizada', 'fechado', 'fechada', 'concluido', 'concluida'].includes(normalized);
 }
 
 async function finalizePatientInteractionsForComplaint(complaintId, actor = null, reason = 'Reclamação vinculada encerrada.') {
@@ -7190,6 +7209,10 @@ async function getComplaintRows(query = {}, user = null) {
   appendMasterAdminComplaintVisibilityFilter(filters, user);
 
   const normalizedAccessRole = normalizeAccessRole(user?.role);
+
+  if (user && !canViewComplaintResolvedPendingReview(user)) {
+    appendComplaintWhereClause(filters, 'c.status <> ?', [complaintResolvedPendingReviewStatus]);
+  }
 
   if (user && !isAdminUser(user) && !['sac_operator', 'supervisor_crc', 'viewer'].includes(normalizedAccessRole)) {
     const role = normalizedAccessRole;
@@ -11890,6 +11913,13 @@ function appendComplaintForwardingUpdates({
     values.push('escalonada_administracao');
     updates.push('admin_escalated_at = COALESCE(admin_escalated_at, NOW())');
     updates.push("current_escalation_level = 'admin'");
+    updates.push('returned_to_sac_at = NULL');
+    updates.push('sac_audit_status = NULL');
+    updates.push('sac_audit_comment = NULL');
+  } else if (role === 'supervisor_crc') {
+    updates.push('status = ?');
+    values.push('em_andamento');
+    updates.push("current_escalation_level = 'supervisor_crc'");
     updates.push('returned_to_sac_at = NULL');
     updates.push('sac_audit_status = NULL');
     updates.push('sac_audit_comment = NULL');
@@ -39309,6 +39339,58 @@ app.patch('/patient-interactions/:id', authenticate, async (req, res) => {
     const phoneNote = hasPhoneUpdate ? ` Telefone atualizado para ${normalizedPhone}.` : '';
     const statusNote = status ? `Status atualizado para ${status}.` : 'Dados do paciente atualizados.';
     await insertPatientInteractionLog(req.params.id, action, `${statusNote}${scheduleNote}${phoneNote}${detailNote}`, req.user);
+    let complaintMovedToFinalReview = false;
+
+    if (status && isCompletedPatientInteractionStatus(status) && currentRecord.complaint_id) {
+      const [complaintRows] = await pool.query(
+        `SELECT id, protocol, status, appointment_sla_active, deleted_at
+           FROM complaints
+          WHERE id = ?
+          LIMIT 1`,
+        [currentRecord.complaint_id]
+      );
+      const linkedComplaint = complaintRows[0] || null;
+
+      if (linkedComplaint && !linkedComplaint.deleted_at && !isClosedComplaintStatus(linkedComplaint.status)) {
+        await pool.query(
+          `UPDATE complaints
+              SET status = ?,
+                  appointment_sla_active = 0,
+                  appointment_due_at = NULL,
+                  appointment_sla_alert_sent_at = NULL,
+                  forwarded_to_role = 'admin',
+                  forwarded_to_label = 'Administração',
+                  forwarded_at = NOW(),
+                  forwarded_by = ?,
+                  assigned_responsible_user_id = NULL,
+                  assigned_responsible_name = 'Administração',
+                  assigned_responsible_role = 'admin',
+                  current_escalation_level = 'admin',
+                  admin_escalated_at = COALESCE(admin_escalated_at, NOW()),
+                  closed_at = NULL,
+                  closed_by_role = NULL,
+                  updated_at = NOW()
+            WHERE id = ?`,
+          [complaintResolvedPendingReviewStatus, getActorName(req.user), currentRecord.complaint_id]
+        );
+
+        if (normalizeComplaintStatusForStorage(linkedComplaint.status) !== complaintResolvedPendingReviewStatus) {
+          await insertComplaintLog(
+            currentRecord.complaint_id,
+            'patient_treatment_completed_pending_final_review',
+            'Tratamento do paciente concluído. Demanda enviada automaticamente para parecer final da Administração.',
+            req.user,
+            {
+              previousStatus: linkedComplaint.status,
+              newStatus: complaintResolvedPendingReviewStatus,
+              reason: `Agendamento ${currentRecord.protocol || req.params.id} encerrado na Gestão de Pacientes.`
+            }
+          );
+        }
+
+        complaintMovedToFinalReview = true;
+      }
+    }
 
     if (hasPhoneUpdate && currentRecord.complaint_id) {
       await pool.query(
@@ -39339,7 +39421,14 @@ app.patch('/patient-interactions/:id', authenticate, async (req, res) => {
       }, req.user);
     }
 
-    res.json({ message: hasPhoneUpdate ? 'Agendamento e telefone atualizados.' : 'Agendamento atualizado.' });
+    res.json({
+      message: complaintMovedToFinalReview
+        ? 'Tratamento encerrado. A reclamação foi enviada para o parecer final dos administradores.'
+        : hasPhoneUpdate
+          ? 'Agendamento e telefone atualizados.'
+          : 'Agendamento atualizado.',
+      complaintMovedToFinalReview
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Erro ao atualizar gestão do paciente.' });
@@ -40047,6 +40136,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       forward_to_role,
       reassign_forward,
       mark_waiting_attendance,
+      mark_resolved_pending_review,
       sac_audit_status,
       sac_audit_comment
     } = req.body;
@@ -40074,11 +40164,15 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
     const hasCommentChange = Boolean(cleanedComment) && cleanedComment !== String(complaint.operator_comment || '').trim();
     const previousStatus = normalizeComplaintStatusForStorage(complaint.status || 'aberta');
     const nextPriority = priority ? normalizePriority(priority) : normalizePriority(complaint.priority);
-    const requestedStatus = mark_waiting_attendance
-      ? complaintAttendanceFollowUpStatus
-      : status || (cleanedComment && canAddTreatment(req.user) ? 'em_andamento' : complaint.status || 'aberta');
+    const requestedStatus = mark_resolved_pending_review
+      ? complaintResolvedPendingReviewStatus
+      : mark_waiting_attendance
+        ? complaintAttendanceFollowUpStatus
+        : status || (cleanedComment && canAddTreatment(req.user) ? 'em_andamento' : complaint.status || 'aberta');
     const nextStatus = normalizeComplaintStatusForStorage(requestedStatus);
     const shouldMarkWaitingAttendance = Boolean(mark_waiting_attendance) || nextStatus === complaintAttendanceFollowUpStatus;
+    const shouldMarkResolvedPendingReview = Boolean(mark_resolved_pending_review)
+      || (nextStatus === complaintResolvedPendingReviewStatus && previousStatus !== complaintResolvedPendingReviewStatus);
     const actorName = getActorName(req.user);
     let assignmentNotificationResult = null;
     const logEntries = [];
@@ -40094,6 +40188,34 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
     ];
     const hasClinicChangeRequest = Object.prototype.hasOwnProperty.call(req.body || {}, 'clinic_id');
     const hasPhoneChangeRequest = Object.prototype.hasOwnProperty.call(req.body || {}, 'patient_phone');
+
+    if (previousStatus === complaintResolvedPendingReviewStatus
+      && nextStatus !== complaintResolvedPendingReviewStatus
+      && nextStatus !== 'resolvida') {
+      return res.status(409).json({
+        error: 'Esta demanda aguarda parecer final. Apenas o fechamento administrativo pode retirar essa classificação.'
+      });
+    }
+
+    if (shouldMarkResolvedPendingReview) {
+      if (!canMarkComplaintResolvedPendingReview(req.user)) {
+        return res.status(403).json({
+          error: 'Somente Operador de SAC ou Administrador Master podem classificar a reclamação como resolvida.'
+        });
+      }
+
+      if (isClosedComplaintStatus(previousStatus) || complaint.deleted_at) {
+        return res.status(409).json({ error: 'Não é possível classificar uma reclamação já finalizada ou excluída.' });
+      }
+
+      logEntries.push({
+        action: 'resolved_pending_final_review',
+        message: 'Demanda classificada como resolvida e encaminhada para parecer final da Administração.',
+        previousStatus,
+        newStatus: complaintResolvedPendingReviewStatus,
+        reason: 'Classificação intermediária registrada pelo SAC ou Administrador Master.'
+      });
+    }
 
     if (hasPhoneChangeRequest) {
       if (!canEditComplaintPatientPhone(req.user)) {
@@ -40457,10 +40579,11 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
         ? (requesterRole === 'manager'
           ? { sac_operator: 'Operador de SAC', coordinator: 'Coordenador' }
           : { sac_operator: 'Operador de SAC' })
-        : {
+          : {
             coordinator: 'Coordenador',
             manager: 'Gerente',
-            admin: 'Administrador'
+            admin: 'Administrador',
+            supervisor_crc: 'Supervisor do CRC'
       };
       const willSaveCoordinatorManagerTreatment = Boolean(cleanedComment) && canAddTreatment(req.user);
       const hasCoordinatorManagerTreatment = requesterIsOperational
@@ -40476,7 +40599,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
             ? (requesterRole === 'manager'
               ? 'Selecione o Operador de SAC ou o Coordenador para devolver a demanda.'
               : 'Selecione o Operador de SAC para devolver a demanda.')
-            : 'Selecione Coordenador, Gerente ou Administrador para reencaminhar a demanda.'
+            : 'Selecione Coordenador, Gerente, Administrador ou Supervisor do CRC para reencaminhar a demanda.'
         });
       }
 
@@ -40514,6 +40637,8 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
           ? 'escalonada_gerente'
           : forward_to_role === 'admin'
           ? 'escalonada_administracao'
+          : forward_to_role === 'supervisor_crc'
+          ? 'em_andamento'
           : nextStatus,
         reason: requesterIsOperational ? 'Devolução operacional após tratativa.' : 'Reencaminhamento manual.'
       });
@@ -40596,7 +40721,7 @@ app.patch('/complaints/:id', authenticate, async (req, res) => {
       ? await repairPendingCoordinatorAssignmentsBestEffort('complaint_update')
       : null;
 
-    if ((first_attendance || reassign_forward) && ['coordinator', 'manager', 'admin'].includes(String(forward_to_role || '').toLowerCase())) {
+    if ((first_attendance || reassign_forward) && ['coordinator', 'manager', 'admin', 'supervisor_crc'].includes(String(forward_to_role || '').toLowerCase())) {
       try {
         await notifyComplaintAssigned(id, complaint.protocol);
       } catch (error) {
@@ -43560,6 +43685,8 @@ Object.assign(app, {
     canChangeComplaintUnit,
     canDeleteEvidence,
     canEditComplaintPatientPhone,
+    canMarkComplaintResolvedPendingReview,
+    canViewComplaintResolvedPendingReview,
     canRenotifyComplaint,
     canReceiveComplaintNotification,
     buildComplaintAssignedNotificationRecipients,
