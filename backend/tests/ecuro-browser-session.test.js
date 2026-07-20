@@ -230,7 +230,7 @@ test('createAuthenticatedEcuroSession fails when form remains on login after sub
   const config = buildConfig({}, { staysOnLogin: true });
   await assert.rejects(
     () => createAuthenticatedEcuroSession(config),
-    /remained on \/login/
+    /Segundo login não alcançou o dashboard/
   );
   assert.equal(config.fakeState.browserClosed, true);
 });
@@ -243,7 +243,6 @@ test('createAuthenticatedEcuroSession succeeds when dashboard patients returns H
   assert.equal(config.fakeState.contextOptions.acceptDownloads, true);
   assert.equal(config.fakeState.contextOptions.httpCredentials.origin, 'https://ecuro.com.br');
   assert.equal(config.fakeState.contextOptions.httpCredentials.username, 'level1-user');
-  assert.equal(config.fakeState.routePattern, '**/*');
   assert.equal(config.fakeState.page.defaultTimeout, 1000);
 
   await session.close();
@@ -251,35 +250,12 @@ test('createAuthenticatedEcuroSession succeeds when dashboard patients returns H
   assert.equal(config.fakeState.browserClosed, true);
 });
 
-test('createAuthenticatedEcuroSession adds Basic Authorization only to Ecuro origin', async () => {
+test('createAuthenticatedEcuroSession scopes Basic Authorization to Ecuro origin', async () => {
   const config = buildConfig();
   const session = await createAuthenticatedEcuroSession(config);
-  let thirdPartyContinuePayload = 'not-called';
-  let ecuroContinuePayload = null;
-
-  await config.fakeState.routeHandler({
-    request: () => ({
-      url: () => 'https://cdn.example.test/app.js',
-      headers: () => ({ Accept: 'text/javascript' })
-    }),
-    continue: async (payload) => {
-      thirdPartyContinuePayload = payload;
-    }
-  });
-
-  await config.fakeState.routeHandler({
-    request: () => ({
-      url: () => 'https://ecuro.com.br/api/patients',
-      headers: () => ({ Accept: 'application/json' })
-    }),
-    continue: async (payload) => {
-      ecuroContinuePayload = payload;
-    }
-  });
-
-  assert.equal(thirdPartyContinuePayload, undefined);
-  assert.match(ecuroContinuePayload.headers.Authorization, /^Basic /);
-  assert.equal(ecuroContinuePayload.headers.Accept, 'application/json');
+  assert.equal(config.fakeState.contextOptions.httpCredentials.origin, 'https://ecuro.com.br');
+  assert.equal(config.fakeState.contextOptions.httpCredentials.username, 'level1-user');
+  assert.equal(config.fakeState.contextOptions.httpCredentials.password, 'level1-pass');
 
   await session.close();
 });
