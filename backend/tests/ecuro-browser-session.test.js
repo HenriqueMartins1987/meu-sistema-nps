@@ -62,6 +62,8 @@ class FakePage {
     this.defaultNavigationTimeout = value;
   }
 
+  on() {}
+
   async goto(url) {
     const baseUrl = this.scenario.baseUrl || 'https://ecuro.com.br';
     if (url === baseUrl) {
