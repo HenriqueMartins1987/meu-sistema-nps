@@ -200,8 +200,16 @@ async function createAuthenticatedEcuroSession(config = {}) {
       headless: config.headless,
       args: [
         '--no-sandbox',
-        '--disable-dev-shm-usage'
+        '--disable-dev-shm-usage',
+        // The VPS has no GPU; letting Chromium try to use one is a known
+        // source of renderer crashes that take the whole process down
+        // without ever reaching a catchable JS error.
+        '--disable-gpu',
+        '--disable-software-rasterizer'
       ]
+    });
+    browser.on('disconnected', () => {
+      console.error('[ecuro-robot-service] Chromium browser disconnected unexpectedly (crash or was killed).');
     });
 
     context = await browser.newContext({
