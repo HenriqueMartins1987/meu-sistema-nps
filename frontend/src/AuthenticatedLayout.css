@@ -315,6 +315,71 @@
   padding: 0;
 }
 
+.export-access-notice,
+.export-access-approval-panel {
+  position: fixed;
+  right: 20px;
+  z-index: 80;
+  width: min(440px, calc(100vw - 40px));
+  border: 1px solid rgba(199, 154, 87, 0.38);
+  border-radius: 14px;
+  background: #fffaf2;
+  color: #33251d;
+  box-shadow: 0 18px 44px rgba(35, 24, 18, 0.2);
+}
+
+.export-access-notice {
+  top: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px 16px;
+}
+
+.export-access-notice button,
+.export-access-approval-panel button {
+  border: 0;
+  border-radius: 9px;
+  background: #765132;
+  color: #fff;
+  cursor: pointer;
+}
+
+.export-access-notice button {
+  width: 30px;
+  height: 30px;
+  font-size: 20px;
+}
+
+.export-access-approval-panel {
+  top: 20px;
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+
+.export-access-approval-panel > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.export-access-approval-panel span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.export-access-approval-panel button {
+  padding: 8px 10px;
+}
+
+.export-access-approval-panel button.reject {
+  background: #9a3f3f;
+}
+
 .app-sidebar-backdrop,
 .app-sidebar-mobile-trigger {
   display: none;

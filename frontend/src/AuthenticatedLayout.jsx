@@ -133,6 +133,19 @@ function matchPath(pathname, targetPath, exact = false) {
   return !exact && pathname.startsWith(`${normalizedTargetPath}/`);
 }
 
+function isExcelOrPdfDownloadTrigger(target) {
+  const trigger = target?.closest?.('button, a');
+  if (!trigger) return null;
+  const label = [
+    trigger.textContent,
+    trigger.getAttribute('aria-label'),
+    trigger.getAttribute('title'),
+    trigger.getAttribute('download'),
+    trigger.getAttribute('href')
+  ].filter(Boolean).join(' ').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  return /(^|\W)(excel|pdf|xlsx?|xls)(\W|$)/.test(label) ? { trigger, label } : null;
+}
+
 export default function AuthenticatedLayout({ remainingMsLabel, remainingWarning = false }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -143,12 +156,80 @@ export default function AuthenticatedLayout({ remainingMsLabel, remainingWarning
   );
   const [expanded, setExpanded] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [exportAccess, setExportAccess] = useState(null);
+  const [exportNotice, setExportNotice] = useState('');
+  const [pendingExportRequests, setPendingExportRequests] = useState([]);
   const menuSections = useMemo(() => buildMenuSections(user), [user]);
+  const master = isMasterAdmin(user);
+  const sacOperator = normalizeRoleValue(user?.role) === 'sac_operator';
 
   useEffect(() => {
     setMobileOpen(false);
     setExpanded(false);
   }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    let active = true;
+    let timer = null;
+    const load = async () => {
+      try {
+        if (master) {
+          const response = await api.get('/admin/export-access/requests', { params: { status: 'pending' } });
+          if (active) setPendingExportRequests(Array.isArray(response.data) ? response.data : []);
+        } else {
+          const response = await api.get('/export-access/status');
+          if (active) setExportAccess(response.data || null);
+        }
+      } catch (error) {
+        if (active && !master) setExportAccess({ canDownload: false, canRequest: sacOperator, status: 'unavailable' });
+      }
+    };
+    load();
+    timer = window.setInterval(load, 15000);
+    return () => {
+      active = false;
+      if (timer) window.clearInterval(timer);
+    };
+  }, [master, sacOperator]);
+
+  useEffect(() => {
+    if (master) return undefined;
+    const interceptDownload = (event) => {
+      const match = isExcelOrPdfDownloadTrigger(event.target);
+      if (!match || exportAccess?.canDownload) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation?.();
+
+      if (!sacOperator) {
+        setExportNotice('Download de Excel e PDF bloqueado. Apenas o Administrador Master possui acesso.');
+        return;
+      }
+      if (exportAccess?.status === 'pending') {
+        setExportNotice('Sua solicitação de download aguarda autorização do Administrador Master.');
+        return;
+      }
+      api.post('/export-access/request', { reason: `Solicitação pela ação: ${match.label.slice(0, 180)}` })
+        .then((response) => {
+          setExportAccess(response.data || { canDownload: false, canRequest: false, status: 'pending' });
+          setExportNotice('Solicitação enviada ao Administrador Master. Você será liberado após a aprovação.');
+        })
+        .catch((error) => {
+          setExportNotice(error.response?.data?.error || 'Não foi possível solicitar autorização de download.');
+        });
+    };
+    document.addEventListener('click', interceptDownload, true);
+    return () => document.removeEventListener('click', interceptDownload, true);
+  }, [exportAccess, master, sacOperator]);
+
+  const decideExportRequest = async (requestId, decision) => {
+    try {
+      await api.post(`/admin/export-access/requests/${requestId}/${decision}`);
+      setPendingExportRequests((current) => current.filter((request) => request.id !== requestId));
+    } catch (error) {
+      setExportNotice(error.response?.data?.error || 'Não foi possível registrar a decisão.');
+    }
+  };
 
   const handleLogout = async () => {
     try {
@@ -174,6 +255,24 @@ export default function AuthenticatedLayout({ remainingMsLabel, remainingWarning
 
   return (
     <div className={`auth-shell ${isOpen ? 'expanded' : 'collapsed'} ${mobileOpen ? 'mobile-open' : ''}`}>
+      {exportNotice ? (
+        <div className="export-access-notice" role="status">
+          <span>{exportNotice}</span>
+          <button type="button" onClick={() => setExportNotice('')} aria-label="Fechar aviso">×</button>
+        </div>
+      ) : null}
+      {master && pendingExportRequests.length ? (
+        <section className="export-access-approval-panel" aria-label="Solicitações de download pendentes">
+          <strong>Autorizações de Excel/PDF</strong>
+          {pendingExportRequests.map((request) => (
+            <div key={request.id}>
+              <span>{request.user_name || request.user_email || `Usuário ${request.user_id}`}</span>
+              <button type="button" onClick={() => decideExportRequest(request.id, 'approve')}>Autorizar 24h</button>
+              <button type="button" className="reject" onClick={() => decideExportRequest(request.id, 'reject')}>Recusar</button>
+            </div>
+          ))}
+        </section>
+      ) : null}
       <button
         type="button"
         className="app-sidebar-mobile-trigger"
