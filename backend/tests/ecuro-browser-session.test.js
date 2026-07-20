@@ -127,6 +127,7 @@ function createFakeChromium(scenario = {}) {
     launch: async (options) => {
       state.launchOptions = options;
       return {
+        on: () => {},
         newContext: async (contextOptions) => {
           state.contextOptions = contextOptions;
           return {

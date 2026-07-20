@@ -521,18 +521,14 @@ async function createAuthenticatedEcuroSession(config = {}) {
     );
   }
 
+  // sessionInUse is only ever cleared inside close(), which close() itself
+  // only reaches via the catch below or the caller. Anything that can throw
+  // between the lock and the try block (missing credentials, a malformed
+  // baseUrl, a bad require) used to leave sessionInUse stuck at true
+  // forever, permanently deadlocking every future call with
+  // "ecuro_session_busy". Everything that can throw now happens inside the
+  // try so close() always runs.
   sessionInUse = true;
-  validateCredentials(config);
-
-  const baseUrl = normalizeBaseUrl(config.baseUrl);
-  const origin = new URL(baseUrl).origin;
-  const timeout = getTimeout(config);
-  const chromium = config.chromium || getPlaywrightChromium();
-
-  const usePersistentContext =
-    String(
-      process.env.ECURO_USE_PERSISTENT_CONTEXT || 'false'
-    ).toLowerCase() === 'true';
 
   const authFailures = [];
 
@@ -553,6 +549,18 @@ async function createAuthenticatedEcuroSession(config = {}) {
   };
 
   try {
+    validateCredentials(config);
+
+    const baseUrl = normalizeBaseUrl(config.baseUrl);
+    const origin = new URL(baseUrl).origin;
+    const timeout = getTimeout(config);
+    const chromium = config.chromium || getPlaywrightChromium();
+
+    const usePersistentContext =
+      String(
+        process.env.ECURO_USE_PERSISTENT_CONTEXT || 'false'
+      ).toLowerCase() === 'true';
+
     const contextOptions = {
       headless: config.headless !== false,
       viewport: {
@@ -568,7 +576,12 @@ async function createAuthenticatedEcuroSession(config = {}) {
       },
       args: [
         '--no-sandbox',
-        '--disable-dev-shm-usage'
+        '--disable-dev-shm-usage',
+        // The VPS has no GPU; letting Chromium try to use one is a known
+        // source of renderer crashes that take the whole process down
+        // without ever reaching a catchable JS error.
+        '--disable-gpu',
+        '--disable-software-rasterizer'
       ]
     };
 
@@ -607,6 +620,10 @@ async function createAuthenticatedEcuroSession(config = {}) {
 
       page = await context.newPage();
     }
+
+    browser?.on('disconnected', () => {
+      console.error('[ecuro-robot-service] Chromium browser disconnected unexpectedly (crash or was killed).');
+    });
 
     page.setDefaultTimeout(timeout);
     page.setDefaultNavigationTimeout(timeout);
