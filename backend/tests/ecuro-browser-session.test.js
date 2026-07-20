@@ -29,6 +29,10 @@ class FakeLocator {
     return false;
   }
 
+  async innerText() {
+    return '';
+  }
+
   async fill(value) {
     this.page.filled[this.selector] = value;
   }
@@ -171,7 +175,7 @@ function buildConfig(overrides = {}, scenario = {}) {
     headless: true,
     timeoutMs: 1000,
     firstLoginWaitMs: 0,
-    secondLoginMaxWaitMs: 0,
+    secondLoginMaxWaitMs: 50,
     postLoginStabilityMs: 0,
     patientsStabilityMs: 0,
     chromium: fake.chromium,
