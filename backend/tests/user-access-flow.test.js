@@ -57,6 +57,13 @@ test('explicit screen permissions are not expanded by role or named access rules
   }), expected);
 });
 
+test('export access policy keeps master open, SAC requestable and other profiles blocked', () => {
+  assert.equal(serverModule.__testables.getExportAccessRolePolicy({ role: 'master_admin' }), 'master');
+  assert.equal(serverModule.__testables.getExportAccessRolePolicy({ role: 'sac_operator' }), 'request');
+  assert.equal(serverModule.__testables.getExportAccessRolePolicy({ role: 'crc_operator' }), 'blocked');
+  assert.equal(serverModule.__testables.getExportAccessRolePolicy({ role: 'manager' }), 'blocked');
+});
+
 test('master admin can update only permissions without revalidating legacy profile fields', async () => {
   let updateParams = null;
 
@@ -2231,7 +2238,7 @@ test('CRC and SAC operators access only scoped agenda dashboards', () => {
   assert.deepEqual(sacVisibility.params, [1, 77, 77]);
 });
 
-test('CRC operator downloads agenda template and sees only linked clinics', async () => {
+test('CRC operator cannot download agenda template and still sees only linked clinics', async () => {
   const clinicQueryParams = [];
 
   pool.query = buildQueryStub([
@@ -2274,8 +2281,8 @@ test('CRC operator downloads agenda template and sees only linked clinics', asyn
     .get('/api/agenda/import-template')
     .set('Authorization', `Bearer ${token}`);
 
-  assert.equal(templateResponse.status, 200);
-  assert.match(templateResponse.headers['content-type'], /spreadsheetml\.sheet/);
+  assert.equal(templateResponse.status, 403);
+  assert.equal(templateResponse.body.code, 'EXPORT_DOWNLOAD_BLOCKED');
 
   const clinicsResponse = await request(app)
     .get('/clinics')
@@ -3898,7 +3905,7 @@ test('sac operator cannot close complaint even when manager treatment exists in 
   assert.equal(closeLogParams, null);
 });
 
-test('CRC operator exports visible agenda tasks in Excel without e-mail dependency', async () => {
+test('CRC operator is blocked from exporting agenda tasks in Excel', async () => {
   pool.query = buildQueryStub([
     {
       match: (sql) => sql.includes('SELECT must_change_password, token_version, active') && sql.includes('FROM users'),
@@ -3960,9 +3967,8 @@ test('CRC operator exports visible agenda tasks in Excel without e-mail dependen
       mustChangePassword: false
     })}`);
 
-  assert.equal(response.status, 200);
-  assert.match(response.headers['content-type'], /spreadsheetml\.sheet/);
-  assert.match(response.headers['content-disposition'], /agenda-tarefas\.xlsx/);
+  assert.equal(response.status, 403);
+  assert.equal(response.body.code, 'EXPORT_DOWNLOAD_BLOCKED');
 });
 
 test('agenda confirmations dashboard summarizes WhatsApp sent dates by collaborator and clinic', async () => {

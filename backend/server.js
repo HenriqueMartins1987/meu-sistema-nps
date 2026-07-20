@@ -18210,6 +18210,99 @@ function requireMasterAdmin(req, res, next) {
   return sendAuthorizationError(req, res, 403, 'AUTH_FORBIDDEN_MASTER', 'Acesso restrito ao Administrador Master');
 }
 
+function getExportAccessRolePolicy(user) {
+  if (isMasterAdminUser(user)) return 'master';
+  if (normalizeAccessRole(user?.role) === 'sac_operator') return 'request';
+  return 'blocked';
+}
+
+async function ensureExportAccessRequestsTable() {
+  await pool.query(
+    `CREATE TABLE IF NOT EXISTS export_access_requests (
+       id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+       user_id BIGINT UNSIGNED NOT NULL,
+       status ENUM('pending', 'approved', 'rejected', 'expired') NOT NULL DEFAULT 'pending',
+       reason VARCHAR(500) NULL,
+       requested_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       decided_at DATETIME NULL,
+       decided_by BIGINT UNSIGNED NULL,
+       expires_at DATETIME NULL,
+       created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+       updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+       PRIMARY KEY (id),
+       INDEX idx_export_access_user_status (user_id, status, expires_at),
+       INDEX idx_export_access_status_requested (status, requested_at)
+     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`
+  );
+}
+
+async function getExportAccessState(user) {
+  const policy = getExportAccessRolePolicy(user);
+  if (policy === 'master') {
+    return { canDownload: true, canRequest: false, status: 'master', expiresAt: null };
+  }
+  if (policy === 'blocked') {
+    return { canDownload: false, canRequest: false, status: 'blocked', expiresAt: null };
+  }
+
+  await ensureExportAccessRequestsTable();
+  await pool.query(
+    `UPDATE export_access_requests
+        SET status = 'expired'
+      WHERE user_id = ?
+        AND status = 'approved'
+        AND expires_at IS NOT NULL
+        AND expires_at <= NOW()`,
+    [user.id]
+  );
+  const [rows] = await pool.query(
+    `SELECT id, status, requested_at, decided_at, expires_at
+       FROM export_access_requests
+      WHERE user_id = ?
+      ORDER BY id DESC
+      LIMIT 1`,
+    [user.id]
+  );
+  const request = rows[0] || null;
+  return {
+    canDownload: request?.status === 'approved' && (!request.expires_at || new Date(request.expires_at).getTime() > Date.now()),
+    canRequest: !request || !['pending', 'approved'].includes(request.status),
+    status: request?.status || 'not_requested',
+    requestId: request?.id || null,
+    requestedAt: request?.requested_at || null,
+    expiresAt: request?.expires_at || null
+  };
+}
+
+async function requireExportDownloadAccess(req, res, next) {
+  try {
+    const state = await getExportAccessState(req.user);
+    if (state.canDownload) return next();
+    if (state.canRequest) {
+      return res.status(403).json({
+        error: 'Solicite autorização ao Administrador Master para baixar arquivos Excel ou PDF.',
+        code: 'EXPORT_AUTHORIZATION_REQUIRED',
+        exportAccess: state
+      });
+    }
+    return res.status(403).json({
+      error: state.status === 'pending'
+        ? 'Sua solicitação de download aguarda autorização do Administrador Master.'
+        : 'Download de Excel e PDF bloqueado para este usuário.',
+      code: state.status === 'pending' ? 'EXPORT_AUTHORIZATION_PENDING' : 'EXPORT_DOWNLOAD_BLOCKED',
+      exportAccess: state
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Não foi possível validar a autorização de download.' });
+  }
+}
+
+function requireNonCsvExportDownloadAccess(req, res, next) {
+  if (String(req.query?.format || '').trim().toLowerCase() === 'csv') return next();
+  return requireExportDownloadAccess(req, res, next);
+}
+
 function canManageUserClinicLinks(user) {
   return isMasterAdminUser(user) || normalizeAccessRole(user?.role) === 'sac_operator';
 }
@@ -18472,6 +18565,133 @@ app.get(['/security/standby-status', '/api/security/standby-status'], (req, res)
 });
 
 app.use(systemMaintenanceGate);
+
+app.get('/export-access/status', authenticate, async (req, res) => {
+  try {
+    return res.json(await getExportAccessState(req.user));
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao consultar autorização de download.' });
+  }
+});
+
+app.post('/export-access/request', authenticate, async (req, res) => {
+  try {
+    if (getExportAccessRolePolicy(req.user) !== 'request') {
+      return res.status(403).json({ error: 'Somente o Operador de SAC pode solicitar autorização de download.' });
+    }
+    const state = await getExportAccessState(req.user);
+    if (state.status === 'pending') return res.json({ message: 'Solicitação já está aguardando aprovação.', ...state });
+    if (state.canDownload) return res.json({ message: 'Seu acesso a downloads já está autorizado.', ...state });
+
+    const reason = String(req.body?.reason || 'Download de relatório Excel/PDF').trim().slice(0, 500);
+    const [result] = await pool.query(
+      `INSERT INTO export_access_requests (user_id, status, reason)
+       VALUES (?, 'pending', ?)`,
+      [req.user.id, reason || null]
+    );
+    await createNotificationForAdmins(
+      'export_access_request',
+      'Autorização de download solicitada',
+      `${getActorName(req.user)} solicitou autorização temporária para baixar Excel/PDF.`,
+      '/admin/controle-master',
+      { requestId: result.insertId, userId: req.user.id }
+    );
+    return res.status(201).json({
+      message: 'Solicitação enviada ao Administrador Master.',
+      canDownload: false,
+      canRequest: false,
+      status: 'pending',
+      requestId: result.insertId
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao solicitar autorização de download.' });
+  }
+});
+
+app.get('/admin/export-access/requests', authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    await ensureExportAccessRequestsTable();
+    const status = ['pending', 'approved', 'rejected', 'expired'].includes(String(req.query?.status || ''))
+      ? String(req.query.status)
+      : 'pending';
+    const [rows] = await pool.query(
+      `SELECT r.id, r.user_id, r.status, r.reason, r.requested_at, r.decided_at, r.expires_at,
+              u.name AS user_name, u.email AS user_email, u.role AS user_role
+         FROM export_access_requests r
+         JOIN users u ON u.id = r.user_id
+        WHERE r.status = ?
+        ORDER BY r.requested_at ASC
+        LIMIT 200`,
+      [status]
+    );
+    return res.json(rows);
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao listar solicitações de download.' });
+  }
+});
+
+app.post('/admin/export-access/requests/:id/approve', authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    await ensureExportAccessRequestsTable();
+    const [rows] = await pool.query(
+      `SELECT r.*, u.name AS user_name
+         FROM export_access_requests r
+         JOIN users u ON u.id = r.user_id
+        WHERE r.id = ?
+        LIMIT 1`,
+      [req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    const request = rows[0];
+    await pool.query(
+      `UPDATE export_access_requests
+          SET status = 'approved', decided_at = NOW(), decided_by = ?, expires_at = DATE_ADD(NOW(), INTERVAL 24 HOUR)
+        WHERE id = ?`,
+      [req.user.id, request.id]
+    );
+    await createNotification(
+      request.user_id,
+      'export_access_approved',
+      'Download autorizado',
+      'O Administrador Master autorizou downloads de Excel/PDF por 24 horas.',
+      null,
+      { requestId: request.id }
+    );
+    return res.json({ message: 'Download autorizado por 24 horas.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao aprovar solicitação de download.' });
+  }
+});
+
+app.post('/admin/export-access/requests/:id/reject', authenticate, requireMasterAdmin, async (req, res) => {
+  try {
+    await ensureExportAccessRequestsTable();
+    const [rows] = await pool.query('SELECT id, user_id FROM export_access_requests WHERE id = ? LIMIT 1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Solicitação não encontrada.' });
+    await pool.query(
+      `UPDATE export_access_requests
+          SET status = 'rejected', decided_at = NOW(), decided_by = ?, expires_at = NULL
+        WHERE id = ?`,
+      [req.user.id, rows[0].id]
+    );
+    await createNotification(
+      rows[0].user_id,
+      'export_access_rejected',
+      'Download não autorizado',
+      'O Administrador Master não autorizou o download de Excel/PDF neste momento.',
+      null,
+      { requestId: rows[0].id }
+    );
+    return res.json({ message: 'Solicitação rejeitada.' });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({ error: 'Erro ao rejeitar solicitação de download.' });
+  }
+});
 
 async function handleManualWhatsAppSend(req, res, eventKey = 'manual_test') {
   try {
@@ -27185,7 +27405,7 @@ app.get('/api/whatsapp/history', authenticate, requireWhatsAppView, handleGetWha
 app.get('/api/whatsapp/complaint-alerts', authenticate, requireWhatsAppView, handleGetComplaintWhatsAppAlerts);
 app.put('/api/whatsapp/complaint-alerts/clinics/:clinicId', authenticate, requireWhatsAppView, handleUpdateComplaintWhatsAppAlert);
 app.post('/api/whatsapp/complaint-alerts/clinics/:clinicId/test', authenticate, requireWhatsAppView, handleTestComplaintWhatsAppAlert);
-app.get('/api/whatsapp/campaigns/template', authenticate, requireWhatsAppView, handleDownloadWhatsAppCampaignTemplate);
+app.get('/api/whatsapp/campaigns/template', authenticate, requireWhatsAppView, requireExportDownloadAccess, handleDownloadWhatsAppCampaignTemplate);
 app.post('/api/whatsapp/campaigns/preview', authenticate, requireWhatsAppView, upload.single('file'), handlePreviewMassWhatsAppCampaign);
 app.post('/api/whatsapp/campaigns/mass-send', authenticate, requireWhatsAppView, upload.single('file'), handleMassWhatsAppCampaignSend);
 app.get('/api/whatsapp/evolution-logs', authenticate, requireWhatsAppView, async (req, res) => {
@@ -33609,7 +33829,7 @@ app.get('/api/agenda/dashboard', authenticate, async (req, res) => {
   }
 });
 
-app.get('/api/agenda/report/excel', exportLimiter, authenticate, async (req, res) => {
+app.get('/api/agenda/report/excel', exportLimiter, authenticate, requireExportDownloadAccess, async (req, res) => {
   try {
     if (!canAccessAgendaDashboard(req.user)) {
       return res.status(403).json({ error: 'Seu perfil não possui acesso ao relatório da agenda.' });
@@ -33628,7 +33848,7 @@ app.get('/api/agenda/report/excel', exportLimiter, authenticate, async (req, res
   }
 });
 
-app.get('/api/agenda/report/pdf', exportLimiter, authenticate, async (req, res) => {
+app.get('/api/agenda/report/pdf', exportLimiter, authenticate, requireExportDownloadAccess, async (req, res) => {
   try {
     if (!canAccessAgendaDashboard(req.user)) {
       return res.status(403).json({ error: 'Seu perfil não possui acesso ao relatório da agenda.' });
@@ -33647,7 +33867,7 @@ app.get('/api/agenda/report/pdf', exportLimiter, authenticate, async (req, res) 
   }
 });
 
-app.get('/api/agenda/items/export/excel', exportLimiter, authenticate, async (req, res) => {
+app.get('/api/agenda/items/export/excel', exportLimiter, authenticate, requireExportDownloadAccess, async (req, res) => {
   try {
     const report = await loadAgendaTaskReport(req.user, req.query || {});
     const buffer = buildAgendaTaskExcelBuffer(report);
@@ -33660,7 +33880,7 @@ app.get('/api/agenda/items/export/excel', exportLimiter, authenticate, async (re
   }
 });
 
-app.get('/api/agenda/items/export/pdf', exportLimiter, authenticate, async (req, res) => {
+app.get('/api/agenda/items/export/pdf', exportLimiter, authenticate, requireExportDownloadAccess, async (req, res) => {
   try {
     const report = await loadAgendaTaskReport(req.user, req.query || {});
     const buffer = await buildAgendaTaskPdfBuffer(report);
@@ -33697,7 +33917,7 @@ app.get('/api/agenda/confirmations/dashboard', authenticate, async (req, res) =>
   }
 });
 
-app.get('/api/agenda/confirmations/export/excel', exportLimiter, authenticate, async (req, res) => {
+app.get('/api/agenda/confirmations/export/excel', exportLimiter, authenticate, requireExportDownloadAccess, async (req, res) => {
   try {
     const report = await loadAgendaConfirmationReport(req.user, req.query || {});
     const buffer = buildAgendaConfirmationExcelBuffer(report);
@@ -33710,7 +33930,7 @@ app.get('/api/agenda/confirmations/export/excel', exportLimiter, authenticate, a
   }
 });
 
-app.get('/api/agenda/confirmations/export/pdf', exportLimiter, authenticate, async (req, res) => {
+app.get('/api/agenda/confirmations/export/pdf', exportLimiter, authenticate, requireExportDownloadAccess, async (req, res) => {
   try {
     const report = await loadAgendaConfirmationReport(req.user, req.query || {});
     const buffer = await buildAgendaConfirmationPdfBuffer(report);
@@ -33723,7 +33943,7 @@ app.get('/api/agenda/confirmations/export/pdf', exportLimiter, authenticate, asy
   }
 });
 
-app.get('/api/agenda/import-template', authenticate, async (req, res) => {
+app.get('/api/agenda/import-template', authenticate, requireExportDownloadAccess, async (req, res) => {
   try {
     if (!canImportAgendaWorkbook(req.user)) {
       return res.status(403).json({ error: 'Seu perfil não pode importar demandas em lote.' });
@@ -36330,7 +36550,7 @@ function buildAdminUsersPdfBuffer(rows = []) {
   });
 }
 
-app.get(['/admin/users/export/excel', '/api/admin/users/export/excel'], exportLimiter, authenticate, requireMasterAdmin, async (req, res) => {
+app.get(['/admin/users/export/excel', '/api/admin/users/export/excel'], exportLimiter, authenticate, requireMasterAdmin, requireExportDownloadAccess, async (req, res) => {
   try {
     const rows = await getAdminUsersExportRows();
     const buffer = buildAdminUsersExcelBuffer(rows);
@@ -36343,7 +36563,7 @@ app.get(['/admin/users/export/excel', '/api/admin/users/export/excel'], exportLi
   }
 });
 
-app.get(['/admin/users/export/pdf', '/api/admin/users/export/pdf'], exportLimiter, authenticate, requireMasterAdmin, async (req, res) => {
+app.get(['/admin/users/export/pdf', '/api/admin/users/export/pdf'], exportLimiter, authenticate, requireMasterAdmin, requireExportDownloadAccess, async (req, res) => {
   try {
     const rows = await getAdminUsersExportRows();
     const buffer = await buildAdminUsersPdfBuffer(rows);
@@ -38269,7 +38489,7 @@ app.get('/nps/duplicate-report', authenticate, async (req, res) => {
   }
 });
 
-app.get('/nps/bulk-template', authenticate, async (req, res) => {
+app.get('/nps/bulk-template', authenticate, requireNonCsvExportDownloadAccess, async (req, res) => {
   try {
     const permissions = Array.isArray(req.user?.permissions) ? req.user.permissions : [];
 
@@ -43438,12 +43658,12 @@ app.delete(['/dental-card/leads/:id', '/api/dental-card/leads/:id'], authenticat
 app.post(['/dental-card/leads/:id/attempts', '/api/dental-card/leads/:id/attempts'], authenticate, requireDentalCardView, handleCreateDentalCardAttempt);
 app.post(['/dental-card/leads/:id/status', '/api/dental-card/leads/:id/status'], authenticate, requireDentalCardView, handleUpdateDentalCardStatus);
 app.post(['/dental-card/import', '/api/dental-card/import'], authenticate, requireDentalCardView, upload.single('file'), handleImportDentalCard);
-app.get(['/dental-card/export', '/api/dental-card/export'], exportLimiter, authenticate, requireDentalCardView, handleExportDentalCard);
-app.get(['/dental-card/export/excel', '/api/dental-card/export/excel'], exportLimiter, authenticate, requireDentalCardView, handleExportDentalCardExcel);
-app.get(['/dental-card/export/pdf', '/api/dental-card/export/pdf'], exportLimiter, authenticate, requireDentalCardView, handleExportDentalCardPdf);
-app.get(['/dental-card/report/:id/pdf', '/api/dental-card/report/:id/pdf'], exportLimiter, authenticate, requireDentalCardView, handleExportDentalCardLeadPdf);
+app.get(['/dental-card/export', '/api/dental-card/export'], exportLimiter, authenticate, requireDentalCardView, requireExportDownloadAccess, handleExportDentalCard);
+app.get(['/dental-card/export/excel', '/api/dental-card/export/excel'], exportLimiter, authenticate, requireDentalCardView, requireExportDownloadAccess, handleExportDentalCardExcel);
+app.get(['/dental-card/export/pdf', '/api/dental-card/export/pdf'], exportLimiter, authenticate, requireDentalCardView, requireExportDownloadAccess, handleExportDentalCardPdf);
+app.get(['/dental-card/report/:id/pdf', '/api/dental-card/report/:id/pdf'], exportLimiter, authenticate, requireDentalCardView, requireExportDownloadAccess, handleExportDentalCardLeadPdf);
 app.get(['/dental-card/attachments/:id', '/api/dental-card/attachments/:id'], authenticate, requireDentalCardView, handleGetDentalCardAttachment);
-app.get(['/dental-card/import-template', '/api/dental-card/import-template'], authenticate, requireDentalCardView, handleDownloadDentalCardImportTemplate);
+app.get(['/dental-card/import-template', '/api/dental-card/import-template'], authenticate, requireDentalCardView, requireExportDownloadAccess, handleDownloadDentalCardImportTemplate);
 app.get(['/dental-card/notification-settings', '/api/dental-card/notification-settings'], authenticate, requireDentalCardView, handleGetDentalCardNotificationSettings);
 app.put(['/dental-card/notification-settings/:userId', '/api/dental-card/notification-settings/:userId'], authenticate, requireDentalCardView, handleUpsertDentalCardNotificationSetting);
 app.get(['/dental-card/templates', '/api/dental-card/templates'], authenticate, requireDentalCardView, handleGetDentalCardTemplates);
@@ -43697,6 +43917,7 @@ Object.assign(app, {
   __testables: {
     buildAuthenticatedUser,
     parsePermissionsFromUser,
+    getExportAccessRolePolicy,
     buildBrazilPhoneMatchCandidates,
     buildComplaintNotificationEmail,
     findLatestNpsInviteByPhone,
