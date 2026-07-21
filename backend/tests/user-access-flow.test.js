@@ -64,6 +64,27 @@ test('export access policy keeps master open, SAC requestable and other profiles
   assert.equal(serverModule.__testables.getExportAccessRolePolicy({ role: 'manager' }), 'blocked');
 });
 
+test('SAC temporary export grant remains active through July 31 in Sao Paulo and expires on August 1', () => {
+  const beforeDeadline = serverModule.__testables.getSacTemporaryExportGrant(
+    { role: 'sac_operator' },
+    Date.parse('2026-07-31T23:59:59-03:00')
+  );
+  assert.deepEqual(beforeDeadline, { expiresAt: '2026-08-01T03:00:00.000Z' });
+
+  const atDeadline = serverModule.__testables.getSacTemporaryExportGrant(
+    { role: 'sac_operator' },
+    Date.parse('2026-08-01T00:00:00-03:00')
+  );
+  assert.equal(atDeadline, null);
+  assert.equal(
+    serverModule.__testables.getSacTemporaryExportGrant(
+      { role: 'crc_operator' },
+      Date.parse('2026-07-31T12:00:00-03:00')
+    ),
+    null
+  );
+});
+
 test('master admin can update only permissions without revalidating legacy profile fields', async () => {
   let updateParams = null;
 

@@ -18216,6 +18216,16 @@ function getExportAccessRolePolicy(user) {
   return 'blocked';
 }
 
+const sacTemporaryExportGrantExpiresAt = '2026-08-01T03:00:00.000Z';
+
+function getSacTemporaryExportGrant(user, now = Date.now()) {
+  if (normalizeAccessRole(user?.role) !== 'sac_operator') return null;
+  const expiresAtMs = Date.parse(sacTemporaryExportGrantExpiresAt);
+  const nowMs = now instanceof Date ? now.getTime() : Number(now);
+  if (!Number.isFinite(nowMs) || nowMs >= expiresAtMs) return null;
+  return { expiresAt: sacTemporaryExportGrantExpiresAt };
+}
+
 async function ensureExportAccessRequestsTable() {
   await pool.query(
     `CREATE TABLE IF NOT EXISTS export_access_requests (
@@ -18240,6 +18250,15 @@ async function getExportAccessState(user) {
   const policy = getExportAccessRolePolicy(user);
   if (policy === 'master') {
     return { canDownload: true, canRequest: false, status: 'master', expiresAt: null };
+  }
+  const temporaryGrant = getSacTemporaryExportGrant(user);
+  if (temporaryGrant) {
+    return {
+      canDownload: true,
+      canRequest: false,
+      status: 'temporary_grant',
+      expiresAt: temporaryGrant.expiresAt
+    };
   }
   if (policy === 'blocked') {
     return { canDownload: false, canRequest: false, status: 'blocked', expiresAt: null };
@@ -43918,6 +43937,7 @@ Object.assign(app, {
     buildAuthenticatedUser,
     parsePermissionsFromUser,
     getExportAccessRolePolicy,
+    getSacTemporaryExportGrant,
     buildBrazilPhoneMatchCandidates,
     buildComplaintNotificationEmail,
     findLatestNpsInviteByPhone,
