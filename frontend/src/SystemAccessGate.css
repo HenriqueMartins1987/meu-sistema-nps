@@ -1,0 +1,166 @@
+.system-suspension-page {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 32px 20px;
+  background:
+    radial-gradient(circle at top, rgba(196, 69, 54, 0.2), transparent 34%),
+    linear-gradient(145deg, #171215, #2f2020 58%, #171215);
+  color: #251b1b;
+}
+
+.system-suspension-card {
+  width: min(760px, 100%);
+  padding: clamp(30px, 5vw, 58px);
+  border: 1px solid rgba(196, 69, 54, 0.45);
+  border-top: 9px solid #c44536;
+  border-radius: 18px;
+  background: #fffdfa;
+  box-shadow: 0 32px 90px rgba(0, 0, 0, 0.42);
+  text-align: center;
+}
+
+.system-suspension-icon,
+.master-export-modal-icon {
+  width: 84px;
+  height: 84px;
+  margin: 0 auto 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: linear-gradient(145deg, #d65343, #a92d24);
+  color: #fff;
+  font-size: 52px;
+  font-weight: 950;
+  line-height: 1;
+  box-shadow: 0 14px 34px rgba(196, 69, 54, 0.34);
+}
+
+.system-suspension-eyebrow {
+  margin: 0 0 8px;
+  color: #a92d24;
+  font-size: 12px;
+  font-weight: 950;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.system-suspension-card h1,
+.master-export-modal h2 {
+  margin: 0 0 22px;
+  color: #241819;
+  line-height: 1.12;
+}
+
+.system-suspension-card h1 {
+  font-size: clamp(34px, 6vw, 54px);
+}
+
+.system-suspension-card > p,
+.master-export-modal > p {
+  margin: 0 auto 18px;
+  max-width: 650px;
+  color: #59494a;
+  font-size: clamp(16px, 2.2vw, 19px);
+  line-height: 1.72;
+}
+
+.system-suspension-card strong,
+.master-export-modal strong {
+  color: #9d2e27;
+}
+
+.system-suspension-notice {
+  margin: 28px 0;
+  padding: 18px 20px;
+  border: 1px solid rgba(196, 69, 54, 0.28);
+  border-radius: 12px;
+  background: rgba(196, 69, 54, 0.08);
+  color: #7f2a25;
+  font-weight: 850;
+  line-height: 1.55;
+}
+
+.system-suspension-login,
+.master-export-modal-button {
+  min-height: 48px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 22px;
+  border: 0;
+  border-radius: 10px;
+  background: #2b2223;
+  color: #fff;
+  font-weight: 900;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: 0 10px 26px rgba(43, 34, 35, 0.24);
+}
+
+.master-export-restricted-control {
+  cursor: not-allowed !important;
+  opacity: 0.58 !important;
+  filter: grayscale(0.2);
+}
+
+.master-export-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100000;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(20, 12, 14, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.master-export-modal {
+  width: min(520px, 100%);
+  padding: 34px;
+  border: 1px solid rgba(196, 69, 54, 0.42);
+  border-radius: 16px;
+  background: #fffdfa;
+  text-align: center;
+  box-shadow: 0 30px 80px rgba(0, 0, 0, 0.4);
+}
+
+.master-export-modal-icon {
+  width: 66px;
+  height: 66px;
+  margin-bottom: 16px;
+  font-size: 40px;
+}
+
+.master-export-modal h2 {
+  font-size: 30px;
+}
+
+.master-export-modal-button {
+  margin-top: 10px;
+  min-width: 160px;
+  background: #a92d24;
+}
+
+@media (max-width: 600px) {
+  .system-suspension-page {
+    padding: 16px;
+  }
+
+  .system-suspension-card,
+  .master-export-modal {
+    padding: 26px 20px;
+    border-radius: 14px;
+  }
+
+  .system-suspension-icon {
+    width: 70px;
+    height: 70px;
+    font-size: 44px;
+  }
+
+  .system-suspension-login,
+  .master-export-modal-button {
+    width: 100%;
+  }
+}
