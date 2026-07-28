@@ -4,13 +4,13 @@
   "description": "Backend do sistema meu-sistema-nps",
   "main": "server.js",
   "scripts": {
-    "start": "node -r ./disableEmailSending.js server.js",
-    "dev": "node -r ./disableEmailSending.js server.js",
+    "start": "node -r ./disableEmailSending.js -r ./systemAccessGuard.js server.js",
+    "dev": "node -r ./disableEmailSending.js -r ./systemAccessGuard.js server.js",
     "robot:server": "node -r ./disableEmailSending.js robot/ecuroRobotServer.js",
     "robot:install-browser": "npx playwright install chromium",
     "test": "node --test --test-concurrency=1 --test-isolation=none tests/*.test.js",
     "sync:prod-local": "node scripts/syncProductionToLocal.js",
-    "nps:demo": "node -r ./disableEmailSending.js scripts/npsDemo.js",
+    "nps:demo": "node -r ./disableEmailSending.js -r ./systemAccessGuard.js scripts/npsDemo.js",
     "nps:demo:reset": "node scripts/npsDemoReset.js"
   },
   "keywords": [],
