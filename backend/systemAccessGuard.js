@@ -75,10 +75,7 @@ function extractBearerToken(req) {
   return match ? match[1].trim() : '';
 }
 
-function readRequestIdentity(req) {
-  if (isMasterIdentity(req?.user)) return req.user;
-
-  const token = extractBearerToken(req);
+function verifyToken(token) {
   const secret = String(process.env.JWT_SECRET || '').trim();
   if (!token || !secret) return null;
 
@@ -87,6 +84,11 @@ function readRequestIdentity(req) {
   } catch (error) {
     return null;
   }
+}
+
+function readRequestIdentity(req) {
+  if (isMasterIdentity(req?.user)) return req.user;
+  return verifyToken(extractBearerToken(req));
 }
 
 function requestPath(req) {
@@ -135,15 +137,25 @@ function isExportRequest(req) {
   return hasExportIntent && hasProtectedFormat;
 }
 
-function sendSuspended(res) {
-  return res.status(503).json({
+function suspensionPayload() {
+  return {
     error: SUSPENSION_MESSAGE,
+    message: SUSPENSION_MESSAGE,
     code: 'SYSTEM_MAINTENANCE',
     maintenanceMode: true,
+    enabled: true,
     suspended: true,
     suspensionAt: new Date(suspensionTimestamp()).toISOString(),
     masterOnly: true
-  });
+  };
+}
+
+function sendSuspended(res) {
+  return res.status(503).json(suspensionPayload());
+}
+
+function sendMaintenanceStatus(res) {
+  return res.status(200).json(suspensionPayload());
 }
 
 function sendExportDenied(res) {
@@ -158,30 +170,34 @@ function wrapLoginResponse(res) {
   const originalJson = res.json.bind(res);
 
   res.json = (payload) => {
-    const identity = payload?.user || payload?.data?.user || payload;
-    const successfulLogin = Boolean(payload?.token || payload?.success || payload?.data?.token);
+    const token = payload?.token || payload?.data?.token || '';
+    const identity = payload?.user || payload?.data?.user || verifyToken(token) || payload;
+    const successfulLogin = Boolean(token || payload?.success);
 
     if (successfulLogin && !isMasterIdentity(identity)) {
       res.status(503);
-      return originalJson({
-        error: SUSPENSION_MESSAGE,
-        code: 'SYSTEM_MAINTENANCE',
-        maintenanceMode: true,
-        suspended: true,
-        suspensionAt: new Date(suspensionTimestamp()).toISOString(),
-        masterOnly: true
-      });
+      return originalJson(suspensionPayload());
     }
 
     return originalJson(payload);
   };
 }
 
+function exportDeniedPayload() {
+  return JSON.stringify({
+    error: EXPORT_RESTRICTION_MESSAGE,
+    code: 'MASTER_EXPORT_ONLY',
+    masterOnly: true
+  });
+}
+
 function protectBinaryResponse(res) {
   const originalSetHeader = res.setHeader.bind(res);
   const originalWriteHead = res.writeHead.bind(res);
+  const originalWrite = res.write.bind(res);
   const originalEnd = res.end.bind(res);
   let protectedDownloadDetected = false;
+  let denialHeadersWritten = false;
 
   res.setHeader = (name, value) => {
     const headerName = String(name || '').toLowerCase();
@@ -203,8 +219,10 @@ function protectBinaryResponse(res) {
     }
 
     if (protectedDownloadDetected && !res.headersSent) {
+      denialHeadersWritten = true;
       res.statusCode = 403;
       res.removeHeader('Content-Disposition');
+      res.removeHeader('Content-Length');
       originalSetHeader('Content-Type', 'application/json; charset=utf-8');
       return originalWriteHead(403);
     }
@@ -212,16 +230,23 @@ function protectBinaryResponse(res) {
     return originalWriteHead(statusCode, ...args);
   };
 
+  res.write = (chunk, encoding, callback) => {
+    if (protectedDownloadDetected || denialHeadersWritten) {
+      if (typeof callback === 'function') callback();
+      return true;
+    }
+    return originalWrite(chunk, encoding, callback);
+  };
+
   res.end = (chunk, encoding, callback) => {
-    if (protectedDownloadDetected && !res.headersSent) {
-      res.statusCode = 403;
-      res.removeHeader('Content-Disposition');
-      originalSetHeader('Content-Type', 'application/json; charset=utf-8');
-      return originalEnd(JSON.stringify({
-        error: EXPORT_RESTRICTION_MESSAGE,
-        code: 'MASTER_EXPORT_ONLY',
-        masterOnly: true
-      }), 'utf8', callback);
+    if (protectedDownloadDetected || denialHeadersWritten) {
+      if (!res.headersSent) {
+        res.statusCode = 403;
+        res.removeHeader('Content-Disposition');
+        res.removeHeader('Content-Length');
+        originalSetHeader('Content-Type', 'application/json; charset=utf-8');
+      }
+      return originalEnd(exportDeniedPayload(), 'utf8', callback);
     }
 
     return originalEnd(chunk, encoding, callback);
@@ -253,7 +278,7 @@ function installSystemAccessGuard() {
       }
 
       if (isMaintenanceStatusRequest(path)) {
-        return sendSuspended(res);
+        return sendMaintenanceStatus(res);
       }
 
       if (isLoginRequest(path, req.method)) {
