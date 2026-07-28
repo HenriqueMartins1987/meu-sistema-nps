@@ -34,6 +34,7 @@ import ReportsHub from './pages/ReportsHub';
 import AgendaPage from './pages/AgendaPage';
 import { PermissionRoute, ProtectedRoute, PublicOnlyRoute } from './ProtectedRoute';
 import { isMasterAdmin, normalizeRoleValue, readUser } from './constants';
+import SystemAccessGate from './SystemAccessGate';
 import './App.css';
 
 function enablePortugueseSpellcheck(root = document) {
@@ -101,79 +102,81 @@ function App() {
   }, []);
 
   return (
-    <Routes>
-      <Route element={<PublicOnlyRoute />}>
-        <Route path="/" element={<Login />} />
-      </Route>
-      <Route path="/primeiro-cadastro" element={<Register />} />
-      <Route path="/marketing" element={<MarketingIntake />} />
-      <Route path="/registro-marketing" element={<MarketingIntake />} />
-      <Route path="/pesquisa-nps" element={<NpsSurveyPage />} />
-      <Route path="/nps" element={<NpsSurveyPage />} />
-      <Route path="/public/dental-card" element={<PublicDentalCardForm />} />
-      <Route path="/public/dental-card/:unidadeSlug" element={<PublicDentalCardForm />} />
-      <Route element={<ProtectedRoute />}>
-        <Route element={<PermissionRoute permission="home" />}>
-          <Route path="/agenda" element={<AgendaPage />} />
-          <Route path="/agenda/dashboard" element={<AgendaPage initialView="dashboard" />} />
-          <Route path="/home" element={<Home />} />
-          <Route path="/home/relatorios" element={<ReportsHub />} />
-          <Route path="/perfil" element={<Profile />} />
+    <SystemAccessGate>
+      <Routes>
+        <Route element={<PublicOnlyRoute />}>
+          <Route path="/" element={<Login />} />
         </Route>
-        <Route element={<PermissionRoute permission="financial_dashboard" />}>
-          <Route path="/home/financial-intelligence" element={<FinancialIntelligence />} />
+        <Route path="/primeiro-cadastro" element={<Register />} />
+        <Route path="/marketing" element={<MarketingIntake />} />
+        <Route path="/registro-marketing" element={<MarketingIntake />} />
+        <Route path="/pesquisa-nps" element={<NpsSurveyPage />} />
+        <Route path="/nps" element={<NpsSurveyPage />} />
+        <Route path="/public/dental-card" element={<PublicDentalCardForm />} />
+        <Route path="/public/dental-card/:unidadeSlug" element={<PublicDentalCardForm />} />
+        <Route element={<ProtectedRoute />}>
+          <Route element={<PermissionRoute permission="home" />}>
+            <Route path="/agenda" element={<AgendaPage />} />
+            <Route path="/agenda/dashboard" element={<AgendaPage initialView="dashboard" />} />
+            <Route path="/home" element={<Home />} />
+            <Route path="/home/relatorios" element={<ReportsHub />} />
+            <Route path="/perfil" element={<Profile />} />
+          </Route>
+          <Route element={<PermissionRoute permission="financial_dashboard" />}>
+            <Route path="/home/financial-intelligence" element={<FinancialIntelligence />} />
+          </Route>
+          <Route element={<PermissionRoute permission="financial_campaigns" />}>
+            <Route path="/home/financial-intelligence/campaigns" element={<FinancialCampaignUnitDashboard />} />
+          </Route>
+          <Route element={<PermissionRoute permission="financial_management" />}>
+            <Route path="/home/financial-intelligence/manage" element={<FinancialIntelligenceManage />} />
+            <Route path="/home/financial-intelligence/manage/collaborators" element={<FinancialCollaboratorManagement />} />
+            <Route path="/home/financial-intelligence/manage/:id" element={<FinancialIntelligenceRecord />} />
+          </Route>
+          <Route element={<PermissionRoute permission="whatsapp_management" />}>
+            <Route path="/home/whatsapp-management" element={<WhatsAppManagement />} />
+            <Route path="/home/whatsapp-management/:section" element={<WhatsAppManagement />} />
+          </Route>
+          <Route element={<PermissionRoute permission="dental_card" />}>
+            <Route path="/dental-card" element={<DentalCard />} />
+          </Route>
+          <Route path="/gestao/:id" element={<ComplaintDetail />} />
+          <Route path="/admin/robot-master" element={<RobotMasterMonitor />} />
+          <Route element={<PermissionRoute permission="complaints_register" />}>
+            <Route path="/cadastro" element={<Cadastro />} />
+          </Route>
+          <Route element={<PermissionRoute permission="complaints_management" />}>
+            <Route path="/gestao" element={<DashboardManagement />} />
+            <Route path="/gestao/relatorio-semanal" element={<WeeklyComplaintReport />} />
+            <Route path="/admin/usuarios-clinicas" element={<AdminPanel clinicLinksOnly />} />
+          </Route>
+          <Route element={<PermissionRoute permission="complaints_dashboard" />}>
+            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/bi" element={<BI />} />
+          </Route>
+          <Route element={<PermissionRoute permission="nps_management" />}>
+            <Route path="/gestao-nps" element={<NpsManagement />} />
+          </Route>
+          <Route element={<PermissionRoute permission="nps_dashboard" />}>
+            <Route path="/dashboard-nps" element={<NpsDashboard />} />
+          </Route>
+          <Route element={<PermissionRoute permission="crm_relationship" />}>
+            <Route path="/crm" element={<CrmWorkspace />} />
+          </Route>
+          <Route path="/admin" element={<AdminEntry />} />
+          <Route element={<PermissionRoute masterOnly />}>
+            <Route path="/admin/controle-master" element={<MasterControlCenter />} />
+            <Route path="/admin/monitoria" element={<MasterMonitoring />} />
+            <Route path="/admin/configuracoes/whatsapp" element={<WhatsAppServiceSettings />} />
+          </Route>
+          <Route element={<PermissionRoute permission="patient_management" />}>
+            <Route path="/pacientes" element={<PatientManagement />} />
+            <Route path="/pacientes/cadastro" element={<PatientManagement />} />
+            <Route path="/pacientes/dashboard" element={<PatientManagement />} />
+          </Route>
         </Route>
-        <Route element={<PermissionRoute permission="financial_campaigns" />}>
-          <Route path="/home/financial-intelligence/campaigns" element={<FinancialCampaignUnitDashboard />} />
-        </Route>
-        <Route element={<PermissionRoute permission="financial_management" />}>
-          <Route path="/home/financial-intelligence/manage" element={<FinancialIntelligenceManage />} />
-          <Route path="/home/financial-intelligence/manage/collaborators" element={<FinancialCollaboratorManagement />} />
-          <Route path="/home/financial-intelligence/manage/:id" element={<FinancialIntelligenceRecord />} />
-        </Route>
-        <Route element={<PermissionRoute permission="whatsapp_management" />}>
-          <Route path="/home/whatsapp-management" element={<WhatsAppManagement />} />
-          <Route path="/home/whatsapp-management/:section" element={<WhatsAppManagement />} />
-        </Route>
-        <Route element={<PermissionRoute permission="dental_card" />}>
-          <Route path="/dental-card" element={<DentalCard />} />
-        </Route>
-        <Route path="/gestao/:id" element={<ComplaintDetail />} />
-        <Route path="/admin/robot-master" element={<RobotMasterMonitor />} />
-        <Route element={<PermissionRoute permission="complaints_register" />}>
-          <Route path="/cadastro" element={<Cadastro />} />
-        </Route>
-        <Route element={<PermissionRoute permission="complaints_management" />}>
-          <Route path="/gestao" element={<DashboardManagement />} />
-          <Route path="/gestao/relatorio-semanal" element={<WeeklyComplaintReport />} />
-          <Route path="/admin/usuarios-clinicas" element={<AdminPanel clinicLinksOnly />} />
-        </Route>
-        <Route element={<PermissionRoute permission="complaints_dashboard" />}>
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/bi" element={<BI />} />
-        </Route>
-        <Route element={<PermissionRoute permission="nps_management" />}>
-          <Route path="/gestao-nps" element={<NpsManagement />} />
-        </Route>
-        <Route element={<PermissionRoute permission="nps_dashboard" />}>
-          <Route path="/dashboard-nps" element={<NpsDashboard />} />
-        </Route>
-        <Route element={<PermissionRoute permission="crm_relationship" />}>
-          <Route path="/crm" element={<CrmWorkspace />} />
-        </Route>
-        <Route path="/admin" element={<AdminEntry />} />
-        <Route element={<PermissionRoute masterOnly />}>
-          <Route path="/admin/controle-master" element={<MasterControlCenter />} />
-          <Route path="/admin/monitoria" element={<MasterMonitoring />} />
-          <Route path="/admin/configuracoes/whatsapp" element={<WhatsAppServiceSettings />} />
-        </Route>
-        <Route element={<PermissionRoute permission="patient_management" />}>
-          <Route path="/pacientes" element={<PatientManagement />} />
-          <Route path="/pacientes/cadastro" element={<PatientManagement />} />
-          <Route path="/pacientes/dashboard" element={<PatientManagement />} />
-        </Route>
-      </Route>
-    </Routes>
+      </Routes>
+    </SystemAccessGate>
   );
 }
 
