@@ -2,7 +2,7 @@ import React, { useEffect } from 'react';
 import { Navigate, Routes, Route } from 'react-router-dom';
 
 import Login from './Login';
-import Home from './HomeShellFixed';
+import Home from './HomeContractNotice';
 import Cadastro from './Cadastro';
 import Dashboard from './Dashboard';
 import DashboardManagement from './DashboardManagement';
