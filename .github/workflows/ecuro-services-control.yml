@@ -1,0 +1,49 @@
+name: Ecuro Services Control
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Action to execute
+        required: true
+        default: status
+        type: choice
+        options:
+          - status
+          - stop
+          - start
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Control Ecuro PM2 services
+        uses: appleboy/ssh-action@v1.0.3
+        env:
+          CONTROL_ACTION: ${{ inputs.action }}
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT }}
+          envs: CONTROL_ACTION
+          script_stop: true
+          script: |
+            set -e
+            cd ${{ secrets.VPS_BACKEND_PATH }}
+            NAMES=$(pm2 jlist | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{for(const p of JSON.parse(s||'[]')){const n=String(p.name||'');if(n.toLowerCase().includes('ecuro'))console.log(n)}})")
+            echo "Ecuro services found: $(printf '%s\n' "$NAMES" | sed '/^$/d' | wc -l)"
+            if [ "$CONTROL_ACTION" = "stop" ]; then
+              if [ -n "$NAMES" ]; then
+                printf '%s\n' "$NAMES" | while IFS= read -r name; do [ -n "$name" ] && pm2 stop "$name"; done
+              fi
+              pm2 save
+            elif [ "$CONTROL_ACTION" = "start" ]; then
+              if [ -n "$NAMES" ]; then
+                printf '%s\n' "$NAMES" | while IFS= read -r name; do [ -n "$name" ] && pm2 restart "$name" --update-env; done
+              else
+                pm2 start npm --name ecuro-robot-service -- run robot:server
+              fi
+              pm2 save
+            fi
+            pm2 jlist | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const rows=JSON.parse(s||'[]').filter(p=>String(p.name||'').toLowerCase().includes('ecuro')).map(p=>({name:p.name,status:p.pm2_env&&p.pm2_env.status}));console.log(JSON.stringify(rows))})"
