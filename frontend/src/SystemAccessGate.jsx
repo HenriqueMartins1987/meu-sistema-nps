@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { isMasterAdmin, readUser } from './constants';
 import './SystemAccessGate.css';
@@ -132,7 +132,7 @@ export default function SystemAccessGate({ children }) {
   const location = useLocation();
   const [now, setNow] = useState(Date.now());
   const [downloadBlocked, setDownloadBlocked] = useState(false);
-  const user = useMemo(() => readUser(), [location.pathname]);
+  const user = readUser();
   const master = isMasterAdmin(user);
   const suspended = isSystemSuspended(now);
 
