@@ -150,16 +150,30 @@ function suspensionPayload() {
   };
 }
 
+function sendJsonResponse(res, statusCode, payload) {
+  if (typeof res?.status === 'function' && typeof res?.json === 'function') {
+    return res.status(statusCode).json(payload);
+  }
+
+  const body = JSON.stringify(payload);
+  res.statusCode = statusCode;
+  if (!res.headersSent && typeof res.setHeader === 'function') {
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Length', Buffer.byteLength(body));
+  }
+  return res.end(body);
+}
+
 function sendSuspended(res) {
-  return res.status(503).json(suspensionPayload());
+  return sendJsonResponse(res, 503, suspensionPayload());
 }
 
 function sendMaintenanceStatus(res) {
-  return res.status(200).json(suspensionPayload());
+  return sendJsonResponse(res, 200, suspensionPayload());
 }
 
 function sendExportDenied(res) {
-  return res.status(403).json({
+  return sendJsonResponse(res, 403, {
     error: EXPORT_RESTRICTION_MESSAGE,
     code: 'MASTER_EXPORT_ONLY',
     masterOnly: true
@@ -306,5 +320,6 @@ module.exports = {
   isPdfOrExcelDescriptor,
   isSystemSuspended,
   normalizeRole,
+  sendJsonResponse,
   suspensionTimestamp
 };

@@ -8,7 +8,8 @@ const {
   isMasterIdentity,
   isPdfOrExcelDescriptor,
   isSystemSuspended,
-  normalizeRole
+  normalizeRole,
+  sendJsonResponse
 } = require('../systemAccessGuard');
 
 test('normaliza perfis equivalentes ao Administrador Master', () => {
@@ -30,4 +31,26 @@ test('reconhece respostas e arquivos PDF ou Excel', () => {
   assert.equal(isPdfOrExcelDescriptor('attachment; filename="relatorio.xlsx"'), true);
   assert.equal(isPdfOrExcelDescriptor('application/vnd.ms-excel'), true);
   assert.equal(isPdfOrExcelDescriptor('application/json'), false);
+});
+
+test('responde com JSON usando ServerResponse nativa sem encerrar o processo', () => {
+  const headers = new Map();
+  let body = '';
+  const response = {
+    headersSent: false,
+    setHeader(name, value) {
+      headers.set(name, value);
+    },
+    end(value) {
+      body = value;
+      return this;
+    }
+  };
+
+  const result = sendJsonResponse(response, 503, { code: 'SYSTEM_MAINTENANCE' });
+
+  assert.equal(result, response);
+  assert.equal(response.statusCode, 503);
+  assert.equal(headers.get('Content-Type'), 'application/json; charset=utf-8');
+  assert.equal(JSON.parse(body).code, 'SYSTEM_MAINTENANCE');
 });

@@ -4131,6 +4131,7 @@ async function ensureDatabaseSchema() {
   `);
 
   await ensureColumn('clinics', 'coordinator_name', 'VARCHAR(160) NULL');
+  await ensureColumn('clinics', 'manager', 'VARCHAR(160) NULL');
   await ensureColumn('clinics', 'catalog_code', 'VARCHAR(220) NULL');
   await ensureColumn('clinics', 'responsible_whatsapp', 'VARCHAR(40) NULL');
   await ensureColumn('clinics', 'responsible_email', 'VARCHAR(180) NULL');
