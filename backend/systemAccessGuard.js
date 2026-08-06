@@ -181,6 +181,37 @@ function sendExportDenied(res) {
 }
 
 function wrapLoginResponse(res) {
+  if (typeof res?.json !== 'function') {
+    const originalEnd = res.end.bind(res);
+
+    res.end = (chunk, encoding, callback) => {
+      let payload = null;
+      try {
+        const body = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk || '');
+        payload = body ? JSON.parse(body) : null;
+      } catch (_error) {
+        return originalEnd(chunk, encoding, callback);
+      }
+
+      const token = payload?.token || payload?.data?.token || '';
+      const identity = payload?.user || payload?.data?.user || verifyToken(token) || payload;
+      const successfulLogin = Boolean(token || payload?.success);
+
+      if (successfulLogin && !isMasterIdentity(identity)) {
+        const body = JSON.stringify(suspensionPayload());
+        res.statusCode = 503;
+        if (!res.headersSent && typeof res.setHeader === 'function') {
+          res.setHeader('Content-Type', 'application/json; charset=utf-8');
+          res.setHeader('Content-Length', Buffer.byteLength(body));
+        }
+        return originalEnd(body, 'utf8', callback);
+      }
+
+      return originalEnd(chunk, encoding, callback);
+    };
+    return;
+  }
+
   const originalJson = res.json.bind(res);
 
   res.json = (payload) => {
@@ -321,5 +352,6 @@ module.exports = {
   isSystemSuspended,
   normalizeRole,
   sendJsonResponse,
+  wrapLoginResponse,
   suspensionTimestamp
 };

@@ -9,7 +9,8 @@ const {
   isPdfOrExcelDescriptor,
   isSystemSuspended,
   normalizeRole,
-  sendJsonResponse
+  sendJsonResponse,
+  wrapLoginResponse
 } = require('../systemAccessGuard');
 
 test('normaliza perfis equivalentes ao Administrador Master', () => {
@@ -53,4 +54,25 @@ test('responde com JSON usando ServerResponse nativa sem encerrar o processo', (
   assert.equal(response.statusCode, 503);
   assert.equal(headers.get('Content-Type'), 'application/json; charset=utf-8');
   assert.equal(JSON.parse(body).code, 'SYSTEM_MAINTENANCE');
+});
+
+test('intercepta login em ServerResponse nativa sem depender de res.json', () => {
+  const headers = new Map();
+  let body = '';
+  const response = {
+    headersSent: false,
+    setHeader(name, value) {
+      headers.set(name, value);
+    },
+    end(value) {
+      body = value;
+      return this;
+    }
+  };
+
+  wrapLoginResponse(response);
+  const result = response.end(JSON.stringify({ success: false, error: 'credenciais invalidas' }));
+
+  assert.equal(result, response);
+  assert.equal(JSON.parse(body).error, 'credenciais invalidas');
 });
