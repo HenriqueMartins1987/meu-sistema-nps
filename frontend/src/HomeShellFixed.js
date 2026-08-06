@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { io as createSocket } from 'socket.io-client';
 import api, { apiBaseUrl } from './api';
-import logo from './assets/logo3.png';
+import logo from './assets/grc-brand.svg';
 import { hasPermission, isMasterAdmin, normalizeRoleValue, readUser } from './constants';
 import { clearSession, readToken, saveSession } from './session';
 

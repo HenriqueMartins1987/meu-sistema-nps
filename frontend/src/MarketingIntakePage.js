@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import api from './api';
-import logo from './assets/logo3.png';
+import logo from './assets/grc-brand.svg';
 import {
   brazilPhonePattern,
   brazilPhoneTitle,

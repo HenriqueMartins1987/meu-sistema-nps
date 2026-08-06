@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { hasPermission, isMasterAdmin, normalizeRoleValue, readUser } from './constants';
 import { clearSession } from './session';
-import grcLogo from './assets/logo3.png';
+import grcLogo from './assets/grc-brand.svg';
 import api from './api';
 import './AuthenticatedLayout.css';
 
@@ -290,10 +290,10 @@ export default function AuthenticatedLayout({ remainingMsLabel, remainingWarning
         onMouseLeave={() => setExpanded(false)}
       >
         <div className="app-sidebar-brand">
-          <div className="app-sidebar-brand-mark">GS</div>
+          <div className="app-sidebar-brand-mark">GRC</div>
           <div className="app-sidebar-brand-copy">
-            <strong>Grupo Sorria</strong>
-            <span>Painel administrativo</span>
+            <strong>GRC</strong>
+            <span>Gestao de relacionamento</span>
           </div>
         </div>
 

@@ -93,7 +93,7 @@ function SuspensionPage() {
       <section className="system-suspension-card" role="alert" aria-live="assertive">
         <div className="system-suspension-icon" aria-hidden="true">!</div>
         <p className="system-suspension-eyebrow">Acesso restrito</p>
-        <h1>Sistema NPS suspenso</h1>
+        <h1>Sistema GRC temporariamente indisponivel</h1>
         <p>
           Em razão da ausência de regularização contratual, o acesso ao sistema foi suspenso
           a partir de <strong>31/07/2026, às 08:00</strong>.

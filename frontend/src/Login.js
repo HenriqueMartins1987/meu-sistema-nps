@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import logo from './assets/logo3.png';
+import logo from './assets/grc-brand.svg';
 import api, { getApiErrorMessage } from './api';
 import { saveSession } from './session';
 import { formatBrazilPhoneInput, isCompleteBrazilPhone } from './constants';

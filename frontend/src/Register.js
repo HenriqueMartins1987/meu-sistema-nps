@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from './api';
-import logo from './assets/logo3.png';
+import logo from './assets/grc-brand.svg';
 import {
   accessProfiles,
   brazilPhonePattern,

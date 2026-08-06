@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 620 180" role="img" aria-labelledby="title desc">
+  <title id="title">GRC Consultoria</title>
+  <desc id="desc">Marca institucional GRC Consultoria e Gestao</desc>
+  <defs>
+    <linearGradient id="grcGradient" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#22b8a7"/>
+      <stop offset="1" stop-color="#08779b"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(14 16)">
+    <path d="M74 0 138 37v74l-64 37-64-37V37z" fill="#0b263f"/>
+    <path d="M74 18 122 46v56l-48 28-48-28V46z" fill="none" stroke="url(#grcGradient)" stroke-width="8"/>
+    <path d="M96 48c-6-8-14-12-25-12-22 0-36 16-36 38s14 38 37 38c12 0 22-4 29-11V78H73v-15h46v45c-12 13-28 20-48 20-33 0-55-22-55-54s23-54 55-54c17 0 31 6 41 17z" fill="#fff" transform="scale(.76) translate(24 24)"/>
+  </g>
+  <text x="180" y="92" fill="#0b263f" font-family="Arial, Helvetica, sans-serif" font-size="76" font-weight="800" letter-spacing="8">GRC</text>
+  <rect x="184" y="112" width="348" height="5" rx="2.5" fill="url(#grcGradient)"/>
+  <text x="183" y="145" fill="#496577" font-family="Arial, Helvetica, sans-serif" font-size="20" font-weight="700" letter-spacing="3">CONSULTORIA &amp; GESTAO</text>
+</svg>
